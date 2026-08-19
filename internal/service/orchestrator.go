@@ -1877,18 +1877,27 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 // MetricsReader and AccountLister, so a dispatcher without it yields a clean
 // ErrKeywordInsightsUnsupported → 400.
 //
-// Both methods are project-scoped, not campaign-scoped: they report on the account the
-// connection points at, so there is no campaign row to authorize against — the connection is
-// the scope. Both are pure reads that never mutate platform or DB state, and neither result
-// is ever persisted.
+// Both methods are project-scoped and confined to the project's OWN campaigns. The connection
+// alone is NOT the scope: Google Ads is one customer shared across every foundation
+// (docs/architecture.md, "Account Tenancy"), so a read scoped only by the connection returns
+// every project's keywords, spend and demographics. campaignIDs carries the upstream ids the
+// caller owns, and the adapter must confine its query to them.
+//
+// campaignIDs is never empty — the orchestrator answers an empty result WITHOUT calling the
+// adapter, because an empty scope is exactly when an unscoped query would expose everyone else's
+// data. An adapter must still refuse an empty slice rather than widening, so the guarantee does
+// not rest on one caller.
+//
+// Both are pure reads that never mutate platform or DB state, and neither result is persisted.
 type KeywordInsightsReader interface {
-	// ReadKeywordPerformance returns the account's top keywords by impressions over window.
-	// The result is capped; KeywordPerformance.Truncated reports whether more exist.
-	ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error)
-	// ReadAudienceInsights returns age, gender and device breakdowns over window. Each
-	// dimension independently covers the same traffic, so a consumer must total within a
-	// dimension, never across them.
-	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error)
+	// ReadKeywordPerformance returns the top keywords by impressions over window, across the
+	// caller's own campaigns only. The result is capped; KeywordPerformance.Truncated reports
+	// whether more exist.
+	ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.KeywordPerformance, error)
+	// ReadAudienceInsights returns age, gender and device breakdowns over window for the
+	// caller's own campaigns. Each dimension independently covers the same traffic, so a
+	// consumer must total within a dimension, never across them.
+	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.AudienceInsights, error)
 }
 
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
@@ -1922,16 +1931,44 @@ func (o *Orchestrator) keywordInsightsFor(platform model.Provider) (KeywordInsig
 	return reader, nil
 }
 
-// ReadKeywordPerformance reads a project's account-wide keyword performance.
+// projectCampaignScope returns the upstream campaign ids this project owns on platform.
+//
+// The single place the authorization scope for the two insight reads is established. It is a
+// database read scoped by project_id in SQL, not a filter applied to platform results after the
+// fact: the platform read must never see another project's rows in the first place.
+func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID string, platform model.Provider) ([]string, error) {
+	ids, err := o.campaigns.ListProjectPlatformCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("resolve campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	return ids, nil
+}
+
+// ReadKeywordPerformance reads keyword performance across the project's OWN campaigns.
 func (o *Orchestrator) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error) {
 	reader, err := o.keywordInsightsFor(platform)
 	if err != nil {
 		return nil, err
 	}
+	campaignIDs, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// EMPTY SCOPE RETURNS EARLY, BEFORE ANY UPSTREAM CALL. This is the arm that decides
+	// whether option A actually closes the hole: a project with no campaigns has nothing to
+	// show, and passing an empty scope down would either build `campaign.id IN ()` or drop the
+	// predicate, restoring the account-wide read on the shared customer — exposing every other
+	// project's data to precisely the caller with no campaigns of its own.
+	//
+	// An empty result, NOT a 409: "you have not run any campaigns yet" is an ordinary state,
+	// and reporting it as an error would make it indistinguishable from a broken connection.
+	if len(campaignIDs) == 0 {
+		return &model.KeywordPerformance{Window: window, Rows: []model.KeywordRow{}}, nil
+	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	kp, rerr := reader.ReadKeywordPerformance(callCtx, projectID, platform, window)
+	kp, rerr := reader.ReadKeywordPerformance(callCtx, projectID, platform, window, campaignIDs)
 	o.recordUpstream(ctx, platform, opReadKeywords, start, rerr)
 	if rerr != nil {
 		return nil, rerr
@@ -1950,16 +1987,25 @@ func (o *Orchestrator) ReadKeywordPerformance(ctx context.Context, projectID str
 	return kp, nil
 }
 
-// ReadAudienceInsights reads a project's account-wide demographic breakdowns.
+// ReadAudienceInsights reads demographic breakdowns across the project's OWN campaigns.
 func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error) {
 	reader, err := o.keywordInsightsFor(platform)
 	if err != nil {
 		return nil, err
 	}
+	campaignIDs, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Same early return as ReadKeywordPerformance, and for the same reason — see the comment
+	// there. Both endpoints need it or the exposure simply moves to the other one.
+	if len(campaignIDs) == 0 {
+		return &model.AudienceInsights{Window: window, Buckets: []model.AudienceBucket{}}, nil
+	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	ai, rerr := reader.ReadAudienceInsights(callCtx, projectID, platform, window)
+	ai, rerr := reader.ReadAudienceInsights(callCtx, projectID, platform, window, campaignIDs)
 	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
 	if rerr != nil {
 		return nil, rerr

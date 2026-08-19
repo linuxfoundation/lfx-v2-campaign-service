@@ -1105,17 +1105,18 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 
 // ReadKeywordPerformance implements service.KeywordInsightsReader for Google Ads.
 //
-// Project-scoped rather than campaign-scoped: it reads the account the project's connection
-// points at, so there is no campaign row to authorize against and no account-identity guard
-// to apply — the connection IS the scope, exactly as it is for ListAccounts. A caller can
-// only ever see the account they are already connected to.
+// Confined to campaignIDs, the upstream campaigns the calling project owns. An earlier version
+// of this read was scoped only by the connection, on the reasoning that "the connection IS the
+// scope, exactly as it is for ListAccounts". That reasoning does not hold on this platform:
+// Google Ads is ONE customer shared across every foundation (docs/architecture.md, "Account
+// Tenancy"), so a connection-scoped GAQL query returns every project's keyword text, campaign
+// ids and spend. The campaign ids are read from this service's own rows, scoped by project_id
+// in SQL, and are what make the read answer only for the caller.
 //
-// It resolves the ordinary client, which accepts the LF system fallback. That is correct
-// here and is NOT the adoption hazard resolveOwnedGoogleAdsClient exists to prevent: this
-// call names no upstream id, so it cannot reach a resource the caller chose — it reports on
-// whatever account the credential already grants, which is the same thing the existing
-// /connection-google-ads/accounts and /metrics reads do.
-func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error) {
+// It still resolves the ordinary client, which accepts the LF system fallback, and that remains
+// correct: the call names no upstream id the caller chose, and once the query is campaign-scoped
+// a fallback project reads only its own campaigns rather than the whole LF account.
+func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.KeywordPerformance, error) {
 	// Translate and validate the window BEFORE resolving credentials: an unsupported window
 	// is a permanent input fault regardless of connection state, so it must produce the same
 	// 400 either way rather than being masked by a contingent connection failure.
@@ -1127,7 +1128,7 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 	if err != nil {
 		return nil, err
 	}
-	kp, err := client.GetKeywordPerformance(ctx, gaWindow)
+	kp, err := client.GetKeywordPerformance(ctx, gaWindow, campaignIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1155,9 +1156,11 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 	}, nil
 }
 
-// ReadAudienceInsights implements service.KeywordInsightsReader for Google Ads. Same scoping
-// and same window-first ordering as ReadKeywordPerformance.
-func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error) {
+// ReadAudienceInsights implements service.KeywordInsightsReader for Google Ads. Same
+// campaign-scoping and same window-first ordering as ReadKeywordPerformance — the demographic
+// queries aggregate the whole customer without it, which on a shared account means every other
+// project's targeting distribution.
+func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.AudienceInsights, error) {
 	gaWindow, err := googleads.WindowFor(window)
 	if err != nil {
 		return nil, fmt.Errorf("read google ads audience insights: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
@@ -1166,7 +1169,7 @@ func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectI
 	if err != nil {
 		return nil, err
 	}
-	ai, err := client.GetAudienceInsights(ctx, gaWindow)
+	ai, err := client.GetAudienceInsights(ctx, gaWindow, campaignIDs)
 	if err != nil {
 		return nil, err
 	}

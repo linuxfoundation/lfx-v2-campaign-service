@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); and account-wide keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); and project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -852,15 +852,36 @@ double-apply anything.
 
 ## Keyword and audience insights, and keyword actions (LFXV2-2641)
 
-`keywords.go` adds two account-wide GAQL reads and one mutation. All three are scoped to the
-client's own customer id and none of them creates a keyword — criterion creation remains
-GA-4's `createAdGroupTargeting`.
+`keywords.go` adds two GAQL reads and one mutation. None of them creates a keyword — criterion
+creation remains GA-4's `createAdGroupTargeting`.
+
+**The reads are scoped to the caller's own CAMPAIGNS, not to the connected account, and that
+distinction is the authorization boundary.** An earlier version scoped them only to the client's
+customer id, on the reasoning that "the connection IS the scope". That reasoning does not hold
+here: Google Ads is ONE customer shared across every foundation (see `docs/architecture.md`,
+"Account Tenancy"), so a connection-scoped query returns every project's keyword text, campaign
+ids, spend and demographic distribution to any `campaign_manager`. Both reads now take the
+`platform_campaign_id`s the service holds for the project — read with `project_id` in the SQL
+WHERE clause, never filtered in Go after an unscoped read — and render them into a
+`campaign.id IN (...)` predicate via `campaignScopePredicate`.
+
+`campaignScopePredicate` REFUSES an empty list rather than returning an empty string, because an
+empty predicate concatenated into the query silently restores the account-wide read — and it does
+so for the input most likely to occur, a project that has dispatched nothing. The orchestrator
+answers that case earlier still, returning an empty result WITHOUT issuing any upstream query;
+the adapter's refusal is defence in depth for a future caller in another package. Ids are
+validated digits-only for the same reason `GetCampaignMetrics` validates its campaign id: GAQL
+has no parameterized queries and these values reach the string by concatenation.
+
+The consequence worth stating plainly is a BEHAVIOUR CHANGE: a campaign created outside this
+service, or claimed but not yet dispatched, has no dispatched row and is therefore not in scope,
+so its keywords and demographics no longer appear.
 
 **The keyword read is capped, and says so.** `GetKeywordPerformance` orders by impressions
 descending and asks for `maxKeywordRows+1` rows; the extra row is dropped and reported as
 `Truncated`. That probe is the whole mechanism: without it a caller receiving exactly the cap
-cannot distinguish a small account from a truncated large one, and would total the slice as
-account-wide spend. The status predicate is an ALLOW-LIST (`ENABLED`, `PAUSED`), not an exclusion of `REMOVED`:
+cannot distinguish a small result set from a truncated large one, and would total the slice as
+the project's whole spend. The status predicate is an ALLOW-LIST (`ENABLED`, `PAUSED`), not an exclusion of `REMOVED`:
 `AdGroupCriterionStatus` also carries `UNSPECIFIED` and `UNKNOWN`, and an omitted proto field
 decodes to `""` — all three survive `!= 'REMOVED'` and would be offered as actionable rows
 carrying a pause/remove that cannot apply. `status` and `match_type` are additionally

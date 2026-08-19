@@ -13,7 +13,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Keyword + audience INSIGHTS (account-wide reads) and keyword ACTIONS
+// Keyword + audience INSIGHTS (project-scoped reads) and keyword ACTIONS
 // (pause/remove on an existing ad-group criterion).
 //
 // Everything here is scoped to the client's own customer id. These are reads of,
@@ -28,8 +28,8 @@ const (
 	//
 	// A cap is necessary because an account's keyword set is unbounded and this is a
 	// synchronous read feeding a UI table. It is documented in the API contract via the
-	// `truncated` flag rather than hidden: a silently-capped total presented as
-	// account-wide spend is a wrong number, not merely an incomplete one.
+	// `truncated` flag rather than hidden: a silently-capped total presented as the
+	// project's whole spend is a wrong number, not merely an incomplete one.
 	maxKeywordRows = 50
 
 	// maxKeywordActions bounds one keyword-actions batch. It matches maxKeywords (the
@@ -42,8 +42,8 @@ const (
 	// KeywordStatusUnknown and MatchTypeUnknown are the contract's escape hatches for an
 	// upstream value this client does not recognise. They are declared here rather than
 	// alongside StatusEnabled/MatchTypeExact because they are NOT Google vocabulary — nothing
-	// is ever SENT with these values; they exist only so an account-wide read can report an
-	// unrecognised upstream value without emitting one the API contract forbids.
+	// is ever SENT with these values; they exist only so a read can report an unrecognised
+	// upstream value without emitting one the API contract forbids.
 	KeywordStatusUnknown = "UNKNOWN"
 	MatchTypeUnknown     = "UNKNOWN"
 
@@ -74,7 +74,7 @@ type KeywordRow struct {
 	Ctr float64 `json:"ctr"`
 }
 
-// KeywordPerformance is the account-wide keyword read.
+// KeywordPerformance is the keyword read, confined to the caller's own campaigns.
 type KeywordPerformance struct {
 	Window MetricsWindow `json:"window"`
 	Rows   []KeywordRow  `json:"rows"`
@@ -95,7 +95,8 @@ type AudienceBucket struct {
 	Ctr         float64 `json:"ctr"`
 }
 
-// AudienceInsights is the account-wide demographic read across all three breakdowns.
+// AudienceInsights is the demographic read across all three breakdowns, confined to the
+// caller's own campaigns.
 type AudienceInsights struct {
 	Window  MetricsWindow    `json:"window"`
 	Buckets []AudienceBucket `json:"buckets"`
@@ -239,16 +240,52 @@ func normaliseKeywordMatchType(s string) string {
 // carrying a pause/remove action that cannot meaningfully apply. Enumerate the live states
 // and default-deny, matching campaignRowIdentity's positive switch.
 //
-// Status and MatchType are additionally normalised on the way out: this is an ACCOUNT-WIDE
-// read that returns keywords this service never created, so an unrecognised upstream value
-// is reachable regardless of what the create path restricts itself to. See normaliseKeywordStatus.
+// Status and MatchType are additionally normalised on the way out: the read is confined to the
+// project's campaigns but still returns keywords this service never created (a campaign adopted,
+// or edited in the Google UI), so an unrecognised upstream value is reachable regardless of what
+// the create path restricts itself to. See normaliseKeywordStatus.
 //
 // The query asks for maxKeywordRows+1 rows so a full page can be told from a truncated
 // one; the extra row is dropped and reported as Truncated. Ordering is by impressions
 // descending, which is what makes a truncated answer the useful slice rather than an
 // arbitrary one.
-func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow) (*KeywordPerformance, error) {
+// campaignScopePredicate renders the GAQL predicate that confines a read to campaignIDs.
+//
+// It is the security boundary for the two account-wide reads in this file. Google Ads is ONE
+// customer shared across every foundation (docs/architecture.md, "Account Tenancy"), so a query
+// scoped only by the connection returns every project's keywords, spend and demographics; this
+// predicate is what narrows it to the campaigns the calling project actually owns.
+//
+// It returns an error for an EMPTY list rather than an empty string. An empty string would be
+// concatenated into the query and silently restore the account-wide read — the exact defect this
+// exists to prevent, reintroduced by the one input most likely to occur (a project that has
+// dispatched nothing). Callers must handle "no campaigns" before building a query; making the
+// empty case unrepresentable here means a caller cannot forget.
+//
+// Each id is validated digits-only, matching GetCampaignMetrics: these are concatenated into the
+// query string and GAQL has no parameterized queries, so an unvalidated id is an injection vector.
+func campaignScopePredicate(campaignIDs []string, op string) (string, error) {
+	if len(campaignIDs) == 0 {
+		return "", fmt.Errorf("%s: no campaign ids to scope the query to; an unscoped read would "+
+			"return every project's data from the shared customer", op)
+	}
+	quoted := make([]string, 0, len(campaignIDs))
+	for _, raw := range campaignIDs {
+		id := strings.TrimSpace(raw)
+		if !customerIDRE.MatchString(id) {
+			return "", fmt.Errorf("%s: campaign id %q must be digits only", op, raw)
+		}
+		quoted = append(quoted, "'"+id+"'")
+	}
+	return "campaign.id IN (" + strings.Join(quoted, ", ") + ")", nil
+}
+
+func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow, campaignIDs []string) (*KeywordPerformance, error) {
 	w, err := resolveWindow(window, "get keyword performance")
+	if err != nil {
+		return nil, err
+	}
+	scope, err := campaignScopePredicate(campaignIDs, "get keyword performance")
 	if err != nil {
 		return nil, err
 	}
@@ -263,9 +300,10 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 			"metrics.impressions, metrics.clicks, metrics.cost_micros "+
 			"FROM keyword_view "+
 			"WHERE segments.date DURING %s AND ad_group_criterion.status IN ('ENABLED', 'PAUSED') "+
+			"AND %s "+
 			"ORDER BY metrics.impressions DESC "+
 			"LIMIT %d",
-		w, maxKeywordRows+1,
+		w, scope, maxKeywordRows+1,
 	)
 
 	rows, err := c.gaqlSearch(ctx, query)
@@ -366,8 +404,12 @@ var audienceQueries = []audienceQuery{
 // Google's UNDETERMINED/UNKNOWN buckets are returned as-is. They are real unattributed
 // traffic, often a large share of it, and dropping them would make the buckets sum to less
 // than the campaign's impressions with nothing indicating why.
-func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow) (*AudienceInsights, error) {
+func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, campaignIDs []string) (*AudienceInsights, error) {
 	w, err := resolveWindow(window, "get audience insights")
+	if err != nil {
+		return nil, err
+	}
+	scope, err := campaignScopePredicate(campaignIDs, "get audience insights")
 	if err != nil {
 		return nil, err
 	}
@@ -378,8 +420,8 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow) 
 		// allow-listed window — no caller input reaches the query string.
 		query := fmt.Sprintf(
 			"SELECT %s, metrics.impressions, metrics.clicks, metrics.cost_micros "+
-				"FROM %s WHERE segments.date DURING %s",
-			aq.selectField, aq.from, w,
+				"FROM %s WHERE segments.date DURING %s AND %s",
+			aq.selectField, aq.from, w, scope,
 		)
 		rows, sErr := c.gaqlSearch(ctx, query)
 		if sErr != nil {

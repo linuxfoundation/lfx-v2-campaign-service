@@ -164,6 +164,13 @@ type fakeCampaignRepo struct {
 	// indexPayloads records the co-committed index messages, so a test can assert a campaign is
 	// indexed rather than only persisted.
 	indexPayloads [][]byte
+	// scopeIDs pins the project's campaign scope directly, for tests that need a specific
+	// scope (or an EMPTY one) without dispatching campaigns to produce it. nil means "derive
+	// it from the campaigns this fake holds".
+	scopeIDs []string
+	// scopeErr makes the scope lookup fail, so a test can assert the read does not fall back
+	// to an unscoped platform call when the scope cannot be established.
+	scopeErr error
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
@@ -201,6 +208,34 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 // the SQL guarantees. A fake that returned insertion order would let a brief-metrics test
 // pass against a handler that had stopped depending on a stable order — which is the whole
 // contract the ORDER BY exists to provide.
+// ListProjectPlatformCampaignIDs mirrors the SQL: the project's own live campaigns on one
+// platform, across every brief, excluding rows with no upstream id yet. scopeIDs lets a test
+// pin the scope directly; otherwise it is derived from the campaigns the fake holds, so a test
+// that dispatches a campaign automatically has it in scope.
+func (r *fakeCampaignRepo) ListProjectPlatformCampaignIDs(_ context.Context, projectID string, platform model.Provider) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.scopeErr != nil {
+		return nil, r.scopeErr
+	}
+	if r.scopeIDs != nil {
+		return append([]string{}, r.scopeIDs...), nil
+	}
+	out := make([]string, 0)
+	seen := map[string]bool{}
+	for _, c := range append(append([]*model.Campaign{}, r.upserted...), r.adopted...) {
+		if c == nil || c.ProjectID != projectID || c.Platform != platform || c.Status == "deleted" {
+			continue
+		}
+		if c.PlatformCampaignID == "" || seen[c.PlatformCampaignID] {
+			continue
+		}
+		seen[c.PlatformCampaignID] = true
+		out = append(out, c.PlatformCampaignID)
+	}
+	return out, nil
+}
+
 func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, projectID, briefID string) ([]*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

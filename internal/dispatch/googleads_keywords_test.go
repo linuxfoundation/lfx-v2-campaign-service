@@ -232,7 +232,7 @@ func TestGoogleAdsReadKeywordPerformance_MapsRowsAndKeepsRequestWindow(t *testin
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	kp, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days)
+	kp, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("ReadKeywordPerformance: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestGoogleAdsReadKeywordPerformance_BadWindowRefusedBeforeCredentials(t *te
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, errEncryptor{}, opts...)
 
-	_, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindow("next_tuesday"))
+	_, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindow("next_tuesday"), []string{"555"})
 	if err == nil {
 		t.Fatal("expected an unsupported-window error, got nil")
 	}
@@ -282,7 +282,7 @@ func TestGoogleAdsReadAudienceInsights_MapsBucketsAndKeepsRequestWindow(t *testi
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days)
+	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("ReadAudienceInsights: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestGoogleAdsReadAudienceInsights_DimensionTokensMatchTheModelVocabulary(t 
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days)
+	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("ReadAudienceInsights: %v", err)
 	}
@@ -346,10 +346,10 @@ func TestGoogleAdsKeywordInsights_UnusableConnectionIsTagged(t *testing.T) {
 	}
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: inactive}, identityEncryptor{}, opts...)
 
-	if _, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); !errors.Is(err, domain.ErrConnectionNotUsable) {
+	if _, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, []string{"555"}); !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Errorf("keyword read: error is not ErrConnectionNotUsable: %v", err)
 	}
-	if _, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); !errors.Is(err, domain.ErrConnectionNotUsable) {
+	if _, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, []string{"555"}); !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Errorf("audience read: error is not ErrConnectionNotUsable: %v", err)
 	}
 }

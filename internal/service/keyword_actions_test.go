@@ -65,14 +65,14 @@ func (d *keywordActionDispatcher) ApplyKeywordActions(_ context.Context, _ strin
 	return out, nil
 }
 
-func (d *keywordActionDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow) (*model.KeywordPerformance, error) {
+func (d *keywordActionDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
 	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days, Rows: []model.KeywordRow{{CriterionID: "777", AdGroupID: "333"}}}, nil
 }
 
-func (d *keywordActionDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow) (*model.AudienceInsights, error) {
+func (d *keywordActionDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -302,7 +302,10 @@ func TestApplyKeywordActions_AdapterTextIsNotEchoed(t *testing.T) {
 func keywordInsightsService(t *testing.T, d PlatformDispatcher) *ConnectionService {
 	t.Helper()
 	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
-	camps := &fakeCampaignRepo{}
+	// A non-empty scope, because these tests exercise what happens AFTER the read reaches the
+	// platform. An empty scope is answered without contacting the dispatcher at all, which is
+	// its own behaviour and has its own tests.
+	camps := &fakeCampaignRepo{scopeIDs: []string{"555"}}
 	jobs := newFakeJobRepo()
 	svc.SetOrchestrator(NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: d}))
 	return svc
@@ -471,11 +474,11 @@ func (d nilResultDispatcher) Dispatch(context.Context, *model.CampaignBrief, mod
 	return nil, errors.New("unused")
 }
 
-func (d nilResultDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow) (*model.KeywordPerformance, error) {
+func (d nilResultDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
 	return nil, nil
 }
 
-func (d nilResultDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow) (*model.AudienceInsights, error) {
+func (d nilResultDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
 	return nil, nil
 }
 
@@ -491,16 +494,18 @@ func (d nilSliceDispatcher) Dispatch(context.Context, *model.CampaignBrief, mode
 	return nil, errors.New("unused")
 }
 
-func (d nilSliceDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow) (*model.KeywordPerformance, error) {
+func (d nilSliceDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
 	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days}, nil
 }
 
-func (d nilSliceDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow) (*model.AudienceInsights, error) {
+func (d nilSliceDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
 	return &model.AudienceInsights{Window: model.MetricsWindowLast30Days}, nil
 }
 
+// scopeIDs is non-empty: these tests assert what the orchestrator does with the dispatcher's
+// RESULT, and an empty scope never reaches the dispatcher.
 func keywordOrchestrator(d PlatformDispatcher) *Orchestrator {
-	return NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+	return NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds: d,
 	})
 }
@@ -588,5 +593,123 @@ func TestOrchestratorKeywords_UnsupportedPlatform(t *testing.T) {
 	campaign := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "555"}
 	if _, err := orch.ApplyKeywordActions(ctx, "p1", model.ProviderGoogleAds, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}}); !errors.Is(err, domain.ErrKeywordActionsUnsupported) {
 		t.Errorf("unregistered platform: error = %v, want ErrKeywordActionsUnsupported", err)
+	}
+}
+
+// countingInsightsDispatcher records whether the platform was contacted at all. The COUNT is the
+// assertion: "returned an empty result" and "never issued the query" are different facts, and only
+// the second one closes the exposure.
+type countingInsightsDispatcher struct {
+	keywordCalls  int
+	audienceCalls int
+	gotIDs        []string
+}
+
+func (d *countingInsightsDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("not used")
+}
+
+func (d *countingInsightsDispatcher) ReadKeywordPerformance(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, ids []string) (*model.KeywordPerformance, error) {
+	d.keywordCalls++
+	d.gotIDs = ids
+	return &model.KeywordPerformance{Window: w, Rows: []model.KeywordRow{{CriterionID: "leaked-from-another-project"}}}, nil
+}
+
+func (d *countingInsightsDispatcher) ReadAudienceInsights(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, ids []string) (*model.AudienceInsights, error) {
+	d.audienceCalls++
+	d.gotIDs = ids
+	return &model.AudienceInsights{Window: w, Buckets: []model.AudienceBucket{{Dimension: "age_range", Value: "leaked"}}}, nil
+}
+
+// TestKeywordInsights_EmptyScopeIssuesNoUpstreamCall is the test that makes project-scoping real.
+//
+// Scoping the GAQL to the project's campaigns closes the cross-project read ONLY if the empty case
+// is handled before a query is built. An empty id list rendered into the predicate produces either
+// `campaign.id IN ()` or, if the predicate is dropped as "nothing to filter", the original
+// account-wide read — handing every other project's keywords and demographics to precisely the
+// caller that owns no campaigns.
+//
+// It asserts the CALL COUNT, not merely that the result was empty. A dispatcher that is contacted
+// and whose rows are then discarded would satisfy an empty-result assertion while still having
+// issued the exposing query upstream; the rows returned here are deliberately non-empty so that
+// any implementation which calls through fails loudly instead of coincidentally looking correct.
+func TestKeywordInsights_EmptyScopeIssuesNoUpstreamCall(t *testing.T) {
+	d := &countingInsightsDispatcher{}
+	// scopeIDs is explicitly empty: the project owns no campaigns on this platform.
+	orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{}}, newFakeJobRepo(),
+		map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: d})
+	ctx := context.Background()
+
+	kp, err := orch.ReadKeywordPerformance(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadKeywordPerformance: an empty scope is an ordinary state, not an error: %v", err)
+	}
+	if d.keywordCalls != 0 {
+		t.Errorf("keyword read contacted the platform %d time(s) with an EMPTY scope; the query "+
+			"would be unscoped and return every project's keywords from the shared customer",
+			d.keywordCalls)
+	}
+	if kp == nil || len(kp.Rows) != 0 {
+		t.Errorf("rows = %+v, want an empty result for a project that owns no campaigns", kp)
+	}
+	if kp != nil && kp.Rows == nil {
+		t.Error("Rows is nil rather than an empty slice: a consumer cannot tell " +
+			"'no keywords' from 'the field was never populated'")
+	}
+
+	ai, err := orch.ReadAudienceInsights(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadAudienceInsights: %v", err)
+	}
+	if d.audienceCalls != 0 {
+		t.Errorf("audience read contacted the platform %d time(s) with an EMPTY scope; the "+
+			"demographic queries would aggregate every project's traffic", d.audienceCalls)
+	}
+	if ai == nil || len(ai.Buckets) != 0 {
+		t.Errorf("buckets = %+v, want an empty result", ai)
+	}
+	if ai != nil && ai.Buckets == nil {
+		t.Error("Buckets is nil rather than an empty slice")
+	}
+}
+
+// TestKeywordInsights_ScopeIsPassedToTheAdapter pins that the ids actually reach the adapter.
+// Without this, the empty-scope guard could pass while a non-empty scope was silently dropped —
+// leaving the account-wide read in place for every project that DOES own campaigns.
+func TestKeywordInsights_ScopeIsPassedToTheAdapter(t *testing.T) {
+	d := &countingInsightsDispatcher{}
+	orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"111", "222"}}, newFakeJobRepo(),
+		map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: d})
+
+	if _, err := orch.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("ReadKeywordPerformance: %v", err)
+	}
+	if d.keywordCalls != 1 {
+		t.Fatalf("keyword calls = %d, want 1", d.keywordCalls)
+	}
+	if len(d.gotIDs) != 2 || d.gotIDs[0] != "111" || d.gotIDs[1] != "222" {
+		t.Errorf("adapter received scope %v, want the project's own campaign ids; a dropped "+
+			"scope restores the account-wide read", d.gotIDs)
+	}
+}
+
+// TestKeywordInsights_ScopeLookupFailureDoesNotFallBack pins that a repo failure is an ERROR
+// rather than a silent widening. "We could not determine which campaigns you own" must never
+// degrade into "so here is everything".
+func TestKeywordInsights_ScopeLookupFailureDoesNotFallBack(t *testing.T) {
+	d := &countingInsightsDispatcher{}
+	orch := NewOrchestrator(&fakeCampaignRepo{scopeErr: errors.New("db down")}, newFakeJobRepo(),
+		map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: d})
+	ctx := context.Background()
+
+	if _, err := orch.ReadKeywordPerformance(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); err == nil {
+		t.Error("a scope lookup failure must fail the read, not proceed unscoped")
+	}
+	if _, err := orch.ReadAudienceInsights(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); err == nil {
+		t.Error("a scope lookup failure must fail the audience read too")
+	}
+	if d.keywordCalls != 0 || d.audienceCalls != 0 {
+		t.Errorf("platform was contacted (%d keyword, %d audience) after the scope could not be "+
+			"established", d.keywordCalls, d.audienceCalls)
 	}
 }

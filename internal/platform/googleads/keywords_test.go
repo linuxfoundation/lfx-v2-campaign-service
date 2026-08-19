@@ -36,7 +36,7 @@ func TestGetKeywordPerformance_HappyPath(t *testing.T) {
 			`]}`)
 	})
 
-	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetKeywordPerformance: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestGetKeywordPerformance_TruncatesAndReportsIt(t *testing.T) {
 		_, _ = io.WriteString(w, `{"results":[`+strings.Join(rows, ",")+`]}`)
 	})
 
-	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetKeywordPerformance: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestGetKeywordPerformance_ExactlyCapIsNotTruncated(t *testing.T) {
 		_, _ = io.WriteString(w, `{"results":[`+strings.Join(rows, ",")+`]}`)
 	})
 
-	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetKeywordPerformance: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestGetKeywordPerformance_MissingIDsIsAnError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"305729261","keyword":{"text":"x","matchType":"EXACT"}},`+
 			`"adGroup":{},"campaign":{"id":"21234567890"},"metrics":{"impressions":"5","clicks":"1","costMicros":"10"}}]}`)
 	})
-	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days); err == nil {
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
 		t.Fatal("expected an error for a row missing its ad group id, got nil")
 	}
 }
@@ -154,7 +154,7 @@ func TestGetKeywordPerformance_RejectsUnknownWindowBeforeCalling(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
-	_, err := c.GetKeywordPerformance(context.Background(), MetricsWindow("LAST_30_DAYS'; DROP--"))
+	_, err := c.GetKeywordPerformance(context.Background(), MetricsWindow("LAST_30_DAYS'; DROP--"), []string{"555"})
 	if err == nil {
 		t.Fatal("expected an error for an unknown window, got nil")
 	}
@@ -174,7 +174,7 @@ func TestGetKeywordPerformance_EmptyWindowDefaults(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
-	kp, err := c.GetKeywordPerformance(context.Background(), "")
+	kp, err := c.GetKeywordPerformance(context.Background(), "", []string{"555"})
 	if err != nil {
 		t.Fatalf("GetKeywordPerformance: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestGetKeywordPerformance_OmittedZeroMetricsParseAsZero(t *testing.T) {
 		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},`+
 			`"adGroup":{"id":"2"},"campaign":{"id":"3"},"metrics":{}}]}`)
 	})
-	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetKeywordPerformance: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestGetKeywordPerformance_ParseErrorNamesFieldNotValue(t *testing.T) {
 		}}})
 		_, _ = w.Write(body)
 	})
-	_, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+	_, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 	if err == nil {
 		t.Fatal("expected a parse error, got nil")
 	}
@@ -258,7 +258,7 @@ func TestGetAudienceInsights_ReadsAllThreeBreakdowns(t *testing.T) {
 		}
 	})
 
-	ai, err := c.GetAudienceInsights(context.Background(), WindowLast7Days)
+	ai, err := c.GetAudienceInsights(context.Background(), WindowLast7Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetAudienceInsights: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestGetAudienceInsights_AggregatesRepeatedBucketsAcrossCampaigns(t *testing
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
 
-	ai, err := c.GetAudienceInsights(context.Background(), WindowLast30Days)
+	ai, err := c.GetAudienceInsights(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetAudienceInsights: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestGetAudienceInsights_OneBreakdownFailureFailsTheRead(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
-	if _, err := c.GetAudienceInsights(context.Background(), WindowLast30Days); err == nil {
+	if _, err := c.GetAudienceInsights(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
 		t.Fatal("expected the whole read to fail when one breakdown fails, got nil")
 	}
 }
@@ -364,7 +364,7 @@ func TestGetAudienceInsights_KeepsUndeterminedBucket(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
-	ai, err := c.GetAudienceInsights(context.Background(), WindowLast30Days)
+	ai, err := c.GetAudienceInsights(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
 		t.Fatalf("GetAudienceInsights: %v", err)
 	}
@@ -640,7 +640,7 @@ func TestGetKeywordPerformance_NormalisesUnrecognisedEnums(t *testing.T) {
 				_, _ = io.WriteString(w, `{"results":[`+
 					keywordRowJSON("777", "333", "555", "kw", tc.matchType, tc.status, 10, 1, 100)+`]}`)
 			})
-			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 			if err != nil {
 				t.Fatalf("GetKeywordPerformance: %v", err)
 			}
@@ -674,7 +674,7 @@ func TestGetKeywordPerformance_QueryAllowListsLiveStatuses(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
-	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days); err != nil {
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err != nil {
 		t.Fatalf("GetKeywordPerformance: %v", err)
 	}
 	mu.Lock()
@@ -685,5 +685,43 @@ func TestGetKeywordPerformance_QueryAllowListsLiveStatuses(t *testing.T) {
 	}
 	if strings.Contains(body, "!= 'REMOVED'") {
 		t.Errorf("query still uses an exclusion, which admits UNSPECIFIED/UNKNOWN/\"\": %s", body)
+	}
+}
+
+// TestCampaignScopePredicate_EmptyListIsRefused pins the adapter's own refusal to build an
+// unscoped query.
+//
+// The orchestrator already answers an empty scope without calling down here, so this is
+// defence in depth — and it is worth having precisely because that guarantee lives in a
+// different package. A future caller (another platform, a batch job, a refactor that inlines
+// the read) that passes an empty slice must get an error, not an account-wide query. Returning
+// an empty predicate string would be concatenated into the GAQL and silently restore the
+// cross-project read on the shared customer.
+func TestCampaignScopePredicate_EmptyListIsRefused(t *testing.T) {
+	for _, ids := range [][]string{nil, {}} {
+		if _, err := campaignScopePredicate(ids, "op"); err == nil {
+			t.Errorf("campaignScopePredicate(%v) returned no error; an empty scope must never "+
+				"produce a query, because an unscoped read returns every project's data", ids)
+		}
+	}
+}
+
+// The ids are concatenated into the GAQL string and GAQL has no parameterized queries, so a
+// non-numeric id is an injection vector. Same digits-only rule GetCampaignMetrics applies.
+func TestCampaignScopePredicate_RejectsNonNumericIDs(t *testing.T) {
+	for _, bad := range []string{"1' OR '1'='1", "abc", "12 34", "", "-1"} {
+		if _, err := campaignScopePredicate([]string{"111", bad}, "op"); err == nil {
+			t.Errorf("campaignScopePredicate accepted %q; ids reach the query by concatenation", bad)
+		}
+	}
+}
+
+func TestCampaignScopePredicate_RendersAnINList(t *testing.T) {
+	got, err := campaignScopePredicate([]string{" 111 ", "222"}, "op")
+	if err != nil {
+		t.Fatalf("campaignScopePredicate: %v", err)
+	}
+	if got != "campaign.id IN ('111', '222')" {
+		t.Errorf("predicate = %q", got)
 	}
 }
