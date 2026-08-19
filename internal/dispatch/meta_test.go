@@ -1309,3 +1309,167 @@ func TestMeta_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Errorf("got %+v", m)
 	}
 }
+
+// TestMeta_DispatchMapsVariantImageURL pins the WIRE CONTRACT for the per-variant
+// creative image: a caller's `imageUrl` in the dispatch config must land on that
+// variant's creative as link_data.picture, the documented by-URL field, with no
+// /adimages round-trip (that edge documents only `bytes` and `copy_from`).
+//
+// This is a dispatcher-level test on purpose. meta.AdVariant carries no json tags,
+// so the JSON key is matched case-insensitively against the Go field name — the
+// mapping is implicit, and nothing but a test that actually sends `imageUrl` over
+// the wire proves the UI's key decodes. A rename of the field would silently drop
+// every image, creating link-only ads while still reporting success.
+func TestMeta_DispatchMapsVariantImageURL(t *testing.T) {
+	type captured struct {
+		path string
+		body string
+	}
+	var (
+		mu   sync.Mutex
+		reqs []captured
+	)
+	record := func(r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		reqs = append(reqs, captured{path: r.URL.Path, body: string(b)})
+		mu.Unlock()
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/adimages"):
+			record(r)
+			_, _ = io.WriteString(w, `{"images":{"hero.png":{"hash":"SHOULD_NOT_BE_USED"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			record(r)
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+
+	// `imageUrl` is the camelCase key the UI would send.
+	cfg := json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"objective":"traffic","geoTargets":["US"],"currencyOffset":100,
+		"variants":[
+			{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native",
+			 "imageUrl":"https://cdn.example.org/wire-hero.png"}
+		]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
+		t.Fatalf("campaign not mapped: %+v", camp)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	find := func(suffix string) string {
+		for _, rq := range reqs {
+			if strings.HasSuffix(rq.path, suffix) {
+				return rq.body
+			}
+		}
+		return ""
+	}
+
+	// The undocumented upload edge must never be called.
+	if imgBody := find("/adimages"); imgBody != "" {
+		t.Errorf("/adimages was called; the url parameter is undocumented: %s", imgBody)
+	}
+
+	// The caller's URL landed on the creative as picture...
+	creativeBody := find("/adcreatives")
+	if creativeBody == "" {
+		t.Fatal("no /adcreatives request captured")
+	}
+	if !strings.Contains(creativeBody, `"picture":"https://cdn.example.org/wire-hero.png"`) {
+		t.Errorf("creative body missing link_data.picture — the config's imageUrl never reached the client: %s", creativeBody)
+	}
+	// ...and no image_hash accompanies it (the two are mutually exclusive).
+	if strings.Contains(creativeBody, "image_hash") {
+		t.Errorf("creative body sent image_hash alongside picture: %s", creativeBody)
+	}
+	if strings.Contains(creativeBody, "SHOULD_NOT_BE_USED") {
+		t.Errorf("creative body used a hash from the unused upload edge: %s", creativeBody)
+	}
+	// The image URL must NOT be the creative's click destination — that is the
+	// registration/UTM URL. A swap would point the ad at the image file.
+	if !strings.Contains(creativeBody, `"link":"https://events.example/kc?`) {
+		t.Errorf("creative body missing the registration URL as the link: %s", creativeBody)
+	}
+}
+
+// The config_snapshot stored for a meta campaign must NOT carry a variant image
+// URL's query/fragment. A creative image URL is caller-supplied and may be
+// PRE-SIGNED — its signature is a bearer credential — and config_snapshot is
+// persisted UNENCRYPTED. This is the SUCCESS path: it fires on every create with
+// an image, which is why scrubbing only the error sinks never covered it. Mirrors
+// TestReddit_ConfigSnapshotRedactsPostURL.
+func TestMeta_ConfigSnapshotRedactsVariantImageURL(t *testing.T) {
+	camp := campaignFromMeta(context.Background(),
+		&meta.CampaignResult{CampaignID: "cmp_1", CampaignName: "n"},
+		metaConfig{
+			Budget: 10,
+			Variants: []meta.AdVariant{
+				{Headline: "h1", ImageURL: "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG&e=1"},
+				{Headline: "h2", ImageURL: "https://cdn.example.org/b.png#SECRET_FRAG"},
+			},
+		},
+	)
+	if camp.ConfigSnapshot == nil {
+		t.Fatal("expected a config snapshot")
+	}
+	// Assert the persisted VALUE, not that a sanitizer was called.
+	s := string(camp.ConfigSnapshot)
+	if strings.Contains(s, "SECRET_SIG") || strings.Contains(s, "X-Amz-Signature") {
+		t.Errorf("config snapshot carries the pre-signed query/signature, got: %s", s)
+	}
+	if strings.Contains(s, "SECRET_FRAG") {
+		t.Errorf("config snapshot carries the image URL fragment, got: %s", s)
+	}
+	// The sanitized URL must survive so the snapshot still identifies the image.
+	if !strings.Contains(s, "https://cdn.example.org/a.png") {
+		t.Errorf("config snapshot lost the sanitized image URL entirely, got: %s", s)
+	}
+	if !strings.Contains(s, "https://cdn.example.org/b.png") {
+		t.Errorf("config snapshot lost the second sanitized image URL, got: %s", s)
+	}
+}
+
+// Sanitizing the snapshot must not mutate the caller's config: the FULL url still
+// has to reach Meta. cfg is passed by value but Variants shares a backing array, so
+// an in-place scrub would silently strip the signature from the live request too.
+func TestMeta_ConfigSnapshotSanitizeDoesNotMutateCallerConfig(t *testing.T) {
+	const full = "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG"
+	variants := []meta.AdVariant{{Headline: "h1", ImageURL: full}}
+	cfg := metaConfig{Budget: 10, Variants: variants}
+
+	campaignFromMeta(context.Background(), &meta.CampaignResult{CampaignID: "c", CampaignName: "n"}, cfg)
+
+	if got := variants[0].ImageURL; got != full {
+		t.Errorf("the caller's variant ImageURL was mutated to %q; Meta must still receive the full signed URL %q", got, full)
+	}
+}

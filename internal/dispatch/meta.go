@@ -410,8 +410,24 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 		Status:             campaignStatusCreated,
 	}
 	// Persist the budget/schedule/config the caller supplied (Meta honors a
-	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config.
-	applyCampaignConfig(ctx, c, cfg.Budget, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, cfg)
+	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config,
+	// but with every variant's ImageURL SANITIZED: a creative image URL is
+	// caller-supplied and may be PRE-SIGNED, whose signature is a bearer credential
+	// granting time-boxed read access, and config_snapshot is stored UNENCRYPTED in
+	// Postgres. This is the SUCCESS path — it runs on every create with an image, not
+	// only on failures — so scrubbing the error sinks alone never covered it. Same
+	// reason and same helper as campaignFromReddit's PostURL.
+	snapshot := cfg
+	if len(cfg.Variants) > 0 {
+		// Copy the slice before mutating: cfg is passed by value but Variants shares its
+		// backing array with the caller's config, and the FULL url must still reach Meta.
+		snapshot.Variants = make([]meta.AdVariant, len(cfg.Variants))
+		copy(snapshot.Variants, cfg.Variants)
+		for i := range snapshot.Variants {
+			snapshot.Variants[i].ImageURL = sanitizeSnapshotURL(snapshot.Variants[i].ImageURL)
+		}
+	}
+	applyCampaignConfig(ctx, c, cfg.Budget, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: on the degraded/ambiguous-orphan paths Result is the sole carrier
