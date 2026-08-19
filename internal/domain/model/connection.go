@@ -289,12 +289,21 @@ type KeywordRow struct {
 	Ctr         float64
 }
 
-// KeywordPerformance is an account-wide keyword read over one window.
+// KeywordPerformance is a keyword read over one window, confined to the CALLING PROJECT'S
+// OWN CAMPAIGNS — not the connected account.
+//
+// Same tenant boundary as AudienceInsights below: the Google Ads customer is shared across
+// foundations, so `campaignScopePredicate` narrows the query to the project's own
+// `platform_campaign_id`s. An account-wide read here would hand every project the others'
+// keyword text and spend.
 type KeywordPerformance struct {
 	Window MetricsWindow
 	Rows   []KeywordRow
-	// Truncated reports that the account holds MORE keywords than Rows carries. A consumer
-	// must not total a truncated slice and present it as account-wide spend.
+	// Truncated reports that the project's campaigns hold MORE keywords than Rows carries —
+	// these are the TOP rows by impressions, not the full set. A consumer must not total a
+	// truncated slice and present it as the project's whole spend, and must not present an
+	// untruncated one as the ACCOUNT's: neither figure covers the campaigns this project
+	// does not own.
 	Truncated bool
 }
 
@@ -316,7 +325,15 @@ type AudienceBucket struct {
 	Ctr         float64
 }
 
-// AudienceInsights is an account-wide demographic read across every breakdown.
+// AudienceInsights is a demographic read across every breakdown, over the CALLING PROJECT'S
+// OWN CAMPAIGNS — not the connected account.
+//
+// The distinction is the tenant boundary, not a nicety of wording. Google Ads is ONE customer
+// shared across every foundation, so a read scoped only by the connection would return every
+// other project's demographics; `campaignScopePredicate` confines the query to the
+// `platform_campaign_id`s this service holds for the project. Describing the result as
+// account-wide invites a consumer to present these buckets as the account's audience, and
+// invites a future author to treat the scope as an optimisation they may drop.
 //
 // Each dimension independently covers the SAME traffic, so impressions may be totalled
 // within a dimension but never across them — summing age, gender and device triple-counts.

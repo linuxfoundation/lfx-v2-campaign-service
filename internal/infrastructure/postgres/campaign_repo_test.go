@@ -120,9 +120,10 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 		// pause a campaign. A soft-deleted row surfacing there would offer them a campaign
 		// that no longer exists to act on.
 		"ListCampaignsForBrief": listCampaignsForBriefQuery,
-		// The project-scope read authorizes the account-wide Google Ads keyword/audience
-		// endpoints. A soft-deleted campaign here would keep widening those reads after the
-		// campaign was removed.
+		// The project-scope read is what CONFINES the Google Ads keyword/audience endpoints
+		// to the calling project — they would be account-wide without it, on a customer
+		// shared across every foundation. A soft-deleted campaign here would keep widening
+		// those reads after the campaign was removed.
 		"ListProjectPlatformCampaignIDs": listProjectPlatformCampaignIDsQuery,
 	} {
 		t.Run(name, func(t *testing.T) {

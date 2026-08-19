@@ -244,7 +244,15 @@ func normaliseKeywordMatchType(s string) string {
 	}
 }
 
-// GetKeywordPerformance reads the account's top keywords by impressions over window.
+// GetKeywordPerformance reads the top keywords by impressions over window, across the
+// campaigns named by campaignIDs — NOT the connected account's full keyword set.
+//
+// The scope is the tenant boundary, not a filter. Google Ads is ONE customer shared across
+// every foundation, so this query is confined by `campaignScopePredicate` to the campaigns
+// the calling project owns; describing it as the account's keywords obscures the very
+// boundary the predicate exists to enforce, and invites a reader to treat the ids as an
+// optional narrowing rather than as the thing standing between one project and everyone
+// else's spend. The predicate refuses an empty list for that reason.
 //
 // Only ad-group criteria of type KEYWORD are returned, and the status predicate is an
 // ALLOW-LIST (ENABLED, PAUSED) rather than an exclusion of REMOVED. The difference matters:
@@ -264,7 +272,9 @@ func normaliseKeywordMatchType(s string) string {
 // arbitrary one.
 // campaignScopePredicate renders the GAQL predicate that confines a read to campaignIDs.
 //
-// It is the security boundary for the two account-wide reads in this file. Google Ads is ONE
+// It is the security boundary for the two reads in this file that would OTHERWISE be
+// account-wide — they are campaign-scoped precisely because this predicate is applied, so
+// nothing in this package returns an account-wide result. Google Ads is ONE
 // customer shared across every foundation (docs/architecture.md, "Account Tenancy"), so a query
 // scoped only by the connection returns every project's keywords, spend and demographics; this
 // predicate is what narrows it to the campaigns the calling project actually owns.
@@ -412,7 +422,13 @@ var audienceQueries = []audienceQuery{
 	},
 }
 
-// GetAudienceInsights reads age, gender and device breakdowns for the account over window.
+// GetAudienceInsights reads age, gender and device breakdowns over window, across the
+// campaigns named by campaignIDs — NOT all demographics for the connected account.
+//
+// Campaign-scoped through `campaignScopePredicate`, on the same tenant boundary
+// GetKeywordPerformance is: the shared Google Ads customer means an account-scoped read
+// would return every other foundation's demographics. Each of the three GAQL queries below
+// carries the predicate independently, so all three are scoped or the call fails.
 //
 // The three breakdowns are three separate GAQL queries. A failure in ANY of them fails the
 // whole call rather than returning the breakdowns that loaded: each dimension independently

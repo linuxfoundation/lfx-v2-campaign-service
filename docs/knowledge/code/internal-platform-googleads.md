@@ -877,6 +877,23 @@ The consequence worth stating plainly is a BEHAVIOUR CHANGE: a campaign created 
 service, or claimed but not yet dispatched, has no dispatched row and is therefore not in scope,
 so its keywords and demographics no longer appear.
 
+**The narrowing has to be swept across every surface that DESCRIBES these reads, not only the
+one that performs them.** The scope predicate landed with the type godocs, method godocs, test
+rationales, the API catalog row and this file still calling the results "account-wide", "the
+account's keywords" or "the whole account's spend" — a published boundary WIDER than the one
+the code enforces. That is not a cosmetic lag. A consumer reading `AudienceInsights` as the
+account's audience presents another foundation's demographics under this project's name; a
+future author reading `campaignIDs` as a filter rather than as the tenant boundary drops it as
+an optimisation; and a test whose stated reason is "an ACCOUNT-WIDE read returns keywords this
+service never created" rests on a premise that is now false, even where its conclusion survives
+(adopted campaigns and UI edits reach the same place). The rule is that whoever narrows a read
+adopts every claim about it they leave standing.
+
+The distinction to preserve while sweeping: a comment saying these reads WOULD be account-wide
+without the predicate is TRUE and load-bearing — `campaignScopePredicate`'s own refusal, the
+orchestrator's empty-scope early return and the dispatcher's post-filter guard are all written
+that way on purpose. What must go is any claim that the RESULT is account-wide.
+
 **The keyword read is capped, and says so.** `GetKeywordPerformance` orders by impressions
 descending and asks for `maxKeywordRows+1` rows; the extra row is dropped and reported as
 `Truncated`. That probe is the whole mechanism: without it a caller receiving exactly the cap
@@ -898,7 +915,9 @@ criterion views (`age_range_view`, `gender_view`); device is a SEGMENT of the `c
 resource, which is why it selects `segments.device FROM campaign` while the others select a
 criterion field from a `*_view`. Because the device query segments campaigns, it returns one
 row per (campaign, device) pair, so buckets are AGGREGATED by value rather than assumed unique
-— taking the last row per device would report a single campaign's numbers as the account's.
+— taking the last row per device would report a single campaign's numbers as the whole
+SCOPE's, i.e. as every campaign the project owns. (Never as the ACCOUNT's: both reads in this
+file are campaign-scoped, which is what `campaignScopePredicate` is for.)
 CTR is computed after aggregation, never averaged per row. A failure in any one breakdown
 fails the whole read: each dimension independently covers the same traffic, and a caller shown
 two of three cannot tell the third is missing rather than empty. Google's

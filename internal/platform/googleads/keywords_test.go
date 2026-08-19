@@ -84,8 +84,10 @@ func TestGetKeywordPerformance_HappyPath(t *testing.T) {
 }
 
 // A cap without a truncation signal is a silent lie: a caller receiving exactly the cap
-// cannot tell a small account from a truncated large one and would total the slice as the
-// whole account's spend.
+// cannot tell a project with few keywords from a truncated large one and would total the
+// slice as the project's whole spend. (Not the ACCOUNT's — the read is confined to the
+// project's own campaigns by campaignScopePredicate, so neither figure covers the shared
+// customer.)
 func TestGetKeywordPerformance_TruncatesAndReportsIt(t *testing.T) {
 	rows := make([]string, 0, maxKeywordRows+1)
 	for i := 0; i < maxKeywordRows+1; i++ {
@@ -110,7 +112,8 @@ func TestGetKeywordPerformance_TruncatesAndReportsIt(t *testing.T) {
 
 // Exactly the cap, with no probe row, is NOT truncated. Guards the off-by-one in the other
 // direction: reporting truncation for a complete answer tells a caller their totals are a
-// partial slice when they are the whole account.
+// partial slice when they cover every keyword on the project's own campaigns — which is the
+// whole of what this read is scoped to, and is never the whole shared account.
 func TestGetKeywordPerformance_ExactlyCapIsNotTruncated(t *testing.T) {
 	rows := make([]string, 0, maxKeywordRows)
 	for i := 0; i < maxKeywordRows; i++ {
@@ -299,7 +302,8 @@ func TestGetAudienceInsights_ReadsAllThreeBreakdowns(t *testing.T) {
 
 // The device breakdown segments the CAMPAIGN resource, so it returns one row per
 // (campaign, device). Taking the last row per device would report a single campaign's
-// numbers as the whole account's.
+// numbers as the whole scope's — every campaign the project owns, which is what this
+// read covers (not the shared account).
 func TestGetAudienceInsights_AggregatesRepeatedBucketsAcrossCampaigns(t *testing.T) {
 	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -668,9 +672,12 @@ func TestApplyKeywordActions_CancelledContextAbortsBeforeRequest(t *testing.T) {
 	}
 }
 
-// An ACCOUNT-WIDE read returns keywords this service never created, so an upstream value
+// This read returns keywords this service never created — a campaign ADOPTED into the
+// project, or one of its own campaigns edited in the Google UI — so an upstream value
 // outside the API contract's closed enums is reachable no matter what the create path
-// restricts itself to. The design declares Enum(...) on the RESPONSE and Goa emits that
+// restricts itself to. (The premise used to be stated as "an ACCOUNT-WIDE read". The read
+// is campaign-scoped, so that reason is false; the conclusion survives on the two above,
+// which is why the test stands unchanged.) The design declares Enum(...) on the RESPONSE and Goa emits that
 // validation in the generated CLIENT — the server never validates its own response body — so
 // an un-normalised passthrough makes a client reject the ENTIRE response over one row.
 func TestGetKeywordPerformance_NormalisesUnrecognisedEnums(t *testing.T) {
