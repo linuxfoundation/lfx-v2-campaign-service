@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 
@@ -76,6 +77,11 @@ type Config struct {
 	// prefixes, applied by the event-URL fetcher's SSRF guard in addition to the
 	// well-known 64:ff9b::/96. See constants.EnvEventURLNAT64Prefixes.
 	EventURLNAT64Prefixes []string
+
+	// CampaignJobRetention is how long a TERMINAL campaign job is kept before the
+	// retention sweeper prunes it. Zero means "not configured" — the repository
+	// default applies. See constants.EnvCampaignJobRetention.
+	CampaignJobRetention time.Duration
 
 	PGHost     string
 	PGPort     string
@@ -176,6 +182,7 @@ func LoadConfig() *Config {
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
 		EventURLNAT64Prefixes:   splitCSV(os.Getenv(constants.EnvEventURLNAT64Prefixes)),
+		CampaignJobRetention:    parseRetention(os.Getenv(constants.EnvCampaignJobRetention)),
 	}
 
 	if os.Getenv(constants.EnvDebug) == "true" {
@@ -465,6 +472,39 @@ func envOrDefaultUnlessSet(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseRetention converts a retention duration string to a time.Duration, returning 0 for
+// anything it cannot use.
+//
+// Zero means "not configured, use the built-in default" to every consumer — it is NOT "retain
+// nothing". Every rejected input therefore lands on the long default rather than on an
+// aggressive window: unset, empty, unparseable ("30 days", "7d"), and non-positive ("0h",
+// "-1h") all return 0.
+//
+// This does NOT panic the way EVENT_URL_NAT64_PREFIXES does on a bad value. That variable
+// fails closed by panicking because a malformed prefix silently WIDENS an SSRF guard, so
+// running on is worse than not starting. Here the failure direction is the opposite: falling
+// back keeps MORE audit history than the operator asked for, which is safe, and refusing to
+// boot a campaign service over a retention typo would turn a cosmetic misconfiguration into an
+// outage. The mis-set value is visible in the startup log line either way.
+func parseRetention(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("ignoring unparseable campaign job retention; using the default",
+			"env", constants.EnvCampaignJobRetention, "value", v, "error", err)
+		return 0
+	}
+	if d <= 0 {
+		slog.Warn("ignoring non-positive campaign job retention; using the default",
+			"env", constants.EnvCampaignJobRetention, "value", v)
+		return 0
+	}
+	return d
 }
 
 func envOrDefault(key, def string) string {

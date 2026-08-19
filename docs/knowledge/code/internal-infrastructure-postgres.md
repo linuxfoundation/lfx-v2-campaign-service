@@ -248,6 +248,62 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   fewest references to the number, not the branch you happen to be in** — a migration
   version leaks into prose and recovery code, and the leak, not the file name, is the cost.
   See *Migration numbering* below.
+- `000026` — partial index `idx_campaign_jobs_retention` on
+  `campaign_jobs (updated_at) WHERE status IN ('succeeded','partial','failed')`,
+  supporting the terminal-job retention prune (`JobRepo.PruneTerminalJobs`,
+  LFXV2-3222). It is the COMPLEMENT of `000004`'s `idx_campaign_jobs_recovery`, and
+  that is the whole reason it is needed: `000004` is partial over the two
+  NON-terminal statuses, so it cannot serve a predicate that selects terminal rows,
+  and without a matching index the prune full-scans on every replica the very
+  history it exists to bound. Keyed on `updated_at` because retention is measured
+  from when a job REACHED its terminal state, not from when it was created.
+  Restricting it to terminal rows also keeps it off the hot path: an in-flight
+  queued/running job's insert-and-update cycle never touches this index.
+
+## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
+
+`campaign_jobs` is append-only — nothing else in the service deletes a row — so it
+grows with every brief dispatch forever. `PruneTerminalJobs` bounds it, wired the
+same way the outbox prune is (see `Relay.prune` / `PrunePublishedIndexMessages`): a
+bounded batch per pass, run periodically from a background sweeper, on every replica
+with no leader election.
+
+These rows are the audit trail of real ad spend, which sets every design choice:
+
+- **Terminal statuses are an ALLOW-LIST** (`terminalJobStatuses`, passed as
+  `status = ANY($1::text[])`), never `status != 'running'` or `NOT IN
+  ('queued','running')`. A status added to the CHECK constraint later would be swept
+  in silently by any negative predicate — deleting spend records with no code change
+  and no review. `TestTerminalJobStatusesMatchTheDomainVocabulary` pins the list
+  against `model.JobStatus.Terminal()` over the WHOLE vocabulary, in both directions,
+  and `TestPruneTerminalJobsQueryUsesAnAllowList` rejects a negative predicate in the
+  SQL text (the distinction exists only there). That test iterates
+  `model.AllJobStatuses` rather than a local copy of the five statuses: a hand-written
+  list would make it agree with itself, leaving a status added later unclassified while
+  still reporting that it checked "both directions". `TestJobStatus_Terminal` pins
+  `AllJobStatuses` in turn, so adding a status forces it to be deliberately classified.
+- **A queued/running row is never eligible, at any age.** An old non-terminal row is
+  not stale history, it is a STUCK JOB — the record someone needs to investigate a
+  dispatch that never finished. The recovery sweep (`FailStuckJobs`) transitions those
+  to `failed` after `staleJobCutoff`, at which point they become terminal and start
+  their retention window from that transition; so nothing is retained forever, and
+  nothing is deleted while it still looks live.
+- **Age is measured on `updated_at`**, the terminal transition. A job created months
+  ago but completed yesterday is recent history; `created_at` ordering would prune it
+  first.
+- **Every batch is bounded** (`ORDER BY updated_at LIMIT $3`, deleting by id via the
+  subquery) so one sweep over a backlog cannot hold a long transaction or lock the
+  table against live dispatch writes. The backlog drains across passes.
+- **A non-positive window or limit selects the DEFAULT, not "unbounded".** The sweeper
+  passes `0` whenever `CAMPAIGN_JOB_RETENTION` is unset — the common case — and
+  `updated_at < now() - '0s'` would match every terminal row. `DefaultJobRetention` is
+  180 days, deliberately long, because a deployment that configures nothing gets it.
+
+No `FOR UPDATE SKIP LOCKED`, unlike the outbox DRAIN. The drain needs it because it
+claims rows it will then publish — an at-most-once side effect outside the
+transaction. A DELETE has no such side effect: it takes its own row locks, and two
+replicas' overlapping sweeps simply find fewer rows each. The outbox PRUNE is the
+right comparison and it does not use SKIP LOCKED either.
 
 ### `Migrate` refuses to succeed over an INVALID index
 

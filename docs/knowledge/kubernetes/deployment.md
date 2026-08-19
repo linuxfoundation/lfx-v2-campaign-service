@@ -57,6 +57,27 @@ disabled path costs one env read. With the gate off the read returns
 `ErrMetricsUnsupported`, which the service maps to the same 400 a platform with
 no metrics adapter at all returns.
 
+`MICROSOFT_METRICS_ENABLED` is the same kind of gate on the same terms, and defaults
+to `"false"` for the same reason: the Microsoft Advertising v13 Reporting contract
+was implemented from Microsoft's published documentation and has NOT been exercised
+against a live ad account (LFXV2-3260). It fails closed identically — only exactly
+`"true"` enables the read — and is likewise read per call
+(`MicrosoftDispatcher.ReadMetrics`), so flipping it needs a pod restart but no
+rebuild. Microsoft's pipeline has more surface to be wrong about than any other
+platform's: an asynchronous submit/poll/download returning a zipped CSV rather than
+one synchronous JSON GET. With the gate off, a Microsoft metrics read returns the
+same 400 as Reddit's.
+
+The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
+`prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while
+`prometheus.io/port` is rendered from `service.port` in the TEMPLATE rather than
+hardcoded in values, so the scrape port cannot drift from the port the container
+listens on. `prometheus.io/port` is RESERVED: the template omits that key from the
+user's `podAnnotations` before merging, so setting it there has no effect and cannot
+render a duplicate annotation whose value would win. A deployment that overrides
+`podAnnotations` replaces the map and must re-declare the other scrape keys. `/metrics` is scraped on the pod IP and is deliberately
+absent from the HTTPRoute and RuleSet, exactly like the health probes.
+
 Probes: `livez` restarts a hung process (never touches the DB); `readyz` gates
 traffic on DB connectivity. The `startupProbe` on `/readyz` carries a ~90s
 `failureThreshold` budget for a database cold start. This budget is meaningful
