@@ -348,6 +348,21 @@ func isTokenExpiryResponse(statusCode int, body string) bool {
 // It clears only the CACHE, never the refresh material: a revoked access token does
 // not imply a revoked refresh token, and discarding the latter would turn a
 // recoverable state into one needing a human re-authorization.
+//
+// "The next caller" means a SUBSEQUENT OPERATION, not the failing one. Both 401 arms
+// (doRequest and doAdAnalyticsAttempt) return immediately after calling this, and
+// dispatch constructs a fresh Client per operation — so the caller that hit the 401
+// still surfaces ErrCredentialsExpired, and the self-heal happens on the next
+// dispatch, whose empty cache forces an exchange.
+//
+// A refresh-and-replay INSIDE the failing operation is deliberately not done, even
+// when CanRefresh() is true. doRequest's retry rule (see the `idempotent` predicate)
+// already forbids re-sending a plain create POST, because those endpoints carry no
+// idempotency key and a rejected attempt may still have committed upstream; a 401
+// says no more about whether the write landed than the 429 that rule was written
+// for. Retrying only the idempotent methods would leave the create cascade — the
+// path this ticket was opened for — unchanged, so it would buy the least where it
+// is wanted most. One failed operation, then a clean one, is the cheaper trade.
 func (c *Client) invalidateAccessToken() {
 	c.tokenMu.Lock()
 	c.accessToken = ""

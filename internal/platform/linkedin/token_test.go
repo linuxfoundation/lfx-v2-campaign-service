@@ -684,6 +684,63 @@ func TestTokenDecodeErrorNeverEchoesTheResponseBody(t *testing.T) {
 	}
 }
 
+// TestRefreshCapable401FailsClosedWithoutReplay pins the contract for the case the other
+// 401 tests do not reach: a connection whose CanRefresh() is TRUE receiving a 401 from the
+// API. Those tests build bearer-only credentials, so this decision had no regression seam.
+//
+// The contract is fail-closed with NO refresh-and-replay inside the failing operation, and
+// that is deliberate rather than an oversight. doRequest already refuses to re-send a plain
+// create POST on a 429 because those endpoints carry no idempotency key and the rejected
+// attempt may have committed upstream; a 401 establishes no more about whether the write
+// landed. The self-heal is the NEXT operation, which dispatch starts with a fresh Client and
+// an empty cache.
+//
+// Asserting the exchange COUNT is the load-bearing half: without it the test would pass
+// equally well against an implementation that silently retried.
+func TestRefreshCapable401FailsClosedWithoutReplay(t *testing.T) {
+	var exchanges, apiCalls atomic.Int32
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		exchanges.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"fresh-token","expires_in":3600}`))
+	}))
+	defer tokenSrv.Close()
+
+	// The API rejects EVERY attempt, so a replay would show up as a second call.
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		apiCalls.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"serviceErrorCode":65602,"message":"The token used in the request has expired","status":401}`))
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(refreshableCreds(), RuntimeConfig{},
+		withTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+
+	_, err := c.doRequest(context.Background(), http.MethodGet, "/adAccounts", nil, nil, nil)
+	if !errors.Is(err, ErrCredentialsExpired) {
+		t.Fatalf("error = %v, want ErrCredentialsExpired — a refresh-capable connection whose "+
+			"freshly minted token is also rejected must still fail closed", err)
+	}
+	if got := apiCalls.Load(); got != 1 {
+		t.Errorf("api calls = %d, want 1: the 401 must not be replayed inside the failing "+
+			"operation — create POSTs carry no idempotency key", got)
+	}
+	// One exchange for the expired injected token; none afterwards for the 401 itself.
+	if got := exchanges.Load(); got != 1 {
+		t.Errorf("token exchanges = %d, want 1: the 401 arm must not trigger a second exchange", got)
+	}
+	// The rejected token is dropped, so the next operation re-exchanges rather than
+	// replaying it. This is what "the next caller re-exchanges" actually buys.
+	c.tokenMu.Lock()
+	cached := c.accessToken
+	c.tokenMu.Unlock()
+	if cached != "" {
+		t.Errorf("cached access token = %q, want empty: a rejected token must be invalidated", cached)
+	}
+}
+
 // Redaction must not cost classification: a cancelled context still has to be detectable
 // through the chain, which is why redactBodyReadError returns the canonical sentinels.
 func TestTokenBodyReadCancellationRemainsDetectable(t *testing.T) {
