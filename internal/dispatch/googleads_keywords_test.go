@@ -227,9 +227,11 @@ func TestGoogleAdsKeywordActions_HappyPathReturnsOutcomes(t *testing.T) {
 	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// The client resolves each criterion's TYPE before mutating; 333~777 is a positive
-		// keyword, so the mutate proceeds.
+		// keyword, so the mutate proceeds. `negative` is OMITTED, which is how Google actually
+		// sends a positive keyword — protobuf JSON does not serialise a field at its default
+		// value. Spelling `"negative":false` here would test a body no real response has.
 		if strings.Contains(r.URL.Path, "googleAds:search") {
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777","negative":false},"adGroup":{"id":"333"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777"},"adGroup":{"id":"333"}}]}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/333~777"}]}`)
@@ -551,7 +553,7 @@ func TestGoogleAdsKeywordActions_UnconfirmedOutcomeSurvivesTheDispatcher(t *test
 	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "googleAds:search") {
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777","negative":false},"adGroup":{"id":"333"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777"},"adGroup":{"id":"333"}}]}`)
 			return
 		}
 		// A 2xx naming a criterion the batch never addressed: the mutate MAY have applied.

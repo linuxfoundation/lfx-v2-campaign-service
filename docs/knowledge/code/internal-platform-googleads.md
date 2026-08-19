@@ -938,8 +938,16 @@ the opposite of the endpoint's guarantee, and irreversible for `REMOVE`. The typ
 with the same mechanism the READ path uses rather than a second one: a `keyword_view` query,
 Google's type-scoped resource, which is exactly why `GetKeywordPerformance` needs no type
 predicate. `ad_group_criterion.negative` is selected on top of it because `keyword_view` carries
-both polarities. **Unresolvable ids and rows omitting `negative` FAIL CLOSED**: refusing costs a
-caller one re-read, while admitting one risks an irreversible removal of an exclusion. The
+both polarities. **An UNRESOLVABLE id FAILS CLOSED; an OMITTED `negative` field does not** —
+these are different facts and conflating them broke the happy path. `negative` is a proto bool,
+so protobuf JSON omits it whenever it is false: the omission IS the positive answer, and every
+ordinary positive keyword arrives that way. Absence already means "false" in this wire format, so
+reading it as "unknown polarity" gives absence a second meaning it cannot carry and refuses every
+keyword the read path just handed the caller — a re-read produces the identical omission and
+cannot repair it. Only an explicit `negative: true` is refused as an exclusion. An id the view
+returns NO ROW for is still refused, which is the guard's whole purpose (a userList criterion
+returns no row): refusing costs a caller one re-read, while admitting one risks an irreversible
+removal of an exclusion. The
 sentinel is `ErrKeywordCriterionNotPositiveKeyword`, which the dispatcher folds onto
 `domain.ErrKeywordActionInvalid` — a permanent 400, since no retry turns an audience criterion
 into a keyword.

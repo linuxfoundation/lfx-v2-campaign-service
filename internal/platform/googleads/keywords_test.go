@@ -776,11 +776,29 @@ func keywordCriterionServer(t *testing.T, searchResults, mutateResults string, m
 	})
 }
 
-// criterionRowJSON builds one keyword_view row for the type-resolution query, rendering
-// `negative` as an explicit JSON boolean.
+// criterionRowJSON builds one keyword_view row for the type-resolution query.
+//
+// A POSITIVE row OMITS `negative` entirely, because that is what Google actually sends:
+// protobuf JSON does not serialise a field at its default value, so `negative: false` never
+// appears on the wire. Rendering it explicitly — as this helper used to — produces a body no
+// real response has, and a positive-path test built on it agrees with the decoder instead of
+// checking it. A NEGATIVE row carries the explicit `negative: true`, which IS what Google
+// sends for an exclusion.
 func criterionRowJSON(adGroupID, criterionID string, negative bool) string {
-	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"negative":%t},"adGroup":{"id":%q}}`,
-		criterionID, negative, adGroupID)
+	if negative {
+		return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"negative":true},"adGroup":{"id":%q}}`,
+			criterionID, adGroupID)
+	}
+	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q},"adGroup":{"id":%q}}`,
+		criterionID, adGroupID)
+}
+
+// criterionRowJSONExplicitNegativeFalse renders `negative: false` explicitly. A conformant
+// protobuf-JSON serialiser never emits this, but a proxy or a future non-default serialiser
+// may, and it must decode to the same POSITIVE verdict as the omitted form.
+func criterionRowJSONExplicitNegativeFalse(adGroupID, criterionID string) string {
+	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"negative":false},"adGroup":{"id":%q}}`,
+		criterionID, adGroupID)
 }
 
 // A POSITIVE keyword must still be actionable — the guard must refuse the wrong criterion
@@ -884,26 +902,87 @@ func TestApplyKeywordActions_UnresolvableCriterionFailsClosed(t *testing.T) {
 	}
 }
 
-// A row that OMITS `negative` is treated as negative — unknown polarity is refused, not
-// assumed benign.
-func TestApplyKeywordActions_OmittedNegativeFieldFailsClosed(t *testing.T) {
+// A row that OMITS `negative` is POSITIVE and MUST be actionable. This is the realistic wire
+// shape, not an edge case: protobuf JSON omits a field at its default value, so an ordinary
+// positive keyword — the very row `GetKeywordPerformance` just handed the caller — arrives
+// with no `negative` key at all.
+//
+// Treating that omission as "unknown polarity" refuses every ordinary keyword and makes the
+// endpoint unusable, and re-reading cannot repair it because the second read omits the field
+// identically. The body here is written inline rather than through the helper so the shape
+// under test is visible at the assertion, and so a future change to the helper cannot quietly
+// reintroduce an explicit `negative: false` and make this test agree with a broken decoder.
+func TestApplyKeywordActions_OmittedNegativeFieldIsPositiveAndActionable(t *testing.T) {
 	mutated := false
 	c := keywordCriterionServer(t,
 		`{"adGroupCriterion":{"criterionId":"305729261"},"adGroup":{"id":"176216228"}}`,
 		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`,
 		&mutated)
 
-	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
-		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	out, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
 	})
+	if err != nil {
+		t.Fatalf("a positive keyword whose `negative` field is OMITTED — the shape Google actually sends — was refused, which breaks the endpoint's normal path: %v", err)
+	}
+	if len(out) != 1 || out[0].CriterionID != "305729261" {
+		t.Fatalf("outcomes = %+v, want the one criterion acted on", out)
+	}
+	if !mutated {
+		t.Error("the mutate was never issued for a positive keyword sent in the realistic omitted-field form")
+	}
+}
+
+// An EXPLICIT `negative: false` must reach the same POSITIVE verdict as the omitted form.
+// Conformant protobuf JSON never emits it, but the two spellings mean one thing and the
+// decoder must not distinguish them.
+func TestApplyKeywordActions_ExplicitNegativeFalseIsPositive(t *testing.T) {
+	mutated := false
+	c := keywordCriterionServer(t,
+		criterionRowJSONExplicitNegativeFalse("176216228", "305729261"),
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`,
+		&mutated)
+
+	if _, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
+	}); err != nil {
+		t.Fatalf("an explicit `negative: false` must be actionable, got: %v", err)
+	}
+	if !mutated {
+		t.Error("the mutate was never issued for an explicitly-positive keyword")
+	}
+}
+
+// A MISSING FIELD and a MISSING ROW are different facts, and conflating them is what broke the
+// happy path. This pins BOTH verdicts in one test so a future change cannot collapse them
+// again: the same batch shape that is ADMITTED when the row exists with `negative` omitted is
+// REFUSED when `keyword_view` returns no row for the id at all — a userList criterion, the
+// case the guard exists to catch.
+func TestApplyKeywordActions_MissingFieldAdmittedMissingRowRefused(t *testing.T) {
+	omittedFieldRow := `{"adGroupCriterion":{"criterionId":"305729261"},"adGroup":{"id":"176216228"}}`
+	mutateResult := `{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`
+	action := []KeywordAction{{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove}}
+
+	admitted := false
+	if _, err := keywordCriterionServer(t, omittedFieldRow, mutateResult, &admitted).
+		ApplyKeywordActions(context.Background(), action); err != nil {
+		t.Fatalf("missing FIELD must be admitted as positive: %v", err)
+	}
+	if !admitted {
+		t.Error("the mutate was not issued for a row whose `negative` field is merely absent")
+	}
+
+	refused := false
+	_, err := keywordCriterionServer(t, "", mutateResult, &refused).
+		ApplyKeywordActions(context.Background(), action)
 	if err == nil {
-		t.Fatal("a criterion with unknown polarity was allowed; it must fail closed")
+		t.Fatal("missing ROW must FAIL CLOSED — that is a userList/absent criterion, not a positive keyword")
 	}
 	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
 		t.Errorf("error is not ErrKeywordCriterionNotPositiveKeyword: %v", err)
 	}
-	if mutated {
-		t.Error("the mutate was issued for a criterion of unknown polarity")
+	if refused {
+		t.Error("the mutate was issued for a criterion keyword_view returned no row for")
 	}
 }
 

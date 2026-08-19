@@ -691,6 +691,11 @@ var ErrKeywordCriterionNotPositiveKeyword = errors.New("google-ads: keyword acti
 // on top of that, because keyword_view carries BOTH polarities and only the positive ones are
 // the keywords this endpoint may act on.
 //
+// An ABSENT ROW and an ABSENT FIELD are NOT the same fact. `negative` is a proto bool, so
+// protobuf JSON omits it whenever it is false: the omission IS the positive answer, and every
+// ordinary positive keyword arrives that way. Only an explicit `negative: true` marks an
+// exclusion. Reading a missing field as "unknown" would refuse the entire happy path.
+//
 // UNRESOLVABLE ids FAIL CLOSED — an id the view does not return is refused, never passed
 // through. That is deliberate, and it is the same asymmetry the dispatcher's provenance guard
 // already rests on: the two errors do not cost the same. Wrongly refusing a legitimate keyword
@@ -737,7 +742,7 @@ func (c *Client) resolveKeywordCriteria(ctx context.Context, validated []Keyword
 		var row struct {
 			AdGroupCriterion struct {
 				CriterionID string `json:"criterionId"`
-				Negative    *bool  `json:"negative"`
+				Negative    bool   `json:"negative"`
 			} `json:"adGroupCriterion"`
 			AdGroup struct {
 				ID string `json:"id"`
@@ -751,12 +756,19 @@ func (c *Client) resolveKeywordCriteria(ctx context.Context, validated []Keyword
 		if adGroupID == "" || criterionID == "" {
 			continue
 		}
-		// A row omitting `negative` decodes to nil, and that is treated as NEGATIVE: unknown
-		// polarity is refused, not assumed benign. Google omits proto fields at their default
-		// (false), so a positive keyword can legitimately arrive with the field absent — but
-		// assuming the benign default is precisely how an exclusion gets removed, and the
-		// caller's remedy (re-read the keywords endpoint) is cheap where a REMOVE is final.
-		positive[adGroupID+"~"+criterionID] = row.AdGroupCriterion.Negative != nil && !*row.AdGroupCriterion.Negative
+		// An OMITTED `negative` means false — POSITIVE — and is admitted. In protobuf JSON a
+		// field at its default value is not serialised, so an ordinary positive keyword arrives
+		// with no `negative` key at all; that is the SHAPE OF THE HAPPY PATH, not a missing
+		// answer. Absence already carries the meaning "false" in this wire format, so a guard
+		// that reads it as "unknown polarity" gives absence a second meaning it cannot carry,
+		// and refuses every positive keyword the read path just handed the caller — re-reading
+		// produces the identical omission and cannot repair it.
+		//
+		// A MISSING FIELD and a MISSING ROW are different facts and are kept apart. Only an
+		// explicit `negative: true` is refused here; an id `keyword_view` returns NO row for is
+		// refused by the `!ok` arm below, which is the guard's whole purpose (a userList
+		// criterion returns no row) and still FAILS CLOSED.
+		positive[adGroupID+"~"+criterionID] = !row.AdGroupCriterion.Negative
 	}
 
 	for i, a := range validated {
