@@ -23,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
@@ -174,6 +175,13 @@ type Container struct {
 	Briefs      briefsvc.Service
 	Audiences   audiencesvc.Service
 
+	// Metrics owns the Prometheus registry served at /metrics. It is built FIRST in
+	// NewContainer, before any wiring branch, so the endpoint exists on every path —
+	// including no-database mode and a cold start still retrying migrations. A
+	// scrape target that only appears once the database is up is exactly backwards:
+	// the pod's DB-outage window is when its metrics matter most.
+	Metrics *metrics.Registry
+
 	// mu guards pool, which the background DB-init goroutine sets once the pool
 	// opens and Close reads on shutdown.
 	mu   sync.Mutex
@@ -250,6 +258,17 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 	}
 
 	c := &Container{Config: cfg}
+
+	// Build the metrics registry BEFORE any wiring branch, for the reason on the
+	// field: /metrics must be served in no-database mode and during a cold start,
+	// not only once the pool opens. A failure here is fatal rather than degraded —
+	// it means duplicate instrument registration (a programming error), not a
+	// missing dependency.
+	promReg, merr := metrics.New()
+	if merr != nil {
+		return nil, fmt.Errorf("metrics registry: %w", merr)
+	}
+	c.Metrics = promReg
 
 	// Build the index publisher BEFORE any wiring branch. Indexing is independent of
 	// the database (a resource is published after its write commits), and there are
@@ -736,6 +755,11 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// sweep catches those; it stops on Shutdown via the orchestrator's root ctx.
 	orch.StartRecoverySweeper()
 
+	// campaign_jobs is append-only: nothing else ever deletes a row, so terminal job
+	// history grows with every dispatch forever. Prune it on the same sweeper lifetime.
+	orch.SetJobRetention(cfg.CampaignJobRetention)
+	orch.StartJobRetentionSweeper()
+
 	// Drain the index outbox: rows co-committed with their resource whose publish never
 	// landed. Without this a dropped message is lost, and a terminal write (archiving a
 	// brief) has no later write to repair the index.
@@ -812,6 +836,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			cancelRecover()
 			orch.StartRecoverySweeper()
 
+			// Same retention sweeper as the fast path (see wireLiveBackends).
+			orch.SetJobRetention(cfg.CampaignJobRetention)
+			orch.StartJobRetentionSweeper()
+
 			// Same relay as the fast path (see wireLiveBackends). Written under c.mu: this runs
 			// on the init goroutine while Close may be reading the field concurrently.
 			c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
@@ -847,11 +875,42 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 	}
 }
 
-// setPool stores the live pool under the lock (Close reads it on shutdown).
+// setPool stores the live pool under the lock (Close reads it on shutdown) and
+// points the metrics pool gauges at it.
+//
+// This is the single chokepoint for BOTH paths that open a pool — the live fast
+// path and the cold-start background retry — so wiring the gauges here (rather
+// than at each call site) is what stops the retry path from silently reporting
+// no pool statistics after it recovers.
 func (c *Container) setPool(pool *postgres.Pool) {
 	c.mu.Lock()
 	c.pool = pool
 	c.mu.Unlock()
+
+	if c.Metrics == nil {
+		return
+	}
+	if pool == nil {
+		// Report NOTHING rather than zeroes: see PoolStatsFunc. A zeroed pool is
+		// indistinguishable from a collapsed one.
+		c.Metrics.SetPoolStats(nil)
+		return
+	}
+	c.Metrics.SetPoolStats(func() (metrics.PoolStats, bool) {
+		st := pool.Stat()
+		if st == nil {
+			return metrics.PoolStats{}, false
+		}
+		return metrics.PoolStats{
+			AcquiredConns:    int64(st.AcquiredConns()),
+			IdleConns:        int64(st.IdleConns()),
+			TotalConns:       int64(st.TotalConns()),
+			MaxConns:         int64(st.MaxConns()),
+			NewConnsCount:    st.NewConnsCount(),
+			CanceledAcquires: st.CanceledAcquireCount(),
+			EmptyAcquires:    st.EmptyAcquireCount(),
+		}, true
+	})
 }
 
 // initDatabase runs migrations and opens the pool within a single bounded
@@ -1031,6 +1090,16 @@ func (c *Container) Close(ctx context.Context) error {
 	if c.indexPublisher != nil {
 		c.indexPublisher.Close()
 	}
+	// Shut the MeterProvider down LAST, after every source that records into it has
+	// stopped. Doing it earlier would drop the shutdown-path measurements (the dispatch
+	// drain's own outcomes) and leave instruments recording into a stopped provider.
+	// Non-fatal: /metrics is an observability surface, so a flush failure must not
+	// override a real shutdown error from the drain above.
+	if c.Metrics != nil {
+		if err := c.Metrics.Shutdown(ctx); err != nil {
+			slog.Warn("error shutting down the metrics provider", "error", err)
+		}
+	}
 	return shutdownErr
 }
 
@@ -1123,6 +1192,10 @@ func (c *Container) indexingDisabled() bool {
 func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]service.PlatformDispatcher) *service.Orchestrator {
 	o := service.NewOrchestrator(campaigns, jobs, dispatchers)
 	o.SetIndexer(c.indexPublisher)
+	// Injected here for the same reason as the publisher: BOTH construction paths
+	// (the live fast path and the cold-start retry) route through this helper, so a
+	// path cannot silently keep the no-op recorder and report no dispatch metrics.
+	o.SetMetrics(c.Metrics)
 	if c.indexingDisabled() {
 		o.DisableIndexing()
 	}

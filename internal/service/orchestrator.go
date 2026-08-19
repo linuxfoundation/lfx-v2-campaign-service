@@ -326,10 +326,41 @@ func dispatchErrIsPreCreate(err error) bool {
 }
 
 // Orchestrator runs async multi-platform campaign creation for a brief.
+// DispatchMetrics records dispatch and job-state observations. It is declared
+// HERE, as a narrow interface, rather than importing internal/infrastructure/metrics:
+// the orchestrator's dependencies are all interfaces it owns, and a concrete
+// import would make every orchestrator test drag in a Prometheus registry.
+//
+// The implementation must be safe for concurrent use — dispatch runs record from
+// one goroutine per platform.
+type DispatchMetrics interface {
+	RecordDispatch(ctx context.Context, platform model.Provider, outcome string)
+	RecordJobTransition(ctx context.Context, status model.JobStatus)
+	RecordUpstreamCall(ctx context.Context, platform model.Provider, operation, outcome string, seconds float64)
+}
+
+// Dispatch outcome tokens. These MIRROR the constants in
+// internal/infrastructure/metrics, which is what bounds the label's cardinality;
+// they are duplicated rather than imported to keep this package free of the
+// metrics dependency. metrics.safeOutcome collapses anything it does not
+// recognise, so a drift here degrades to "unknown" rather than minting series.
+const (
+	dispatchOutcomeSuccess = "success"
+	dispatchOutcomeSkipped = "skipped"
+	dispatchOutcomeFailure = "failure"
+	dispatchOutcomePanic   = "panic"
+)
+
 type Orchestrator struct {
 	campaigns   domain.CampaignRepository
 	jobs        domain.JobRepository
 	dispatchers map[model.Provider]PlatformDispatcher
+
+	// metricsMu guards metrics, which SetMetrics late-binds from the container for
+	// the same reason as indexer above. Never nil after construction: defaults to
+	// a no-op so every record site can call it unconditionally.
+	metricsMu sync.RWMutex
+	metrics   DispatchMetrics
 
 	// indexerMu guards indexer, which SetIndexer late-binds from the container.
 	// Campaign CREATES land here (dispatchOne persists them), not in BriefService,
@@ -370,14 +401,19 @@ type Orchestrator struct {
 	sweeperCtx    context.Context
 	sweeperCancel context.CancelFunc
 	sweeperOnce   sync.Once
+	// jobRetention is how long a TERMINAL job is kept before the retention sweeper
+	// prunes it. Zero means "use the repository default" (see
+	// postgres.DefaultJobRetention) — SetJobRetention installs any POSITIVE window,
+	// including one shorter (so more deleting) than the default, and refuses only
+	// non-positive values, which are what an unset or unparseable
+	// CAMPAIGN_JOB_RETENTION produces.
+	jobRetention time.Duration
 	// sem is a process-wide semaphore bounding concurrent provider dispatches
 	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
 	// get maxParallelDispatch slots, leaving total provider calls unbounded).
 	sem chan struct{}
 }
 
-// NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
-// platform with no registered dispatcher is recorded as a failed result.
 // SetIndexer injects the Query Service index publisher. Separate from the constructor
 // so existing NewOrchestrator call sites (mostly tests) are unaffected and default to
 // Noop, mirroring BriefService.SetIndexer.
@@ -388,6 +424,73 @@ func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
 	o.indexerMu.Lock()
 	defer o.indexerMu.Unlock()
 	o.indexer = p
+}
+
+// Upstream operation tokens. COMPILE-TIME CONSTANTS, never derived from a request,
+// a URL or an upstream response. These being the only values passed to
+// recordUpstream is the PRIMARY bound on the `operation` label; metrics.safeOperation
+// is a secondary shape guard at the recording boundary, which degrades an id-shaped
+// or otherwise derived string to a bounded token rather than minting series.
+const (
+	opToggleStatus   = "toggle_status"
+	opReadMetrics    = "read_metrics"
+	opLookupCampaign = "lookup_campaign"
+	opListAccounts   = "list_accounts"
+	opSearchEmails   = "search_emails"
+)
+
+// recordUpstream times one upstream platform call. It is called ONLY after the
+// pre-platform guards have passed, so the histogram measures actual network work
+// rather than local refusals — a "no dispatcher registered" rejection returns in
+// nanoseconds and would drag every latency quantile toward zero.
+//
+// The outcome is derived from the error's PRESENCE only. The error VALUE never
+// becomes a label: upstream errors embed account ids, campaign ids and response
+// fragments, all unbounded.
+func (o *Orchestrator) recordUpstream(ctx context.Context, platform model.Provider, operation string, start time.Time, err error) {
+	outcome := callOutcomeOK
+	if err != nil {
+		outcome = callOutcomeError
+	}
+	o.dispatchMetrics().RecordUpstreamCall(ctx, platform, operation, outcome, time.Since(start).Seconds())
+}
+
+// Upstream call outcome tokens, mirroring internal/infrastructure/metrics for the
+// same reason as the dispatch outcomes above.
+const (
+	callOutcomeOK    = "ok"
+	callOutcomeError = "error"
+)
+
+// noopDispatchMetrics is the default recorder, so a call site never needs a nil
+// check and an orchestrator built without metrics behaves identically.
+type noopDispatchMetrics struct{}
+
+func (noopDispatchMetrics) RecordDispatch(context.Context, model.Provider, string) {}
+func (noopDispatchMetrics) RecordJobTransition(context.Context, model.JobStatus)   {}
+func (noopDispatchMetrics) RecordUpstreamCall(context.Context, model.Provider, string, string, float64) {
+}
+
+// SetMetrics late-binds the metrics recorder from the container. Passing nil
+// restores the no-op rather than storing nil, so the record sites stay
+// unconditional.
+func (o *Orchestrator) SetMetrics(m DispatchMetrics) {
+	o.metricsMu.Lock()
+	if m == nil {
+		m = noopDispatchMetrics{}
+	}
+	o.metrics = m
+	o.metricsMu.Unlock()
+}
+
+// dispatchMetrics returns the current recorder under the read lock.
+func (o *Orchestrator) dispatchMetrics() DispatchMetrics {
+	o.metricsMu.RLock()
+	defer o.metricsMu.RUnlock()
+	if o.metrics == nil {
+		return noopDispatchMetrics{}
+	}
+	return o.metrics
 }
 
 // IndexerIsNoop reports whether this orchestrator would publish nothing. Exported for
@@ -445,6 +548,8 @@ func (o *Orchestrator) indexingIsDisabled() bool {
 	return o.indexingDisabled
 }
 
+// NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
+// platform with no registered dispatcher is recorded as a failed result.
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
 	if dispatchers == nil {
 		dispatchers = map[model.Provider]PlatformDispatcher{}
@@ -456,6 +561,7 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		jobs:          jobs,
 		dispatchers:   dispatchers,
 		indexer:       indexer.Noop{},
+		metrics:       noopDispatchMetrics{},
 		rootCtx:       rootCtx,
 		rootCancel:    rootCancel,
 		sweeperCtx:    sweeperCtx,
@@ -494,21 +600,127 @@ func (o *Orchestrator) StartRecoverySweeper() {
 			case <-o.sweeperCtx.Done():
 				return
 			case <-ticker.C:
-				// Bound each sweep so a slow DB can't wedge the goroutine, but derive it
-				// from sweeperCtx (do NOT detach) so cancelling sweeperCtx at Shutdown
-				// interrupts a sweep already blocked mid-statement rather than letting it
-				// run to its own timeout against a closing pool.
-				sctx, cancel := context.WithTimeout(o.sweeperCtx, jobFinalizeTimeout)
-				n, err := o.jobs.FailStuckJobs(sctx, "job did not complete before a service restart")
+				o.runRecoverySweep()
+			}
+		}
+	}()
+}
+
+// runRecoverySweep performs ONE stuck-job recovery pass. Separated from the ticker
+// loop so it is directly testable: the sweep interval is minutes, so a test driving
+// the loop would either sleep for minutes or assert nothing.
+func (o *Orchestrator) runRecoverySweep() {
+	// Bound each sweep so a slow DB can't wedge the goroutine, but derive it
+	// from sweeperCtx (do NOT detach) so cancelling sweeperCtx at Shutdown
+	// interrupts a sweep already blocked mid-statement rather than letting it
+	// run to its own timeout against a closing pool.
+	sctx, cancel := context.WithTimeout(o.sweeperCtx, jobFinalizeTimeout)
+	n, err := o.jobs.FailStuckJobs(sctx, "job did not complete before a service restart")
+	cancel()
+	if err != nil {
+		// A cancellation here is the expected outcome when Shutdown interrupts
+		// an in-flight sweep, not a real failure — don't log it as an error.
+		if o.sweeperCtx.Err() == nil {
+			slog.ErrorContext(o.sweeperCtx, "periodic stuck-job sweep failed", "error", err)
+		}
+		return
+	}
+	if n <= 0 {
+		return
+	}
+	slog.InfoContext(o.sweeperCtx, "periodic stuck-job sweep recovered jobs", "count", n)
+	// Record one terminal transition per row the sweep terminalized. The finalize
+	// path deliberately does NOT record a terminal whose status write failed, which
+	// leaves the running→terminal gap open for exactly the stuck rows; this is where
+	// that gap CLOSES. Without it the gap is permanent, so a stuck-job alert keeps
+	// firing after the rows are already terminal in the database — the mirror image
+	// of the bug the finalize guard fixes, and just as misleading to whoever is on
+	// call. The sweep reports only a COUNT, so each row is recorded as the `failed`
+	// status it sets.
+	for i := int64(0); i < n; i++ {
+		o.dispatchMetrics().RecordJobTransition(o.sweeperCtx, model.JobFailed)
+	}
+}
+
+// jobRetentionSweepInterval is how often the retention sweeper prunes terminal job history.
+//
+// Hourly, not every few seconds like the outbox relay. Retention is measured in months, so the
+// only thing a faster cadence buys is a smaller per-pass batch; what it costs is a repeated
+// scan on every replica for rows that, in the steady state, are not there. An hour keeps the
+// table bounded on a timescale that matters for disk while leaving the prune invisible next to
+// the dispatch workload.
+const jobRetentionSweepInterval = time.Hour
+
+// jobRetentionPassTimeout bounds one prune so a slow database cannot wedge the goroutine.
+// Larger than jobFinalizeTimeout because this statement may delete a full batch under a
+// first-run backlog, and it is not on any request path.
+const jobRetentionPassTimeout = 30 * time.Second
+
+// SetJobRetention installs the operator-configured retention window for TERMINAL jobs.
+//
+// A non-positive duration leaves the repository default in place. A window SHORTER than
+// postgres.DefaultJobRetention is accepted — operators legitimately want a shorter one — but
+// zero or negative is treated as "unset" rather than "retain nothing", because that is exactly
+// what a missing or unparseable environment variable produces, and reading it as "delete
+// everything" would destroy the spend record on a config typo.
+//
+// Call before StartJobRetentionSweeper; the sweeper reads the field once per pass under no
+// lock, so it must be set during construction rather than concurrently with a running sweeper.
+func (o *Orchestrator) SetJobRetention(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	o.jobRetention = d
+}
+
+// StartJobRetentionSweeper launches a background goroutine that periodically deletes TERMINAL
+// campaign_jobs rows past the retention window, bounding a table that is otherwise append-only
+// and grows with every brief dispatch forever.
+//
+// Deliberately mirrors StartRecoverySweeper's lifetime handling rather than inventing its own:
+// tracked by wg so Shutdown waits for it before the pool closes, but owned by sweeperCtx, which
+// Shutdown cancels FIRST — so a prune already blocked in the database is interrupted promptly
+// and its shutdown never competes with the dispatch-drain budget. Call once after construction.
+//
+// Runs on every replica with no leader election, exactly as the recovery sweeper does. Two pods
+// pruning at once is harmless: the DELETE is bounded and idempotent, so the second simply finds
+// fewer rows.
+func (o *Orchestrator) StartJobRetentionSweeper() {
+	o.StartJobRetentionSweeperWithInterval(jobRetentionSweepInterval)
+}
+
+// StartJobRetentionSweeperWithInterval is StartJobRetentionSweeper with the tick injected.
+//
+// It exists so a test can drive the sweeper LOOP rather than calling PruneTerminalJobs
+// directly: a mis-wired ticker or a select arm returning on the wrong channel would pass
+// every direct-call test while pruning nothing in production. Callers outside tests should
+// use StartJobRetentionSweeper so the interval stays a single constant.
+func (o *Orchestrator) StartJobRetentionSweeperWithInterval(interval time.Duration) {
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-o.sweeperCtx.Done():
+				return
+			case <-ticker.C:
+				// Derived from sweeperCtx (NOT detached) so cancelling it at Shutdown
+				// aborts a prune already blocked mid-statement rather than letting it run
+				// to its own timeout against a closing pool.
+				sctx, cancel := context.WithTimeout(o.sweeperCtx, jobRetentionPassTimeout)
+				n, err := o.jobs.PruneTerminalJobs(sctx, o.jobRetention, 0)
 				cancel()
 				if err != nil {
 					// A cancellation here is the expected outcome when Shutdown interrupts
-					// an in-flight sweep, not a real failure — don't log it as an error.
+					// an in-flight prune, not a real failure. A prune failure otherwise
+					// costs disk, never correctness — log it and wait for the next tick.
 					if o.sweeperCtx.Err() == nil {
-						slog.ErrorContext(o.sweeperCtx, "periodic stuck-job sweep failed", "error", err)
+						slog.ErrorContext(o.sweeperCtx, "terminal job retention sweep failed", "error", err)
 					}
 				} else if n > 0 {
-					slog.InfoContext(o.sweeperCtx, "periodic stuck-job sweep recovered jobs", "count", n)
+					slog.InfoContext(o.sweeperCtx, "terminal job retention sweep pruned jobs", "count", n)
 				}
 			}
 		}
@@ -691,6 +903,11 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	if err := o.jobs.UpdateJobStatus(ctx, jobID, model.JobRunning, nil, ""); err != nil {
 		slog.ErrorContext(ctx, "failed to mark campaign job running", "job_id", jobID, "error", err)
 	}
+	// Recorded after the write is ATTEMPTED rather than only on success: the job is
+	// running either way (dispatch proceeds below regardless), so gating this on the
+	// write would under-count running jobs during a database blip and make the
+	// transition counters disagree with the work actually performed.
+	o.dispatchMetrics().RecordJobTransition(ctx, model.JobRunning)
 
 	results := make([]platformResult, len(platforms))
 	g, gctx := errgroup.WithContext(ctx)
@@ -721,8 +938,16 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 					res.Error = "dispatch queue timed out waiting for a slot"
 				}
 				results[i] = res
+				o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomeFailure)
 				return nil
 			}
+
+			// dispatched records that dispatchPlatform RETURNED and its result was
+			// already stored in results[i]. It is what makes the recover arm below
+			// able to tell "the dispatch itself panicked" from "the dispatch
+			// succeeded and something after it panicked" — see there for why the
+			// distinction decides whether a paid campaign gets reported as failed.
+			dispatched := false
 
 			// Recover from a panic in a dispatcher (or future code here): a panic
 			// in this detached goroutine would otherwise crash the whole process
@@ -730,14 +955,46 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			defer func() {
 				if r := recover(); r != nil {
 					slog.ErrorContext(gctx, "panic during platform dispatch", "platform", p, "job_id", jobID, "panic", r)
+					// Only synthesize a failure when the dispatch had NOT already
+					// completed. A panic raised AFTER dispatchPlatform returned (the
+					// outcome-recording call below is the only such code today) must
+					// not rewrite a stored success: the campaign really was created
+					// upstream, and reporting it failed would invite a reconcile or
+					// retry that could double-create a PAID campaign. Losing the
+					// metric for that platform is the strictly cheaper failure.
+					//
+					// rerr is cleared on BOTH arms: recovering but returning the panic
+					// as the group error would cancel every sibling platform's context,
+					// which is the crash this recovery exists to prevent.
+					rerr = nil
+					if dispatched {
+						return
+					}
 					res.OK = false
 					res.Error = "internal error during dispatch"
 					results[i] = res
+					// A panic gets its OWN outcome rather than folding into "failure":
+					// it is a bug in this service, not an upstream platform refusing a
+					// campaign, and the two want different responses from whoever is
+					// on call. The recovered value is NEVER used as a label — it is
+					// unbounded and can embed ids.
+					o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomePanic)
 					rerr = nil
 				}
 			}()
 
-			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config, by)
+			// Deliberately a NEW variable rather than assigning the outer res, which
+			// the recover arm rewrites into a failure. Keeping the completed dispatch
+			// out of res, together with the `dispatched` flag the recover arm checks,
+			// is what stops a panic raised AFTER this point (the recording call below)
+			// from turning a created-upstream campaign into a failed result.
+			done := o.dispatchPlatform(gctx, jobID, brief, p, config, by)
+			results[i] = done
+			// Set BEFORE the recording call: it is the only code that can panic after
+			// the result is stored, and the flag is what tells the recover arm not to
+			// overwrite it.
+			dispatched = true
+			o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomeFor(done))
 			return nil
 		})
 	}
@@ -756,19 +1013,52 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobFinalizeTimeout)
 	defer cancel()
 
+	// The TERMINAL transitions below are recorded only on a SUCCESSFUL status write,
+	// the opposite of the RUNNING transition above, which is deliberately recorded on
+	// attempt. The asymmetry is the point: campaign_job_transitions_total exists so a
+	// stuck job shows up as a gap between the running count and the terminal count.
+	// A job whose terminal write failed is still `running` in the database and IS the
+	// stuck job the alert hunts, so counting its terminal here would close the gap for
+	// exactly the rows the metric exists to expose. Such rows are terminalized later by
+	// the recovery sweeper (FailStuckJobs), which records the terminal transition for
+	// each row it recovers — that is where the gap closes, and it stays open until then.
 	status := aggregateStatus(results)
 	payload, err := json.Marshal(results)
 	if err != nil {
 		// Don't store a null result (which would make the job unpollable);
 		// record the marshal failure in the job's error field and fail the job.
 		slog.ErrorContext(finCtx, "failed to marshal job result", "job_id", jobID, "error", err)
-		if uerr := o.jobs.UpdateJobStatus(finCtx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error()); uerr != nil {
-			slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", uerr)
-		}
+		o.terminalize(finCtx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error())
 		return
 	}
-	if err := o.jobs.UpdateJobStatus(finCtx, jobID, status, payload, ""); err != nil {
-		slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", err)
+	o.terminalize(finCtx, jobID, status, payload, "")
+}
+
+// terminalize writes a job's TERMINAL status and records the transition only if
+// that write succeeded. Both finalize paths (the normal one and the marshal
+// failure) go through it so the metric can never be recorded for a status that
+// did not persist — see the asymmetry note at the finalize site for why the
+// terminal transition is guarded where the RUNNING one is not.
+func (o *Orchestrator) terminalize(ctx context.Context, jobID string, status model.JobStatus, payload []byte, jobErr string) {
+	if err := o.jobs.UpdateJobStatus(ctx, jobID, status, payload, jobErr); err != nil {
+		slog.ErrorContext(ctx, "failed to finalize campaign job", "job_id", jobID, "error", err)
+		return
+	}
+	o.dispatchMetrics().RecordJobTransition(ctx, status)
+}
+
+// dispatchOutcomeFor maps a platform result onto the CLOSED outcome enum. Skipped
+// is checked before OK because a skipped platform is reported with OK=true (no
+// campaign was created, so counting it as a success would inflate the dispatch
+// success rate with work never attempted).
+func dispatchOutcomeFor(res platformResult) string {
+	switch {
+	case res.Skipped:
+		return dispatchOutcomeSkipped
+	case res.OK:
+		return dispatchOutcomeSuccess
+	default:
+		return dispatchOutcomeFailure
 	}
 }
 
@@ -1037,7 +1327,26 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// NoUpstreamCreate) that the error occurred before any create call (e.g.
 		// input/config validation), in which case releasing the claim to allow a
 		// retry is safe.
-		if dispatchErrIsPreCreate(derr) {
+		//
+		// `campaign == nil` is an INDEPENDENT precondition on that release, not a
+		// restatement of the error check. NoUpstreamCreate is a claim the DISPATCHER
+		// makes about its own error; a non-nil campaign is evidence from the same
+		// return that something was built for an upstream resource. When the two
+		// disagree, the evidence wins and the claim is RETAINED — releasing it would
+		// free the (brief, platform) slot and authorize a duplicate PAID create,
+		// which is the one failure this claim exists to prevent.
+		//
+		// The condition keys on `campaign == nil` ALONE, deliberately not on
+		// campaign.PlatformCampaignID != "". An id-less partial is exactly the
+		// group-orphan / ambiguous-create shape the retain branch below persists via
+		// its `len(campaign.Result) > 0` arm: the id is empty BY DESIGN while a real
+		// upstream resource exists. Testing the id would route those straight back
+		// into the release path and reintroduce the double-create.
+		//
+		// No dispatcher returns this pairing today (every preCreateError is returned
+		// with a nil campaign), so this is a guard against a future adapter, not a
+		// live bug. It is cheap, and the failure it prevents costs real money.
+		if dispatchErrIsPreCreate(derr) && campaign == nil {
 			// The reason token is carried on THIS branch only, and only for the errors it
 			// has a vocabulary for. Pre-create is where the connection faults land — a
 			// resolve that could not produce a usable client never reached the provider —
@@ -1391,7 +1700,10 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// delivered. A context deadline surfaces as UNCONFIRMED (the caller reports verify/retry).
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
-	return toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
+	start := time.Now()
+	terr := toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
+	o.recordUpstream(ctx, platform, opToggleStatus, start, terr)
+	return terr
 }
 
 // ReadCampaignMetrics fetches live performance metrics for one campaign from its ad
@@ -1412,7 +1724,9 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
+	start := time.Now()
 	m, rerr := reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
+	o.recordUpstream(ctx, platform, opReadMetrics, start, rerr)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -1449,7 +1763,9 @@ func (o *Orchestrator) LookupPlatformCampaign(ctx context.Context, projectID str
 	}
 	callCtx, cancel := context.WithTimeout(ctx, adoptLookupTimeout)
 	defer cancel()
+	start := time.Now()
 	ref, err := adopter.LookupCampaign(callCtx, projectID, platform, platformCampaignID)
+	o.recordUpstream(ctx, platform, opLookupCampaign, start, err)
 	if err != nil {
 		return nil, err
 	}
@@ -1491,7 +1807,9 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
+	start := time.Now()
 	accounts, aerr := lister.ListAccounts(callCtx, projectID, platform)
+	o.recordUpstream(ctx, platform, opListAccounts, start, aerr)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -1539,7 +1857,9 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
+	start := time.Now()
 	emails, serr := searcher.SearchEmails(callCtx, projectID, platform, query)
+	o.recordUpstream(ctx, platform, opSearchEmails, start, serr)
 	if serr != nil {
 		return nil, serr
 	}

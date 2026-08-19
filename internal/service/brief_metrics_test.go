@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -474,13 +476,230 @@ func indexOf(h, n string) int {
 	return -1
 }
 
-// A connection failure must log the fixed reason TOKEN, never the cause's text.
+// A fixed instant for the pacing cases. Date arithmetic tested against the wall clock passes or
+// fails by WHEN it is run.
+var metricsNow = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+
+func budgeted(c *model.Campaign, amount float64, kind model.BudgetType, startOffset, endOffset int) *model.Campaign {
+	start := metricsNow.AddDate(0, 0, startOffset)
+	end := metricsNow.AddDate(0, 0, endOffset)
+	c.BudgetAmount = &amount
+	c.BudgetType = &kind
+	c.StartDate = &start
+	c.EndDate = &end
+	return c
+}
+
+// Pacing is spend against the flight-prorated plan, and it must be computed over the period the
+// SPEND covers rather than the elapsed flight.
+func TestGetBriefMetrics_PacingIsProratedAcrossTheFlight(t *testing.T) {
+	// Day 10 of a 20-day $1000 flight. The default window is 30 days, capped to the 10 elapsed,
+	// so expected-by-now is $500. Spending exactly that is on plan.
+	//
+	// End offset +9, not +10: end_date runs through the END of its day, so -10..+9 is the
+	// 20-day flight this case describes. +10 would be 21 days.
+	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 1000, model.BudgetLifetime, -10, 9)
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 10000, Clicks: 200, CostMicros: 500_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("a measured row with a budget and a flight carries no pacing")
+	}
+	if row.Pacing.Pct == nil {
+		t.Fatal("computable pacing carries no pct")
+	}
+	if math.Abs(*row.Pacing.Pct-100) > 5 {
+		t.Errorf("pacing = %.1f%%, want ~100%% (half the budget, half way through)", *row.Pacing.Pct)
+	}
+	if row.Pacing.Label != "normal" {
+		t.Errorf("label = %q, want normal", row.Pacing.Label)
+	}
+	// On plan, healthy CTR, spending: nothing to flag.
+	if len(res.ActionItems) != 0 {
+		t.Errorf("a healthy campaign raised %d action items", len(res.ActionItems))
+	}
+}
+
+// A campaign with no budget has no pacing, and the absence must be visible as `unknown` with an
+// ABSENT pct — not as 0%, which reads as a campaign that spent nothing.
+func TestGetBriefMetrics_NoBudgetYieldsUnknownPacingNotZero(t *testing.T) {
+	c := campaignOn("c1", model.ProviderGoogleAds) // no BudgetAmount
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 10000, Clicks: 200, CostMicros: 5_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("an ok row carries no pacing object at all; unknown must be stated, not omitted")
+	}
+	if row.Pacing.Label != "unknown" {
+		t.Errorf("label = %q, want unknown", row.Pacing.Label)
+	}
+	if row.Pacing.Pct != nil {
+		t.Errorf("incomputable pacing carries pct = %v; it must be ABSENT, because 0%% is a claim about spend", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "underspending" || item.Rule == "budget_constrained" {
+			t.Errorf("%s raised against a campaign with no budget — that is the absence of a plan, not a spend finding", item.Rule)
+		}
+	}
+}
+
+// A row that could not be read must raise NO action items. Evaluating it would see zero
+// impressions and zero spend and report every failed read as a dead campaign.
+func TestGetBriefMetrics_UnreadableRowRaisesNoActionItems(t *testing.T) {
+	bad := budgeted(campaignOn("c2", model.ProviderMetaAds), 1000, model.BudgetLifetime, -10, 10)
+	disp := newPerCampaignDispatcher()
+	disp.errs["c2"] = errors.New("meta graph api: 500 internal error")
+
+	s := newBriefMetricsService(t, disp, bad)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	if len(res.ActionItems) != 0 {
+		t.Errorf("an unreadable row raised %d action items (%+v) — that reports an outage as a campaign defect", len(res.ActionItems), res.ActionItems)
+	}
+	if row := rowByCampaign(t, res, "c2"); row.Pacing != nil {
+		t.Errorf("a row with no measurement carries pacing %+v", row.Pacing)
+	}
+	// And the list is [] rather than null, so a consumer can iterate it unconditionally.
+	if res.ActionItems == nil {
+		t.Error("action_items is nil; it must marshal as [] so empty is distinguishable from absent")
+	}
+}
+
+// The rules see a CTR in PERCENT. The domain model carries a ratio, so a missing conversion
+// makes the threshold a hundred times too strict and flags every healthy campaign.
+func TestGetBriefMetrics_LowCTRUsesPercentNotRatio(t *testing.T) {
+	healthy := budgeted(campaignOn("c1", model.ProviderGoogleAds), 1000, model.BudgetLifetime, -10, 10)
+	poor := budgeted(campaignOn("c2", model.ProviderLinkedInAds), 1000, model.BudgetLifetime, -10, 10)
+	disp := newPerCampaignDispatcher()
+	// 2% CTR — comfortably healthy. As a raw ratio (0.02) it would sit below the 0.3 threshold
+	// and be flagged.
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 500_000_000, Ctr: 0.02}
+	// 0.1% CTR — genuinely poor.
+	disp.results["c2"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 20, CostMicros: 500_000_000, Ctr: 0.001}
+
+	s := newBriefMetricsService(t, disp, healthy, poor)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	var flagged []string
+	for _, item := range res.ActionItems {
+		if item.Rule == "low_ctr" {
+			flagged = append(flagged, item.CampaignID)
+		}
+	}
+	if len(flagged) != 1 || flagged[0] != "c2" {
+		t.Errorf("low_ctr flagged %v, want [c2] only — a 2%% CTR is healthy and must not fire", flagged)
+	}
+}
+
+// The window the row was READ over is what pacing must be computed against. Spend from a 7-day
+// window compared to 30 days of plan reports an on-track campaign as spending a fifth of what
+// it should — a confident figure about a period nobody asked about.
+func TestGetBriefMetrics_PacingUsesTheRowsOwnWindow(t *testing.T) {
+	// Day 20 of a 40-day $4000 flight: $100/day of plan. Exactly on plan over 7 days = $700.
+	//
+	// End offset +19, not +20: end_date runs through the END of its day, so -20..+19 is the
+	// 40-day flight this case describes.
+	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 4000, model.BudgetLifetime, -20, 19)
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 700_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	window := string(model.MetricsWindowLast7Days)
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1", Window: &window})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil || row.Pacing.Pct == nil {
+		t.Fatal("no computable pacing")
+	}
+	// ~108%, not 100%: the window is clamped to now, so `last_7_days` at noon contributes 6.5
+	// days of plan ($650) against the 7 days of spend the platform reports ($700). That bias is
+	// deliberate and bounded — see the clamp's comment in window.go, where erring toward
+	// "spending ahead" is the safer direction because it never manufactures an underspending
+	// item against a healthy campaign.
+	//
+	// What this test is really about is the DENOMINATOR's window: against the 30-day default it
+	// would be ~23% and raise an underspending item against a campaign that is exactly on track.
+	// 108 vs 23 proves the row's own window was used; the exact figure is asserted so a later
+	// change to the clamp cannot pass unnoticed.
+	if math.Abs(*row.Pacing.Pct-107.7) > 1 {
+		t.Errorf("pacing = %.1f%%, want ~107.7%% — expected spend must cover the 7-day window this row was read over, clamped to now", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "underspending" {
+			t.Error("underspending raised against a campaign that is exactly on plan for its window")
+		}
+	}
+}
+
+// A campaign with a budget but NO start date must not be paced.
 //
-// safeErrSummary normalises and truncates; it does not REDACT. An unusable-connection cause can
-// embed fragments of a decrypted credential blob, and this handler fans out across every
-// campaign on the brief — so one malformed credential row would write those fragments once per
-// campaign into centralised logs. The campaign-scoped handler omits error text on these arms for
-// the same reason; this test is what stops a later edit reintroducing safeErrSummary here.
+// start_date is nullable in the schema, so this is a storable state. Defaulting the start to
+// `now` makes the flight begin this instant and the one-day elapsed floor then compares a
+// 30-day window of spend against a single day of plan: a campaign exactly on plan reports
+// 500% overspending and raises a budget item against itself.
+func TestGetBriefMetrics_CampaignWithNoStartDateIsNotPaced(t *testing.T) {
+	c := campaignOn("c1", model.ProviderGoogleAds)
+	amount, kind := 1000.0, model.BudgetLifetime
+	end := metricsNow.AddDate(0, 0, 10)
+	c.BudgetAmount = &amount
+	c.BudgetType = &kind
+	c.EndDate = &end // StartDate deliberately left nil
+
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 500_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("an ok row must state pacing, even when it is unknown")
+	}
+	if row.Pacing.Label != "unknown" {
+		t.Errorf("label = %q, want unknown — there is no flight to prorate across", row.Pacing.Label)
+	}
+	if row.Pacing.Pct != nil {
+		t.Errorf("pct = %v; a campaign with no start date has no plan-to-date to measure against", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "budget_constrained" || item.Rule == "underspending" {
+			t.Errorf("%s raised against a campaign with no recorded start: %q", item.Rule, item.Issue)
+		}
+	}
+}
+
 func TestGetBriefMetrics_ConnectionFailureLogsNoErrorText(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
@@ -510,9 +729,6 @@ func TestGetBriefMetrics_ConnectionFailureLogsNoErrorText(t *testing.T) {
 	}
 }
 
-// A decrypt failure logs NO error text at all — not even a reason token. The cause comes from
-// the Encryptor INTERFACE and may quote ciphertext or key material, so there is nothing on it
-// that is safe to render.
 func TestGetBriefMetrics_DecryptFailureLogsNoCauseText(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
@@ -540,5 +756,161 @@ func TestGetBriefMetrics_DecryptFailureLogsNoCauseText(t *testing.T) {
 	// WARNs it would page nobody.
 	if !strings.Contains(logged, "level=ERROR") {
 		t.Errorf("a decrypt failure was not logged at ERROR:\n%s", logged)
+	}
+}
+
+// A window that precedes the campaign's flight must not be paced at the ENDPOINT either.
+//
+// The overlap fix lives in the rules package, but the endpoint chooses which figure to pass. This
+// pins the wiring: passing the window's bare LENGTH instead of its overlap with the flight makes
+// this test fail, which is what stops the fix regressing at the caller while the unit tests stay
+// green.
+func TestGetBriefMetrics_WindowPrecedingTheFlightIsNotPaced(t *testing.T) {
+	// Flight begins on the 13th of the current month; `last_month` lies entirely before it.
+	c := campaignOn("c1", model.ProviderGoogleAds)
+	amount, kind := 1000.0, model.BudgetLifetime
+	start := time.Date(metricsNow.Year(), metricsNow.Month(), 13, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 30)
+	c.BudgetAmount = &amount
+	c.BudgetType = &kind
+	c.StartDate = &start
+	c.EndDate = &end
+
+	disp := newPerCampaignDispatcher()
+	// Zero spend is CORRECT for this window — the campaign did not exist during it.
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	window := string(model.MetricsWindowLastMonth)
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", Window: &window,
+	})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("an ok row must state pacing even when unknown")
+	}
+	if row.Pacing.Label != "unknown" {
+		t.Errorf("label = %q, want unknown — the window precedes the flight entirely", row.Pacing.Label)
+	}
+	if row.Pacing.Pct != nil {
+		t.Errorf("pct = %v; the campaign did not exist during this window", *row.Pacing.Pct)
+	}
+	// EVERY rule, not just the pacing ones. This test previously asserted only underspending and
+	// passed while the same row emitted zero_delivery — the window predates the campaign, so its
+	// zero impressions and zero spend are correct and mean "not running yet", but the delivery
+	// rule was still reading them as a campaign that failed to start.
+	if len(res.ActionItems) != 0 {
+		var fired []string
+		for _, item := range res.ActionItems {
+			fired = append(fired, item.Rule)
+		}
+		t.Errorf("a window preceding the campaign raised %v — the campaign did not exist during it", fired)
+	}
+}
+
+// An email send with no opens must not be reported as a campaign that never ran.
+//
+// HubSpot maps opens onto Impressions and always reports CostMicros=0, so a delivered email
+// nobody opened is numerically identical to a paid campaign that never served. This pins the
+// WIRING: hardcoding BillsPerDelivery at the caller makes this test fail, which is what stops the
+// channel distinction regressing while the rules-package tests stay green.
+func TestGetBriefMetrics_EmailWithNoOpensIsNotZeroDelivery(t *testing.T) {
+	email := campaignOn("c1", model.ProviderHubSpot)
+	disp := newPerCampaignDispatcher()
+	// Delivered, but nobody opened: zero "impressions", zero cost — and correct.
+	disp.results["c1"] = &model.CampaignMetrics{
+		Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0,
+		Email: &model.EmailMetrics{Sent: 500, Delivered: 495},
+	}
+
+	s := newBriefMetricsService(t, disp, email)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	for _, item := range res.ActionItems {
+		if item.Rule == "zero_delivery" {
+			t.Errorf("zero_delivery raised for an email delivered to 495 recipients: %q", item.Issue)
+		}
+	}
+
+	// A PAID campaign with the identical numbers still fires, or the assertion above would pass
+	// for any reason at all.
+	paid := campaignOn("c2", model.ProviderGoogleAds)
+	disp2 := newPerCampaignDispatcher()
+	disp2.results["c2"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+	s2 := newBriefMetricsService(t, disp2, paid)
+	s2.SetClock(func() time.Time { return metricsNow })
+	res2, err := s2.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics (paid): %v", err)
+	}
+	var found bool
+	for _, item := range res2.ActionItems {
+		if item.Rule == "zero_delivery" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("zero_delivery did not fire for a paid campaign with no delivery")
+	}
+}
+
+// A campaign dispatched before its flight begins must not be reported as failing to deliver.
+//
+// Pins the WIRING, not just the rule: hardcoding DeliveryExpected at the caller makes this fail.
+// The caller half of this gate went untested twice already on this branch.
+func TestGetBriefMetrics_CampaignBeforeItsFlightIsNotZeroDelivery(t *testing.T) {
+	// Dispatched now, scheduled to start in a week.
+	c := campaignOn("c1", model.ProviderGoogleAds)
+	amount, kind := 1000.0, model.BudgetLifetime
+	start := metricsNow.AddDate(0, 0, 7)
+	end := start.AddDate(0, 0, 30)
+	c.BudgetAmount, c.BudgetType, c.StartDate, c.EndDate = &amount, &kind, &start, &end
+
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "zero_delivery" {
+			t.Errorf("zero_delivery raised for a campaign that starts in a week: %q", item.Issue)
+		}
+	}
+
+	// A campaign whose flight started a week ago, same zero metrics, DOES fire — or the
+	// assertion above would pass for any reason at all.
+	started := campaignOn("c2", model.ProviderGoogleAds)
+	s2Start := metricsNow.AddDate(0, 0, -7)
+	s2End := metricsNow.AddDate(0, 0, 23)
+	started.BudgetAmount, started.BudgetType, started.StartDate, started.EndDate = &amount, &kind, &s2Start, &s2End
+	disp2 := newPerCampaignDispatcher()
+	disp2.results["c2"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+	s2 := newBriefMetricsService(t, disp2, started)
+	s2.SetClock(func() time.Time { return metricsNow })
+	res2, err := s2.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics (started): %v", err)
+	}
+	var found bool
+	for _, item := range res2.ActionItems {
+		if item.Rule == "zero_delivery" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("zero_delivery did not fire for a campaign a week into its flight with no delivery")
 	}
 }

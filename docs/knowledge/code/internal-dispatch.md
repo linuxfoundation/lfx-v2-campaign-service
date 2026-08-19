@@ -108,6 +108,17 @@ it (a blind retry could double-create). Adapters drive that decision:
   The retained row is recorded as a recoverable orphan; its upstream id may be empty
   until reconciled.
 
+The two bullets are INDEPENDENT preconditions on the release, and the orchestrator enforces
+both — `dispatchErrIsPreCreate(derr) && campaign == nil`. `NoUpstreamCreate` is only the
+ADAPTER's assertion about its own error, while a non-nil campaign is evidence from the same
+return that a resource was built; when they disagree the evidence wins and the claim is
+RETAINED. Every adapter today returns `preCreateError` with a nil campaign, so the second
+term guards a future adapter rather than a live path — but a release here frees the
+`(brief, platform)` slot and authorizes a duplicate PAID create, so the conservative term is
+kept regardless. The guard tests `campaign == nil` alone, never `PlatformCampaignID != ""`,
+for the reason the bullet above gives: the id-less name-only partial is precisely the shape
+that must retain.
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from
@@ -166,7 +177,7 @@ Which adapters honour it today:
 | Google Ads | yes | `validateGoogleAdsCredentials` — dispatch, toggle, metrics, discovery |
 | Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
-| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
+| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle, metrics (async Reporting API; default-OFF) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
 | LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
 | HubSpot (email) | **n/a** | out of scope — see below |
@@ -248,16 +259,58 @@ platform's actual query syntax (e.g. Google Ads' GAQL `DURING` literals, Meta's 
 guard against GAQL injection) belongs in that platform's client package, not in the adapter or
 the orchestrator.
 
-**Microsoft Ads is NOT a `MetricsReader` and is not expected to become one under this
-contract.** Its Campaign Management API v13 (REST/JSON, synchronous — what the existing
-create dispatcher and status toggle use) has no metrics surface. Metrics live in a wholly
-separate service, the Reporting API v13: SOAP, and asynchronous
-(`SubmitGenerateReport` → poll `PollGenerateReport` until the status leaves `Pending` →
-download a zipped CSV via a `ReportDownloadUrl`). There is no synchronous "impressions for
-this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contract within
-`metricsCallTimeout` (20s). Closing this gap needs a design decision (e.g. a bounded
-submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
-live read) — deferred, not attempted here.
+**Microsoft Ads implements `MetricsReader` as of LFXV2-3260**, but the read is gated OFF
+by default. Its Campaign Management API v13 (REST/JSON, synchronous — what the create
+dispatcher and status toggle use) has no metrics surface; metrics live in a separate
+service, the Reporting API v13. That API is **REST/JSON, not SOAP** — an earlier revision of
+this document said SOAP — and it is asynchronous (`SubmitGenerateReport` → poll
+`PollGenerateReport` until the status leaves `Pending` → download a zipped CSV via a
+`ReportDownloadUrl`).
+
+The adapter absorbs the asynchrony behind one bounded call: `reportPollBudget` (15s) caps
+the whole submit+poll phase and must stay strictly under `metricsCallTimeout` (20s), or the
+caller's context cancels first and `ErrReportNotReady` becomes unreachable —
+`TestReportPollBudgetStaysUnderTheMetricsCallTimeout` pins that relationship. The download
+sits outside the budget deliberately: once `Success` is reported the file exists, and
+cutting off the transfer would discard a report already paid for.
+
+"The whole submit+poll phase" is a claim about WHERE the deadline is taken, and it only
+became true in LFXV2-3260. `GetCampaignMetrics` computes `deadline` BEFORE calling
+`submitReport` and passes it into `pollReport`, so submit time is charged against the same
+budget the polling spends. An earlier revision created the deadline INSIDE `pollReport`,
+after submit had already returned: submit was effectively free, and a slow submit surfaced
+the caller's `context deadline exceeded` instead of `ErrReportNotReady`, with no download
+headroom left. `pollReport` also checks the budget BEFORE its first poll, so a submit that
+already consumed it answers `ErrReportNotReady` without issuing a poll there is no time to
+act on. `TestPollBudgetCoversTheSubmitPhase` pins this with a clock that advances only
+during the submit — an every-reading clock expires the budget either way and cannot tell the
+two placements apart.
+
+Because the request/response shapes follow Microsoft's published documentation but have
+never been exercised against a live Bing account, `ReadMetrics` answers
+`domain.ErrMetricsUnsupported` unless `MICROSOFT_METRICS_ENABLED` is exactly `"true"` —
+the same fail-closed gate Reddit uses. Delete the gate once the shape is confirmed live.
+
+**Microsoft enforces the same account-identity invariant Google Ads does, on BOTH its read
+and its toggle** (LFXV2-3260). A Microsoft campaign id is unique only WITHIN an ad account,
+while `resolveMicrosoftClient` returns the project's CURRENT connection, which
+`UpdateMicrosoftAds` can re-point between create and a later call. Unguarded, the stored
+`PlatformCampaignID` is addressed against the NEW account, where it matches nothing (a false
+"no metrics") or collides with an unrelated campaign — whose numbers would be rendered as
+this campaign's measurement on the read path, and whose delivery would be changed on the
+toggle path. `verifyMicrosoftAccountMatch` is shared by both callers so they cannot drift,
+and returns `domain.ErrCampaignAccountMismatch` (409) before any request is issued.
+
+The creating account is stamped into the result blob as `microsoft.CampaignResult.AccountID`.
+`microsoftCreationAccountID` prefers that field and falls back to the `aid=` parameter of the
+`microsoftAdsUrl` the blob has always carried, so rows written before the field existed stay
+checkable rather than silently unguarded. It mirrors `googleAdsCreationCustomerID`'s
+`customerId`/`ocid` pair exactly, INCLUDING the contract that an ABSENT id means "unknown,
+proceed": only a present-and-different id is a mismatch. Absence must not become a new
+failure signal, or every pre-LFXV2-3260 row would be stranded — unlike HubSpot, which fails
+closed on absent provenance because a bare HubSpot email id carries no recoverable fallback
+at all. The comparison is against `Client.AccountID()` (the ad account), NOT the MCC parent
+`customer_id`.
 
 **Meta** also implements it: `MetaDispatcher.ReadMetrics` resolves the connection the same way
 `ToggleStatus`/`Dispatch` do, then calls `meta.Client.GetCampaignMetrics`, which issues a single

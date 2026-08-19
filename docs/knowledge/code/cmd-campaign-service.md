@@ -12,7 +12,15 @@ wired Goa service's handlers — the health/campaign, connection, brief, and
 audience servers (`buildMux`). Every service the container wires must also be
 mounted here: a service constructed in the container but not mounted is
 unreachable (its routes 404) even though the code compiles, which is the bug the
-connection-routes change originally fixed. `debug.LogPayloads()` is intentionally not applied to any
+connection-routes change originally fixed. `buildMux` also mounts `GET /metrics` (the Prometheus text exposition format)
+directly on the muxer rather than through a Goa method, which is what keeps it out
+of the published OpenAPI documents BY CONSTRUCTION rather than by remembering the
+`Meta("swagger:generate", "false")` annotation `/livez` and `/readyz` rely on. It is
+unauthenticated for the same reason those are — the scraper carries no bearer token —
+and is likewise absent from the chart's HTTPRoute and RuleSet, so it is reachable only
+in-cluster. See [internal/infrastructure/metrics](internal-infrastructure-metrics.md).
+
+`debug.LogPayloads()` is intentionally not applied to any
 service: payloads carry bearer tokens and (for connections) plaintext provider
 credentials, so DEBUG payload logging would leak secrets. `debug.HTTP()` is
 still applied, but in clue v1.2.1 it does not log headers or statuses — it only

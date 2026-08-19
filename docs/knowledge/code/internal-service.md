@@ -55,7 +55,34 @@ an explicit `UpdateBrief`, so edits to the AI-generated copy are never silently 
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate
 platform sets (a duplicate would create two paid upstream campaigns), then hands
 off to the `Orchestrator`, which persists a job and dispatches per platform
-asynchronously (bounded concurrency). Dispatch is idempotent: a brief already
+asynchronously (bounded concurrency). The orchestrator records dispatch outcomes,
+job state transitions and upstream platform latency through the `DispatchMetrics`
+interface — declared in THIS package rather than importing
+[internal/infrastructure/metrics](internal-infrastructure-metrics.md), so orchestrator
+tests do not drag in a Prometheus registry, and injected via `SetMetrics` from the one
+`newOrchestrator` helper both construction paths route through. It defaults to a no-op,
+never nil, so every record site is unconditional. A recovered dispatcher panic gets its
+OWN outcome rather than folding into `failure`: a panic is a bug in this service, not an
+upstream refusal, and the two want different responses from whoever is on call. A panic
+raised AFTER a dispatch has completed is a different case: a `dispatched` flag makes the
+recover arm leave the stored result alone, because the campaign really was created
+upstream and reporting it failed would invite a retry that could double-create a PAID
+campaign — losing one metric is strictly cheaper. Upstream
+calls are timed only AFTER the pre-platform guards pass, so local refusals (which return
+in nanoseconds) do not drag the latency quantiles toward zero.
+
+The RUNNING and TERMINAL job transitions are recorded with deliberately OPPOSITE rules.
+RUNNING is recorded on **attempt** (dispatch proceeds whether or not the status write
+lands, so gating it would under-count during a database blip). The terminal one is
+recorded only after a **successful** write, via the single `terminalize` helper both
+finalize paths route through: `campaign_job_transitions_total` exists so a stuck job
+shows up as the gap between `running` and the terminal statuses, and a job whose terminal
+write failed is still `running` in the database — counting its terminal would close the
+gap for exactly the rows the alert hunts. The recovery sweeper (`runRecoverySweep`)
+then records one terminal transition per row it recovers — that is where the gap
+CLOSES. Both halves are needed: guarding only the finalize side would leave the gap
+permanently open, so a stuck-job alert would keep firing after the rows were already
+terminal in the database. Dispatch is idempotent: a brief already
 carrying a COMPLETED campaign for a platform is reused rather than re-created. The
 idempotency fast-path lookup (`GetCampaignByPlatform`) distinguishes its outcomes: an
 existing campaign with an upstream id AND a terminal status (`created` /
@@ -81,6 +108,25 @@ orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
+
+### Background sweepers
+
+The orchestrator runs TWO periodic sweepers, both tracked by `wg` and both owned by
+`sweeperCtx` — which `Shutdown` cancels FIRST, before the dispatch drain, so a sweep
+already blocked in the database is interrupted promptly and its shutdown never eats
+into the drain budget. Both run on every replica with no leader election.
+
+- `StartRecoverySweeper` (every 5m) fails forward jobs stuck past `staleJobCutoff`,
+  complementing the one-time startup scan.
+- `StartJobRetentionSweeper` (hourly, LFXV2-3222) prunes TERMINAL `campaign_jobs`
+  rows past the retention window via `JobRepo.PruneTerminalJobs`, bounding a table
+  that is otherwise append-only. The window comes from `CAMPAIGN_JOB_RETENTION` via
+  `SetJobRetention`, which IGNORES a non-positive value: zero is what an unset or
+  unparseable variable produces, and it must mean "use the long repository default",
+  never "retain nothing". A prune error is logged and dropped — retention failing
+  costs disk, never correctness — and the goroutine keeps running rather than exiting
+  on the first transient error. See the postgres concept for why only terminal
+  statuses are eligible and why they are an allow-list.
 
 ## Campaign status toggle
 

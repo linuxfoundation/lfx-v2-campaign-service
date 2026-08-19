@@ -172,8 +172,10 @@ type Client struct {
 	// Microsoft splits its API across hosts by service; apiVersion is shared, since both
 	// services are versioned in lockstep at v13.
 	customerBaseURL string
-	apiVersion      string
-	tokenURL        string
+	// reportingBaseURL is the Reporting origin — the third host in the same split.
+	reportingBaseURL string
+	apiVersion       string
+	tokenURL         string
 
 	httpClient *http.Client
 	now        func() time.Time
@@ -254,6 +256,16 @@ func WithCustomerBaseURL(u string) Option {
 	}
 }
 
+// WithReportingBaseURL overrides the Reporting service origin. Primarily for tests
+// (httptest.Server).
+func WithReportingBaseURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.reportingBaseURL = strings.TrimRight(u, "/")
+		}
+	}
+}
+
 // WithTokenURL overrides the OAuth2 token endpoint. Primarily for tests.
 func WithTokenURL(u string) Option {
 	return func(c *Client) {
@@ -303,15 +315,16 @@ func withRetryBaseDelay(d time.Duration) Option {
 // caller's client is not mutated). Mirrors the google-ads/reddit clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:           creds,
-		account:         account,
-		baseURL:         msAdsBaseURL,
-		customerBaseURL: msCustomerBaseURL,
-		apiVersion:      msAdsAPIVersion,
-		tokenURL:        msOAuthTokenURL,
-		httpClient:      &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
-		now:             time.Now,
-		retryBaseDelay:  retryBaseDelay,
+		creds:            creds,
+		account:          account,
+		baseURL:          msAdsBaseURL,
+		customerBaseURL:  msCustomerBaseURL,
+		reportingBaseURL: msReportingBaseURL,
+		apiVersion:       msAdsAPIVersion,
+		tokenURL:         msOAuthTokenURL,
+		httpClient:       &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
+		now:              time.Now,
+		retryBaseDelay:   retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -611,6 +624,14 @@ func clipID(s string) string {
 	return s // fewer than max runes
 }
 
+// AccountID reports the ad account id this client is bound to. Exposed so a caller holding a
+// campaign created under a KNOWN account can verify the connection it just resolved still
+// points at that same account before issuing an account-scoped request — Microsoft campaign
+// ids are unique only WITHIN an account, so running such a request under a different account
+// reads as "no activity" at best and another account's campaign at worst. Mirrors
+// googleads.Client.CustomerID.
+func (c *Client) AccountID() string { return c.account.AccountID }
+
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
@@ -674,6 +695,35 @@ func (c *Client) doCustomerRequest(ctx context.Context, method, path string, bod
 		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
 	}
 	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
+}
+
+// doReportingRequest performs one call against the REPORTING service —
+// {reportingBaseURL}/Reporting/{version}/{path} — reusing do's token refresh, 429 policy
+// and outcome classification.
+//
+// It is account-scoped (unlike doCustomerRequest): a report is always about ONE account's
+// data, so CustomerAccountId must be attached and validateAccountIDs must run. The account
+// id also reaches the request body, but via Scope.Campaigns[].AccountId — NOT via
+// Scope.AccountIds, which submitReport deliberately omits because that element is UNIONed
+// with Campaigns and would widen a campaign-scoped read to the whole account.
+func (c *Client) doReportingRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, err
+	}
+	return c.do(ctx, method, c.reportingBaseURL+"/Reporting/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+}
+
+// sleepCtx waits for d, or returns early if ctx is done. A bare time.Sleep in a poll loop
+// would keep waiting after the caller has already given up.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // do is the shared request loop behind doRequest and doCustomerRequest. fullURL is
@@ -1013,7 +1063,27 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // array (so it never truncates/corrupts a large valid body) but only RETAINS the first
 // maxDecodedErrorItems elements — later elements are decoded into a scratch and dropped, so
 // a pathological fault with thousands of tiny items can't balloon memory before the cap.
-type boundedErrorItems []msErrorItem
+//
+// Truncation is RECORDED rather than silent, because at least one consumer's correctness
+// depends on completeness rather than on a sample. isDuplicateKeywordPartial is ALL-not-ANY:
+// it concludes "every rejection here is an already-exists duplicate" and lets the caller
+// report the batch as a no-op success. Reading that conclusion off a truncated array is
+// unsound — AddKeywords sends up to maxKeywords (60) and only 16 errors are retained, so a
+// genuine editorial rejection at index 40 was discarded BEFORE classification and the batch
+// was reported as duplicate-only success, which is exactly what ALL exists to prevent.
+//
+// Widening the bound to maxKeywords was the other candidate and was rejected: it fixes the
+// 60-keyword case but leaves the invariant resting on a size coincidence, so it breaks again
+// the moment maxKeywords rises or a body null-pads past the bound. Recording truncation makes
+// the invariant structural instead — absence of a rejection in a set KNOWN to be incomplete is
+// never evidence there was none, at any size — and keeps the O(1) memory bound the cap exists
+// for.
+type boundedErrorItems struct {
+	Items []msErrorItem
+	// Truncated reports that the body carried MORE error items than were retained, so Items
+	// is a prefix of the real error set rather than the whole of it.
+	Truncated bool
+}
 
 func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -1032,10 +1102,14 @@ func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 		if err := dec.Decode(&it); err != nil {
 			return err
 		}
-		if len(*b) < maxDecodedErrorItems {
-			*b = append(*b, it)
+		if len(b.Items) < maxDecodedErrorItems {
+			b.Items = append(b.Items, it)
+			continue
 		}
-		// else: parsed to advance the stream, then discarded (bounds memory).
+		// Parsed to advance the stream, then discarded (bounds memory) — but the fact that
+		// something WAS discarded is retained, so a consumer that needs completeness can tell
+		// it is looking at a prefix.
+		b.Truncated = true
 	}
 	return nil
 }
@@ -1079,7 +1153,7 @@ func parseErrorCodes(body []byte) []string {
 	if !add(env.ErrorCode) || !add(env.Code) {
 		return codes
 	}
-	for _, group := range []boundedErrorItems{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
+	for _, group := range [][]msErrorItem{env.Errors.Items, env.OperationErrors.Items, env.BatchErrors.Items, env.PartialErrors.Items} {
 		for _, it := range group {
 			if !add(it.ErrorCode) || !add(it.Code) {
 				return codes

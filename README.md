@@ -12,9 +12,64 @@ campaign creation and management.
   requests (readiness probe), including a PostgreSQL connectivity
   check. Returns `200` with a `text/plain` body of `OK` when ready,
   or `503` when not ready.
+- `/metrics`: `GET` — Prometheus metrics in the text exposition
+  format. Served on the same port as the API, and available in
+  no-database mode and during a cold start (a scrape target that only
+  appears once the database is up is exactly backwards). See
+  [Metrics](#metrics) below.
 
-Both endpoints are unauthenticated and are excluded from the generated
-public API documentation.
+These three endpoints are unauthenticated and are excluded from the
+generated public API documentation. They are also absent from the Helm
+chart's `HTTPRoute` and Heimdall `RuleSet`, so they are reachable only
+in-cluster (kubelet probes and the Prometheus scraper), never through
+the public gateway.
+
+## Metrics
+
+`GET /metrics` serves the Prometheus text exposition format. The
+endpoint takes **no configuration** — there is no environment variable
+to enable it and no separate metrics port. It is independent of the
+`OTEL_*` settings below: `OTEL_METRICS_EXPORTER` defaults to `none`, so
+wiring these instruments to the OTLP pipeline would leave `/metrics`
+empty in the default deployment.
+
+Service metrics:
+
+| Metric | Type | Labels | What it answers |
+| --- | --- | --- | --- |
+| `campaign_dispatch_total` | counter | `platform`, `outcome` | Are campaigns actually landing on each ad platform? `outcome` is one of `success`, `skipped`, `failure`, `panic` — `panic` is separate because it is a bug in this service, not an upstream refusal. |
+| `campaign_job_transitions_total` | counter | `status` | Dispatch jobs reaching each state (`running`, `succeeded`, `partial`, `failed`). A growing gap between `running` and the terminal states means jobs are getting stuck — the terminal transition is recorded only when the status write actually persisted, so a job stuck by a failed write leaves the gap open rather than closing it. |
+| `campaign_upstream_calls_total` | counter | `platform`, `operation`, `outcome` | Upstream ad-platform API call volume and error rate. |
+| `campaign_upstream_call_duration_seconds` | histogram | `platform`, `operation`, `outcome` | Upstream ad-platform latency. Timed only after the pre-platform guards pass, so local refusals do not drag the quantiles toward zero. Bucketed on the service's own call budgets (10ms…45s, with edges on the 20s/30s/45s ceilings) rather than the OTel default, whose ms-scale boundaries would collapse every healthy call into one bucket. |
+| `campaign_db_pool_*` | gauge / counter | none | Database pool health: acquired, idle, total, max and newly-established connections, plus canceled and empty acquires. Exported only when a pool is actually wired — see below. |
+
+Plus the standard Go runtime and process collectors.
+
+**Label cardinality.** No metric here carries a campaign id, brief id,
+project id, job id, account id or URL as a label value — an unbounded
+label creates one retained time series per distinct value and is the
+classic way to take a Prometheus server down. `platform` is mapped
+through a closed provider set and anything outside it collapses to
+`unknown`; the outcome labels are closed enums; and `operation` passes a
+shape guard that admits short lower-snake tokens and degrades anything
+id-shaped or derived to `unknown`. No metric name, label
+or help string carries a credential, DSN or token.
+
+**Absent pool metrics are meaningful.** When no database is wired (no-DB
+mode, or a cold start before the pool opens) the `campaign_db_pool_*`
+series are **not exported at all**, rather than exported as zeroes. A
+zero is a measurement: reporting `max_connections=0` for a service
+running without a database is indistinguishable from a pool that has
+collapsed, and would fire a false exhaustion alert.
+
+**Scraping.** The chart sets `prometheus.io/scrape`,
+`prometheus.io/path` and `prometheus.io/port` on the pod template by
+default, so a discovery-based collector picks the pod up with no further
+configuration. `prometheus.io/port` is derived from `service.port` in
+the template rather than hardcoded in `values.yaml`, so the scrape port
+cannot drift from the port the container listens on. A deployment that
+overrides `podAnnotations` replaces the map, so it must re-declare
+`prometheus.io/scrape` and `prometheus.io/path` to keep being scraped.
 
 ## Environment variables
 
@@ -135,6 +190,51 @@ openssl rand -base64 32
   sets it to `"false"`
   (`charts/lfx-v2-campaign-service/values.yaml`); flip it only after
   the contract is verified against a live Reddit ad account.
+- `CAMPAIGN_JOB_RETENTION` (default `4320h`, i.e. 180 days) — how long a
+  **terminal** campaign job (`succeeded`, `partial`, `failed`) is kept
+  before the retention sweeper deletes it. A Go duration string.
+
+  `campaign_jobs` is otherwise append-only: nothing else in the service
+  deletes a row, so without the sweeper the table grows with every brief
+  dispatch forever, and the stuck-job recovery sweep pays for that
+  growth on every pass. One bounded, ordered batch is deleted per pass
+  (see `JobRepo.PruneTerminalJobs`), so a large backlog drains over
+  several passes rather than in one long transaction. Every replica runs
+  it without leader election, exactly as the stuck-job sweeper does —
+  overlapping passes are harmless because the delete is bounded and
+  idempotent.
+
+  Only **terminal** jobs are ever eligible, enumerated as an allow-list
+  rather than as "not queued/running". A queued or running row is never
+  deleted at any age: an old non-terminal row is a **stuck job**, which
+  is precisely the record needed to investigate a dispatch that never
+  finished. (The recovery sweeper fails those out after 15m, at which
+  point they become terminal and their retention window starts from that
+  transition.) Age is measured on `updated_at` — when the job reached
+  its terminal state — so a job created months ago but completed
+  yesterday counts as recent history.
+
+  The default is deliberately long because these rows are the audit
+  trail of real ad spend. Unset, empty, unparseable (`30 days` and `7d`
+  are **not** valid Go durations) and non-positive values all fall back
+  to the 180-day default rather than to a short window, so a typo cannot
+  cause early deletion — the rejected value is logged at startup.
+
+- `MICROSOFT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to Microsoft Advertising (Bing Ads) metrics reads.
+  Only the exact value `true` enables them; unset or any other value
+  (including `TRUE` or a typo) fails closed, and
+  `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
+  supported for this campaign's platform" for a Microsoft campaign.
+  Off by default because the v13 Reporting contract was implemented
+  from Microsoft's published documentation and has NOT been exercised
+  against a live Microsoft Advertising account. Microsoft's pipeline
+  is also unlike every other platform's — an asynchronous
+  submit/poll/download returning a zipped CSV rather than one JSON
+  GET — so there is more surface to be wrong about. The chart sets it
+  to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
+  only after the contract is verified against a live Microsoft ad
+  account.
 
 ### Snowflake (optional, audience building)
 
