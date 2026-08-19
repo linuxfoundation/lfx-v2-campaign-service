@@ -158,6 +158,18 @@ type CampaignInput struct {
 	// field rather than inventing a default that could not be currency-correct across every
 	// account. A non-zero value must be within [minCpcBid, maxCpcBid].
 	CpcBid float64
+	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
+	// (LFXV2-3279), attached as CAMPAIGN-level location criteria. Optional at this layer: an
+	// empty list creates the campaign with NO location criteria, which is what this client
+	// did before geo targeting existed and means Microsoft serves it EVERYWHERE.
+	//
+	// That default is why an unresolvable code is a HARD FAILURE rather than a silent drop.
+	// Microsoft takes numeric LocationIds, not ISO codes, so each code is resolved against
+	// Microsoft's own geographical-locations file at create time; if any code cannot be
+	// resolved, CreateCampaign REFUSES before its first mutating call. Dropping it instead
+	// would produce a campaign that spends globally while reporting success — the exact
+	// defect this ticket fixes. See geo.go.
+	GeoTargets []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -203,6 +215,19 @@ type CampaignResult struct {
 	// with NO keywords is re-keyworded on the next run (they are posted, not skipped), so the
 	// ids land and ACTIVATE succeeds.
 	KeywordIDs []string `json:"keywordIds,omitempty"`
+	// GeoCriterionIDs are the ids of the CAMPAIGN-level location criteria THIS RUN attached
+	// (LFXV2-3279). It reports what this RUN did, NOT the campaign's total targeting.
+	//
+	// EMPTY DOES NOT MEAN UNTARGETED, and reading it that way is the mistake this comment
+	// exists to prevent. On a REUSED campaign the client reads the existing location criteria
+	// (existingLocationIDs) and attaches only the ones genuinely missing, so an empty field
+	// there means every requested target was ALREADY present — the campaign is targeted and
+	// this run correctly attached nothing. The reuse path's Steps entry says which case it was.
+	//
+	// It is only on a run that CREATED the campaign that an empty value would mean no
+	// targeting — and that case cannot reach a successful result, because a geo attach failure
+	// on a created campaign is returned as an error with a partial, never as a clean success.
+	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -477,6 +502,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign bid invalid: %w", err)
 	}
+	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
+	// below, before the first mutating call. Splitting the two is deliberate: this half needs
+	// no network, so an unsupported code fails with nothing sent at all.
+	geoCodes, err := validateGeoTargets(in.GeoTargets)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err)
+	}
 
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
@@ -497,6 +529,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// classify as an ambiguous transportError.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign creation aborted before any request (context already done): %w", ctxErr)
+	}
+
+	// Resolve the geo codes to numeric Microsoft LocationIds BEFORE anything is created.
+	//
+	// This is a NETWORK call (it may download Microsoft's geographical-locations file), so it
+	// cannot live in the pure-validation prologue above — but it must still happen before the
+	// first MUTATING call, and that ordering is the entire safety property of this ticket.
+	// Location criteria can only be attached AFTER the campaign exists; if resolution ran at
+	// that point instead, a failure would leave a campaign with NO location criteria, which
+	// Microsoft serves EVERYWHERE. The campaign is created paused, but a paused untargeted
+	// campaign is one human click away from spending globally, and the operator enabling it
+	// has no signal that its targeting silently went missing.
+	//
+	// Refusing here costs nothing: the lookup and the create below never run, so there is no
+	// orphaned campaign to reconcile and a clean (nil, err) is honest about it.
+	geoLocationIDs, err := c.resolveGeoTargets(ctx, geoCodes)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo targeting could not be resolved (nothing was created): %w", err)
 	}
 
 	// Step 1: idempotency lookup by the deterministic (case-insensitively unique) name,
@@ -602,10 +652,120 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// UNCONFIRMED ad-group/ad step, where this run may have created (or attempted) a lower
 	// level even though the campaign was reused — so "created nothing" is not true. Only the
 	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
+	// geoCriterionIDs accumulates the ids of the location criteria attached below, so a later
+	// ad-group/ad failure still reports the targeting this run put on the campaign.
+	var geoCriterionIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
+		r.GeoCriterionIDs = geoCriterionIDs
 		return r
+	}
+
+	// Step 2.5: attach the CAMPAIGN-level location criteria, before the ad-group cascade.
+	//
+	// Location criteria belong to the campaign, so this is the earliest point they CAN be
+	// attached — and attaching them first is deliberate: it narrows the window in which a
+	// campaign exists with no targeting. The ids were resolved before the campaign was
+	// created, so this step can no longer fail for an unresolvable code; only the POST itself
+	// can fail, and that failure is reported rather than swallowed.
+	//
+	// A geo failure is NOT downgraded to a warning. An untargeted campaign is the harm this
+	// ticket exists to prevent, so the caller gets an error and a partial carrying the
+	// campaign id, which is what a reconciliation needs to either finish or delete the tree.
+	//
+	// ON A REUSED CAMPAIGN THE EXISTING CRITERIA ARE READ FIRST, because neither guess is safe.
+	// Re-posting blindly DUPLICATES every location: AddCampaignCriterions publishes no
+	// duplicate refusal, unlike AddKeywords (1517/1542), and the dispatcher retries by design
+	// (NameSuffix = brief.ID composes the same name so the lookup reuses the campaign), so each
+	// retry would widen the criterion list on a live paid campaign. Skipping blindly is worse:
+	// a run whose attach was REJECTED leaves a campaign with NO criteria, and the retry would
+	// then finish the cascade and report SUCCESS for a campaign that serves everywhere — the
+	// exact harm this ticket exists to prevent, reintroduced through the back door.
+	//
+	// POST /CampaignCriterions/QueryByIds distinguishes the two, and only the locations that
+	// are genuinely missing are attached. A read FAILURE is propagated rather than treated as
+	// "no criteria": "we could not check" must not collapse into the re-attach path.
+	//
+	// SCOPE — this is CAMPAIGN-level targeting only, and that is a real bound worth stating.
+	// Microsoft lets an AD GROUP carry its own location criteria, and when it does they
+	// OVERRIDE the campaign's for that group. This client never creates ad-group location
+	// criteria (only campaign-level ones, here), so a tree it builds end to end has exactly one
+	// place geo is decided. The gap is a REUSED ad group that a human added ad-group-level geo
+	// to outside this service: findOrCreateAdGroup matches by name and does not read its
+	// criteria, so that group's locations would govern delivery while this step reports the
+	// campaign targeting it attached. Closing it needs an ad-group criterion read
+	// (/AdGroupCriterions) in the reuse path, which is a separate change from campaign-level
+	// targeting; it is NOT claimed to be handled here. The same reuse discipline would apply:
+	// read, reconcile what is genuinely missing, refuse on a conflict.
+	if len(geoLocationIDs) > 0 {
+		wanted := geoLocationIDs
+		if alreadyExisted {
+			existing, excluded, rerr := c.existingLocationIDs(ctx, campaignID)
+			if rerr != nil {
+				return campaignPartial(), fmt.Errorf("microsoft-ads could not read the existing location criteria of reused campaign %s, so its geo targeting cannot be confirmed or safely completed (do not enable it until verified): %w", campaignID, rerr)
+			}
+			// A requested target that the campaign already EXCLUDES is refused, not attached.
+			// Microsoft applies exclusions AFTER inclusions, so adding a positive criterion on
+			// top of a NegativeCampaignCriterion does NOT override it — the country stays
+			// excluded while this run reports the targeting as attached, which is the same
+			// silent wrong-geo outcome the polarity check exists to prevent. Removing the
+			// exclusion is not this broker's call either: it is a deliberate decision made on a
+			// live campaign, so the conflict is surfaced for a human instead.
+			if conflicts := intersectExcluded(geoLocationIDs, excluded); len(conflicts) > 0 {
+				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting CONFLICTS with existing exclusions on reused campaign %s: location(s) %s are requested as targets but are already EXCLUDED by a negative campaign criterion, and Microsoft applies exclusions after inclusions, so attaching them would not take effect (remove the exclusions in Microsoft Advertising, or target different countries, before retrying)",
+					campaignID, strings.Join(conflicts, ", "))
+			}
+			// The reconcile compares the EXACT positive set, not just "is what I asked for a
+			// subset of what is there". composeName does not include GeoTargets — the name is
+			// LFX | Search Campaign | project | event | brief.ID — so the same brief re-run with
+			// a NARROWER geo list reuses the same campaign, and a subset check would find every
+			// requested id present, attach nothing, and report success for a campaign still
+			// carrying the WIDER previous targeting. That is a campaign spending in countries
+			// nobody approved, reported as correctly targeted: the same class of harm as an
+			// untargeted campaign, just smaller in blast radius.
+			//
+			// Extra criteria are REFUSED rather than removed, for the same reason a conflicting
+			// exclusion is: deleting location criteria from a live paid campaign is a targeting
+			// decision that belongs to an operator, not to a retry path. The error names the
+			// unexpected locations so the fix is mechanical.
+			if extra := unrequestedTargets(existing, geoLocationIDs); len(extra) > 0 {
+				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting MISMATCH on reused campaign %s: it carries location criteria that were NOT requested (%s), so it would serve more widely than this brief asks (requested: %s). The campaign name does not encode geo targeting, so a re-run with a narrower list reuses the same campaign; remove the unexpected location criteria in Microsoft Advertising, or create a distinct campaign, before retrying",
+					campaignID, strings.Join(extra, ", "), strings.Join(geoCodes, ", "))
+			}
+			missing := make([]string, 0, len(geoLocationIDs))
+			for _, id := range geoLocationIDs {
+				if _, have := existing[id]; !have {
+					missing = append(missing, id)
+				}
+			}
+			wanted = missing
+			if len(wanted) == 0 {
+				steps = append(steps, fmt.Sprintf("Geo targeting already present on reused campaign %s (%s) — not re-attached", campaignID, strings.Join(geoCodes, ", ")))
+			}
+		}
+		if len(wanted) > 0 {
+			geoIDs, gerr := c.createCampaignCriterions(ctx, campaignID, wanted)
+			if gerr != nil {
+				partial := campaignPartial()
+				partial.GeoCriterionIDs = geoIDs
+				switch {
+				case createOutcomeAmbiguous(gerr) || errors.Is(gerr, errNoID):
+					return partial, fmt.Errorf("microsoft-ads geo targeting UNCONFIRMED (campaign %s exists; its location criteria may or may not have been attached — verify its targeting in Microsoft Advertising before enabling or retrying): %w", campaignID, gerr)
+				case errors.Is(gerr, context.Canceled) || errors.Is(gerr, context.DeadlineExceeded):
+					return partial, fmt.Errorf("microsoft-ads geo targeting aborted (campaign %s exists with incomplete location criteria and would serve too widely if enabled; context done): %w", campaignID, gerr)
+				case errors.Is(gerr, errPartialFailure) && len(geoIDs) > 0:
+					// Some criteria DID attach. Saying "NOT geo-targeted" here would be false and
+					// would send an operator to delete targeting that exists; the campaign is
+					// targeted to a SUBSET, which still must not be enabled as-is.
+					return partial, fmt.Errorf("microsoft-ads geo targeting PARTIALLY attached (campaign %s carries %d of %d requested location criteria and would serve too widely if enabled; reconcile the missing ones before enabling): %w", campaignID, len(geoIDs), len(wanted), gerr)
+				default:
+					return partial, fmt.Errorf("microsoft-ads geo targeting rejected (campaign %s exists but is NOT geo-targeted and would serve everywhere if enabled; do not enable it until its targeting is fixed): %w", campaignID, gerr)
+				}
+			}
+			geoCriterionIDs = geoIDs
+			steps = append(steps, fmt.Sprintf("Geo targeting attached: %d location criteria (%s)", len(geoIDs), strings.Join(geoCodes, ", ")))
+		}
 	}
 
 	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the

@@ -44,19 +44,28 @@ import (
 //     PartialErrors array — the NestedPartialErrors shape belongs to the criterion endpoints
 //     this client does not use.)
 //
-// GEO TARGETING IS DELIBERATELY NOT HERE, and the reason is a hard API constraint rather
-// than a scoping preference. Microsoft takes location criteria at the CAMPAIGN level
-// (POST /CampaignCriterions with a LocationCriterion), and LocationCriterion.LocationId —
-// a numeric Microsoft identifier — is its ONLY Add-writable element; DisplayName and
-// LocationType are read-only, so a country cannot be named. Those ids come from Microsoft's
-// geographical-locations CSV, fetched via POST /GeoLocationsFileUrl/Query, which this
-// service does not ingest. The sibling dispatchers' geoTargets are ISO-2 strings ("US",
-// "JP") and the v13 API accepts an ISO code for targeting NOWHERE — the ISO table in
-// Microsoft's own Geographical Location Codes guide is explicitly scoped to account
-// business addresses, and the locations file has no ISO column at all. Plumbing geo here
-// would therefore mean hardcoding an invented ISO→LocationId table (US=190, CA=32, …) on
-// the path that spends money, and one that silently goes stale as locations are deprecated.
-// That needs the locations file as a real, refreshable input, so it is its own change.
+// GEO TARGETING IS NOT IN THIS FILE, but it EXISTS: it lives in geo.go (LFXV2-3279),
+// because Microsoft takes location criteria at the CAMPAIGN level (POST /CampaignCriterions
+// with CriterionType "Targets") while everything here is ad-group scoped. That split is the
+// only reason the two are separate files.
+//
+// An earlier revision of this comment asserted geo targeting was IMPOSSIBLE without an
+// invented ISO->LocationId table, on the grounds that "the v13 API accepts an ISO code for
+// targeting NOWHERE" and that the ISO table in Microsoft's Geographical Location Codes guide
+// is "explicitly scoped to account business addresses". Checked against the primary sources,
+// the CONSTRAINT held but that PROOF did not. LocationCriterion.LocationId really is the only
+// Add-writable element (DisplayName/LocationType/EnclosedLocationIds are all "Add: Read-only")
+// and the locations file really has no ISO column, so an ISO code is genuinely not a
+// targetable value. But the guide introduces its country table with "In some contexts the API
+// requires a country code string e.g., for the business address of an AdvertiserAccount
+// object" — an EXAMPLE, not a scope limit, so the table was never the barrier it was said to
+// be. What it yields is a country NAME, and a name is not a LocationId; THAT is why the file
+// must be ingested.
+//
+// geo.go therefore does what the deferral asked for: it fetches the locations file via
+// POST /GeoLocationsFileUrl/Query, parses it by COLUMN NAME, drops non-Active rows, and
+// caches the result with a refresh — so every LocationId that reaches a paid campaign comes
+// from Microsoft at run time, and none is hardcoded here.
 // See the MS-4 section of docs/knowledge/code/internal-platform-microsoft.md.
 // ---------------------------------------------------------------------------
 
