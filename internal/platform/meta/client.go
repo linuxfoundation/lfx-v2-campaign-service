@@ -2255,11 +2255,17 @@ type CampaignResult struct {
 	Platform     string
 	CampaignName string
 	CampaignID   string
-	AdSetName    string
-	AdSetID      string
-	AdCount      int
-	MetaURL      string
-	Steps        []string
+	// AccountID is the ad account the campaign was CREATED under, in Meta's documented
+	// "act_<digits>" form. The dispatcher's metaCreationAccountID reads it back so a later
+	// read/toggle resolving to a DIFFERENT account is refused rather than addressing the
+	// stored campaign id under the wrong account. This struct is marshalled UNTAGGED, so
+	// the persisted key is the Go field name "AccountID" — the reader matches that.
+	AccountID string
+	AdSetName string
+	AdSetID   string
+	AdCount   int
+	MetaURL   string
+	Steps     []string
 }
 
 // ---------------------------------------------------------------------------
@@ -2698,6 +2704,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 					Platform:     "meta-ads",
 					CampaignName: campaignName,
+					AccountID:    accountID,
 					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 					Steps:        steps,
 				}, fmt.Errorf("meta campaign creation aborted during name lookup UNCONFIRMED (caller context done; cannot confirm %q is absent, verify in Meta Ads Manager before retrying): %w",
@@ -2724,6 +2731,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
+				AccountID:    accountID,
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w",
@@ -2758,6 +2766,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return &CampaignResult{
 					Platform:     "meta-ads",
 					CampaignName: campaignName,
+					AccountID:    accountID,
 					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 					Steps:        steps,
 				}, fmt.Errorf("meta campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
@@ -2775,6 +2784,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
+				AccountID:    accountID,
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
@@ -2799,6 +2809,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
+				AccountID:    accountID,
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign creation succeeded but returned a non-numeric campaign ID %q (a PAUSED campaign %q may exist; verify in Meta Ads Manager before retrying)", campaignID, campaignName)
@@ -2828,6 +2839,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AdSetName:    adSetName,
 			AdSetID:      adSetID,
 			AdCount:      adCount,
+			AccountID:    accountID,
 			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 			Steps:        steps,
 		}

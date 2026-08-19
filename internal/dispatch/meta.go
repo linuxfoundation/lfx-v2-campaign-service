@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -278,6 +279,18 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
 	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
 	// individual ad ids — the client discovers those via GET /{adSetID}/ads).
+	// Provenance BEFORE the provisioning guard below, deliberately. A campaign id is unique
+	// only within an ad account, so a connection re-pointed since create would address an
+	// unrelated campaign — and this path CHANGES delivery, so a collision pauses or activates
+	// something this project does not own. "This row has no ad set" is only a meaningful
+	// answer once the row is known to belong to the resolved account: on a re-pointed
+	// connection the persisted ad set id describes a campaign in a DIFFERENT account, so
+	// answering 409-not-provisioned there would explain the wrong campaign. Ordering the two
+	// the other way makes a foreign-account ACTIVATE report a missing ad set instead of the
+	// mismatch — the trap microsoft.go records at the same seam.
+	if err := verifyMetaAccountMatch("toggle meta campaign status", campaign, res.accountID); err != nil {
+		return err
+	}
 	adSetID := metaAdSetID(campaign)
 	// ACTIVATE requires a servable tree. A legacy/incomplete "created" row can lack the ad
 	// set id (absent/unparseable Result), so activating would fail without ever serving.
@@ -343,6 +356,14 @@ func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, plat
 		return nil, err
 	}
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	// Prove the persisted campaign belongs to the account this read is scoped to.
+	// resolveMetaCredentials returns the project's CURRENT connection, which can have been
+	// re-pointed since create; GET /{campaignID}/insights under a different account yields
+	// either a false "no data" or ANOTHER campaign's numbers presented as this campaign's
+	// measurement — the failure-as-measurement class this path refuses throughout.
+	if err := verifyMetaAccountMatch("read meta campaign metrics", campaign, res.accountID); err != nil {
+		return nil, err
+	}
 	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
 	if err != nil {
 		return nil, err
@@ -381,6 +402,75 @@ func metaAdSetID(campaign *model.Campaign) string {
 		return ""
 	}
 	return blob.AdSetID
+}
+
+// metaCreationAccountID reports the ad account the campaign was CREATED under, normalised to
+// Meta's documented "act_<digits>" form, or "" when the persisted result blob does not record
+// it.
+//
+// Prefers the explicit AccountID the create path now stamps, and falls back to the act= query
+// parameter of the MetaURL the blob has always carried — the create path builds that as
+// ".../adsmanager/manage/campaigns?act=" + the account id with its "act_" prefix STRIPPED, so
+// the fallback re-adds the prefix to yield the same vocabulary the connection uses. Rows
+// written BEFORE the explicit field existed therefore stay checkable rather than silently
+// unguarded. Mirrors microsoftCreationAccountID and googleAdsCreationCustomerID.
+//
+// It unmarshals into the SAME meta.CampaignResult type the create path marshals into Result
+// (campaignFromMeta), for the reason metaAdSetID records: one definition of the persisted wire
+// shape, so reader and writer move together rather than desyncing.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func metaCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob meta.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	if id := normalizeMetaAccountID(blob.AccountID); id != "" {
+		return id
+	}
+	u, err := url.Parse(blob.MetaURL)
+	if err != nil {
+		return ""
+	}
+	return normalizeMetaAccountID(u.Query().Get("act"))
+}
+
+// normalizeMetaAccountID puts a Meta ad account id into the single "act_<digits>" vocabulary
+// both sides of the provenance comparison must speak. The connection stores the prefixed form
+// while MetaURL carries the bare digits, so comparing them raw would report every legacy row
+// as a mismatch — a false 409 on a campaign that is perfectly in scope. An empty input stays
+// empty ("unknown"), never "act_".
+func normalizeMetaAccountID(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return ""
+	}
+	return "act_" + strings.TrimPrefix(trimmed, "act_")
+}
+
+// verifyMetaAccountMatch refuses an operation on a campaign that was created under a DIFFERENT
+// ad account than the project's current connection resolves to.
+//
+// Meta campaign ids are unique only WITHIN an ad account, and a project's connection can be
+// re-pointed between create and a later read/toggle. Without this check the stored
+// PlatformCampaignID is addressed against the NEW account, where it either matches nothing —
+// rendered on the read path as a campaign with genuinely zero activity — or collides with an
+// unrelated campaign, whose numbers become this campaign's measurement or whose delivery is
+// changed by the toggle.
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+func verifyMetaAccountMatch(op string, campaign *model.Campaign, accountID string) error {
+	created := metaCreationAccountID(campaign)
+	if created == "" || created == normalizeMetaAccountID(accountID) {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under meta ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, normalizeMetaAccountID(accountID), domain.ErrCampaignAccountMismatch)
 }
 
 // metaRunStatus maps the service run state (active/paused) to Meta's status enum.

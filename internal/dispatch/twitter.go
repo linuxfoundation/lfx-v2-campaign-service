@@ -288,6 +288,55 @@ func twitterChildIDs(campaign *model.Campaign) (lineItemID string) {
 	return blob.LineItemID
 }
 
+// twitterCreationAccountID reports the ad account the campaign was CREATED under, or "" when
+// the persisted result blob does not record it.
+//
+// The blob is campaignFromTwitter's json.Marshal of an UNTAGGED twitter.CampaignResult, so the
+// key is the Go field name "AccountID" — the same convention twitterChildIDs follows for
+// "LineItemID", and pinned by the same round-trip test.
+//
+// Unlike the google-ads, microsoft, linkedin and meta siblings there is NO recoverable
+// fallback: twitter.CampaignResult's TwitterURL is the bare ads-manager constant
+// ("https://ads.x.com") and has never carried an account id, so a row written before the
+// explicit AccountID field existed records no provenance anywhere and cannot be checked. Such
+// a row is waved through as "unknown"; only a re-dispatch can give it a provenance.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func twitterCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID string `json:"AccountID"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(blob.AccountID)
+}
+
+// verifyTwitterAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT ad account than the project's current connection resolves to.
+//
+// X Ads campaign ids are unique only WITHIN an ad account — every endpoint this client calls
+// is nested under /accounts/{account_id}/ — and a project's connection can be re-pointed
+// between create and a later read/toggle. Without this check the stored PlatformCampaignID is
+// addressed against the NEW account, where it either matches nothing — rendered on the read
+// path as a campaign with genuinely zero activity — or collides with an unrelated campaign,
+// whose numbers become this campaign's measurement or whose delivery is changed by the toggle.
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+func verifyTwitterAccountMatch(op string, campaign *model.Campaign, client *twitter.Client) error {
+	created := twitterCreationAccountID(campaign)
+	if created == "" || created == strings.TrimSpace(client.AccountID()) {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under x ads account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, strings.TrimSpace(client.AccountID()), domain.ErrCampaignAccountMismatch)
+}
+
 // ToggleStatus implements service.StatusToggler for X (Twitter) Ads.
 //
 // Scope is the campaign + line item; the promoted tweet is intentionally untouched (see
@@ -303,6 +352,18 @@ func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, 
 	}
 	client, err := d.resolveTwitterClient(ctx, projectID, platform)
 	if err != nil {
+		return err
+	}
+	// Provenance BEFORE the provisioning guard below, deliberately. A campaign id is unique
+	// only within an ad account, so a connection re-pointed since create would address an
+	// unrelated campaign — and this path CHANGES delivery, so a collision pauses or activates
+	// something this project does not own. "This row's line item is not known" is only a
+	// meaningful answer once the row is known to belong to the resolved account: on a
+	// re-pointed connection the persisted line-item id describes a campaign in a DIFFERENT
+	// account, so answering 409-not-provisioned there would explain the wrong campaign.
+	// Ordering the two the other way makes a foreign-account ACTIVATE report a missing line
+	// item instead of the mismatch — the trap microsoft.go records at the same seam.
+	if err := verifyTwitterAccountMatch("toggle x ads campaign status", campaign, client); err != nil {
 		return err
 	}
 	lineItemID := twitterChildIDs(campaign)
@@ -353,6 +414,14 @@ func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	}
 	client, err := d.resolveTwitterClient(ctx, projectID, platform)
 	if err != nil {
+		return nil, err
+	}
+	// Prove the persisted campaign belongs to the account this read is scoped to.
+	// resolveTwitterClient returns the project's CURRENT connection, which can have been
+	// re-pointed since create; the stats endpoint is nested under /accounts/{account_id}/, so
+	// reading the stored campaign id under a different account yields either a false "no data"
+	// or ANOTHER campaign's numbers presented as this campaign's measurement.
+	if err := verifyTwitterAccountMatch("read x ads campaign metrics", campaign, client); err != nil {
 		return nil, err
 	}
 	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, xWindow)

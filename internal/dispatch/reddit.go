@@ -271,6 +271,18 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err != nil {
 		return err
 	}
+	// Provenance BEFORE the provisioning guard below, deliberately. A campaign id is unique
+	// only within an ad account, so a connection re-pointed since create would address an
+	// unrelated campaign — and this path CHANGES delivery, so a collision pauses or activates
+	// something this project does not own. "This row has no fully-created ad group + ad" is
+	// only a meaningful answer once the row is known to belong to the resolved account: on a
+	// re-pointed connection the persisted child ids describe a campaign in a DIFFERENT
+	// account, so answering 409-not-provisioned there would explain the wrong campaign.
+	// Ordering the two the other way makes a foreign-account ACTIVATE report missing children
+	// instead of the mismatch — the trap microsoft.go records at the same seam.
+	if err := verifyRedditAccountMatch("toggle reddit campaign status", campaign, client); err != nil {
+		return err
+	}
 	adGroupID, adID := redditChildIDs(campaign)
 	// ACTIVATE requires the FULL servable tree. A reddit create can legitimately land a
 	// campaign + ad group but NO ad (the no-PostURL path returns AdCount 0 / empty AdID) and
@@ -327,6 +339,14 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 	if err != nil {
 		return nil, err
 	}
+	// Prove the persisted campaign belongs to the account this read is scoped to.
+	// resolveRedditClient returns the project's CURRENT connection, which can have been
+	// re-pointed since create; reading the stored campaign id under a different account
+	// yields either a false "no data" or ANOTHER campaign's numbers presented as this
+	// campaign's measurement.
+	if err := verifyRedditAccountMatch("read reddit campaign metrics", campaign, client); err != nil {
+		return nil, err
+	}
 	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
 	if err != nil {
 		if errors.Is(err, reddit.ErrUnsupportedWindow) {
@@ -335,6 +355,51 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 		return nil, fmt.Errorf("get campaign metrics from reddit: %w", err)
 	}
 	return metrics, nil
+}
+
+// redditCreationAccountID reports the ad account the campaign was CREATED under, or "" when
+// the persisted result blob does not record it.
+//
+// Unlike the google-ads, microsoft, linkedin and meta siblings there is NO recoverable
+// fallback: reddit.CampaignResult's RedditURL is the bare ads-manager constant
+// ("https://ads.reddit.com") and has never carried an account id, so a row written before the
+// explicit accountId field existed records no provenance anywhere and cannot be checked. Such
+// a row is waved through as "unknown"; only a re-dispatch can give it a provenance.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func redditCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(blob.AccountID)
+}
+
+// verifyRedditAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT ad account than the project's current connection resolves to.
+//
+// Reddit campaign ids are unique only WITHIN an ad account, and a project's connection can be
+// re-pointed between create and a later read/toggle. Without this check the stored
+// PlatformCampaignID is addressed against the NEW account, where it either matches nothing —
+// rendered on the read path as a campaign with genuinely zero activity — or collides with an
+// unrelated campaign, whose numbers become this campaign's measurement or whose delivery is
+// changed by the toggle.
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+func verifyRedditAccountMatch(op string, campaign *model.Campaign, client *reddit.Client) error {
+	created := redditCreationAccountID(campaign)
+	if created == "" || created == strings.TrimSpace(client.AccountID()) {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under reddit ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, strings.TrimSpace(client.AccountID()), domain.ErrCampaignAccountMismatch)
 }
 
 // redditChildIDs pulls the ad group + ad ids the create path stored in the persisted

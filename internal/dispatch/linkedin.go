@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -227,6 +228,19 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+	// Provenance BEFORE the mutation, and before the creative-servability question the client
+	// answers below. A campaign id is unique only within an ad account, so a connection
+	// re-pointed since create would address an unrelated campaign — and this path CHANGES
+	// delivery, so a collision pauses or activates something this project does not own.
+	//
+	// Ordering is load-bearing: UpdateCampaignAndCreativesStatus discovers the campaign's
+	// creatives and refuses an activate with none servable (linkedin.IsNotServable →
+	// ErrCampaignNotProvisioned). Run against a FOREIGN account that discovery describes a
+	// DIFFERENT campaign, so answering "no servable creatives" there would explain the wrong
+	// campaign — and it would have contacted LinkedIn to do it. The mismatch is the answer.
+	if err := verifyLinkedInAccountMatch("toggle linkedin campaign status", campaign, accountID); err != nil {
+		return err
+	}
 	// Cascade to the campaign's creatives too: CreateCampaign leaves them DRAFT, so
 	// activating only the campaign would not serve (a DRAFT creative never serves, and the
 	// creative's effective status is gated by the campaign). The client discovers the
@@ -491,6 +505,16 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	}
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: accessToken}, runtime, d.opts...)
 
+	// Prove the persisted campaign belongs to the account this read will be scoped to. The
+	// Ad Analytics finder is scoped by the sponsoredAccount URN built from accountID below,
+	// which is the project's CURRENT connection and may have been re-pointed since create;
+	// querying the stored campaign id under a different account yields either an empty result
+	// indistinguishable from genuinely zero activity, or ANOTHER campaign's numbers presented
+	// as this campaign's measurement.
+	if err := verifyLinkedInAccountMatch("read linkedin campaign metrics", campaign, accountID); err != nil {
+		return nil, err
+	}
+
 	// Call GetCampaignMetrics with the bare campaign id and account id.
 	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
 	if err != nil {
@@ -501,6 +525,69 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	}
 
 	return metrics, nil
+}
+
+// linkedInCreationAccountID reports the sponsored ad account the campaign was CREATED
+// under, or "" when the persisted result blob does not record it.
+//
+// Prefers the explicit accountId the create path now stamps (linkedin.CampaignResult), and
+// falls back to the account segment of the linkedInUrl the blob has always carried — the
+// create path builds that as ".../campaignmanager/accounts/<accountID>/campaigns[/<id>]",
+// making it a faithful record of the same value, so rows written BEFORE the explicit field
+// existed stay checkable rather than silently unguarded. Mirrors microsoftCreationAccountID
+// (accountId + aid=) and googleAdsCreationCustomerID (customerId + ocid=).
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func linkedInCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID   string `json:"accountId"`
+		LinkedInURL string `json:"linkedInUrl"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(blob.AccountID); id != "" {
+		return id
+	}
+	u, err := url.Parse(blob.LinkedInURL)
+	if err != nil {
+		return ""
+	}
+	// ".../campaignmanager/accounts/<accountID>/campaigns..." — take the segment that
+	// FOLLOWS "accounts". Indexing a fixed position would silently read the wrong segment
+	// if the path shape ever changes; requiring the literal marker fails closed to "unknown".
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i, seg := range segs {
+		if seg == "accounts" && i+1 < len(segs) {
+			return strings.TrimSpace(segs[i+1])
+		}
+	}
+	return ""
+}
+
+// verifyLinkedInAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT sponsored ad account than the project's current connection resolves to.
+//
+// LinkedIn campaign ids are unique only WITHIN an ad account, and the project's connection
+// can be re-pointed between create and a later read/toggle. Without this check the stored
+// PlatformCampaignID is addressed against the NEW account, where it either matches nothing —
+// rendered as a campaign with genuinely zero activity on the read path — or collides with an
+// unrelated campaign, whose numbers become this campaign's measurement or whose delivery is
+// changed by the toggle.
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+func verifyLinkedInAccountMatch(op string, campaign *model.Campaign, accountID string) error {
+	created := linkedInCreationAccountID(campaign)
+	if created == "" || created == strings.TrimSpace(accountID) {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under linkedin ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, strings.TrimSpace(accountID), domain.ErrCampaignAccountMismatch)
 }
 
 // linkedinRunStatus maps the service run state (active/paused) to LinkedIn's status enum.
