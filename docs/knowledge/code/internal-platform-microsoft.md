@@ -406,21 +406,37 @@ likewise an error carrying the campaign id (for reconciliation), never a warning
 the ad-group cascade. An empty `GeoTargets` is still legal and still means "serve everywhere" —
 that is the pre-existing behaviour, and the decision belongs to the caller.
 
-**A REUSED campaign is NOT re-attached**, and the asymmetry with keywords is deliberate.
-`AddKeywords` may be re-posted to a reused ad group because Microsoft actively REFUSES a
-duplicate keyword (`CampaignServiceDuplicateKeyword` 1517 /
-`CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists` 1542), which turns a re-post into a
-reconcile. `AddCampaignCriterions` publishes **no equivalent refusal** for a location criterion,
-so a re-post would APPEND a second copy of every location — and the dispatcher retries by design
-(`NameSuffix = brief.ID` composes the same name so the lookup reuses the campaign), meaning
-every retry would widen the criterion list on a live paid campaign. Without a documented
-duplicate rejection to rely on, skipping is the only safe direction: the targeting a previous
-run attached is still there.
+**A REUSED campaign is RECONCILED, not blindly skipped and not blindly re-posted**, and the
+asymmetry with keywords is what forces the read. `AddKeywords` may be re-posted to a reused ad
+group because Microsoft actively REFUSES a duplicate keyword (`CampaignServiceDuplicateKeyword`
+1517 / `CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists` 1542), which turns a re-post
+into a reconcile for free. `AddCampaignCriterions` publishes **no equivalent refusal** for a
+location criterion, so a re-post would APPEND a second copy of every location — and the
+dispatcher retries by design (`NameSuffix = brief.ID` composes the same name so the lookup
+reuses the campaign), meaning every retry would widen the criterion list on a live paid campaign.
 
-`CampaignResult.GeoCriterionIDs` therefore reports what THIS RUN attached. On a retry that
-reuses an existing campaign it is empty even though the targeting exists upstream, because this
-client calls no criterion read — the steps line says so explicitly rather than leaving the
-absence to be inferred.
+Skipping instead would be worse, and that was the earlier defect here. A campaign predating this
+feature, or one whose previous attach was REJECTED, carries NO criteria; skipping would finish
+the ad-group cascade and report SUCCESS for a campaign that serves everywhere — precisely the
+harm the ticket exists to prevent, reintroduced through the reuse door. Neither guess is safe, so
+the client READS: `POST /CampaignCriterions/QueryByIds` enumerates the campaign's existing
+location criteria and only the genuinely missing ones are attached. A read FAILURE is propagated,
+never treated as "no criteria" — "we could not check" must not collapse into the re-attach path.
+
+Two wire details on that read differ from the add path. `CriterionType` is `Location`, not the
+add side's `Targets` grouping ("The Targets value is not allowed for this operation"), and
+`CampaignCriterionIds` is sent as **null** to mean "all of them" — the only way to enumerate
+criteria whose ids this run never learned. The response's **outer** `Type` is decoded as well as
+the nested criterion's: a `CampaignCriterion` is polymorphic, and only a
+`BiddableCampaignCriterion` is a positive target. A `NegativeCampaignCriterion` carrying the same
+`LocationId` is an EXCLUSION, so counting it would skip the attach and leave the campaign
+excluding the country it was asked to serve. An absent or unrecognised wrapper type fails the
+read closed rather than being guessed either way.
+
+`CampaignResult.GeoCriterionIDs` therefore reports what THIS RUN attached, and an empty value on
+a reused campaign means every requested target was ALREADY present — not that the campaign is
+untargeted. The steps line distinguishes the two cases explicitly rather than leaving the absence
+to be inferred.
 
 **The refresh runs DETACHED.** Its result is shared by every concurrent waiter, so running it on
 the leader's own context published one caller's cancellation to all of them — and since a geo

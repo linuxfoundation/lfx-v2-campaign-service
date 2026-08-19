@@ -139,6 +139,12 @@ const (
 	// campaignCriterionTypeBiddable is the CampaignCriterion subtype discriminator. Biddable
 	// (not Negative) is a POSITIVE target: these are the places the campaign SHOULD serve.
 	campaignCriterionTypeBiddable = "BiddableCampaignCriterion"
+
+	// campaignCriterionTypeNegative is the OTHER CampaignCriterion subtype: an EXCLUSION
+	// rather than a target. This client never CREATES one, but a campaign it reuses may
+	// already carry them, so the reuse read has to recognise the value to avoid counting an
+	// exclusion as a satisfied positive target. See existingLocationIDs.
+	campaignCriterionTypeNegative = "NegativeCampaignCriterion"
 )
 
 // Locations-file column headings, matched case-insensitively by NAME rather than by
@@ -909,8 +915,23 @@ type queryCampaignCriterionsRequest struct {
 }
 
 // queryCampaignCriterionsResponse is the (subset of the) 200 body.
+//
+// The OUTER Type is decoded, not just the nested Criterion's. A CampaignCriterion is a
+// polymorphic wrapper whose Type is either BiddableCampaignCriterion (a POSITIVE target) or
+// NegativeCampaignCriterion (an EXCLUSION), and the add path sets it explicitly
+// (campaignCriterionTypeBiddable). Reading only the nested LocationId conflates the two: an
+// existing US EXCLUSION would satisfy a requested US TARGET, the attach would be skipped, and
+// the campaign would be left excluding the very country it was asked to serve — while this run
+// reported the targeting as already present. The wrapper Type is the only field that
+// distinguishes them, so it has to survive the decode.
+//
+// It is a POINTER so an ABSENT key is distinguishable from an empty string: absence means the
+// response does not describe the criterion's polarity, which is not evidence that it is
+// positive. See existingLocationIDs, which fails closed on both absence and any unrecognised
+// value rather than guessing.
 type queryCampaignCriterionsResponse struct {
 	CampaignCriterions []struct {
+		Type      *string `json:"Type"`
 		Criterion struct {
 			Type       string       `json:"Type"`
 			LocationId *json.Number `json:"LocationId"`
@@ -951,9 +972,35 @@ func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (ma
 	}
 	out := make(map[string]struct{}, len(resp.CampaignCriterions))
 	for _, cc := range resp.CampaignCriterions {
-		if id := numberID(cc.Criterion.LocationId); id != "" {
-			out[id] = struct{}{}
+		id := numberID(cc.Criterion.LocationId)
+		if id == "" {
+			continue
 		}
+		// ONLY a Biddable criterion is a positive target. A NegativeCampaignCriterion carrying
+		// the same LocationId is an EXCLUSION of that country, and counting it as "already
+		// targeted" would skip the attach and leave the campaign excluding the country it was
+		// asked to serve — worse than the duplicate this read exists to prevent, because it is
+		// silent and the steps line would claim the targeting is present.
+		//
+		// FAIL CLOSED on anything else, including an ABSENT Type. An unrecognised or missing
+		// wrapper type means this read cannot classify the criterion's polarity, and "we could
+		// not classify it" must not collapse into either "it is a target" (skips a needed
+		// attach) or "it is not" (duplicates a criterion that is already there). Both wrong
+		// answers spend money, so the read refuses instead — the same discipline the truncation
+		// and PartialErrors guards above apply.
+		if cc.Type == nil {
+			return nil, fmt.Errorf("microsoft-ads location criterion read returned a criterion (location %s) with no Type, so it cannot be told apart from an exclusion and the campaign's existing targeting cannot be determined", id)
+		}
+		if *cc.Type == campaignCriterionTypeNegative {
+			// A known exclusion is classified, not an error — it simply is not a positive
+			// target, so it does not enter the set and the location is attached as requested.
+			continue
+		}
+		if *cc.Type != campaignCriterionTypeBiddable {
+			return nil, fmt.Errorf("microsoft-ads location criterion read returned an unrecognised criterion type %q (location %s), so the campaign's existing targeting cannot be determined",
+				truncate(*cc.Type, maxErrorBodyChars), id)
+		}
+		out[id] = struct{}{}
 	}
 	return out, nil
 }

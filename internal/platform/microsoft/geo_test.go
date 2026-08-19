@@ -756,7 +756,7 @@ func TestCreateCampaign_ReusedCampaignDoesNotReattachGeo(t *testing.T) {
 	g := &geoAPI{
 		fileBody: geoFileFixture(geoRowUS),
 		// The campaign already carries US (LocationId 190).
-		criterionReadBody: `{"CampaignCriterions":[{"Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
 	}
 	c := newGeoClient(t, g)
 	in := validInput()
@@ -1001,7 +1001,7 @@ func TestExistingLocationIDs_SendsTheReadCriterionTypeEnum(t *testing.T) {
 	g := &geoAPI{
 		fileBody:          geoFileFixture(geoRowUS),
 		criterionReadSeen: &seen,
-		criterionReadBody: `{"CampaignCriterions":[{"Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
 	}
 	c := newGeoClient(t, g)
 
@@ -1039,5 +1039,94 @@ func TestExistingLocationIDs_TruncatedErrorArrayRefuses(t *testing.T) {
 	c := newGeoClient(t, g)
 	if _, err := c.existingLocationIDs(context.Background(), "321"); err == nil {
 		t.Fatal("a truncated error array must refuse — a clean prefix is not evidence the read succeeded")
+	}
+}
+
+// A NegativeCampaignCriterion is an EXCLUSION, not a target. Counting one as an existing
+// positive target would skip the attach and leave the campaign EXCLUDING the country it was
+// asked to serve — silently, while the run reported the targeting as already present.
+func TestExistingLocationIDs_NegativeCriterionIsNotATarget(t *testing.T) {
+	g := &geoAPI{
+		fileBody: geoFileFixture(geoRowUS),
+		// US (190) is present, but as an EXCLUSION.
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"NegativeCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+
+	got, err := c.existingLocationIDs(context.Background(), "321")
+	if err != nil {
+		t.Fatalf("existingLocationIDs: %v", err)
+	}
+	if _, ok := got["190"]; ok {
+		t.Fatal("a NegativeCampaignCriterion is an EXCLUSION of that location, not a positive target; counting it would skip the attach and leave the campaign excluding the country it must serve")
+	}
+	if len(got) != 0 {
+		t.Errorf("existing targets = %v, want empty (the only criterion was an exclusion)", got)
+	}
+}
+
+// The end-to-end consequence: a reused campaign carrying only an EXCLUSION for the requested
+// country must still be attached, not reported as already targeted.
+func TestCreateCampaign_ReusedCampaignWithOnlyAnExclusionIsAttached(t *testing.T) {
+	var seen createCampaignCriterionsRequest
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionSeen:     &seen,
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"NegativeCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+
+	name := composeName(in)
+	g.campaignQueryBody = `{"Campaigns":[{"Id":321,"Name":` + strconv.Quote(name) + `}]}`
+
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if !g.sawPath("/CampaignCriterions") {
+		t.Fatal("the requested US target was only present as an EXCLUSION, so it must be attached; treating the exclusion as a satisfied target leaves the campaign excluding the country it must serve")
+	}
+	if len(seen.CampaignCriterions) != 1 {
+		t.Fatalf("attached %d criteria, want 1 (US)", len(seen.CampaignCriterions))
+	}
+	if got := seen.CampaignCriterions[0].Criterion.LocationId.String(); got != "190" {
+		t.Errorf("attached LocationId = %s, want 190", got)
+	}
+}
+
+// An ABSENT wrapper Type cannot be classified as target-or-exclusion, and neither guess is
+// safe: assuming "target" skips a needed attach, assuming "not a target" duplicates one that
+// is already there. Both spend money, so the read refuses.
+func TestExistingLocationIDs_AbsentCriterionTypeRefuses(t *testing.T) {
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadBody: `{"CampaignCriterions":[{"Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+
+	_, err := c.existingLocationIDs(context.Background(), "321")
+	if err == nil {
+		t.Fatal("a criterion with no wrapper Type cannot be told apart from an exclusion, so the read must refuse rather than guess its polarity")
+	}
+	if !strings.Contains(err.Error(), "no Type") {
+		t.Errorf("error = %v, want it to name the missing Type", err)
+	}
+}
+
+// An UNRECOGNISED wrapper type is the same unclassifiable case as an absent one.
+func TestExistingLocationIDs_UnknownCriterionTypeRefuses(t *testing.T) {
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"FutureCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+
+	_, err := c.existingLocationIDs(context.Background(), "321")
+	if err == nil {
+		t.Fatal("an unrecognised criterion type cannot be classified as a target or an exclusion, so the read must refuse")
+	}
+	if !strings.Contains(err.Error(), "unrecognised criterion type") {
+		t.Errorf("error = %v, want it to name the unrecognised type", err)
 	}
 }

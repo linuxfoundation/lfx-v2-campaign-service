@@ -216,13 +216,17 @@ type CampaignResult struct {
 	// ids land and ACTIVATE succeeds.
 	KeywordIDs []string `json:"keywordIds,omitempty"`
 	// GeoCriterionIDs are the ids of the CAMPAIGN-level location criteria THIS RUN attached
-	// (LFXV2-3279). Empty means the campaign carries no geo targeting from this run, which —
-	// unlike an empty KeywordIDs — means Microsoft will serve it EVERYWHERE once enabled.
+	// (LFXV2-3279). It reports what this RUN did, NOT the campaign's total targeting.
 	//
-	// Unlike keywords, these are NOT re-attached on a reused campaign: this client calls no
-	// criterion read, so on a retry that finds an existing campaign the ids are unknown to
-	// this run and the field is empty even though the targeting is present upstream. The
-	// field therefore reports what this RUN did, not the campaign's total targeting.
+	// EMPTY DOES NOT MEAN UNTARGETED, and reading it that way is the mistake this comment
+	// exists to prevent. On a REUSED campaign the client reads the existing location criteria
+	// (existingLocationIDs) and attaches only the ones genuinely missing, so an empty field
+	// there means every requested target was ALREADY present — the campaign is targeted and
+	// this run correctly attached nothing. The reuse path's Steps entry says which case it was.
+	//
+	// It is only on a run that CREATED the campaign that an empty value would mean no
+	// targeting — and that case cannot reach a successful result, because a geo attach failure
+	// on a created campaign is returned as an error with a partial, never as a clean success.
 	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
