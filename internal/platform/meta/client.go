@@ -1731,11 +1731,12 @@ func validateRegistrationURL(raw string) error {
 // bare link ad, exactly as before this field existed.
 //
 // This runs BEFORE any mutating call (alongside the copy-limit checks) on purpose.
-// The image upload happens per-variant, inside the creative loop, where a failure
-// is non-fatal — by then the paid campaign and ad set already exist. A malformed
-// URL is a deterministic caller error that we can detect with no network at all,
-// so detecting it up front turns "orphaned paid campaign with no ads" into a clean
-// pre-spend rejection. Mirrors validateRegistrationURL's checks and its rationale.
+// The image is attached per-variant as link_data.picture inside the creative loop,
+// where a rejection is non-fatal — by then the paid campaign and ad set already
+// exist. A malformed URL is a deterministic caller error that we can detect with no
+// network at all, so detecting it up front turns "orphaned paid campaign with no
+// ads" into a clean pre-spend rejection. Mirrors validateRegistrationURL's checks
+// and its rationale.
 func validateVariantImageURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -1750,9 +1751,9 @@ func validateVariantImageURL(raw string) error {
 	}
 	// Reject embedded userinfo (user[:password]@host). Meta FETCHES this URL
 	// server-side, so credentials embedded in it would be handed to Meta in the
-	// upload body — a basic-auth secret must not travel that path. (The URL is
-	// deliberately kept out of error strings and Steps; this check closes the
-	// remaining route by which it reaches a third party at all.) Mirrors
+	// creative body as link_data.picture — a basic-auth secret must not travel that
+	// path. (The URL is deliberately kept out of error strings and Steps; this check
+	// closes the remaining route by which it reaches a third party at all.) Mirrors
 	// validateRegistrationURL.
 	if parsed.User != nil {
 		return fmt.Errorf("image URL must not contain embedded credentials (userinfo)")
@@ -2185,19 +2186,31 @@ func redactCredentials(s string) string {
 // through. Mirrors displayMetaUTMURL's reason for existing: the full URL still
 // goes to Meta, only the persisted copy is sanitized.
 //
-// The URL is replaced by its redactURL form (scheme+host+path — no query, no
-// fragment, no userinfo) so the step still says WHICH image failed without
-// carrying the signature. An empty imageURL leaves the message untouched.
+// The rule is STRUCTURAL, not a search for the secret in the text: when the image
+// URL carries a query or fragment — the part that holds a pre-signed signature —
+// upstream-derived text is NEVER emitted. The step becomes the URL's redactURL
+// form (scheme+host+path, so it still says WHICH image failed) plus a fixed note.
 //
-// It FAILS CLOSED. Exact substring replacement only removes an echo that survived
-// upstream byte-for-byte, and the paths that reach here routinely mangle it: `do`
-// truncates a non-Graph body at 300 runes, which can clip the URL mid-query and
-// leave a PREFIX of the signature that ReplaceAll can no longer match; a proxy may
-// re-encode or line-wrap it. So after replacing, the result is VERIFIED to carry no
-// residue of the secret material (the URL's query/fragment); if any survives, the
-// message is dropped for a fixed placeholder rather than emitted. A redactor that
-// emits text it cannot confirm is clean is not a redactor — and the caller's Steps
-// are persisted, so an unverifiable message must never reach them.
+// An earlier revision replaced the URL by exact substring match and then verified
+// the result carried no recognizable fragment of the secret. That is not sound.
+// The text arriving here has been through transformations that the replacement
+// cannot invert and the verifier cannot enumerate: `do` truncates a non-Graph body
+// at 300 runes (clipping the signature mid-value), and a proxy/WAF may re-encode,
+// line-wrap, or otherwise re-render it. A substring verifier only rejects the
+// residues it thought to look for — an echo of "?sig=SECRET_SIG" wrapped to
+// "?sig=SEC\nRET_SIG" defeats both the replacement AND a prefix scan, because no
+// contiguous run of the value at or above any sensible minimum length survives.
+// Proving arbitrary transformed text clean is not something substring checks can
+// do, so this no longer tries: it withholds by construction on the only input
+// class where a secret can exist.
+//
+// When the URL has NO query or fragment there is no secret to protect, so the
+// message is emitted with the URL replaced by its redactURL form — the diagnostic
+// is kept wherever keeping it is safe. An empty imageURL leaves it untouched.
+//
+// Every return path is clamped to max, including the withheld one: redactURL keeps
+// the caller-controlled path, so an over-long path must not produce an unbounded
+// persisted Step.
 func scrubURLFromErr(err error, imageURL string, max int) string {
 	if err == nil {
 		return ""
@@ -2207,58 +2220,35 @@ func scrubURLFromErr(err error, imageURL string, max int) string {
 	if raw == "" {
 		return truncate(msg, max)
 	}
-	// Replace the full URL first, then the query-bearing forms an upstream may
-	// have re-encoded. redactURL keeps the identifying prefix.
+	if urlHasSecretMaterial(raw) {
+		// Fail closed: withhold upstream text entirely rather than emit text that
+		// no substring check can prove free of the signature.
+		return truncate(fmt.Sprintf("%s (message withheld: the image URL carries credentials that upstream text may echo)", redactURL(raw)), max)
+	}
+	// No query/fragment: nothing secret to leak. Replace the URL (and the form an
+	// upstream may have percent-encoded) with its redactURL form and keep the message.
 	msg = strings.ReplaceAll(msg, raw, redactURL(raw))
 	if esc := url.QueryEscape(raw); esc != raw {
 		msg = strings.ReplaceAll(msg, esc, redactURL(raw))
 	}
-	if !urlSecretResidueFree(msg, raw) {
-		return fmt.Sprintf("%s (message withheld: it echoed the image URL's credentials)", redactURL(raw))
-	}
 	return truncate(msg, max)
 }
 
-// minResidueRun is the shortest run of a secret's characters that urlSecretResidueFree
-// treats as a leak. A very short fragment ("ab") occurs in ordinary prose by chance, so
-// matching on it would withhold every message and destroy the diagnostic; 6 is long
-// enough to be specific to the secret and short enough that a clipped signature — the
-// exact case that defeats ReplaceAll — is still caught.
-const minResidueRun = 6
-
-// urlSecretResidueFree reports whether msg is free of any recognizable fragment of
-// rawURL's SECRET material — its query and fragment, which is where a pre-signed
-// URL carries its signature. The scheme/host/path are deliberately NOT checked:
-// redactURL intentionally leaves them so the step still identifies which image
-// failed.
+// urlHasSecretMaterial reports whether raw carries a query or fragment — the
+// components in which a pre-signed URL carries its signature. Scheme, host and
+// path are not secret material: redactURL deliberately preserves them so a step
+// still identifies which image failed.
 //
-// It checks PREFIXES of each secret token rather than only the whole token, because
-// truncation clips from the right: a 300-rune clamp can leave "sig=SECRET_SIG_ABC"
-// where the full value was "sig=SECRET_SIG_ABCDEF". A prefix check catches that; an
-// equality check does not.
-func urlSecretResidueFree(msg, rawURL string) bool {
-	secret := ""
-	if i := strings.IndexAny(rawURL, "?#"); i >= 0 {
-		secret = rawURL[i+1:]
+// A value that does not parse is treated as SECRET-BEARING. An unparseable string
+// is exactly the case where the delimiter scan is least trustworthy, and the safe
+// answer under a fail-closed policy is to withhold.
+func urlHasSecretMaterial(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
 	}
-	if strings.TrimSpace(secret) == "" {
-		return true // no query/fragment: nothing secret to leak
-	}
-	// Split into tokens on the delimiters that separate parameters, so one
-	// unaffected parameter name cannot mask another parameter's surviving value.
-	for _, tok := range strings.FieldsFunc(secret, func(r rune) bool {
-		return r == '&' || r == '=' || r == ';' || r == '#'
-	}) {
-		if len([]rune(tok)) < minResidueRun {
-			continue
-		}
-		// Longest first: any surviving prefix of length >= minResidueRun is a leak.
-		for n := len([]rune(tok)); n >= minResidueRun; n-- {
-			pre := string([]rune(tok)[:n])
-			if strings.Contains(msg, pre) {
-				return false
-			}
-		}
+	if u, err := url.Parse(trimmed); err == nil {
+		return u.RawQuery != "" || u.Fragment != "" || u.ForceQuery
 	}
 	return true
 }
@@ -2469,7 +2459,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		// The OPTIONAL creative image URL is validated here, with the rest of the
 		// deterministic per-variant checks, so a malformed URL fails before any paid
-		// resource exists rather than at the non-fatal per-variant upload.
+		// resource exists rather than at the non-fatal per-variant creative create.
 		if err := validateVariantImageURL(v.ImageURL); err != nil {
 			return nil, fmt.Errorf("variant %d: %w", i+1, err)
 		}

@@ -432,8 +432,9 @@ func TestImageURLDoesNotReachStepsWhenMetaEchoesIt(t *testing.T) {
 	}
 }
 
-// TestScrubURLFromErr covers the sink-side scrubber directly, including the forms
-// an upstream may re-encode the URL into.
+// TestScrubURLFromErr covers the sink-side scrubber directly. The scrubber's rule
+// is structural: a URL carrying a query/fragment means upstream text is withheld
+// entirely; a URL without one is safe to render alongside the message.
 func TestScrubURLFromErr(t *testing.T) {
 	const secretURL = "https://cdn.example.org/a.png?sig=SECRET_SIG"
 
@@ -442,26 +443,34 @@ func TestScrubURLFromErr(t *testing.T) {
 			t.Errorf("scrubURLFromErr(nil) = %q, want empty", got)
 		}
 	})
-	t.Run("verbatim echo is scrubbed", func(t *testing.T) {
+	t.Run("verbatim echo of a secret-bearing URL is withheld", func(t *testing.T) {
 		err := fmt.Errorf("could not fetch %s", secretURL)
 		got := scrubURLFromErr(err, secretURL, 300)
 		if strings.Contains(got, "SECRET_SIG") {
-			t.Errorf("scrubbed message still carries the signature: %q", got)
+			t.Errorf("message still carries the signature: %q", got)
 		}
 		if !strings.Contains(got, "cdn.example.org/a.png") {
-			t.Errorf("scrubbed message lost the identifying path: %q", got)
+			t.Errorf("message lost the identifying path: %q", got)
 		}
 	})
-	t.Run("percent-encoded echo is scrubbed", func(t *testing.T) {
+	t.Run("percent-encoded echo is withheld", func(t *testing.T) {
 		err := fmt.Errorf("could not fetch %s", url.QueryEscape(secretURL))
 		if got := scrubURLFromErr(err, secretURL, 300); strings.Contains(got, "SECRET_SIG") {
-			t.Errorf("percent-encoded echo not scrubbed: %q", got)
+			t.Errorf("percent-encoded echo not withheld: %q", got)
 		}
 	})
 	t.Run("empty imageURL leaves the message intact", func(t *testing.T) {
 		err := fmt.Errorf("plain failure")
 		if got := scrubURLFromErr(err, "", 300); got != "plain failure" {
 			t.Errorf("scrubURLFromErr with empty url = %q, want the message unchanged", got)
+		}
+	})
+	t.Run("a query-less URL is replaced in place, message kept", func(t *testing.T) {
+		const plain = "https://cdn.example.org/a.png"
+		err := fmt.Errorf("could not fetch %s", plain)
+		got := scrubURLFromErr(err, plain, 300)
+		if !strings.Contains(got, "could not fetch") {
+			t.Errorf("a URL with no secret material must keep the diagnostic: %q", got)
 		}
 	})
 	t.Run("still truncates", func(t *testing.T) {
@@ -566,22 +575,20 @@ func creativeLinkData(t *testing.T, body map[string]any) map[string]any {
 	return ld
 }
 
-// TestScrubURLFromErrFailsClosed covers the case exact-substring replacement cannot
-// reach: `do` truncates a non-Graph error body at 300 runes, which can clip the
-// echoed URL mid-query and leave a PREFIX of the signature. ReplaceAll no longer
-// matches, so the old scrubber emitted the surviving credential. The scrubber must
-// now withhold any message it cannot confirm is clean.
+// TestScrubURLFromErrFailsClosed pins the structural withholding rule. The cases
+// below are exactly the ones a substring-matching redactor cannot handle: `do`
+// truncates a non-Graph body at 300 runes (clipping a signature mid-value), and a
+// proxy may line-wrap or re-encode the echo. None of these can be proven clean by
+// scanning for the secret, so the scrubber must withhold on the URL's SHAPE.
 func TestScrubURLFromErrFailsClosed(t *testing.T) {
 	const secretURL = "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG_ABCDEF&e=1"
 
 	t.Run("truncated echo is withheld, not emitted", func(t *testing.T) {
-		// A proxy page that echoed the request line, then got clipped mid-signature.
 		err := fmt.Errorf("proxy error: upstream refused https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG_ABC")
 		got := scrubURLFromErr(err, secretURL, 300)
 		if strings.Contains(got, "SECRET_SIG") {
 			t.Errorf("fail-open: a clipped signature survived scrubbing: %q", got)
 		}
-		// It must still identify WHICH image failed.
 		if !strings.Contains(got, "cdn.example.org/a.png") {
 			t.Errorf("withheld message lost the identifying image path: %q", got)
 		}
@@ -594,11 +601,60 @@ func TestScrubURLFromErrFailsClosed(t *testing.T) {
 		}
 	})
 
-	t.Run("a clean unrelated message is still emitted verbatim", func(t *testing.T) {
+	// The case that defeated the previous prefix-scanning verifier: a SHORT parameter
+	// name (skipped as below the minimum run length) whose VALUE is wrapped mid-token,
+	// so no contiguous run of it survives for a substring check to find. Withholding on
+	// the URL's shape is what makes this safe; searching the text never could.
+	t.Run("short param name with a wrapped value is withheld", func(t *testing.T) {
+		const shortParamURL = "https://cdn.example.org/a.png?sig=SECRET_SIG"
+		err := fmt.Errorf("proxy error: upstream refused https://cdn.example.org/a.png?sig=SEC\nRET_SIG")
+		got := scrubURLFromErr(err, shortParamURL, 300)
+		if strings.Contains(got, "SEC\nRET_SIG") || strings.Contains(got, "SECRET_SIG") {
+			t.Errorf("fail-open: a wrapped short-param value survived: %q", got)
+		}
+		if !strings.Contains(got, "cdn.example.org/a.png") {
+			t.Errorf("withheld message lost the identifying image path: %q", got)
+		}
+	})
+
+	t.Run("a fragment-only URL is withheld", func(t *testing.T) {
+		const fragURL = "https://cdn.example.org/b.png#SECRET_FRAG"
+		err := fmt.Errorf("upstream echoed https://cdn.example.org/b.png#SECRET_FRAG")
+		if got := scrubURLFromErr(err, fragURL, 300); strings.Contains(got, "SECRET_FRAG") {
+			t.Errorf("fail-open: a fragment secret survived: %q", got)
+		}
+	})
+
+	// Even the withheld rendering is caller-controlled in its path component, so it
+	// must honor the same clamp as the normal return path.
+	t.Run("the withheld message is clamped to max", func(t *testing.T) {
+		longPath := "https://cdn.example.org/" + strings.Repeat("p", 400) + ".png?sig=SECRET_SIG"
+		err := fmt.Errorf("upstream refused")
+		got := scrubURLFromErr(err, longPath, 100)
+		if len([]rune(got)) > 101 {
+			t.Errorf("withheld message was not clamped: %d runes", len([]rune(got)))
+		}
+	})
+
+	t.Run("a clean unrelated message is withheld too when the URL is secret-bearing", func(t *testing.T) {
+		// The rule is structural: it does not depend on whether THIS message happened
+		// to echo the URL, because the next upstream rendering may.
 		err := fmt.Errorf("meta API POST /adcreatives failed (400): Invalid parameter")
 		got := scrubURLFromErr(err, secretURL, 300)
-		if got != "meta API POST /adcreatives failed (400): Invalid parameter" {
-			t.Errorf("a message with no URL residue must pass through unchanged, got %q", got)
+		if strings.Contains(got, "Invalid parameter") {
+			t.Errorf("upstream text must be withheld for a secret-bearing URL, got %q", got)
+		}
+	})
+
+	// An unparseable value is the case where the delimiter scan is least trustworthy,
+	// so urlHasSecretMaterial reports it as secret-bearing and the message is withheld.
+	t.Run("an unparseable URL is treated as secret-bearing", func(t *testing.T) {
+		// A control character makes url.Parse fail outright.
+		badURL := "https://cdn.example.org/a.png\x7f?sig=SECRET_SIG"
+		err := fmt.Errorf("upstream refused SECRET_SIG for that image")
+		got := scrubURLFromErr(err, badURL, 300)
+		if strings.Contains(got, "SECRET_SIG") {
+			t.Errorf("fail-open: an unparseable URL let upstream text through: %q", got)
 		}
 	})
 

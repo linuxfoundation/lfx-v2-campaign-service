@@ -84,15 +84,25 @@ identifying scheme+host+path and drops the query, fragment, and userinfo. This
 mirrors `displayMetaUTMURL`: the full value still goes to Meta, only the persisted
 copy is sanitized.
 
-`scrubURLFromErr` FAILS CLOSED. Substring replacement alone only catches an echo
-that survived upstream byte-for-byte, and these paths mangle it routinely: `do`
-truncates a non-Graph error body at 300 runes, which can clip the URL mid-query and
-leave a prefix of the signature that `ReplaceAll` no longer matches. After
-replacing, the result is verified free of any residue of the URL's query/fragment
-(`urlSecretResidueFree`, prefix-matched because truncation clips from the right);
-if any survives, the message is dropped for the redacted URL plus a fixed
-"message withheld" note rather than emitted. A redactor that emits text it cannot
-confirm is clean is not a redactor.
+`scrubURLFromErr` FAILS CLOSED, and it does so STRUCTURALLY rather than by
+searching the text for the secret. When the image URL carries a query or fragment
+— the components that hold a pre-signed signature — upstream-derived text is never
+emitted at all: the step becomes the URL's `redactURL` form plus a fixed
+"message withheld" note. When the URL has no query or fragment there is nothing
+secret to protect, so the message is kept with the URL replaced in place.
+
+The structural rule replaced an earlier verify-the-text approach, which was not
+sound. The text reaching this sink has been through transformations that
+replacement cannot invert and a verifier cannot enumerate: `do` truncates a
+non-Graph body at 300 runes (clipping a signature mid-value), and a proxy or WAF
+may re-encode or line-wrap the echo. A substring verifier only rejects the residues
+it thought to look for — an echo of `?sig=SECRET_SIG` wrapped to `?sig=SEC\nRET_SIG`
+defeats both the replacement and a prefix scan, because no contiguous run of the
+value survives to be found. Arbitrary transformed text cannot be proven clean by
+substring checks, so the scrubber no longer tries; it withholds on the input's
+shape. An unparseable URL is likewise treated as secret-bearing. Every return path,
+including the withheld one, is clamped to the caller's `max`, since `redactURL`
+preserves the caller-controlled path.
 
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are
