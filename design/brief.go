@@ -856,19 +856,26 @@ func briefMetricsRowStatusEnum() {
 
 // commonBriefErrors declares the standard error set for a brief method.
 //
-// BadRequest is unconditional, and it takes no parameter deciding otherwise. JWTAuth
-// returns this service's own *briefs.BadRequestError for any refused token — Goa generates
-// one concrete type per service from the shared design type, so the connections service's
-// identically-shaped error is a DIFFERENT Go type and naming it here would send a reader to
-// the wrong package. Goa builds each method's
-// error encoder from its declared list — a method that omits BadRequest has no case
-// for it, so the typed 400 falls out of the generic encoder as a 500 and never appears
+// BadRequest and Unauthorized are both unconditional, and neither takes a parameter
+// deciding otherwise. JWTAuth returns this service's own *briefs.UnauthorizedError for any
+// refused token — Goa generates one concrete type per service from the shared design type,
+// so the connections service's identically-shaped error is a DIFFERENT Go type and naming
+// it here would send a reader to the wrong package. Goa builds each method's
+// error encoder from its declared list — a method that omits Unauthorized has no case
+// for it, so the typed 401 falls out of the generic encoder as a 500 and never appears
 // in OpenAPI. That is true of a bodyless GET exactly as much as of a create. An earlier
 // revision took a `withBadRequest bool` that had stopped gating anything; it is gone
 // rather than retained-and-ignored, because a boolean at 38 call sites that a reader
 // must check does nothing is an invitation to make it mean something again.
 func commonBriefErrors() {
 	Error("BadRequest", BadRequestError, "Bad request")
+	// Unauthorized is declared for exactly the reason BadRequest is, and is now what
+	// JWTAuth actually returns for a refused token. BadRequest STAYS declared: it is
+	// still the status for payload validation, and on the methods that take no body it
+	// is still reachable through the generated path/query decoders (a project_id that
+	// fails the slug Pattern, a malformed UUID). Dropping it here because auth moved
+	// off it would turn those into 500s.
+	Error("Unauthorized", UnauthorizedError, "Unauthorized")
 	Error("NotFound", NotFoundError, "Resource not found")
 	Error("Conflict", ConflictError, "Conflict")
 	Error("InternalServerError", InternalServerError, "Internal server error")
@@ -882,6 +889,12 @@ func commonBriefErrors() {
 // than the other.
 func briefErrorResponses() {
 	Response("BadRequest", StatusBadRequest)
+	// The Header call is what puts the challenge on the wire: it maps the error type's
+	// www_authenticate attribute onto the WWW-Authenticate response header. Without it
+	// the field would serialize into the JSON body and the 401 would carry no challenge.
+	Response("Unauthorized", StatusUnauthorized, func() {
+		Header("www_authenticate:WWW-Authenticate")
+	})
 	Response("NotFound", StatusNotFound)
 	Response("Conflict", StatusConflict)
 	Response("InternalServerError", StatusInternalServerError)
