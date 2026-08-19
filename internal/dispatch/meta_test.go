@@ -1275,6 +1275,379 @@ func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 	}
 }
 
+// TestMeta_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance guard
+// on the TOGGLE path. Meta campaign ids are unique only WITHIN an ad account, so once a
+// project's connection is re-pointed the stored id addressed against the new account can
+// collide with an unrelated campaign and PAUSE OR ACTIVATE something this project does not
+// own. The refusal must be a non-retryable ErrCampaignAccountMismatch (409) raised before Meta
+// is contacted, and it must sit above BOTH branches.
+//
+// The ACTIVATE case pins the ORDERING against the ad-set guard: a foreign-account campaign
+// with NO stored ad set must answer the MISMATCH, not "cannot be activated because it has no
+// ad set to serve". The latter is a fact about a campaign in a different account, so it would
+// explain the wrong campaign — the trap microsoft.go records at the same seam.
+//
+// Both blob shapes are covered: the explicit AccountID the create path stamps, and the legacy
+// row that only carries the account in its Ads Manager URL's act= parameter.
+func TestMeta_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"AccountID field", `{"CampaignID":"23847290","AdSetID":"999","AccountID":"act_999"}`},
+		{"legacy act= url fallback", `{"CampaignID":"23847290","AdSetID":"999","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=999"}`},
+		// The ordering probe: no ad set id at all, so the not-provisioned guard would fire
+		// on ACTIVATE if it ran first.
+		{"AccountID field, no ad set", `{"CampaignID":"23847290","AdSetID":"","AccountID":"act_999"}`},
+	} {
+		for _, status := range []string{model.CampaignRunPaused, model.CampaignRunActive} {
+			t.Run(tc.name+"/status="+status, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					t.Errorf("Meta must not be contacted for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+				}))
+				defer srv.Close()
+				// activeMetaConn resolves to act_777; the rows above record act_999.
+				d := NewMetaDispatcher(
+					fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+					meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+				)
+				camp := &model.Campaign{PlatformCampaignID: "23847290", Result: json.RawMessage(tc.result)}
+				err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, camp, status)
+				if err == nil {
+					t.Fatal("expected a mismatch error")
+				}
+				if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+					t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+				}
+				// The ordering assertion: the mismatch is the answer, never the narrower
+				// provisioning verdict about another account's campaign.
+				if errors.Is(err, domain.ErrCampaignNotProvisioned) {
+					t.Errorf("a foreign-account campaign must answer the mismatch, not a provisioning verdict: %v", err)
+				}
+				// Assert the VALUES, in the single act_ vocabulary both sides normalise to.
+				if !strings.Contains(err.Error(), "act_999") || !strings.Contains(err.Error(), "act_777") {
+					t.Errorf("error must name the created account (act_999) and the resolved one (act_777), got %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestMeta_ToggleStatus_MatchingOrUnknownAccountStillToggles is the guard's other half. It
+// also pins the act_ NORMALISATION: the connection stores "act_777" while a legacy MetaURL
+// carries the bare digits "777", so a raw comparison would report every legacy row as a
+// mismatch — a false 409 on a campaign that is perfectly in scope.
+func TestMeta_ToggleStatus_MatchingOrUnknownAccountStillToggles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching AccountID", `{"CampaignID":"23847290","AdSetID":"999","AccountID":"act_777"}`},
+		{"matching bare-digit url fallback", `{"CampaignID":"23847290","AdSetID":"999","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=777"}`},
+		{"no provenance recorded", `{"CampaignID":"23847290","AdSetID":"999"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var mutations int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+					_, _ = io.WriteString(w, `{"data":[{"id":"555"}]}`)
+					return
+				}
+				mu.Lock()
+				mutations++
+				mu.Unlock()
+				_, _ = io.WriteString(w, `{"success":true}`)
+			}))
+			defer srv.Close()
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "23847290", Result: json.RawMessage(tc.result)}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, camp, model.CampaignRunActive); err != nil {
+				t.Fatalf("ToggleStatus must proceed for a matching/unknown account, got %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// The guard let the call THROUGH. Asserting only "no error" would also pass if
+			// the toggle silently did nothing.
+			if mutations == 0 {
+				t.Error("a matching/unknown-account campaign must actually be toggled, but no mutation reached Meta")
+			}
+		})
+	}
+}
+
+// TestMeta_ReadMetrics_ForeignAccountIs409AndNeverQueries pins the same guard on the READ
+// path: GET /{campaignID}/insights under a re-pointed connection returns either nothing — a
+// false "no data" — or an unrelated campaign's numbers rendered as this campaign's
+// measurement.
+func TestMeta_ReadMetrics_ForeignAccountIs409AndNeverQueries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"AccountID field", `{"CampaignID":"777","AccountID":"act_999"}`},
+		{"legacy act= url fallback", `{"CampaignID":"777","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=999"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				t.Errorf("Meta must not be queried for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+			}))
+			defer srv.Close()
+			d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+			camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777", Result: json.RawMessage(tc.result)}
+			got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+			if err == nil {
+				t.Fatal("expected a mismatch error")
+			}
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+			}
+			if got != nil {
+				t.Errorf("a refused read must return no metrics, got %+v", got)
+			}
+			if !strings.Contains(err.Error(), "act_999") || !strings.Contains(err.Error(), "act_777") {
+				t.Errorf("error must name the created account (act_999) and the resolved one (act_777), got %v", err)
+			}
+		})
+	}
+}
+
+// TestMeta_ReadMetrics_MatchingOrUnknownAccountStillReads is the read guard's other half: a
+// row that cannot PROVE a mismatch must still be read.
+func TestMeta_ReadMetrics_MatchingOrUnknownAccountStillReads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching AccountID", `{"CampaignID":"777","AccountID":"act_777"}`},
+		{"matching bare-digit url fallback", `{"CampaignID":"777","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=777"}`},
+		{"no provenance recorded", `{"CampaignID":"777"}`},
+		{"unparseable result blob", `not json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var queried bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				queried = true
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"data":[{"impressions":"1000","clicks":"40","spend":"25.00"}]}`)
+			}))
+			defer srv.Close()
+			d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+			camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777", Result: json.RawMessage(tc.result)}
+			got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+			if err != nil {
+				t.Fatalf("ReadMetrics must proceed for a matching/unknown account, got %v", err)
+			}
+			if got == nil || got.Impressions != 1000 {
+				t.Errorf("want the platform's metrics (1000 impressions), got %+v", got)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !queried {
+				t.Error("a matching/unknown-account campaign must actually be read, but Meta was never queried")
+			}
+		})
+	}
+}
+
+// TestMeta_DispatchStampsCreatingAccount closes the loop the guard depends on: it drives a
+// REAL create through the client and asserts the persisted Result blob records the account,
+// readable by the very function the guard calls.
+//
+// Meta does have a MetaURL act= fallback, so a lost stamp would not disable the guard
+// outright — but it would silently downgrade every new row to the legacy path, and asserting
+// through metaCreationAccountID pins reader and writer to the SAME persisted shape (this
+// struct is marshalled UNTAGGED, so the key is the Go field name) as well as the act_
+// normalisation both sides must agree on.
+func TestMeta_DispatchStampsCreatingAccount(t *testing.T) {
+	var creativeCount, adCnt int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			n := atomic.AddInt32(&creativeCount, 1)
+			_, _ = io.WriteString(w, `{"id":"creative_`+strconv.Itoa(int(n))+`"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			n := atomic.AddInt32(&adCnt, 1)
+			_, _ = io.WriteString(w, `{"id":"ad_`+strconv.Itoa(int(n))+`"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"variants":[{"headline":"KubeCon 2099","primaryText":"Join us — it's great","description":"d"}]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	// activeMetaConn resolves to act_777, so that is what a created row must record.
+	if got := metaCreationAccountID(camp); got != "act_777" {
+		t.Errorf("a created row must record its creating account: metaCreationAccountID = %q, want %q (blob: %s)", got, "act_777", camp.Result)
+	}
+}
+
+// TestMeta_ClearedAccountWithProvenanceStillToggles pins the OTHER absence the guard must not
+// punish: an empty CURRENT account id.
+//
+// Meta is the only platform where this is reachable. Unlike every sibling, ToggleStatus and
+// ReadMetrics deliberately do NOT require an account selection — they address the campaign node
+// by id and never read AccountConfig.AccountID — so a connection whose account was cleared via
+// PUT can still pause a campaign and read its metrics. TestMeta_ToggleStatus_NoAccountIDNeeded
+// and its ReadMetrics twin pin that contract, but both pass a campaign with NO Result blob, so
+// neither reaches the combination that broke: cleared account AND a row that records
+// provenance.
+//
+// That combination is not rare — via the MetaURL act= fallback it is nearly EVERY historical
+// row — so treating "not selected" as "a different account" would 409 pause and metrics for
+// campaigns that worked the day before, and would render the message as "resolves to account "
+// with an empty name. An absence is not a mismatch on either side of the comparison.
+func TestMeta_ClearedAccountWithProvenanceStillToggles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"explicit AccountID", `{"CampaignID":"23847290","AdSetID":"999","AccountID":"act_777"}`},
+		{"url act= fallback", `{"CampaignID":"23847290","AdSetID":"999","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=777"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeMetaConn(goodMetaCreds)
+			conn.AccountID = "" // the account selection was cleared via PUT
+			var mu sync.Mutex
+			var mutations int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+					_, _ = io.WriteString(w, `{"data":[{"id":"555"}]}`)
+					return
+				}
+				mu.Lock()
+				mutations++
+				mu.Unlock()
+				_, _ = io.WriteString(w, `{"success":true}`)
+			}))
+			defer srv.Close()
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "23847290", Result: json.RawMessage(tc.result)}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, camp, model.CampaignRunPaused); err != nil {
+				t.Fatalf("a cleared account must not 409 a campaign that records provenance, got %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// The mutation must actually reach Meta — asserting only "no error" would pass if
+			// the toggle silently did nothing.
+			if mutations == 0 {
+				t.Error("the toggle must reach Meta, but no mutation was issued")
+			}
+		})
+	}
+}
+
+// TestMeta_ClearedAccountWithProvenanceStillReads is the read half of the same contract.
+func TestMeta_ClearedAccountWithProvenanceStillReads(t *testing.T) {
+	conn := activeMetaConn(goodMetaCreds)
+	conn.AccountID = ""
+	var mu sync.Mutex
+	var queried bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		queried = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"1000","clicks":"40","spend":"25.00"}]}`)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+	camp := &model.Campaign{
+		Platform:           model.ProviderMetaAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"CampaignID":"777","AccountID":"act_777"}`),
+	}
+	got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("a cleared account must not 409 a metrics read for a campaign that records provenance, got %v", err)
+	}
+	if got == nil || got.Impressions != 1000 {
+		t.Errorf("want the platform's metrics (1000 impressions), got %+v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !queried {
+		t.Error("the read must reach Meta, but it was never queried")
+	}
+}
+
+// TestMetaNormalizeAccountID pins the one vocabulary both sides of the provenance comparison
+// must speak, including the shapes that must normalise to "unknown" rather than to a token.
+//
+// The malformed cases are the load-bearing ones. A value that names no account must land in
+// the guard's "" / proceed arm: returning it non-empty would make it compare unequal to every
+// legitimate connection and manufacture a false 409 on a campaign nobody can re-point. They are
+// unreachable behind design/connection.go's ^act_[0-9]+$ today — which is exactly why the
+// helper must not silently depend on that constraint holding forever.
+func TestMetaNormalizeAccountID(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		// The two real vocabularies that must converge: the connection's prefixed form and
+		// the bare digits MetaURL's act= parameter carries.
+		{"act_777", "act_777"},
+		{"777", "act_777"},
+		{"  act_777  ", "act_777"},
+		{"  777  ", "act_777"},
+		// Absence stays absence.
+		{"", ""},
+		{"   ", ""},
+		// Names no account: a prefix with nothing after it, however it is spelled.
+		{"act_", ""},
+		{"act_act_777", ""},
+		// Not digits: never a Meta account id, so "unknown" rather than a false mismatch.
+		{"act_abc", ""},
+		{"ACT_777", ""},
+		{"act_77 7", ""},
+		{"act_-1", ""},
+	} {
+		if got := normalizeMetaAccountID(tc.in); got != tc.want {
+			t.Errorf("normalizeMetaAccountID(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestMeta_MalformedProvenanceProceedsRatherThanFalseMismatch is the consequence of the above
+// stated at the guard: a row whose recorded account names nothing must be waved through as
+// "unknown", not reported as a different account.
+func TestMeta_MalformedProvenanceProceedsRatherThanFalseMismatch(t *testing.T) {
+	for _, blob := range []string{
+		`{"CampaignID":"777","AccountID":"act_"}`,
+		`{"CampaignID":"777","AccountID":"act_abc"}`,
+		`{"CampaignID":"777","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=notanumber"}`,
+	} {
+		camp := &model.Campaign{PlatformCampaignID: "777", Result: json.RawMessage(blob)}
+		if err := verifyMetaAccountMatch("probe", camp, "act_777"); err != nil {
+			t.Errorf("a row whose provenance names no account must proceed as unknown, got %v (blob: %s)", err, blob)
+		}
+	}
+}
+
 // TestMeta_DispatchMapsVariantImageURL pins the WIRE CONTRACT for the per-variant
 // creative image: a caller's `imageUrl` in the dispatch config must land on that
 // variant's creative as link_data.picture, the documented by-URL field, with no

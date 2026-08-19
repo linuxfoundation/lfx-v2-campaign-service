@@ -96,6 +96,13 @@ NOT reclaimed on a timer: a crashed holder strands it until a human acts, which
 KEYS remain unimplemented (LFXV2-2665). A 429 (idempotent methods only) is retried
 with bounded backoff.
 
+`CampaignResult` carries `accountId` (LFXV2-3050), stamped in `buildResult` from the account the
+create ran under, so the dispatcher's provenance guard can refuse a toggle or metrics read whose
+connection has since been re-pointed to another sponsored ad account. Rows written before the
+field existed stay checkable: the guard falls back to parsing the account out of `linkedInUrl`,
+which `campaignManagerURL` builds as `/campaignmanager/accounts/<id>/campaigns[/<id>]`. See
+`internal-dispatch.md` for the guard itself.
+
 ## Campaign status toggle
 
 `UpdateCampaignAndCreativesStatus(ctx, campaignID, status)` pauses/resumes a campaign AND

@@ -149,6 +149,14 @@ per request.** Supported windows: `WindowYesterday` (1 day), `WindowToday` (1 da
 `LAST_MONTH`) is REJECTED with `ErrUnsupportedWindow` — NOT silently truncated, averaged, or
 extrapolated. This is a permanent platform constraint documented in the knowledge base.
 
+`CampaignResult` carries `AccountID` (LFXV2-3050), stamped from `c.account.AccountID` at every
+construction site including the partial-result paths, so the dispatcher's provenance guard can
+refuse a toggle or metrics read whose connection has since been re-pointed to another ad account.
+The field is UNTAGGED like the rest of this struct, so the persisted key is the Go field name.
+X has NO recoverable fallback for it: `TwitterURL` is the bare `https://ads.x.com` constant and
+never carried an account, so a pre-existing row records no provenance and is treated as
+"unknown, proceed". See `internal-dispatch.md` for the guard itself.
+
 **The stats endpoint is NOT nested under `/accounts/{id}` the way every other endpoint this
 client calls is** — it's `{base}/{version}/stats/accounts/{id}` (account id trailing, not
 leading). `doRequest` always builds `accountURL()+path` (`/accounts/{id}/{path}`), so this

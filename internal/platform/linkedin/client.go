@@ -209,14 +209,20 @@ type CampaignInput struct {
 // CampaignResult is the outcome of CreateCampaign. Mirrors
 // LinkedInCampaignCreateResult.
 type CampaignResult struct {
-	Platform          string   `json:"platform"`
-	CampaignGroupName string   `json:"campaignGroupName"`
-	CampaignGroupID   string   `json:"campaignGroupId"`
-	CampaignName      string   `json:"campaignName"`
-	CampaignID        string   `json:"campaignId"`
-	CreativeCount     int      `json:"creativeCount"`
-	LinkedInURL       string   `json:"linkedInUrl"`
-	Steps             []string `json:"steps"`
+	Platform          string `json:"platform"`
+	CampaignGroupName string `json:"campaignGroupName"`
+	CampaignGroupID   string `json:"campaignGroupId"`
+	CampaignName      string `json:"campaignName"`
+	CampaignID        string `json:"campaignId"`
+	// AccountID is the sponsored ad account the campaign was CREATED under. The
+	// dispatcher's linkedInCreationAccountID reads it back so a later read/toggle that
+	// resolves to a DIFFERENT account is refused rather than silently addressing the
+	// stored campaign id under the wrong account. Omitted when empty so a partial result
+	// built before the account was known does not persist a misleading "".
+	AccountID     string   `json:"accountId,omitempty"`
+	CreativeCount int      `json:"creativeCount"`
+	LinkedInURL   string   `json:"linkedInUrl"`
+	Steps         []string `json:"steps"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2651,6 +2657,7 @@ func (c *Client) buildResult(accountID, groupName, groupID, campaignName, campai
 		CampaignGroupID:   groupID,
 		CampaignName:      campaignName,
 		CampaignID:        campaignID,
+		AccountID:         accountID,
 		CreativeCount:     creativeCount,
 		LinkedInURL:       campaignManagerURL(accountID, campaignID),
 		Steps:             steps,
