@@ -42,10 +42,18 @@ compiles, the handler returns the correct typed error, and only the wire status 
 `JWTAuth`'s refusal is exactly such an error, which is why the declaration follows the
 security scheme rather than the payload: a bodyless `GET` needs it as much as a create.
 `TestEveryConnectionMethodEncodesBadRequest`
-(`internal/service/connection_badrequest_encoder_test.go`) pins this by parsing the
-**generated** encoders and requiring a `case "BadRequest"` in every `Encode*Error` — it
-reads generated source rather than driving a list of encoders because the case that must
-fail is a *newly added* provider method, which no hand-maintained list would contain.
+(`internal/service/connection_auth_encoder_test.go`) pins this by parsing the
+**generated** encoders and requiring a `case` for BOTH `"BadRequest"` and `"Unauthorized"`
+in every `Encode*Error` — it reads generated source rather than driving a list of encoders
+because the case that must fail is a *newly added* provider method, which no
+hand-maintained list would contain. `Unauthorized` is the arm that matters for `JWTAuth`:
+its refusal is returned on every method, including bodyless `GET`s that declare no
+`BadRequest` payload at all.
+
+The same file's `TestEveryConnectionUnauthorizedEncoderSetsTheChallenge` covers the second
+half of the contract — that each generated `Unauthorized` arm emits the
+`WWW-Authenticate: Bearer` challenge header, not merely the 401 status, since RFC 9110
+requires the challenge on a 401 and only the generated encoder can put it on the wire.
 `commonBriefErrors()`/`briefErrorResponses()` take no arguments for the same reason: an
 earlier `withBadRequest bool` that had stopped gating anything was removed rather than kept
 for call-site readability, since a parameter that could be passed `false` is a way back to

@@ -711,8 +711,11 @@ every method through `authErrors()` (connections) and `commonBriefErrors()` (bri
 audiences). 400 conflated a refused credential with a malformed payload: a client could not
 tell "token expired, refresh and retry" from "payload invalid, do not retry" — opposite
 handling, and a refresh is exactly the retry a 401 should trigger — and status-based
-alerting counted every auth failure as a client payload error, so an expired credential or
-a JWKS outage read as a spike in malformed requests rather than an auth incident.
+alerting counted a REFUSED CREDENTIAL as a client payload error, so an expired or
+malformed token read as a spike in malformed requests rather than an auth incident. (A
+JWKS outage was never part of that: `domain.ErrKeyUnavailable` has always taken the
+`unavailable` branch and answered 503, and this change does not touch it — see the 503
+split below.)
 BadRequest stays declared everywhere alongside it: it is still the status for payload and
 path-parameter validation, which the bodyless reads reach through the generated decoder.
 

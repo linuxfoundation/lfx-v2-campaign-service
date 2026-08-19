@@ -17,6 +17,17 @@ import (
 // that design file — see the comment on the test.
 const connectionsErrorEncoders = "../../gen/http/lfx_v2_campaign_service_connections/server/encode_decode.go"
 
+// authErrorEncoders is every generated server encoder file that carries a 401. The
+// connections service maps its Unauthorized responses through connectionAuthErrorResponses
+// (design/connection.go); briefs and audiences do so through briefErrorResponses
+// (design/brief.go). Those are INDEPENDENT transport mappings, so a challenge-header
+// regression in one is invisible to a test that reads only the other.
+var authErrorEncoders = []string{
+	connectionsErrorEncoders,
+	"../../gen/http/lfx_v2_campaign_service_briefs/server/encode_decode.go",
+	"../../gen/http/lfx_v2_campaign_service_audiences/server/encode_decode.go",
+}
+
 // TestEveryConnectionMethodEncodesBadRequest pins the one thing that makes JWTAuth's 401
 // reach the caller as a 401.
 //
@@ -110,22 +121,31 @@ func assertEveryConnectionEncoderHandles(t *testing.T, errName string) {
 // that Header() line and the field silently moves into the JSON body: the status is still
 // 401, every encoder still has its Unauthorized case, and the response is spec-violating.
 func TestEveryConnectionUnauthorizedEncoderSetsTheChallenge(t *testing.T) {
-	src, err := os.ReadFile(connectionsErrorEncoders)
-	if err != nil {
-		t.Fatalf("reading the generated connection encoders: %v", err)
-	}
 	// Go canonicalises the header name at generation time, hence "Www-Authenticate".
 	const setChallenge = `w.Header().Set("Www-Authenticate", res.WwwAuthenticate)`
 
-	got := strings.Count(string(src), setChallenge)
-	want := strings.Count(string(src), `case "Unauthorized":`)
-	if want == 0 {
-		t.Fatalf("no Unauthorized cases in %s; the test is not exercising anything",
-			connectionsErrorEncoders)
-	}
-	if got != want {
-		t.Errorf("%d encoders set the WWW-Authenticate challenge but %d have an Unauthorized case: "+
-			"a 401 without a challenge violates RFC 9110 §15.5.2 — check the Header mapping in "+
-			"connectionAuthErrorResponses (design/connection.go)", got, want)
+	// Every service that answers 401, not just connections. briefs and audiences take their
+	// mapping from briefErrorResponses (design/brief.go), which is a SEPARATE Header call from
+	// the connections one: deleting it would leave every brief and audience 401 a bare status
+	// with no challenge, and a connections-only test would still pass. The service-layer tests
+	// cannot see this either — they assert UnauthorizedError.WwwAuthenticate, the struct field,
+	// which is populated before transport and stays correct while the header vanishes.
+	for _, path := range authErrorEncoders {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading the generated encoders %s: %v", path, err)
+		}
+		got := strings.Count(string(src), setChallenge)
+		want := strings.Count(string(src), `case "Unauthorized":`)
+		if want == 0 {
+			t.Errorf("no Unauthorized cases in %s; the test is not exercising anything", path)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s: %d encoders set the WWW-Authenticate challenge but %d have an Unauthorized "+
+				"case: a 401 without a challenge violates RFC 9110 §15.5.2 — check the Header mapping "+
+				"in connectionAuthErrorResponses (design/connection.go) and briefErrorResponses "+
+				"(design/brief.go)", path, got, want)
+		}
 	}
 }
