@@ -71,10 +71,12 @@ The live tests RAN (not skipped) against PostgreSQL 16.10 via `TEST_DATABASE_URL
 in-memory suite alone would not have caught the `DEFAULT FALSE` or `COALESCE` mutations.
 
 **What the local review trio added, and it was the important part.** Two reviewers
-independently found the same hole by mutation: the seven `defer res.stampProvenance(camp)`
-calls — the ONLY thing moving provenance from the credential onto the campaign — had no test.
-Deleting one left `res` used elsewhere in that `Dispatch`, so the package still COMPILED and
-the entire suite stayed green. The three original test files each covered a piece in
+independently found the same hole by mutation: the seven
+`defer func() { res.stampProvenance(camp) }()` calls — the ONLY thing moving provenance from
+the credential onto the campaign — had no test. Deleting one left the entire suite green, and
+for five of the seven it still COMPILED, because those `Dispatch` bodies use `res` elsewhere.
+(Reddit and hubspot use `res` for nothing else, so the compiler catches those two — stricter,
+but not a property the other five have, and not one to rely on.) The three original test files each covered a piece in
 isolation (`stampProvenance` called directly; the orchestrator handed a campaign that already
 carried the flag) and nothing ran a real `Dispatch` and looked at the field. The change's own
 argument — that a defer beats seventeen per-return edits because a future exit cannot be
@@ -86,6 +88,25 @@ dispatcher over both credential scopes, and
 `TestReddit_DispatchStampsProvenanceEndToEnd` adds the error-carrying exits (the UNCONFIRMED
 create, which returns a campaign ALONGSIDE an error). All seven mutations now COMPILE and
 FAIL, each naming its own dispatcher.
+
+**The mutation had to be chosen carefully, and the first choice was wrong.** Deleting the
+defer line outright does NOT compile for reddit or hubspot — `res` is used by nothing else in
+those two `Dispatch` bodies, so the compiler rejects it. A build break is not evidence that a
+test covers anything, so recording those two as "killed by mutation" would have overstated
+the proof. The honest analogue of a real regression keeps `res` used and the defer present
+while dropping only the effect:
+
+    defer func() { _ = res }()   // compiles everywhere; provenance never stamped
+
+Under that mutation all seven COMPILE and all seven are killed by real TEST failures, each
+naming its dispatcher. That is the form the evidence rests on.
+
+Each row also DECLARES which exit it drives (`wantErr`) and asserts it. Eleven reach a clean
+create; the two linkedin rows reach the UNCONFIRMED arm, because the fake answers the
+dark-post step with a plain id where the client requires a `urn:li:share/ugcPost` URN. That is
+kept rather than "fixed": the error-carrying exit is the one per-return stamping would most
+plausibly miss. Asserting it stops the table from silently degrading into all-partials, which
+would still stamp and so would slip past the provenance assertion alone.
 
 The first version of that table was itself the bug it was written to prevent: pointing all
 seven at one 5xx server made nine of fourteen cases hit `t.Skip` (most adapters return

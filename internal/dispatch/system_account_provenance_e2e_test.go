@@ -46,10 +46,11 @@ func (r systemScopedConnReader) Disconnected(context.Context, string, model.Prov
 // It exists because the sibling tests could not. TestStampProvenance_* calls stampProvenance
 // directly against a resolved it constructed, and the orchestrator's test uses a stub
 // dispatcher that hardcodes the field — so between them, NO test ran a real Dispatch and then
-// looked at RanOnSystemAccount. Deleting any single `defer res.stampProvenance(camp)` left the
-// package compiling and the whole suite green, which meant the change's central safety claim
-// ("a deferred call on the named return covers every exit, including ones not written yet")
-// was the one thing nothing verified.
+// looked at RanOnSystemAccount. Deleting the `defer func() { res.stampProvenance(camp) }()`
+// from five of the seven dispatchers left the package COMPILING and the whole suite green
+// (the other two, reddit and hubspot, use `res` for nothing else, so the compiler catches
+// them). That meant the change's central safety claim — "a deferred call on the named return
+// covers every exit, including ones not written yet" — was the one thing nothing verified.
 //
 // Both exits that claim is really about are covered, on the adapter's own httptest harness:
 //
@@ -152,14 +153,28 @@ type campaignDispatcher interface {
 // requires: one case per dispatcher, so deleting the defer from ANY of the seven fails a test
 // that names it.
 //
-// The reviewers found this gap by mutation — removing a single
-// `defer res.stampProvenance(camp)` left the package compiling (`res` is used elsewhere in each
-// Dispatch) and the entire suite green. That made the change's own safety claim the one
-// unverified thing in it: seventeen per-return edits were rejected in favour of seven defers
-// precisely so a future exit could not be missed, and nothing held the seven in place.
+// The reviewers found this gap by mutation: with the defer neutralised, the entire suite
+// stayed green. That made the change's own safety claim the one unverified thing in it —
+// seventeen per-return edits were rejected in favour of seven defers precisely so a future
+// exit could not be missed, and nothing held the seven in place.
 //
-// Every case drives a SUCCESSFUL create against that adapter's own fake API, reusing the
-// harnesses its existing tests use. An earlier revision of this table pointed all seven at one
+// Choose the mutation carefully when re-checking this. DELETING the defer line does not
+// compile for reddit or hubspot, whose Dispatch bodies use `res` for nothing else, and a
+// build break is not evidence that any test covers anything. The honest analogue of a
+// regression keeps `res` used and the defer present, dropping only the effect:
+//
+//	defer func() { _ = res }()
+//
+// Under that form all seven compile and all seven fail HERE, each naming its dispatcher.
+//
+// (The closure is not decoration: a bare `defer res.stampProvenance(camp)` would evaluate
+// `camp` at defer time — always nil — and stamp nothing.)
+//
+// Every case drives a real create against that adapter's own fake API, reusing the harnesses
+// its existing tests use. Eleven of the thirteen reach a clean success; the two linkedin rows
+// reach the UNCONFIRMED arm instead, and that is declared per row in `wantErr` and ASSERTED —
+// so a fake API that drifts into returning partials everywhere fails loudly rather than
+// quietly weakening what this table covers. An earlier revision of this table pointed all seven at one
 // 5xx server on the theory that the error exit is the interesting one; that produced a table
 // which SKIPPED nine of its fourteen cases, because most adapters return (nil, err) rather than
 // a partial when the create fails outright. A skipping table reports PASS while asserting
@@ -250,6 +265,14 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 		// hubspot row runs the project-owned scope ONLY — asserting a system-served hubspot
 		// campaign would be asserting a behaviour the service deliberately does not have.
 		fallbackEligible bool
+		// wantErr records WHICH EXIT this row actually drives, and is asserted rather than
+		// ignored. Eleven rows reach a clean create; the linkedin rows reach the UNCONFIRMED
+		// arm, because linkedinSrv answers the dark-post step with a plain id where the client
+		// requires a urn:li:share/ugcPost URN. That is left as-is deliberately — the
+		// error-carrying exit is the one per-return stamping would most plausibly miss, so it
+		// is worth covering — but it is DECLARED, so the table cannot quietly stop creating
+		// anything and still pass.
+		wantErr bool
 	}{
 		{
 			"google-ads", model.ProviderGoogleAds,
@@ -259,6 +282,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			},
 			json.RawMessage(`{"googleAdsConfig":{"budget":50}}`),
 			true,
+			false,
 		},
 		{
 			"microsoft-ads", model.ProviderMicrosoftAds,
@@ -268,6 +292,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			},
 			json.RawMessage(`{"microsoftConfig":{"budget":50}}`),
 			true,
+			false,
 		},
 		{
 			"reddit-ads", model.ProviderRedditAds,
@@ -279,6 +304,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			},
 			json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"]}}`),
 			true,
+			false,
 		},
 		{
 			"meta-ads", model.ProviderMetaAds,
@@ -288,6 +314,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			},
 			json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"variants":[{"PrimaryText":"p","Headline":"h","Description":"d"}]}}`),
 			true,
+			false,
 		},
 		{
 			"linkedin-ads", model.ProviderLinkedInAds,
@@ -296,6 +323,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 				return NewLinkedInDispatcher(r, identityEncryptor{}, linkedin.WithBaseURL(linkedinSrv.URL))
 			},
 			json.RawMessage(`{"linkedInConfig":{"budgetUsd":50,"startDate":"2099-01-01","endDate":"2099-02-01","geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],"targetingProfile":"devs","targetingProfiles":[{"id":"devs","label":"Developers","skills":["urn:li:skill:1234"]}],"variants":[{"IntroText":"i","Headline":"h"}]}}`),
+			true,
 			true,
 		},
 		{
@@ -306,6 +334,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			},
 			json.RawMessage(`{"twitterConfig":{"budgetAmount":50,"startDate":"2099-08-01","endDate":"2099-08-31","tweetText":"t"}}`),
 			true,
+			false,
 		},
 		{
 			"hubspot", model.ProviderHubSpot,
@@ -316,6 +345,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 					hubspot.WithBaseURL(hsSrv.URL))
 			},
 			json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`),
+			false,
 			false,
 		},
 	}
@@ -341,6 +371,19 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 					repo = systemScopedConnReader{sys: tc.conn()}
 				}
 				camp, err := tc.build(repo).Dispatch(context.Background(), testBrief(), tc.platform, tc.config)
+				// Assert WHICH ARM ran. Without this the table would keep passing if a fake API
+				// drifted and every case silently became a partial — the campaigns would still
+				// be stamped, so the provenance assertion below could not tell the difference,
+				// and the doc comment's claim about what this exercises would quietly rot.
+				switch {
+				case tc.wantErr && err == nil:
+					t.Errorf("%s: expected the UNCONFIRMED/partial arm, got a clean create — "+
+						"this row no longer covers the error-carrying exit it was added for",
+						tc.name)
+				case !tc.wantErr && err != nil:
+					t.Errorf("%s: expected a clean create, got %v — the fake API drifted, so "+
+						"this row is exercising a different exit than it claims", tc.name, err)
+				}
 				if camp == nil {
 					// NOT a skip. A case that reaches no campaign asserts nothing about
 					// provenance, and letting it pass quietly is how the first version of this
