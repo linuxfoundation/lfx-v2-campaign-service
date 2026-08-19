@@ -125,15 +125,20 @@ func TestAccessTokenValueCachesRefreshedToken(t *testing.T) {
 // published contract: POST, form-encoded, with grant_type/refresh_token/client_id/
 // client_secret.
 func TestAccessTokenValueSendsDocumentedExchange(t *testing.T) {
+	// httptest runs each handler in its own goroutine, so the captures need a
+	// happens-before edge to the assertions. Mirrors metrics_test.go.
+	var mu sync.Mutex
 	var (
 		gotMethod, gotContentType string
 		gotForm                   url.Values
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
 		gotMethod = r.Method
 		gotContentType = r.Header.Get("Content-Type")
-		_ = r.ParseForm()
 		gotForm = r.PostForm
+		mu.Unlock()
 		_, _ = w.Write([]byte(linkedInSampleTokenResponse))
 	}))
 	defer srv.Close()
@@ -143,11 +148,15 @@ func TestAccessTokenValueSendsDocumentedExchange(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if gotMethod != http.MethodPost {
-		t.Errorf("method = %q, want POST", gotMethod)
+	mu.Lock()
+	method, contentType, form := gotMethod, gotContentType, gotForm
+	mu.Unlock()
+
+	if method != http.MethodPost {
+		t.Errorf("method = %q, want POST", method)
 	}
-	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
-		t.Errorf("Content-Type = %q, want x-www-form-urlencoded", gotContentType)
+	if !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		t.Errorf("Content-Type = %q, want x-www-form-urlencoded", contentType)
 	}
 	for k, want := range map[string]string{
 		"grant_type":    "refresh_token",
@@ -155,7 +164,7 @@ func TestAccessTokenValueSendsDocumentedExchange(t *testing.T) {
 		"client_id":     "client-id",
 		"client_secret": "client-secret",
 	} {
-		if got := gotForm.Get(k); got != want {
+		if got := form.Get(k); got != want {
 			t.Errorf("form[%q] = %q, want %q", k, got, want)
 		}
 	}
@@ -165,10 +174,15 @@ func TestAccessTokenValueSendsDocumentedExchange(t *testing.T) {
 // the exchange is adopted for the NEXT exchange. LinkedIn returns the refresh token
 // on every exchange; ignoring it would keep using a superseded value.
 func TestAccessTokenValueAdoptsRotatedRefreshToken(t *testing.T) {
+	// Guarded for the same reason as the exchange test above: the append runs on the
+	// handler goroutine and the assertions read it from the test goroutine.
+	var mu sync.Mutex
 	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		mu.Lock()
 		seen = append(seen, r.PostForm.Get("refresh_token"))
+		mu.Unlock()
 		// expires_in 0 so the access token is never cached and a second call re-exchanges.
 		_, _ = w.Write([]byte(`{"access_token":"a","expires_in":-1,"refresh_token":"rotated-refresh-token"}`))
 	}))
@@ -187,14 +201,18 @@ func TestAccessTokenValueAdoptsRotatedRefreshToken(t *testing.T) {
 		t.Fatalf("second: %v", err)
 	}
 
-	if len(seen) != 2 {
-		t.Fatalf("exchanges = %d, want 2", len(seen))
+	mu.Lock()
+	exchanged := append([]string(nil), seen...)
+	mu.Unlock()
+
+	if len(exchanged) != 2 {
+		t.Fatalf("exchanges = %d, want 2", len(exchanged))
 	}
-	if seen[0] != "stored-refresh-token" {
-		t.Errorf("first exchange used %q, want the stored token", seen[0])
+	if exchanged[0] != "stored-refresh-token" {
+		t.Errorf("first exchange used %q, want the stored token", exchanged[0])
 	}
-	if seen[1] != "rotated-refresh-token" {
-		t.Errorf("second exchange used %q, want the rotated token adopted from the response", seen[1])
+	if exchanged[1] != "rotated-refresh-token" {
+		t.Errorf("second exchange used %q, want the rotated token adopted from the response", exchanged[1])
 	}
 }
 
