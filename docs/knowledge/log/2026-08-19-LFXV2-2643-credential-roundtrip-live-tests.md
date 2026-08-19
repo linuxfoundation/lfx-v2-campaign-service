@@ -67,3 +67,27 @@ the handler publishes the returned row's version as the caller's ETag.
 All four ran against a local PostgreSQL 16 and pass under `-count=2`, which is
 the check that the `UniqueID` discipline holds across runs against a database
 the harness does not drop.
+
+**Follow-up — the failure messages report shape, not the secret.** Two
+assertions originally printed the decrypted blob and its expected plaintext with
+`%q` (`"decrypted plaintext = %q, want %q"`). Nothing confidential leaked: both
+values are test literals sealed with the test key. The shape is still wrong, for
+a reason that does not depend on today's values — this is the file a test
+handling a REAL credential gets copied from, and the message renders into CI job
+output. It also contradicts what the bundle already says the codebase does:
+`internal-dispatch.md` drops the JSON unmarshal cause on a decrypted blob
+precisely because it might one day quote plaintext bytes, keeping a suffix
+"built from the project id, never from plaintext", and `internal-service.md`
+records that the one cause that IS logged comes "from ciphertext and key
+material only, never from plaintext".
+
+Both now report length plus `sha256.Sum256` of each side, the pattern the same
+file already used for the stored-column assertion. The digest is what keeps the
+diagnostic usable: length alone cannot separate "same size, different bytes"
+from a passing run, so dropping to lengths only would have traded a leak for a
+test that fails without saying why. Mutating `Decrypt` to return a same-length
+wrong plaintext yields `got 26 bytes sha256=b2cf0dec… want 26 bytes
+sha256=48fa99d3…`; shortening it by three bytes yields `got 23 bytes … want 26
+bytes …`, so the two fault classes stay distinguishable. The
+`bytes.Contains(..., []byte("secret"))` assertion was left alone — it prints
+only the fixed literal it searched for, never the blob.

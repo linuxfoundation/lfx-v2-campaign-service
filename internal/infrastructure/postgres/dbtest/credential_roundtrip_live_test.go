@@ -6,6 +6,7 @@ package dbtest_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"testing"
 
@@ -124,7 +125,13 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 		t.Fatalf("Decrypt of the stored blob: %v", err)
 	}
 	if !bytes.Equal(opened, plaintext) {
-		t.Fatalf("decrypted plaintext = %q, want %q", opened, plaintext)
+		// Report the mismatch by SHAPE, never by value: this failure prints into CI job
+		// output, and the same lines get copied into tests that do hold a real blob. Length
+		// separates "truncated/padded" from "same size, different bytes"; the digests
+		// separate the latter from a fault this test cannot see.
+		t.Fatalf("decrypted blob does not match the plaintext it was sealed from: "+
+			"got %d bytes sha256=%x, want %d bytes sha256=%x",
+			len(opened), sha256.Sum256(opened), len(plaintext), sha256.Sum256(plaintext))
 	}
 	if created.Version != got.Version {
 		t.Fatalf("Create returned version %d but Get reads %d", created.Version, got.Version)
@@ -207,7 +214,11 @@ func TestLiveSetCredentialRotatesTheBlobAndBumpsVersion(t *testing.T) {
 		t.Fatalf("Decrypt rotated blob: %v", err)
 	}
 	if !bytes.Equal(opened, rotatedPlaintext) {
-		t.Fatalf("rotated plaintext = %q, want %q", opened, rotatedPlaintext)
+		// Shape, not value — see the equivalent assertion in
+		// TestLiveCredentialSurvivesTheRealByteaColumn.
+		t.Fatalf("the rotated blob does not open to the rotated plaintext: "+
+			"got %d bytes sha256=%x, want %d bytes sha256=%x",
+			len(opened), sha256.Sum256(opened), len(rotatedPlaintext), sha256.Sum256(rotatedPlaintext))
 	}
 
 	// SetCredential touches ONLY the credential. The account and config columns are
