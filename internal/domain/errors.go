@@ -289,6 +289,29 @@ var (
 	// surfacing separately at each dispatch rather than once, at the point of expiry.
 	ErrCredentialsExpired = errors.New("the stored credentials have expired and must be re-authorized")
 
+	// ErrApplicationCredentialsInvalid — the ad platform refused the connection's
+	// APPLICATION credentials (the OAuth client_id/client_secret pair), not the member's
+	// token. The app credential is wrong, unknown to the platform, or the app was deleted.
+	//
+	// It is separate from ErrCredentialsExpired because the two have OPPOSITE remedies and
+	// different owners. An expired credential is repaired by the MEMBER re-authorizing
+	// through the OAuth flow; an invalid application credential cannot be — the stored
+	// refresh token was never at fault, so "reconnect the connection" sends someone to
+	// perform a re-authorization that provably cannot help. Whoever CONFIGURED the
+	// connection has to correct it.
+	//
+	// It is wrapped ALONGSIDE ErrConnectionNotUsable, like every other reason token here,
+	// so that sentinel keeps deciding the status while this one carries the machine-readable
+	// reason. That pairing is the whole point: without it the fault is neither retryable-
+	// classified nor reason-classified and lands on the generic 503 default arm, telling a
+	// caller to retry a condition that cannot clear until the connection is edited. On the
+	// LF SYSTEM connection that is one typo disabling the platform for every project falling
+	// back to it, reported as a transient outage.
+	//
+	// PERMANENT, never retryable: nothing about waiting turns a wrong client_id into a
+	// right one.
+	ErrApplicationCredentialsInvalid = errors.New("the stored application credentials were rejected by the platform")
+
 	// ErrCredentialsAbsent — the connection row exists but its credential column is
 	// EMPTY. Nothing was decrypted because there was nothing to decrypt.
 	//

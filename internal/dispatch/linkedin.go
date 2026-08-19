@@ -81,13 +81,41 @@ func linkedinConnectionLabel(res *resolved) string {
 // that simply aged out reaches the caller as a generic upstream failure whose cause
 // is visible only in a server log.
 //
+// It re-tags an invalid APPLICATION credential (linkedin.ErrApplicationCredentialsInvalid,
+// LinkedIn's `invalid_client`) the same way, onto its own reason sentinel. Both are permanent
+// connection defects that must not reach the retryable 503 arm, which is why one helper covers
+// them; only the REMEDY differs, and that is exactly what the distinct reason sentinel carries.
+// Re-tagging it as ErrCredentialsExpired instead would send an operator whose client_id holds a
+// typo to re-authorize a member — actionable, and provably unable to help.
+//
 // A no-op for every other error, so call sites can apply it unconditionally. The
 // client's message already names the connection; no credential material is added.
 func linkedinExpiry(err error) error {
-	if err == nil || !errors.Is(err, linkedin.ErrCredentialsExpired) {
+	switch {
+	case err == nil:
+		return err
+	case errors.Is(err, linkedin.ErrApplicationCredentialsInvalid):
+		// Checked BEFORE the expiry arm. The two sentinels are disjoint today, but if an
+		// error ever carried both, the operator-actionable reading is the one that must win:
+		// telling someone to re-authorize a connection whose app credentials are wrong is a
+		// remedy that cannot work.
+		return fmt.Errorf("%w: %w: %w", domain.ErrConnectionNotUsable, domain.ErrApplicationCredentialsInvalid, err)
+	case errors.Is(err, linkedin.ErrCredentialsExpired):
+		return fmt.Errorf("%w: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialsExpired, err)
+	default:
 		return err
 	}
-	return fmt.Errorf("%w: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialsExpired, err)
+}
+
+// linkedinConnectionDefect reports whether err is a PERMANENT connection defect that
+// linkedinExpiry re-tags — an expired member credential or a rejected application credential.
+//
+// The call sites guard on this rather than on ErrCredentialsExpired alone. Guarding on the
+// expiry sentinel is what stranded `invalid_client` on the generic arm: linkedinExpiry would
+// have classified it correctly, but the `if` in front of it never let it through.
+func linkedinConnectionDefect(err error) bool {
+	return errors.Is(err, linkedin.ErrCredentialsExpired) ||
+		errors.Is(err, linkedin.ErrApplicationCredentialsInvalid)
 }
 
 // linkedinCredentials maps the decrypted stored credentials onto the client's
@@ -259,7 +287,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
 		if result == nil {
-			if errors.Is(cerr, linkedin.ErrCredentialsExpired) {
+			if linkedinConnectionDefect(cerr) {
 				// Nothing was created, which is what result==nil already established — either
 				// the client failed closed BEFORE sending a request, or a non-mutating
 				// (find-existing GET) request was answered 401, which POSTed nothing. An
@@ -357,7 +385,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		// pre-send (the credential failed closed before a request) or a non-mutating 401 —
 		// the ambiguous arm above already claimed every expiry that may have changed
 		// platform state, so this arm is now exactly the "nothing was applied" case.
-		if errors.Is(uerr, linkedin.ErrCredentialsExpired) {
+		if linkedinConnectionDefect(uerr) {
 			return res.systemScoped(linkedinExpiry(uerr))
 		}
 		return uerr
@@ -634,7 +662,7 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		// This is the path that produced the observed production 500: an expired token
 		// made the monitor read fail with LinkedIn's bare 401, diagnosable only from the
 		// server log. Surface it as a named, actionable connection defect instead.
-		if errors.Is(err, linkedin.ErrCredentialsExpired) {
+		if linkedinConnectionDefect(err) {
 			return nil, res.systemScoped(linkedinExpiry(err))
 		}
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)

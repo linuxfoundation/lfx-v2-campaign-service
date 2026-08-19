@@ -25,6 +25,47 @@ import (
 // without it the only evidence was a 401 buried in a server log.
 var ErrCredentialsExpired = errors.New("linkedin credentials expired")
 
+// ErrApplicationCredentialsInvalid marks a token exchange LinkedIn refused with
+// `invalid_client`: the stored client_id/client_secret pair is wrong, unknown to
+// LinkedIn, or the app was deleted. It is a PERMANENT, operator-actionable fault.
+//
+// It is deliberately NOT ErrCredentialsExpired. That sentinel resolves to "the member
+// must re-authorize", and no member re-authorization repairs an APPLICATION credential —
+// the stored refresh token was never the problem. Sending that remedy is worse than
+// sending none, because it is actionable and wrong.
+//
+// It needs its own sentinel rather than only a message, for the same reason every other
+// reason token in this repo does: the arms that classify it match STRUCTURALLY. A bare
+// fmt.Errorf here unwrapped to nothing, so it picked up neither this reason nor
+// domain.ErrConnectionNotUsable and fell through to the generic retryable arm — a 503
+// telling a caller to retry a condition that cannot clear until someone edits the
+// connection. A typo in the LF system client_id would disable LinkedIn for every project
+// falling back to it, on that same opaque retry surface.
+var ErrApplicationCredentialsInvalid = errors.New("linkedin application credentials rejected")
+
+// applicationCredentialsError names the connection whose APPLICATION credentials
+// LinkedIn rejected. Like credentialsExpiredError it carries no token material — only the
+// operator-set connection label, which is metadata and never secret.
+//
+// It carries no Method/StatusCode: this arm is reachable only from the token exchange,
+// which happens BEFORE the request it would authorize, so nothing was ever sent and no
+// outcome can be ambiguous. createOutcomeAmbiguous therefore reports false for it with no
+// special case, exactly as it does for the pre-send expiry arms.
+type applicationCredentialsError struct {
+	Connection string
+	// StatusCode is the status LinkedIn answered the TOKEN EXCHANGE with (400 or 401).
+	// It is recorded for classification and deliberately not rendered.
+	StatusCode int
+}
+
+func (e *applicationCredentialsError) Error() string {
+	return fmt.Sprintf("linkedin: %s was refused by LinkedIn: the stored application credentials "+
+		"(client_id/client_secret) are wrong or unknown to LinkedIn — correct the connection's "+
+		"application credentials; re-authorizing the member will not help", e.Connection)
+}
+
+func (e *applicationCredentialsError) Unwrap() error { return ErrApplicationCredentialsInvalid }
+
 // credentialsExpiredError names the connection a human must reconnect. It
 // deliberately carries NO token material — only the operator-set connection
 // label, a short cause, and the request coordinates the outcome classifier needs.
@@ -307,11 +348,17 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 				// ErrCredentialsExpired — that resolves to "re-authorize", and no member
 				// re-authorization repairs an application credential. Whoever configured
 				// the connection must correct it.
-				return "", fmt.Errorf(
-					"linkedin token refresh -> %d: LinkedIn rejected the application credentials "+
-						"(invalid_client: the stored client_id/client_secret is wrong or unknown to LinkedIn; "+
-						"correct the connection's application credentials — re-authorizing the member will not help)",
-					resp.StatusCode)
+				//
+				// It is returned as a TYPED error, not a bare fmt.Errorf. Every arm that
+				// acts on this classification matches structurally (errors.Is), so an
+				// error unwrapping to nothing is invisible to all of them: it would carry
+				// neither this reason nor domain.ErrConnectionNotUsable and would fall
+				// through to the generic retryable arm — the opaque 503 this split exists
+				// to retire. Only the classification travels; no upstream byte is rendered.
+				return "", &applicationCredentialsError{
+					Connection: c.creds.ConnectionLabel(),
+					StatusCode: resp.StatusCode,
+				}
 			}
 			// Everything else on a 400/401 keeps the previous, correct reading: LinkedIn
 			// documents expired, revoked and invalid refresh tokens under the SAME status

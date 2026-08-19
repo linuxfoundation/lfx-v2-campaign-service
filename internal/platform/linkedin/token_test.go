@@ -866,8 +866,13 @@ func TestInvalidClientIsNotReportedAsAnExpiredCredential(t *testing.T) {
 	if errors.Is(err, ErrCredentialsExpired) {
 		t.Errorf("invalid_client classified as ErrCredentialsExpired; it is an application-credential misconfiguration, and re-authorizing the member cannot fix it (err = %v)", err)
 	}
-	if !strings.Contains(err.Error(), "invalid_client") {
-		t.Errorf("error should name the invalid_client classification, got %v", err)
+	// Being "not expired" is NOT enough, and asserting only that is what let this arm
+	// regress into a bare fmt.Errorf that unwrapped to nothing. Every consumer classifies
+	// STRUCTURALLY, so the error must carry its own sentinel — otherwise it is invisible to
+	// all of them and falls through to the generic retryable 503, the opaque surface this
+	// split exists to retire.
+	if !errors.Is(err, ErrApplicationCredentialsInvalid) {
+		t.Errorf("invalid_client does not unwrap to ErrApplicationCredentialsInvalid, so no caller can classify it and it lands on the generic retryable arm: %v", err)
 	}
 	// The upstream error_description is untrusted and must never be echoed.
 	for _, leak := range []string{"sk-LEAKME", "client authentication failed for app"} {

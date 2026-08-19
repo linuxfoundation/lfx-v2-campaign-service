@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -193,5 +195,152 @@ func TestLinkedIn_ExpiredCredentialsAreTaggedOnEveryPath(t *testing.T) {
 				t.Errorf("err = %q; want an actionable message telling the operator to reconnect", err)
 			}
 		})
+	}
+}
+
+// invalidClientLinkedInCreds is a stored blob that is refreshable IN SHAPE — a live
+// refresh token, well within its deadline — so accessTokenValue actually performs the token
+// exchange rather than failing closed beforehand. That is the whole point: `invalid_client`
+// is only observable in LinkedIn's ANSWER, so a fixture that fails closed early would never
+// reach the arm under test.
+var invalidClientLinkedInCreds = func() string {
+	past := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	return `{"AccessToken":"at","RefreshToken":"rt","ClientID":"ci","ClientSecret":"cs",` +
+		`"AccessTokenExpiresAt":"` + past + `","RefreshTokenExpiresAt":"` + future + `"}`
+}()
+
+// invalidClientTokenTransport answers EVERY request with LinkedIn's `invalid_client`
+// token-endpoint rejection. The access token is already expired, so the token exchange is the
+// first call every dispatcher path makes and no request ever gets past it.
+//
+// The body carries a realistic `error_description`, including secret-shaped text, so the
+// no-echo assertion below is meaningful rather than vacuous.
+type invalidClientTokenTransport struct{}
+
+func (invalidClientTokenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	body := `{"error":"invalid_client","error_description":"client authentication failed for app 99 secret sk-LEAKME"}`
+	return &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    r,
+	}, nil
+}
+
+// TestLinkedIn_InvalidClientIsTaggedOnEveryPath is the `invalid_client` counterpart to
+// TestLinkedIn_ExpiredCredentialsAreTaggedOnEveryPath, and it exists because the previous fix
+// split invalid_client out of the expiry arm but dropped it out of the SENTINEL CHAIN, leaving
+// it LESS classifiable than before: a bare fmt.Errorf unwraps to nothing, so it picked up
+// neither a reason nor ErrConnectionNotUsable and fell through to the generic retryable arm.
+//
+// A typo in the LF system client_id would therefore disable LinkedIn for every project falling
+// back to it, and tell each caller to retry a condition that cannot clear.
+//
+// All FOUR entry points are driven, because the re-tagging is per-call-site: each guards on
+// linkedinConnectionDefect before applying linkedinExpiry, and a guard that still asked only
+// about expiry would strand this fault at exactly that one path.
+func TestLinkedIn_InvalidClientIsTaggedOnEveryPath(t *testing.T) {
+	campaign := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "555"}
+
+	cases := []struct {
+		name string
+		call func(d *LinkedInDispatcher) error
+	}{
+		{"Dispatch", func(d *LinkedInDispatcher) error {
+			cfg := json.RawMessage(`{"linkedInConfig":{
+				"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+				"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+				"targetingProfile":"cloud-native",
+				"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+				"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+			}}`)
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			return err
+		}},
+		{"ToggleStatus", func(d *LinkedInDispatcher) error {
+			return d.ToggleStatus(context.Background(), "p1", model.ProviderLinkedInAds, campaign, "paused")
+		}},
+		{"ListAccounts", func(d *LinkedInDispatcher) error {
+			_, err := d.ListAccounts(context.Background(), "p1", model.ProviderLinkedInAds)
+			return err
+		}},
+		{"ReadMetrics", func(d *LinkedInDispatcher) error {
+			_, err := d.ReadMetrics(context.Background(), "p1", model.ProviderLinkedInAds, campaign, model.MetricsWindowLast7Days)
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: activeLinkedInConn(invalidClientLinkedInCreds)},
+				identityEncryptor{},
+				linkedin.WithHTTPClient(&http.Client{Transport: invalidClientTokenTransport{}}),
+			)
+
+			err := tc.call(d)
+			if err == nil {
+				t.Fatal("expected an error when LinkedIn rejects the application credentials")
+			}
+			// ErrConnectionNotUsable decides the HTTP status. Without it this is a generic
+			// upstream failure — the retryable 503 that invites a retry of a permanent fault.
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("err = %v; want ErrConnectionNotUsable — a wrong client_id is PERMANENT and must never reach the retryable 503 arm", err)
+			}
+			// The reason must be the OPERATOR-actionable one.
+			if !errors.Is(err, domain.ErrApplicationCredentialsInvalid) {
+				t.Errorf("err = %v; want ErrApplicationCredentialsInvalid as the reason sentinel", err)
+			}
+			// And it must NOT be the member-actionable one: "re-authorize the connection"
+			// cannot repair an application credential, so that remedy is actionable and wrong.
+			if errors.Is(err, domain.ErrCredentialsExpired) {
+				t.Errorf("err = %v; invalid_client must NOT be reported as an expired credential — re-authorizing the member cannot fix a wrong client_id", err)
+			}
+			// The originating cause survives for anything classifying at the client layer.
+			if !errors.Is(err, linkedin.ErrApplicationCredentialsInvalid) {
+				t.Errorf("err = %v; the originating cause must be preserved", err)
+			}
+			// This repo redacts token-endpoint bodies: only the classification travels.
+			for _, leak := range []string{"sk-LEAKME", "client authentication failed for app"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("upstream token-endpoint text %q leaked into the error: %v", leak, err)
+				}
+			}
+		})
+	}
+}
+
+// TestLinkedinExpiryTagsApplicationCredentialDefect pins the helper itself, alongside its
+// expiry twin. The two reason sentinels must stay DISJOINT: they select different remedies
+// with different owners, so an arm carrying both would leave a caller with contradictory
+// instructions.
+func TestLinkedinExpiryTagsApplicationCredentialDefect(t *testing.T) {
+	base := fmt.Errorf("linkedin: %q was refused: %w", "LF LinkedIn", linkedin.ErrApplicationCredentialsInvalid)
+
+	got := linkedinExpiry(base)
+
+	if !errors.Is(got, domain.ErrConnectionNotUsable) {
+		t.Error("want ErrConnectionNotUsable so the caller gets a non-retryable status, not a 503")
+	}
+	if !errors.Is(got, domain.ErrApplicationCredentialsInvalid) {
+		t.Error("want ErrApplicationCredentialsInvalid as the machine-readable reason")
+	}
+	if errors.Is(got, domain.ErrCredentialsExpired) {
+		t.Error("must NOT also claim the credentials merely expired — that remedy is member re-authorization, which cannot help here")
+	}
+	if !errors.Is(got, linkedin.ErrApplicationCredentialsInvalid) {
+		t.Error("the originating cause must be preserved")
+	}
+	// The predicate the call sites guard on must recognise BOTH defects; guarding on expiry
+	// alone is precisely what stranded invalid_client on the generic arm.
+	if !linkedinConnectionDefect(base) {
+		t.Error("linkedinConnectionDefect must recognise an invalid application credential")
+	}
+	if !linkedinConnectionDefect(fmt.Errorf("x: %w", linkedin.ErrCredentialsExpired)) {
+		t.Error("linkedinConnectionDefect must still recognise an expired credential")
+	}
+	if linkedinConnectionDefect(errors.New("linkedin API POST /adAccounts -> 503")) {
+		t.Error("an upstream outage must stay retryable and NOT be treated as a connection defect")
 	}
 }

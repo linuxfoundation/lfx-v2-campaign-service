@@ -164,6 +164,10 @@ func unusableConnectionReason(err error) string {
 		return "credential_blob_malformed"
 	case errors.Is(err, domain.ErrCredentialsAbsent):
 		return "credentials_absent"
+	case errors.Is(err, domain.ErrApplicationCredentialsInvalid):
+		// Before the expired arm: an error carrying both must report the OPERATOR-actionable
+		// reason, since "re-authorize the member" cannot repair an application credential.
+		return "application_credentials_invalid"
 	case errors.Is(err, domain.ErrCredentialsExpired):
 		return "credentials_expired"
 	case errors.Is(err, domain.ErrAccountNotSelected):

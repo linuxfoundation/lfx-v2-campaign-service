@@ -70,9 +70,20 @@ deliberately NOT `ErrCredentialsExpired`, because no member re-authorization can
 repair a wrong `client_id`/`client_secret`. Everything else on a 400/401 — including
 an absent or unparseable code — keeps the expired/revoked/invalid reading. Only the
 parsed code is matched against a local constant; `error_description` is never read
-and no upstream byte reaches the message. The dispatch
-layer re-tags that as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, which
-keeps it out of the retryable bucket and out of an opaque 500. No token, secret
+and no upstream byte reaches the message.
+
+**Splitting the arm is only half the job: it must still be CLASSIFIABLE.** Every
+consumer of this classification matches structurally (`errors.Is`), so an
+`invalid_client` returned as a bare `fmt.Errorf` unwraps to nothing and is invisible
+to all of them — it carries neither a reason sentinel nor `ErrConnectionNotUsable`
+and falls through to the generic retryable 503, the same opaque surface the split
+exists to retire. It is therefore its own typed error unwrapping to the exported
+`ErrApplicationCredentialsInvalid`. The dispatch layer re-tags an expired credential
+as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, and a rejected application
+credential as `ErrConnectionNotUsable` + `domain.ErrApplicationCredentialsInvalid`:
+the shared sentinel keeps BOTH out of the retryable bucket and out of an opaque 500,
+while the distinct reason carries the remedy — the member re-authorizes for one, the
+operator who configured the connection corrects it for the other. No token, secret
 or upstream body is ever logged or echoed into an error.
 
 **A 401 answering a MUTATING request states two facts, not one.** "Reconnect this
