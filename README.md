@@ -246,9 +246,13 @@ openssl rand -base64 32
   `TRUE` or a typo) leaves the default resolution. HubSpot/email is
   never forced (the path gates on the paid-ads channel kind), and a
   missing or unusable system row fails the dispatch closed rather than
-  falling through to the project connection. Read once at startup like
-  `REDDIT_METRICS_ENABLED`; enable per-environment via the ArgoCD
-  overlay. See `specs/006-force-system-ads-account`.
+  falling through to the project connection. It shares the exact-match
+  `true` parse with `REDDIT_METRICS_ENABLED` but not its lifecycle: this
+  flag is read ONCE, when the credentials source is constructed, so
+  changing it requires a restart, whereas `REDDIT_METRICS_ENABLED` is
+  re-read from the environment on every metrics read. Enable
+  per-environment via the ArgoCD overlay. See
+  `specs/006-force-system-ads-account`.
 
 ### Snowflake (optional, audience building)
 

@@ -1848,11 +1848,11 @@ func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
 		}
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		// The account preflight needs a currency; everything else just needs an id.
-		if strings.HasPrefix(r.URL.Path, "/act_") && !strings.Contains(r.URL.Path, "/") {
-			_, _ = io.WriteString(w, `{"currency":"USD"}`)
-			return
-		}
+		// A single-segment path is the account preflight (GET /act_<id>?fields=...);
+		// url.URL.Path excludes the query string, so the preflight arrives here as the
+		// bare "/act_<id>". It needs a currency — CreateCampaign derives the minor-unit
+		// offset from it and fails before any mutating call if it is absent. Everything
+		// else is a nested edge (/act_<id>/adsets, /<id>/adcreatives) and just needs an id.
 		if strings.Count(strings.Trim(r.URL.Path, "/"), "/") == 0 {
 			_, _ = io.WriteString(w, `{"currency":"USD","id":"23847290"}`)
 			return

@@ -284,3 +284,72 @@ func TestForceFlagOffLeavesProjectResolutionIntact(t *testing.T) {
 		}
 	}
 }
+
+// TestForcedSystemTransientLoadFailureKeepsSystemOrigin covers resolveForcedSystem's
+// NON-ErrNotFound arm: the system row could not be LOADED at all (the store was
+// unreachable), as distinct from the row being absent.
+//
+// The two arms are one line apart and both fail closed, which is exactly why the
+// distinction needs binding rather than reasoning about. They differ in what an operator
+// must DO: the absence arm says "install the LF connection for this provider" and is a
+// settled, permanent state; this arm says "the connection store failed" and is transient —
+// the row may well be installed and readable on the next attempt. Reporting either as the
+// other sends whoever is paged to the wrong remedy.
+//
+// scopedConnReader already exposes the seam this needs (its `errs` map, keyed by project
+// id — the same one the FALLBACK path's "system lookup fails" case in creds_test.go uses);
+// no new fake is required. Injecting at model.SystemProjectID with the flag ON is what
+// makes it reach the forced path rather than the fallback.
+//
+// The assertions are chosen so a mutation is observable:
+//   - dropping the systemOrigin wrapper on this line still yields a non-nil, not-created
+//     error, so only the ErrSystemConnectionOrigin check catches it;
+//   - re-tagging this arm as the absence arm (returning the notCreated(...ErrNotFound)
+//     shape) still carries system origin AND NoUpstreamCreate, so only the NEGATIVE
+//     ErrNotFound assertion catches it. That negative is the point of the test: it is the
+//     one property that separates this arm from the one directly above it.
+func TestForcedSystemTransientLoadFailureKeepsSystemOrigin(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := &scopedConnReader{
+		// A usable PROJECT row that must never be reached: a transient system failure must
+		// fail closed, not silently degrade to the account the flag exists to bypass.
+		rows: map[string]*model.Connection{
+			"cncf": usableConn(`{"project":true}`, "project-account"),
+		},
+		// The store itself failing — NOT domain.ErrNotFound, which is the arm above.
+		errs: map[string]error{
+			model.SystemProjectID: errors.New("connection refused"),
+		},
+	}
+
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if err == nil {
+		t.Fatal("resolve = nil error, want the transient system-row load failure surfaced")
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		t.Errorf("err = %v, want it attributed to the SYSTEM scope: the load that failed was the "+
+			"LF row's, and a caller that reads this as a project-connection problem sends the "+
+			"wrong owner to fix a row they do not have", err)
+	}
+	// The load-bearing negative: this is a TRANSIENT failure, not an absence. If it carried
+	// ErrNotFound it would be indistinguishable from "no system connection is installed" —
+	// a permanent state with a different remedy — and the consumers that branch on
+	// ErrNotFound would report a misconfiguration that may not exist.
+	if errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want NOT the not-created/absence shape: a store that failed to "+
+			"answer is not the same as a system row that is missing, and the two have "+
+			"different operator remedies", err)
+	}
+	var nc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nc) || !nc.NoUpstreamCreate() {
+		t.Errorf("err = %v, want a not-created error so the orchestrator releases the dispatch "+
+			"claim; nothing was created upstream because credentials never resolved", err)
+	}
+	for _, scope := range repo.gets {
+		if scope == "cncf" {
+			t.Errorf("scopes asked = %v, want the project scope NEVER consulted: a transient "+
+				"system failure must fail closed, not fall through to the project account", repo.gets)
+		}
+	}
+}
