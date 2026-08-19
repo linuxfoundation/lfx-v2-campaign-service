@@ -587,6 +587,21 @@ variants: AdVariant[]           — One ad per variant; at least one is required
 primaryText: string             — Required; non-empty; at most 125 runes
 headline: string                — Required; non-empty; at most 40 runes
 description?: string             — At most 30 runes
+imageUrl?: string               — OPTIONAL https URL to a single image for this variant.
+                                  When set, the ad renders as a SINGLE-IMAGE ad: the URL is
+                                  sent as `object_story_spec.link_data.picture`, the
+                                  documented by-URL field, and META fetches the image
+                                  server-side — this service never fetches it. Omitted/empty
+                                  yields the previous bare-link creative, so the field is
+                                  purely additive. No separate upload call is made.
+                                  Validated pre-create: must be absolute, https, and carry NO
+                                  embedded userinfo (Meta fetches it, so credentials in the
+                                  URL would be handed to Meta). A malformed value fails the
+                                  platform job before any paid resource is created.
+                                  The image must be reachable by Meta's fetchers; a creative
+                                  Meta rejects over the image fails only THAT variant's ad
+                                  (non-fatal), and is reported in the result Steps with the
+                                  URL's query/fragment stripped (it may be pre-signed).
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that
