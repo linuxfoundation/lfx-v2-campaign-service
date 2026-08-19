@@ -661,6 +661,21 @@ so its fields can be missing while the campaign's own fields are present.
 * `campaign_budget.period` is `DAILY` or `CUSTOM_PERIOD`; there is no `LIFETIME` value.
   The translation into `model.BudgetType` lives in the dispatcher, not here.
 
+**Two budget guards, not one.** A row is refused when it carries BOTH amounts, and
+separately when the amount it carries CONTRADICTS the period: `DAILY` beside a
+`total_amount_micros`, or `CUSTOM_PERIOD` beside an `amount_micros`. The second is needed
+because `googleAdsUpstreamBudgetAmount` reads whichever amount is present without ever
+consulting the period, so an inconsistent pair would have a whole-flight cap compared
+against a daily recorded budget and be reported as a BUDGET DIVERGENCE that is really a
+field-selection bug — the false finding this readback exists to prevent.
+
+An ABSENT period PASSES both guards, and so do `UNKNOWN`/`UNSPECIFIED`. Absence already
+means "Google did not report this field" on every `CampaignSettings` pointer — a partial
+read is the ordinary case — so it cannot also start meaning "inconsistent pair" without
+breaking that meaning. It is harmless downstream too: the dispatcher consults the period
+only when non-nil, so an absent one yields an `unknown` verdict rather than a fabricated
+divergence. A value Google explicitly declined to name contradicts nothing.
+
 `campaign_budget` is an ATTRIBUTED resource of `campaign`, which is what allows its fields
 in a `FROM campaign` query. Attribution does not segment, so the at-most-one-row guard
 still holds — and the query deliberately selects no `metrics.*` or `segments.*` field,

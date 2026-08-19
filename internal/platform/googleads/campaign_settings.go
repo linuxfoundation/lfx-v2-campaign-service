@@ -154,6 +154,14 @@ const settingsQueryFields = "campaign.id, campaign.name, campaign.status, campai
 	"campaign_budget.period, campaign_budget.delivery_method, " +
 	"campaign_budget.explicitly_shared"
 
+// budgetPeriodDaily and budgetPeriodCustom are the two REAL values of Google's v23
+// BudgetPeriodEnum. The enum also has UNKNOWN/UNSPECIFIED, which are deliberately not named
+// here: only a period that names one of these two can contradict a budget amount field.
+const (
+	budgetPeriodDaily  = "DAILY"
+	budgetPeriodCustom = "CUSTOM_PERIOD"
+)
+
 // parseSettingsInt parses one of Google's string-encoded int64 fields.
 //
 // Unlike parseMetricInt in metrics.go, an EMPTY string is an ERROR rather than zero.
@@ -321,6 +329,36 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	// exactly as the >1-row and unparseable-budget cases do.
 	if row.CampaignBudget.AmountMicros != nil && row.CampaignBudget.TotalAmountMicros != nil {
 		return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned with both campaign_budget.amount_micros and campaign_budget.total_amount_micros, which are mutually exclusive; the row contradicts itself and no reading of its budget can be trusted", campaignID)
+	}
+
+	// The amount field must also AGREE WITH THE PERIOD, not merely be unaccompanied. The two
+	// fields are selected by period upstream — amount_micros for DAILY, total_amount_micros for
+	// CUSTOM_PERIOD — so a row pairing one with the other period is as self-contradictory as a
+	// row carrying both, and fails for the same reason: googleAdsUpstreamBudgetAmount reads
+	// whichever amount is present WITHOUT consulting the period, so a DAILY row carrying only a
+	// total would have a whole-flight cap compared against a daily recorded budget and reported
+	// as a BUDGET DIVERGENCE that is really a field-selection bug. That is the exact false
+	// finding this readback exists to prevent, so the pair is refused rather than reconciled.
+	//
+	// Only a period that NAMES one of the two real values can contradict an amount. An ABSENT
+	// period passes: absence already means "Google did not report this field" everywhere on
+	// CampaignSettings — a partial read is the ordinary case, pinned by
+	// TestGetCampaignSettings_UnreadableFieldIsAbsentNotZero — and it cannot start signalling
+	// "inconsistent pair" without breaking that meaning. It is also harmless downstream, because
+	// the dispatcher consults the period only when it is non-nil and an absent one yields an
+	// `unknown` verdict rather than a fabricated divergence. UNKNOWN/UNSPECIFIED pass for the
+	// same reason: a value Google explicitly declined to name contradicts nothing.
+	//
+	// settings.BudgetPeriod is used rather than the raw row field because trimmedOrNil has
+	// already applied this file's normalisation: a whitespace-only period collapses to nil and
+	// is therefore treated as absent here too, exactly as it is for every other optional string.
+	if settings.BudgetPeriod != nil {
+		switch period := *settings.BudgetPeriod; {
+		case period == budgetPeriodDaily && row.CampaignBudget.TotalAmountMicros != nil:
+			return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned with campaign_budget.period %s but a campaign_budget.total_amount_micros, which belongs to a %s budget; the row contradicts itself and reading its budget would compare a whole-flight cap against a daily amount", campaignID, budgetPeriodDaily, budgetPeriodCustom)
+		case period == budgetPeriodCustom && row.CampaignBudget.AmountMicros != nil:
+			return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned with campaign_budget.period %s but a campaign_budget.amount_micros, which belongs to a %s budget; the row contradicts itself and reading its budget would compare a daily amount against a whole-flight cap", campaignID, budgetPeriodCustom, budgetPeriodDaily)
+		}
 	}
 
 	// A budget amount that is PRESENT but unparseable is an error, not an absence. Absence

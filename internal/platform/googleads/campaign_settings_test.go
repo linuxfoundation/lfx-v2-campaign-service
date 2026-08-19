@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -550,9 +551,14 @@ func TestGetCampaignSettings_PaddedIDRefused(t *testing.T) {
 // mutually exclusive upstream, so a row carrying both contradicts the API's own invariant.
 // Resolving it by preference would compare a DAILY amount against a lifetime recorded budget
 // and report a divergence that is really a field-selection bug.
+//
+// The period is deliberately UNKNOWN rather than DAILY. With DAILY this row is ALSO caught by
+// the period/amount cross-check below, so the test would pass with the mutual-presence check
+// deleted and would stop being evidence for the check it names. UNKNOWN is a period neither
+// cross-check arm can fire on, so mutual presence is the only thing left that can reject it.
 func TestGetCampaignSettings_BothBudgetFieldsRefused(t *testing.T) {
 	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
-		`"campaignBudget":{"amountMicros":"500000000","totalAmountMicros":"9000000000","period":"DAILY"}}`)
+		`"campaignBudget":{"amountMicros":"500000000","totalAmountMicros":"9000000000","period":"UNKNOWN"}}`)
 	srv, _, _ := settingsServer(t, []json.RawMessage{row})
 	client := newAccountsTestClient(t, srv)
 
@@ -563,4 +569,147 @@ func TestGetCampaignSettings_BothBudgetFieldsRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("error should name the contradiction, got: %v", err)
 	}
+}
+
+// TestGetCampaignSettings_DailyPeriodWithTotalAmountRefused and its CUSTOM_PERIOD twin pin the
+// budget period against the budget AMOUNT FIELD. The mutual-presence check above only rejects a
+// row carrying BOTH amounts; a row carrying exactly one, paired with the OTHER period, decoded
+// cleanly and was just as self-contradictory.
+//
+// It matters because googleAdsUpstreamBudgetAmount reads whichever amount is present without
+// ever consulting the period. A DAILY row carrying only total_amount_micros therefore had a
+// whole-flight spend cap compared against a daily recorded budget, and the readback reported a
+// BUDGET DIVERGENCE that was really a field-selection bug — sending an operator to investigate a
+// spend discrepancy that does not exist. That false finding is the one thing this readback exists
+// to make impossible.
+func TestGetCampaignSettings_DailyPeriodWithTotalAmountRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+		`"campaignBudget":{"totalAmountMicros":"9000000000","period":"DAILY"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for a DAILY period carrying total_amount_micros, got: %+v", got)
+	}
+	// The error must name the offending field and the period it contradicts; that pair IS the
+	// diagnosis a responder acts on.
+	if !strings.Contains(err.Error(), "total_amount_micros") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "DAILY") {
+		t.Errorf("error should name the contradicting period, got: %v", err)
+	}
+}
+
+func TestGetCampaignSettings_CustomPeriodWithDailyAmountRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+		`"campaignBudget":{"amountMicros":"500000000","period":"CUSTOM_PERIOD"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for a CUSTOM_PERIOD period carrying amount_micros, got: %+v", got)
+	}
+	if !strings.Contains(err.Error(), "amount_micros") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "CUSTOM_PERIOD") {
+		t.Errorf("error should name the contradicting period, got: %v", err)
+	}
+}
+
+// TestGetCampaignSettings_ConsistentPeriodAmountPairsAccepted is the OTHER direction, and it is
+// what stops the cross-check from being a guard that rejects everything. A fix that made every
+// budget row an error would be exactly as useless as the bug it replaced: the two consistent
+// pairings are the ordinary shape of a healthy campaign, and both must decode with the amount
+// reaching the result.
+//
+// The absent-period and UNKNOWN cases are pinned here too, and they are the subtle ones. Absence
+// already means "Google did not report this field" on every CampaignSettings pointer, so it
+// cannot also start meaning "inconsistent pair" — and an absent period is harmless downstream,
+// where the dispatcher consults the period only when non-nil and an absent one yields an
+// `unknown` verdict rather than a fabricated divergence. UNKNOWN is a value Google explicitly
+// declined to name, which contradicts nothing.
+func TestGetCampaignSettings_ConsistentPeriodAmountPairsAccepted(t *testing.T) {
+	tests := []struct {
+		name       string
+		budget     string
+		wantDaily  *int64
+		wantTotal  *int64
+		wantPeriod string
+	}{
+		{
+			name:      "DAILY with amount_micros",
+			budget:    `{"amountMicros":"750000000","period":"DAILY"}`,
+			wantDaily: int64Ptr(750000000), wantPeriod: "DAILY",
+		},
+		{
+			name:      "CUSTOM_PERIOD with total_amount_micros",
+			budget:    `{"totalAmountMicros":"9000000000","period":"CUSTOM_PERIOD"}`,
+			wantTotal: int64Ptr(9000000000), wantPeriod: "CUSTOM_PERIOD",
+		},
+		{
+			name:      "absent period with amount_micros is a partial read, not a contradiction",
+			budget:    `{"amountMicros":"750000000"}`,
+			wantDaily: int64Ptr(750000000),
+		},
+		{
+			name:      "absent period with total_amount_micros is a partial read, not a contradiction",
+			budget:    `{"totalAmountMicros":"9000000000"}`,
+			wantTotal: int64Ptr(9000000000),
+		},
+		{
+			name:      "UNKNOWN period contradicts neither amount field",
+			budget:    `{"totalAmountMicros":"9000000000","period":"UNKNOWN"}`,
+			wantTotal: int64Ptr(9000000000), wantPeriod: "UNKNOWN",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+				`"campaignBudget":` + tc.budget + `}`)
+			srv, _, _ := settingsServer(t, []json.RawMessage{row})
+			client := newAccountsTestClient(t, srv)
+
+			got, err := client.GetCampaignSettings(context.Background(), "555")
+			if err != nil {
+				t.Fatalf("GetCampaignSettings: a consistent budget pair must decode, got: %v", err)
+			}
+			// Assert the VALUE reached the result, not merely that no error was returned: a
+			// guard that dropped the budget while returning nil would pass a bare error check.
+			if !int64PtrEqual(got.BudgetAmountMicros, tc.wantDaily) {
+				t.Errorf("BudgetAmountMicros = %v, want %v", fmtInt64Ptr(got.BudgetAmountMicros), fmtInt64Ptr(tc.wantDaily))
+			}
+			if !int64PtrEqual(got.BudgetTotalAmountMicros, tc.wantTotal) {
+				t.Errorf("BudgetTotalAmountMicros = %v, want %v", fmtInt64Ptr(got.BudgetTotalAmountMicros), fmtInt64Ptr(tc.wantTotal))
+			}
+			switch {
+			case tc.wantPeriod == "" && got.BudgetPeriod != nil:
+				t.Errorf("BudgetPeriod = %q, want nil", *got.BudgetPeriod)
+			case tc.wantPeriod != "" && (got.BudgetPeriod == nil || *got.BudgetPeriod != tc.wantPeriod):
+				t.Errorf("BudgetPeriod = %v, want %q", got.BudgetPeriod, tc.wantPeriod)
+			}
+		})
+	}
+}
+
+// int64Ptr, int64PtrEqual and fmtInt64Ptr keep the table above readable while comparing
+// PRESENCE as well as value — nil and 0 are different answers here, which is the whole reason
+// CampaignSettings uses pointers.
+func int64Ptr(v int64) *int64 { return &v }
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func fmtInt64Ptr(v *int64) string {
+	if v == nil {
+		return "<nil>"
+	}
+	return strconv.FormatInt(*v, 10)
 }

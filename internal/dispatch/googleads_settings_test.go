@@ -245,8 +245,17 @@ func TestGoogleAds_ReadSettings_IssuesNoMutatingCall(t *testing.T) {
 // change the column's meaning from request to observation, break shape-consistency with
 // every sibling adapter, and let one transient bad read destroy the only record of the
 // request. The row must come back byte-identical in every compared field.
+//
+// The fixture pairs amount_micros with DAILY because those two are the CONSISTENT pairing.
+// It previously paired amount_micros with CUSTOM_PERIOD, which the client now refuses as a
+// self-contradictory row: the amount field is selected by the period upstream, and reading
+// an inconsistent pair compares a daily amount against a whole-flight cap and reports a
+// budget divergence that is really a field-selection bug. The test asserted the old
+// permissive decode by accident — its subject is the write-back property, not budget
+// consistency — and a DAILY period exercises that subject just as well, since the upstream
+// 750 still diverges from the recorded 500.
 func TestGoogleAds_ReadSettings_DoesNotWriteBackOntoTheRow(t *testing.T) {
-	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"upstream name","status":"PAUSED"},"campaignBudget":{"amountMicros":"750000000","period":"CUSTOM_PERIOD"}}]}`)
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"upstream name","status":"PAUSED"},"campaignBudget":{"amountMicros":"750000000","period":"DAILY"}}]}`)
 
 	recorded := 500.0
 	bt := model.BudgetDaily
