@@ -51,17 +51,36 @@ pattern). The pairing also lets the `openfga.enabled=false` branch fall back to
 
 ## Slug-to-UID resolution (LFXV2-3324)
 
-`:projectId` on every `project-api` route is a project **slug** — self-serve's
-`campaign-service.service.ts` sends slugs on this API, never UIDs — but OpenFGA
-tuples for `campaign_manager`/`marketing_ops` are keyed on project **UID**. A
-slug-keyed `openfga_check` object would never match a UID-keyed tuple.
+`:projectId` on every `project-api` route is usually a project **slug** —
+self-serve's `campaign-service.service.ts` sends slugs on this API, never
+UIDs — but OpenFGA tuples for `campaign_manager`/`marketing_ops` are keyed on
+project **UID**. A slug-keyed `openfga_check` object would never match a
+UID-keyed tuple.
 
-When `openfga.enabled`, the rule runs `project_slug_resolver_contextualizer`
-(defined centrally in `lfx-v2-helm`'s `charts/lfx-platform/values.yaml`) before
-`openfga_check`. It calls `lfx-v2-project-service`'s
-`GET /projects/slug-to-uid/{slug}` endpoint and exposes the result as
-`.Outputs.project_slug_resolver_contextualizer.uid`, which `openfga_check`'s
-`object` template reads instead of the raw `:projectId` capture. The
-contextualizer's `continue_pipeline_on_error: false` means a failed resolution
-denies the request rather than letting `openfga_check` run against an
-unresolved/empty object.
+`design/connection.go`'s `projectIDAttr()` also intentionally accepts a raw
+project **UUID** on this rule's get/update/delete/test/set-credential routes,
+to keep historical UUID-keyed connection rows (migration 000003) reachable.
+`project_slug_resolver_contextualizer`'s endpoint only performs slug lookup
+and 404s on a UUID, so the rule must not run it unconditionally.
+
+When `openfga.enabled`, the rule branches on whether `:projectId` matches a
+UUID regex via Heimdall's `if:` CEL guard, evaluated against
+`Request.URL.Captures.projectId`:
+
+- **Not a UUID (slug):** runs `project_slug_resolver_contextualizer` (defined
+  centrally in `lfx-v2-helm`'s `charts/lfx-platform/values.yaml`), which calls
+  `lfx-v2-project-service`'s `GET /projects/slug-to-uid/{slug}` endpoint, then
+  `openfga_check` reads the resolved `.Outputs.project_slug_resolver_contextualizer.uid`.
+  The contextualizer's `continue_pipeline_on_error: false` means a failed
+  resolution denies the request rather than letting `openfga_check` run
+  against an unresolved/empty object.
+- **UUID:** the resolver contextualizer is skipped entirely (its own `if:`
+  guard is the negation of the branch condition), and a second, mutually
+  exclusive `openfga_check` entry — gated by the positive UUID match — reads
+  the raw `:projectId` capture directly as the object UID.
+
+Two separate `openfga_check` entries (one per branch), rather than one entry
+whose `object` template falls back to the raw capture when the resolver's
+output is empty, because whether a skipped contextualizer's `Outputs` are
+safely absent vs. an error is not documented Heimdall behavior — the
+mutually-exclusive `if:` guards avoid relying on it.
