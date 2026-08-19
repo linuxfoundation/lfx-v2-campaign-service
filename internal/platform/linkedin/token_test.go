@@ -596,3 +596,76 @@ func TestTokenTransportErrorNeverLeaksTheRequestBody(t *testing.T) {
 		}
 	}
 }
+
+// leakyBodyRoundTripper models the third vector, which neither the response-body test nor
+// the transport-error test covers: the RoundTripper returns a RESPONSE whose Body.Read
+// fails with credential-bearing text. WithHTTPClient makes the response as caller-controlled
+// as the transport error, and fetchToken reads that body before it classifies the status.
+type leakyBodyRoundTripper struct{}
+
+func (leakyBodyRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(r.Body)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(&failingReader{msg: "read failed for request " + string(body)}),
+	}, nil
+}
+
+// failingReader fails every Read with an error carrying the supplied text.
+type failingReader struct{ msg string }
+
+func (f *failingReader) Read([]byte) (int, error) { return 0, errors.New(f.msg) }
+
+// TestTokenBodyReadErrorNeverLeaksTheRequestBody walks every layer of the chain, like the
+// transport-error test. Wrapping the raw body-read cause with %w bypassed the redaction the
+// transport arm establishes, and these errors are persisted into a campaign's Steps.
+func TestTokenBodyReadErrorNeverLeaksTheRequestBody(t *testing.T) {
+	c := NewClient(refreshableCreds(), RuntimeConfig{},
+		withTokenURL("https://example.invalid/oauth/v2/accessToken"),
+		WithHTTPClient(&http.Client{Transport: leakyBodyRoundTripper{}}))
+
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("a failing body read must not read as a successful token exchange")
+	}
+
+	secrets := []string{"client-secret", "stored-refresh-token", "client_secret", "refresh_token"}
+	for layer := err; layer != nil; layer = errors.Unwrap(layer) {
+		for _, s := range secrets {
+			if strings.Contains(layer.Error(), s) {
+				t.Errorf("error layer %T renders credential material %q: %v", layer, s, layer)
+			}
+		}
+	}
+}
+
+// Redaction must not cost classification: a cancelled context still has to be detectable
+// through the chain, which is why redactBodyReadError returns the canonical sentinels.
+func TestTokenBodyReadCancellationRemainsDetectable(t *testing.T) {
+	c := NewClient(refreshableCreds(), RuntimeConfig{},
+		withTokenURL("https://example.invalid/oauth/v2/accessToken"),
+		WithHTTPClient(&http.Client{Transport: cancelBodyRoundTripper{}}))
+
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled preserved through redaction so callers can still classify it", err)
+	}
+}
+
+type cancelBodyRoundTripper struct{}
+
+func (cancelBodyRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(&ctxCancelReader{}),
+	}, nil
+}
+
+type ctxCancelReader struct{}
+
+func (*ctxCancelReader) Read([]byte) (int, error) { return 0, context.Canceled }

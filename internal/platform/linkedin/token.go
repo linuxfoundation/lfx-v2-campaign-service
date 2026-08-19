@@ -206,7 +206,15 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 
 	buf := new(bytes.Buffer)
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
-		return "", fmt.Errorf("read linkedin token response: %w", err)
+		// Redacted for the same reason the Do error above is: WithHTTPClient accepts an
+		// arbitrary RoundTripper, so the *response* it returns is caller-controlled too and
+		// its Body.Read error text can echo the request body that carried client_secret and
+		// the refresh token. Wrapping the raw cause with %w bypassed the redaction guarantee
+		// the transport arm establishes, and this error can be persisted into a campaign's
+		// Steps, so the leak would be durable. redactBodyReadError rebuilds the cause from
+		// its classification, preserving context.Canceled/DeadlineExceeded for errors.Is
+		// while rendering no untrusted text.
+		return "", fmt.Errorf("read linkedin token response: %w", redactBodyReadError(err))
 	}
 	if int64(buf.Len()) > maxResponseBytes {
 		return "", fmt.Errorf("linkedin token response exceeds %d bytes", maxResponseBytes)

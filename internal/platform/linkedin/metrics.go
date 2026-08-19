@@ -513,6 +513,29 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// A 401 is classified HERE, not left to the caller, and this is the path the
+		// incident actually ran through. Resolving the token through accessTokenValue
+		// above covers a token this client KNOWS is expired; it cannot cover the two
+		// cases that produced the outage — a bearer-only row whose AccessTokenExpiresAt
+		// is zero (so nothing predicts the expiry) and a token LinkedIn revoked
+		// mid-flight. In both, the request is sent and LinkedIn answers 401, and
+		// returning a bare apiError here made GetCampaignMetrics fail with an opaque
+		// upstream error that the dispatcher's ErrCredentialsExpired re-tag could never
+		// match. Mirrors doRequest's 401 arm in client.go.
+		//
+		// The body is passed to the classifier but still NOT retained on apiError: it is
+		// read for the serviceErrorCode signal and discarded, so no untrusted upstream
+		// text reaches an exported field.
+		if isTokenExpiryResponse(resp.StatusCode, buf.String()) {
+			// Clear the cached token so the next read re-exchanges rather than replaying
+			// one LinkedIn has already rejected. Only the CACHE is cleared — a revoked
+			// access token does not imply a revoked refresh token.
+			c.invalidateAccessToken()
+			return nil, false, 0, &credentialsExpiredError{
+				Connection: c.creds.ConnectionLabel(),
+				Reason:     "LinkedIn rejected the access token (HTTP 401: expired, revoked or invalid)",
+			}
+		}
 		// Body is deliberately NOT retained: this analytics path never classifies on
 		// the response body (unlike isInReviewPauseRejection's write-path use of
 		// apiError.Body above), so there's no reason to hold an untrusted,
