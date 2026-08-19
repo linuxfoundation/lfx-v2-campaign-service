@@ -982,3 +982,241 @@ func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
 		}
 	}
 }
+
+// TestLinkedIn_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
+// guard on the TOGGLE path. LinkedIn campaign ids are unique only WITHIN a sponsored ad
+// account, so once a project's connection is re-pointed the stored id addressed against the
+// new account can collide with an unrelated campaign and PAUSE OR ACTIVATE something this
+// project does not own. The refusal must be a non-retryable ErrCampaignAccountMismatch (409)
+// raised before LinkedIn is contacted at all, and it must sit above BOTH branches.
+//
+// The ACTIVATE case is what pins the ORDERING: UpdateCampaignAndCreativesStatus discovers the
+// campaign's creatives and refuses an activate with none servable
+// (ErrCampaignNotProvisioned). Were the guard placed after that call, a foreign-account
+// activate would answer "zero creatives" — a fact about the WRONG campaign, obtained by
+// contacting LinkedIn. The handler below fails the test on any request for that reason.
+//
+// Both blob shapes are covered: the explicit accountId the create path stamps, and the legacy
+// row that only carries the account in its Campaign Manager URL path.
+func TestLinkedIn_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"accountId field", `{"campaignId":"555","accountId":"999888777"}`},
+		{"legacy url fallback", `{"campaignId":"555","linkedInUrl":"https://www.linkedin.com/campaignmanager/accounts/999888777/campaigns/555"}`},
+	} {
+		for _, status := range []string{model.CampaignRunPaused, model.CampaignRunActive} {
+			t.Run(tc.name+"/status="+status, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					// Covers BOTH the mutation and the creative-discovery GET that precedes it:
+					// a campaign in another account must not be described, let alone changed.
+					t.Errorf("LinkedIn must not be contacted for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+				}))
+				defer srv.Close()
+				// activeLinkedInConn resolves to account 123456789; the rows record 999888777.
+				d := NewLinkedInDispatcher(
+					fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+					linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+				)
+				camp := &model.Campaign{PlatformCampaignID: "555", Result: json.RawMessage(tc.result)}
+				err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, camp, status)
+				if err == nil {
+					t.Fatal("expected a mismatch error")
+				}
+				if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+					t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+				}
+				// The mismatch must be the answer, not a narrower guard that masks it.
+				if errors.Is(err, domain.ErrCampaignNotProvisioned) {
+					t.Errorf("a foreign-account campaign must answer the mismatch, not a provisioning verdict about another account's campaign: %v", err)
+				}
+				// Assert the VALUES: a message naming the wrong pair would still satisfy the
+				// sentinel check above.
+				if !strings.Contains(err.Error(), "999888777") || !strings.Contains(err.Error(), "123456789") {
+					t.Errorf("error must name the created account (999888777) and the resolved one (123456789), got %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestLinkedIn_ToggleStatus_MatchingOrUnknownAccountStillToggles is the guard's other half: a
+// row recording the SAME account, and a legacy row recording none at all, must still toggle.
+// Absence means "unknown, proceed" — turning it into a refusal would strand every campaign
+// created before the account id was stamped into the result blob.
+func TestLinkedIn_ToggleStatus_MatchingOrUnknownAccountStillToggles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching accountId", `{"campaignId":"555","accountId":"123456789"}`},
+		{"matching url fallback", `{"campaignId":"555","linkedInUrl":"https://www.linkedin.com/campaignmanager/accounts/123456789/campaigns/555"}`},
+		{"no provenance recorded", `{"campaignId":"555"}`},
+		{"no result blob at all", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotCh := make(chan struct{ method, path, restli, status string }, 8)
+			srv := httptest.NewServer(linkedinToggleHandler(t, gotCh, "urn:li:sponsoredCreative:900"))
+			defer srv.Close()
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "555"}
+			if tc.result != "" {
+				camp.Result = json.RawMessage(tc.result)
+			}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.CampaignRunActive); err != nil {
+				t.Fatalf("ToggleStatus must proceed for a matching/unknown account, got %v", err)
+			}
+			close(gotCh)
+			var mutations int
+			for r := range gotCh {
+				if r.method != http.MethodGet {
+					mutations++
+				}
+			}
+			// The point of the half: the guard let the call THROUGH. Asserting only "no error"
+			// would also pass if the toggle silently did nothing.
+			if mutations == 0 {
+				t.Error("a matching/unknown-account campaign must actually be toggled, but no mutation reached LinkedIn")
+			}
+		})
+	}
+}
+
+// TestLinkedIn_ReadMetrics_ForeignAccountIs409AndNeverQueries pins the same guard on the READ
+// path. The Ad Analytics finder is scoped by the sponsoredAccount URN built from the CURRENT
+// connection, so the stored campaign id read under a re-pointed account returns either nothing
+// — a false "zero activity" — or an unrelated campaign's numbers rendered as this campaign's
+// measurement. The read must fail with ErrCampaignAccountMismatch (409) and never reach
+// LinkedIn.
+func TestLinkedIn_ReadMetrics_ForeignAccountIs409AndNeverQueries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"accountId field", `{"campaignId":"555","accountId":"999888777"}`},
+		{"legacy url fallback", `{"campaignId":"555","linkedInUrl":"https://www.linkedin.com/campaignmanager/accounts/999888777/campaigns/555"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				t.Errorf("LinkedIn must not be queried for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+			}))
+			defer srv.Close()
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "555", Result: json.RawMessage(tc.result)}
+			got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.MetricsWindowLast7Days)
+			if err == nil {
+				t.Fatal("expected a mismatch error")
+			}
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+			}
+			if got != nil {
+				t.Errorf("a refused read must return no metrics, got %+v", got)
+			}
+			if !strings.Contains(err.Error(), "999888777") || !strings.Contains(err.Error(), "123456789") {
+				t.Errorf("error must name the created account (999888777) and the resolved one (123456789), got %v", err)
+			}
+		})
+	}
+}
+
+// TestLinkedIn_ReadMetrics_MatchingOrUnknownAccountStillReads is the read guard's other half:
+// it must not become a wall. A row that cannot PROVE a mismatch must still be read.
+func TestLinkedIn_ReadMetrics_MatchingOrUnknownAccountStillReads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching accountId", `{"campaignId":"555","accountId":"123456789"}`},
+		{"matching url fallback", `{"campaignId":"555","linkedInUrl":"https://www.linkedin.com/campaignmanager/accounts/123456789/campaigns/555"}`},
+		{"no provenance recorded", `{"campaignId":"555"}`},
+		{"unparseable result blob", `not json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var queried bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				queried = true
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[{"impressions":1000,"clicks":40,"costInUsd":"25.50"}]}`)
+			}))
+			defer srv.Close()
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "555", Result: json.RawMessage(tc.result)}
+			got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.MetricsWindowLast7Days)
+			if err != nil {
+				t.Fatalf("ReadMetrics must proceed for a matching/unknown account, got %v", err)
+			}
+			if got == nil || got.Impressions != 1000 {
+				t.Errorf("want the platform's metrics (1000 impressions), got %+v", got)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !queried {
+				t.Error("a matching/unknown-account campaign must actually be read, but LinkedIn was never queried")
+			}
+		})
+	}
+}
+
+// TestLinkedIn_DispatchStampsCreatingAccount closes the loop the guard depends on: it drives a
+// REAL create through the client and asserts the persisted Result blob records the account,
+// readable by the very function the guard calls.
+//
+// LinkedIn does have a URL fallback, so a lost stamp would not disable the guard outright —
+// but it would silently downgrade every new row to the legacy path, and asserting through
+// linkedInCreationAccountID pins reader and writer to the SAME persisted shape either way.
+func TestLinkedIn_DispatchStampsCreatingAccount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	// activeLinkedInConn resolves to account 123456789, so that is what a created row records.
+	if got := linkedInCreationAccountID(camp); got != "123456789" {
+		t.Errorf("a created row must record its creating account: linkedInCreationAccountID = %q, want %q (blob: %s)", got, "123456789", camp.Result)
+	}
+}
