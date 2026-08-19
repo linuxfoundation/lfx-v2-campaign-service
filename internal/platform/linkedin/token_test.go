@@ -219,11 +219,18 @@ func TestAccessTokenValueAdoptsRotatedRefreshToken(t *testing.T) {
 // TestAccessTokenValueRejectedRefreshIsActionable proves a rejected refresh token
 // fails CLOSED with ErrCredentialsExpired naming the connection — not a 500, and
 // never a fallback to the stale token.
+//
+// The body carries `invalid_grant`, the RFC 6749 §5.2 code that actually means the refresh
+// token is expired or revoked. It previously carried `invalid_request` with an
+// expired-sounding description — but the CODE is what classifies, the description is never
+// read, and invalid_request means a malformed REQUEST. The fixture and the code agreed only
+// because the split was binary; under a correct classification that body is an application
+// fault and this test would have been asserting the wrong remedy.
 func TestAccessTokenValueRejectedRefreshIsActionable(t *testing.T) {
 	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(status)
-			_, _ = w.Write([]byte(`{"error":"invalid_request","error_description":"refresh token is invalid, expired or revoked"}`))
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token is invalid, expired or revoked"}`))
 		}))
 
 		c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
@@ -884,12 +891,18 @@ func TestInvalidClientIsNotReportedAsAnExpiredCredential(t *testing.T) {
 
 // TestInvalidGrantStillReportsAnExpiredCredential is the other half of the split: the
 // genuinely-expired case must keep its existing, correct classification.
+//
+// `invalid_grant` is the ONLY RFC 6749 §5.2 code that describes a dead grant, so it is the
+// only code here. An unreadable body is included deliberately — see the fallback case below.
+// This test previously also listed `invalid_request`, which asserted the OLD binary split
+// (everything-but-invalid_client is expired) and would have passed against the very defect
+// the sibling test now pins.
 func TestInvalidGrantStillReportsAnExpiredCredential(t *testing.T) {
 	for _, body := range []string{
 		`{"error":"invalid_grant","error_description":"refresh token expired"}`,
-		`{"error":"invalid_request"}`,
 		`not json at all`,
 		``,
+		`{"error":"some_code_the_rfc_does_not_define"}`,
 	} {
 		t.Run(fmt.Sprintf("body=%.20q", body), func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -901,8 +914,57 @@ func TestInvalidGrantStillReportsAnExpiredCredential(t *testing.T) {
 			c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
 			_, err := c.accessTokenValue(context.Background())
 			if !errors.Is(err, ErrCredentialsExpired) {
-				t.Errorf("err = %v, want ErrCredentialsExpired — an absent or non-invalid_client code must keep the re-authorize remedy", err)
+				t.Errorf("err = %v, want ErrCredentialsExpired — invalid_grant, and any body this "+
+					"client cannot classify, keep the re-authorize remedy", err)
 			}
 		})
+	}
+}
+
+// TestNonGrantOAuthCodesAreApplicationFaults pins the correction to the binary split.
+//
+// RFC 6749 §5.2 defines six token-endpoint codes and only ONE of them — invalid_grant —
+// describes an expired or revoked grant. The other five describe the CLIENT or the REQUEST:
+// a member re-authorization cannot repair any of them, so classifying them as
+// ErrCredentialsExpired hands the operator a remedy that is actionable and provably useless.
+// They take the application-credentials sentinel, whose remedy is "correct the connection".
+//
+// invalid_client already had this treatment; the other four are what this test adds. Each is
+// asserted on BOTH 400 and 401, since LinkedIn uses either for the same fault.
+func TestNonGrantOAuthCodesAreApplicationFaults(t *testing.T) {
+	for _, code := range []string{
+		"invalid_client",
+		"invalid_request",
+		"unauthorized_client",
+		"unsupported_grant_type",
+		"invalid_scope",
+	} {
+		for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized} {
+			t.Run(fmt.Sprintf("%s/%d", code, status), func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(status)
+					_, _ = w.Write([]byte(`{"error":"` + code + `","error_description":"app 99 secret sk-LEAKME"}`))
+				}))
+				t.Cleanup(srv.Close)
+
+				c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+				_, err := c.accessTokenValue(context.Background())
+				if !errors.Is(err, ErrApplicationCredentialsInvalid) {
+					t.Errorf("%s must unwrap to ErrApplicationCredentialsInvalid: it describes the "+
+						"client or the request, not a dead grant, so no member re-authorization "+
+						"repairs it (err = %v)", code, err)
+				}
+				if errors.Is(err, ErrCredentialsExpired) {
+					t.Errorf("%s classified as ErrCredentialsExpired — that remedy tells a member to "+
+						"re-authorize, which cannot fix an application or request fault (err = %v)", code, err)
+				}
+				// The classification travels; the upstream body never does.
+				for _, leak := range []string{"sk-LEAKME", "app 99"} {
+					if strings.Contains(err.Error(), leak) {
+						t.Errorf("upstream token-endpoint text %q leaked into the error: %v", leak, err)
+					}
+				}
+			})
+		}
 	}
 }

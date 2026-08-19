@@ -78,6 +78,15 @@ rows, so the catalog was in scope for this change — but the all-or-none **400*
 rejection with no OpenAPI counterpart (Goa's `Required` cannot express a conditional group),
 was undocumented. Added as a note alongside the connection rows.
 
+> **Correction (same day, see
+> `2026-08-19-LFXV2-3281-rfc6749-code-split-and-catalog-row.md`):** the paragraph above
+> describes the intent, not what landed. The new paragraph was written into the campaign
+> **toggle** row TWICE and never reached the campaign-**metrics** row, which still listed only
+> the previous four LinkedIn reasons — so "on the toggle and metrics rows" was false when
+> written. The duplicate has been removed and the paragraph added to the metrics row, where
+> `ReadMetrics` genuinely surfaces the reason through the same
+> `linkedinConnectionDefect`/`linkedinExpiry` pair.
+
 ## Falsified — no change made
 
 A suppressed reviewer comment claimed `ListAccounts` "discards the `resolved` value and

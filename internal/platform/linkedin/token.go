@@ -342,12 +342,14 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// ignored; the parsed `error` code is matched against a fixed local allow-list and
 		// never rendered, so no upstream byte reaches the message on any arm.
 		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
-			if oauthErrorCode(buf.Bytes()) == oauthErrorInvalidClient {
-				// Operator misconfiguration: the client_id/client_secret pair is wrong,
-				// unknown to LinkedIn, or the app was deleted. Deliberately NOT an
-				// ErrCredentialsExpired — that resolves to "re-authorize", and no member
-				// re-authorization repairs an application credential. Whoever configured
-				// the connection must correct it.
+			if _, appFault := oauthAppFaultCodes[oauthErrorCode(buf.Bytes())]; appFault {
+				// Operator/implementation fault: the client_id/client_secret pair is wrong,
+				// unknown to LinkedIn or the app was deleted (invalid_client); the app is
+				// not authorized for this grant type (unauthorized_client); or the request
+				// itself is malformed, uses an unsupported grant, or asks for an invalid
+				// scope. Deliberately NOT an ErrCredentialsExpired — that resolves to
+				// "re-authorize", and no member re-authorization repairs any of these.
+				// Whoever configured the connection, or this client, must correct it.
 				//
 				// It is returned as a TYPED error, not a bare fmt.Errorf. Every arm that
 				// acts on this classification matches structurally (errors.Is), so an
@@ -360,11 +362,21 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 					StatusCode: resp.StatusCode,
 				}
 			}
-			// Everything else on a 400/401 keeps the previous, correct reading: LinkedIn
-			// documents expired, revoked and invalid refresh tokens under the SAME status
-			// and `invalid_grant`, and all three are repaired the same way. An absent or
-			// unparseable code lands here too, preserving today's behaviour on a body this
-			// client cannot read.
+			// `invalid_grant` — the ONE §5.2 code that describes a dead grant — plus the
+			// deliberate fallback for a body this client cannot read.
+			//
+			// LinkedIn documents expired, revoked and invalid refresh tokens under that same
+			// code, and all three are repaired the same way: the member re-authorizes.
+			//
+			// The FALLBACK is the deliberate part. An absent, non-JSON, or unrecognised code
+			// lands here rather than on the app-fault arm, and that asymmetry is chosen: this
+			// arm's remedy (re-authorize) is recoverable if wrong — the member repeats an
+			// authorization and the real fault resurfaces unchanged — whereas telling an
+			// operator their app credentials are broken when the token merely expired sends
+			// them auditing a correct configuration. On no evidence, prefer the remedy whose
+			// failure is self-correcting. Note this is the OPPOSITE default from before the
+			// split, when every unclassified 400/401 landed here by construction rather than
+			// by choice.
 			return "", &credentialsExpiredError{
 				Connection: c.creds.ConnectionLabel(),
 				Reason: fmt.Sprintf("LinkedIn rejected the refresh token (HTTP %d: expired, revoked or invalid)",
@@ -449,10 +461,57 @@ func (c *Client) warnIfRefreshTokenNearExpiry(ctx context.Context, deadline time
 	)
 }
 
-// oauthErrorInvalidClient is RFC 6749 §5.2's code for "client authentication failed" —
-// an unknown client_id, a wrong client_secret, or a deleted app. It is the one
-// token-endpoint failure a member re-authorization can never repair.
-const oauthErrorInvalidClient = "invalid_client"
+// RFC 6749 §5.2 defines exactly six token-endpoint `error` codes, and they split cleanly by
+// REMEDY — which is the only thing this client needs from them. All six are handled, rather
+// than special-casing one at a time, because the codes are a CLOSED set: enumerating them once
+// means a body carrying any of them is classified, and only a body carrying something outside
+// the RFC (or nothing readable) reaches the fallback.
+//
+// Exactly one of the six describes a dead GRANT — the case a member re-authorization repairs:
+//
+//	invalid_grant: "The provided authorization grant ... or refresh token is invalid, expired,
+//	revoked, does not match the redirection URI ..., or was issued to another client."
+//
+// The other five describe the CLIENT or the REQUEST, and no member re-authorization repairs
+// any of them:
+//
+//	invalid_client        — client authentication failed: unknown client_id, wrong
+//	                        client_secret, or a deleted app.
+//	invalid_request       — the request is malformed, missing a required parameter, or
+//	                        repeats one. A defect in what THIS CLIENT sent.
+//	unauthorized_client   — the client is not authorized to use this grant type; on LinkedIn
+//	                        this is the app lacking refresh-token grant (a Marketing Developer
+//	                        Platform approval), not a token that aged out.
+//	unsupported_grant_type— the server does not support this grant type at all.
+//	invalid_scope         — the requested scope is invalid, unknown or malformed.
+//
+// Sending "re-authorize the connection" for any of those five is worse than sending nothing:
+// it is actionable, and it provably cannot work — the member repeats an authorization whose
+// result was never the problem, and the failure recurs unchanged. They are application- and
+// implementation-level faults, so they take ErrApplicationCredentialsInvalid, whose remedy is
+// "an operator must correct the connection/app". That sentinel is slightly wider than its name
+// (it also covers a malformed request or an unsupported grant), which is deliberate: the
+// remedy is identical for all five, and it is the remedy — not the taxonomy — that the caller
+// acts on. Splitting them further would add sentinels no call site could treat differently.
+const (
+	oauthErrorInvalidClient      = "invalid_client"
+	oauthErrorInvalidGrant       = "invalid_grant"
+	oauthErrorInvalidRequest     = "invalid_request"
+	oauthErrorUnauthorizedClient = "unauthorized_client"
+	oauthErrorUnsupportedGrant   = "unsupported_grant_type"
+	oauthErrorInvalidScope       = "invalid_scope"
+)
+
+// oauthAppFaultCodes are the RFC 6749 §5.2 codes that describe the CLIENT or the REQUEST
+// rather than a dead grant. Every one of them is permanent until an operator changes the
+// connection or this client's request, and none is repaired by a member re-authorization.
+var oauthAppFaultCodes = map[string]struct{}{
+	oauthErrorInvalidClient:      {},
+	oauthErrorInvalidRequest:     {},
+	oauthErrorUnauthorizedClient: {},
+	oauthErrorUnsupportedGrant:   {},
+	oauthErrorInvalidScope:       {},
+}
 
 // oauthErrorCode extracts the RFC 6749 §5.2 `error` code from a token-endpoint error
 // body, returning "" when the body is absent, not JSON, or carries no string `error`.

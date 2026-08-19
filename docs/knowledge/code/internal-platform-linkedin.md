@@ -65,12 +65,35 @@ re-authorize, rather than degrading into an unauthenticated call.
 **A rejected token exchange is classified on the OAuth `error` code, not on status
 alone.** A token endpoint answers 400/401 for both a dead refresh token and a wrong
 application credential, and the two have opposite remedies, so `fetchToken` parses
-RFC 6749 §5.2's `error`: `invalid_client` is an operator misconfiguration and is
-deliberately NOT `ErrCredentialsExpired`, because no member re-authorization can
-repair a wrong `client_id`/`client_secret`. Everything else on a 400/401 — including
-an absent or unparseable code — keeps the expired/revoked/invalid reading. Only the
-parsed code is matched against a local constant; `error_description` is never read
-and no upstream byte reaches the message.
+RFC 6749 §5.2's `error`. Only the parsed code is matched against a local constant;
+`error_description` is never read and no upstream byte reaches the message.
+
+**All six §5.2 codes are handled, and they split by REMEDY rather than one at a
+time.** The codes are a CLOSED set, so enumerating them once means only a body
+outside the RFC — or one that cannot be read — reaches a fallback. Exactly ONE code,
+`invalid_grant`, describes a dead grant: the RFC reserves it for an authorization
+grant or refresh token that is "invalid, expired, revoked, does not match the
+redirection URI ..., or was issued to another client", and that is the case a member
+re-authorization repairs. The other five — `invalid_client`, `invalid_request`,
+`unauthorized_client`, `unsupported_grant_type`, `invalid_scope` — describe the
+CLIENT or the REQUEST: a wrong `client_id`/`client_secret` or deleted app, a
+malformed request, an app not approved for this grant type (on LinkedIn, the
+Marketing Developer Platform case), an unsupported grant, or a bad scope. **None is
+repaired by a member re-authorization**, so all five take
+`ErrApplicationCredentialsInvalid`, whose remedy is "an operator must correct the
+connection". A binary `invalid_client`-or-expired split sent four of those five to
+"re-authorize the connection" — advice that is actionable and provably useless, and
+worse than no advice because the member repeats an authorization whose result was
+never the problem. The sentinel is deliberately a little wider than its name: the
+remedy is identical across the five, and the remedy is what a caller acts on.
+
+**The fallback is a choice, not an accident.** An absent, non-JSON or unrecognised
+code takes the EXPIRED arm. That asymmetry is picked because its failure mode is
+self-correcting: if the guess is wrong the member re-authorizes, the real fault
+resurfaces unchanged, and nothing was destroyed — whereas telling an operator their
+application credentials are broken when a token merely aged out sends them auditing a
+correct configuration. Note this is the opposite default from before the split, when
+every unclassified 400/401 reached that arm by construction rather than by choice.
 
 **Splitting the arm is only half the job: it must still be CLASSIFIABLE.** Every
 consumer of this classification matches structurally (`errors.Is`), so an
