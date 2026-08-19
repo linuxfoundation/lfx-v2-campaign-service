@@ -477,6 +477,135 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	}
 }
 
+// metaFieldServer stands up an httptest server that captures the ad-set and
+// creative request bodies for the Instagram/DSA field tests below. It mirrors the
+// happy-path handler but only keeps the two bodies those assertions need.
+func metaFieldServer(t *testing.T, adsetCap, creativeCap *bodyCapture) *httptest.Server {
+	t.Helper()
+	var creativeCount, adCount int32
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			creativeCap.set(decodeBody(t, r))
+			n := atomic.AddInt32(&creativeCount, 1)
+			_, _ = io.WriteString(w, `{"id":"creative_`+strconv.Itoa(int(n))+`"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
+			n := atomic.AddInt32(&adCount, 1)
+			_, _ = io.WriteString(w, `{"id":"ad_`+strconv.Itoa(int(n))+`"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func metaFieldInput() CampaignInput {
+	return CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://events.example.org/kubecon",
+		Objective:       "traffic",
+		GeoTargets:      []string{"US"},
+		Budget:          500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	}
+}
+
+// TestCreateCampaignBindsInstagramAndDSAFields verifies that when the launch config
+// supplies the Instagram account and the EU DSA advertiser/payer disclosures, they
+// reach Meta at the right level: instagram_user_id as a top-level adcreative field
+// (sibling to object_story_spec, not nested in it), and dsa_beneficiary/dsa_payor on
+// the ad set. These are exactly the two fields whose absence made the ad
+// unpublishable ("Please add Instagram account" / "Please add Advertiser"/"Payer").
+func TestCreateCampaignBindsInstagramAndDSAFields(t *testing.T) {
+	adsetCap := newBodyCapture()
+	creativeCap := newBodyCapture()
+	srv := metaFieldServer(t, adsetCap, creativeCap)
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
+	)
+
+	in := metaFieldInput()
+	in.InstagramUserID = "  17841400000000000  " // padded: must be trimmed before send
+	in.DSABeneficiary = "The Linux Foundation"
+	in.DSAPayor = "The Linux Foundation"
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+
+	adsetBody := adsetCap.get()
+	if adsetBody["dsa_beneficiary"] != "The Linux Foundation" {
+		t.Errorf("adset dsa_beneficiary = %v, want 'The Linux Foundation'", adsetBody["dsa_beneficiary"])
+	}
+	if adsetBody["dsa_payor"] != "The Linux Foundation" {
+		t.Errorf("adset dsa_payor = %v, want 'The Linux Foundation'", adsetBody["dsa_payor"])
+	}
+
+	creativeBody := creativeCap.get()
+	if creativeBody["instagram_user_id"] != "17841400000000000" {
+		t.Errorf("creative instagram_user_id = %v, want trimmed '17841400000000000'", creativeBody["instagram_user_id"])
+	}
+	// instagram_user_id must be top-level, NOT nested inside object_story_spec.
+	if oss, ok := creativeBody["object_story_spec"].(map[string]any); ok {
+		if _, nested := oss["instagram_user_id"]; nested {
+			t.Errorf("instagram_user_id must not be nested inside object_story_spec")
+		}
+	}
+}
+
+// TestCreateCampaignOmitsInstagramAndDSAWhenUnset verifies the fields are absent from
+// the payloads when not configured, so Facebook-only / non-regulated flows are
+// unchanged and Meta never receives an empty-string value it would reject.
+func TestCreateCampaignOmitsInstagramAndDSAWhenUnset(t *testing.T) {
+	adsetCap := newBodyCapture()
+	creativeCap := newBodyCapture()
+	srv := metaFieldServer(t, adsetCap, creativeCap)
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
+	)
+
+	// InstagramUserID/DSABeneficiary/DSAPayor left as whitespace-only: must be treated
+	// as absent, not sent as blank strings.
+	in := metaFieldInput()
+	in.InstagramUserID = "   "
+	in.DSAPayor = "  "
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+
+	adsetBody := adsetCap.get()
+	if _, ok := adsetBody["dsa_beneficiary"]; ok {
+		t.Errorf("adset dsa_beneficiary present but should be omitted: %v", adsetBody["dsa_beneficiary"])
+	}
+	if _, ok := adsetBody["dsa_payor"]; ok {
+		t.Errorf("adset dsa_payor present but should be omitted: %v", adsetBody["dsa_payor"])
+	}
+	creativeBody := creativeCap.get()
+	if _, ok := creativeBody["instagram_user_id"]; ok {
+		t.Errorf("creative instagram_user_id present but should be omitted: %v", creativeBody["instagram_user_id"])
+	}
+}
+
 // TestCreateCampaignNormalizesEventName verifies that a padded EventName is
 // trimmed for ALL generated names and the UTM term — not just the campaign name
 // (which trims internally). A raw " KubeCon EU " would otherwise leak into the

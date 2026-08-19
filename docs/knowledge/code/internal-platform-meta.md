@@ -391,6 +391,31 @@ dropping it answers "your token reaches no ad accounts" about an account sitting
 The decision to REFUSE a campaign on such an account stays in that preflight, where it
 already is. `Status == 0` means Meta omitted the field, not that the account is disabled.
 
+## Publishability: Instagram identity and DSA disclosure
+
+`CreateCampaign` builds an API-accepted hierarchy, but two additional fields decide
+whether Meta will let a human PUBLISH the resulting ad. Both are optional
+`CampaignInput` fields, trimmed once in `CreateCampaign` and attached only when
+non-empty (so Facebook-only / non-regulated flows are unchanged and Meta never
+receives an empty string it would reject):
+
+- **`InstagramUserID`** (config `instagramUserId`) — the Instagram account (IGSID)
+  bound to the ad creative as the top-level `instagram_user_id` adcreative field,
+  SIBLING to `object_story_spec`, not nested inside it. The default placements
+  include Instagram Feed, and an ad that requests an Instagram placement without this
+  field is flagged "Please add Instagram account" and cannot be published — even
+  though the Page's connected Instagram account shows pre-selected in the editor. The
+  legacy Graph field name is `instagram_actor_id`.
+- **`DSABeneficiary` / `DSAPayor`** (config `dsaBeneficiary` / `dsaPayor`) — the EU
+  Digital Services Act advertiser/payer disclosures set on the ad set as
+  `dsa_beneficiary` / `dsa_payor`. Meta blocks publish ("Please add Advertiser" /
+  "Please add Payer") for regulated locations until both are present.
+
+These live in the per-campaign config (like `pixelId`) rather than the connection's
+persisted `providerConfig`, so no new stored column is required; a launch-ready
+config must supply all three when the ad set uses Instagram placement and/or targets
+a regulated location.
+
 ## Dispatch adapter (internal/dispatch)
 
 The `internal/dispatch` meta adapter (see [internal/dispatch](internal-dispatch.md))

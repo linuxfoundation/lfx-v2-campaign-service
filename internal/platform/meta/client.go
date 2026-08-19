@@ -2354,6 +2354,20 @@ type CampaignInput struct {
 	EndDate        string // YYYY-MM-DD
 	Placements     Placement
 	PixelID        string
+	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. It
+	// is REQUIRED for an ad set that requests any Instagram placement (the default
+	// placements include Instagram Feed): without it Meta flags the ad "Please add
+	// Instagram account" and refuses to publish, even though the Page's connected
+	// Instagram account shows pre-selected in the editor. Sent only when supplied, so
+	// Facebook-only flows are unchanged. (Legacy Graph field name: instagram_actor_id.)
+	InstagramUserID string
+	// DSABeneficiary and DSAPayor are the EU Digital Services Act "advertiser" and
+	// "payer" disclosures set on the ad set. Meta holds the ad set unpublishable
+	// ("Please add Advertiser" / "Please add Payer") for regulated locations until both
+	// are present. Both are sent only when supplied, so flows that target no regulated
+	// location are unchanged.
+	DSABeneficiary string
+	DSAPayor       string
 	HSToken        string
 	Variants       []AdVariant
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
@@ -2595,6 +2609,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// pass validation yet be concatenated un-trimmed into the creative click URL,
 	// producing a malformed parse. Trim once here, ahead of both consumers.
 	in.RegistrationURL = strings.TrimSpace(in.RegistrationURL)
+
+	// Trim the disclosure/identity fields once here so the "sent only when supplied"
+	// guards below treat a whitespace-only value as absent (not as a blank string that
+	// Meta would reject) and every consumer sees the same normalized value.
+	in.InstagramUserID = strings.TrimSpace(in.InstagramUserID)
+	in.DSABeneficiary = strings.TrimSpace(in.DSABeneficiary)
+	in.DSAPayor = strings.TrimSpace(in.DSAPayor)
 
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never
@@ -3008,6 +3029,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		adSetBody["promoted_object"] = promotedObject
 	}
 
+	// EU DSA advertiser/payer disclosure. Attached only when supplied: Meta rejects an
+	// empty string, and a flow that targets no regulated location does not need them.
+	// When targeting DOES include a regulated location, Meta blocks publish until both
+	// are present ("Please add Advertiser" / "Please add Payer"), so a launch-ready
+	// config must set them.
+	if in.DSABeneficiary != "" {
+		adSetBody["dsa_beneficiary"] = in.DSABeneficiary
+	}
+	if in.DSAPayor != "" {
+		adSetBody["dsa_payor"] = in.DSAPayor
+	}
+
 	if in.LifetimeBudget {
 		adSetBody["lifetime_budget"] = budgetMinor
 	} else {
@@ -3229,14 +3262,24 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		linkData["picture"] = img
 	}
 
-	var creativeResp createResponse
-	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/adcreatives", map[string]any{
+	creativeBody := map[string]any{
 		"name": fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": map[string]any{
 			"page_id":   c.account.PageID,
 			"link_data": linkData,
 		},
-	}, &creativeResp); err != nil {
+	}
+	// Bind the Instagram identity so an ad set requesting an Instagram placement (the
+	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add
+	// Instagram account" and blocks publish. instagram_user_id is a top-level adcreative
+	// field, sibling to object_story_spec — not nested inside it. Sent only when
+	// configured so Facebook-only creatives are unchanged.
+	if in.InstagramUserID != "" {
+		creativeBody["instagram_user_id"] = in.InstagramUserID
+	}
+
+	var creativeResp createResponse
+	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/adcreatives", creativeBody, &creativeResp); err != nil {
 		return "", "", err
 	}
 	if creativeResp.ID == "" {

@@ -32,14 +32,24 @@ type metaCreds struct {
 // scale; when zero the client derives it from the account's ISO currency during its
 // preflight.
 type metaConfig struct {
-	Budget         float64          `json:"budget"`
-	LifetimeBudget bool             `json:"lifetimeBudget"`
-	StartDate      string           `json:"startDate"` // YYYY-MM-DD
-	EndDate        string           `json:"endDate"`   // YYYY-MM-DD
-	Objective      string           `json:"objective"` // awareness|traffic|engagement|leads|conversions
-	GeoTargets     []string         `json:"geoTargets"`
-	Placements     meta.Placement   `json:"placements"`
-	PixelID        string           `json:"pixelId"`
+	Budget         float64        `json:"budget"`
+	LifetimeBudget bool           `json:"lifetimeBudget"`
+	StartDate      string         `json:"startDate"` // YYYY-MM-DD
+	EndDate        string         `json:"endDate"`   // YYYY-MM-DD
+	Objective      string         `json:"objective"` // awareness|traffic|engagement|leads|conversions
+	GeoTargets     []string       `json:"geoTargets"`
+	Placements     meta.Placement `json:"placements"`
+	PixelID        string         `json:"pixelId"`
+	// InstagramUserID (IGSID) binds the ad creative to an Instagram account. REQUIRED
+	// when any Instagram placement is used (the default placements include Instagram
+	// Feed) — without it Meta refuses to publish the ad with "Please add Instagram
+	// account". Left empty for Facebook-only campaigns.
+	InstagramUserID string `json:"instagramUserId"`
+	// DSABeneficiary and DSAPayor are the EU DSA advertiser/payer disclosures. Required
+	// for a launch-ready ad set that targets a regulated location; Meta blocks publish
+	// ("Please add Advertiser" / "Please add Payer") until both are set.
+	DSABeneficiary string           `json:"dsaBeneficiary"`
+	DSAPayor       string           `json:"dsaPayor"`
 	Variants       []meta.AdVariant `json:"variants"`
 	// CurrencyOffset is a FALLBACK minor-unit scale (1 for zero-decimal currencies like
 	// JPY, 100 for most), NOT an unconditional override: the client's preflight derives
@@ -219,6 +229,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		EndDate:         cfg.EndDate,
 		Placements:      cfg.Placements,
 		PixelID:         cfg.PixelID,
+		InstagramUserID: cfg.InstagramUserID,
+		DSABeneficiary:  cfg.DSABeneficiary,
+		DSAPayor:        cfg.DSAPayor,
 		Variants:        cfg.Variants,
 	}
 
