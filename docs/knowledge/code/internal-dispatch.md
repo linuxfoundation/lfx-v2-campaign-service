@@ -356,29 +356,33 @@ non-zero click count. Per-metric presence tracking is deliberately not used — 
 omitted-because-zero key is indistinguishable from an omitted-because-malformed one, so
 requiring every key would reject responses that are genuinely fine.
 
-**Reddit implements it, but the capability is GATED OFF BY DEFAULT because the entire
-request/response contract is an UNVERIFIED, BEST-EFFORT GUESS**
+**Reddit implements it, but the capability is GATED OFF BY DEFAULT because the contract
+has NOT YET BEEN EXERCISED AGAINST A LIVE AD ACCOUNT**
 (`internal/platform/reddit/metrics.go`). `RedditDispatcher.ReadMetrics` returns
 `domain.ErrMetricsUnsupported` — the same 400 a platform with no metrics support at all
 produces — unless `REDDIT_METRICS_ENABLED` is exactly `"true"`; any other value, including
 unset, fails closed. The gate exists because DECLARING the method is itself the capability
 switch: the orchestrator discovers `MetricsReader` by type assertion and the published
-endpoint invokes it immediately, so an ungated wiring would return 200 from a guessed shape
-and currency unit, with none of the caveats visible in the response. The gate is read per
+endpoint invokes it immediately, so an ungated wiring would return 200 from a contract no
+live call has confirmed, with none of the caveats visible in the response. The gate is read per
 call rather than at construction, so a deployment flips it without a rebuild.
 `REDDIT_METRICS_ENABLED` is declared in `pkg/constants` and wired in the chart's
-`values.yaml`. Once the shape is verified against a live ad account, the gate is deleted. Unlike this client's create/toggle endpoints
-(ported from a working upstream client) and unlike Meta/LinkedIn/X's metrics clients (built
-against each platform's public API docs), Reddit's v3 reporting/metrics endpoint has no public
-documentation — it is gated behind Reddit's developer portal and a private Postman collection.
-The implementation is inferred only from this package's own proven v3 conventions (resource
-nesting, OAuth2 bearer + retry/backoff, the `{"data": ...}` envelope): a `POST
-/ad_accounts/{account_id}/reports` with a guessed `{"data": {starts_at, ends_at, campaign_ids,
-breakdowns, fields}}` body, decimal-string spend (converted to micros ×1e6, rounded), and an
-empty result rows array treated as zero-activity. This was investigated and recorded as BLOCKED
-on LFXV2-2995 before the file was written — treat every field name and the request/response
-shape as a placeholder to be corrected once official Reddit Ads API access confirms the real
-contract, not a confirmed integration.
+`values.yaml`. Once the shape is exercised against a live ad account, the gate is deleted.
+
+The request and response shapes come from Reddit's **official public OpenAPI document**
+(`https://ads-api.reddit.com/api/v3/openapi.json`, "Download Specs" on
+`https://ads-api.reddit.com/docs/v3/`), operation `POST /ad_accounts/{ad_account_id}/reports`.
+This SUPERSEDES the LFXV2-2995 BLOCKED finding recorded here previously, which stated that
+Reddit published no public documentation and that the shape was a guess inferred from this
+package's own v3 conventions. That finding was a claim about what a fetcher could reach, not
+about what exists: the docs site renders client-side. Reading the spec falsified five of the
+six things previously guessed — only the path and method survived; see
+`docs/knowledge/code/internal-platform-reddit.md` for the table.
+
+What remains unverified is narrower and is why the gate stays: no request has been made
+against a live Reddit ad account, so behaviour a schema cannot express — whether a
+zero-activity campaign is omitted or returned as an explicit zero row, and whether the
+account's configured attribution window shifts the numbers — is still unconfirmed.
 
 **X/Twitter** implements it: `twitterMetricsWindow` maps the shared `model.MetricsWindow`
 vocabulary to X Ads' own `MetricsWindow` literals, then `GetCampaignMetrics(ctx, campaignID,

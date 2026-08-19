@@ -635,7 +635,7 @@ func TestReddit_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 // (upstream failure) — Reddit's reporting endpoint has no "yesterday" or "last_14_days"
 // date-range mapping (see dateRangeForWindow), and the platform is never contacted.
 func TestReddit_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
-	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// Reddit metrics are default-OFF until the contract is exercised on a live account;
 	// opt this test in so it exercises the read path rather than the gate.
 	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
 	d := NewRedditDispatcher(
@@ -657,15 +657,48 @@ func TestReddit_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
 	}
 }
 
+// TestReddit_ReadMetrics_UnsupportedWindowBeatsAResolutionFailure pins the ORDER, which
+// the previous window test could not: it used a healthy connection, so it passed whether
+// the window was checked before or after resolution.
+//
+// Here both are broken. An unsupported window is a permanent 400 that names the one thing
+// the caller can change, while a connection error would send them to repair a connection
+// on a request that would still be rejected on the window. So the window must win. Same
+// property linkedin.go and twitter.go pin, and the reason ValidateMetricsWindow is
+// package-level and clock-free.
+func TestReddit_ReadMetrics_UnsupportedWindowBeatsAResolutionFailure(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	resolveErr := errors.New("connection lookup failed")
+	d := NewRedditDispatcher(fakeConnReader{err: resolveErr}, identityEncryptor{})
+
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowYesterday,
+	)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("the unsupported window must be reported (400) even though the connection is also broken, got: %v", err)
+	}
+	if errors.Is(err, resolveErr) {
+		t.Errorf("the connection error masked the window rejection; the window is checked before resolution, got: %v", err)
+	}
+}
+
 // TestReddit_ReadMetrics_Success verifies the happy path: resolveRedditClient succeeds
 // and ReadMetrics delegates to the client, returning its result unmodified.
 func TestReddit_ReadMetrics_Success(t *testing.T) {
-	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// Reddit metrics are default-OFF until the contract is exercised on a live account;
 	// opt this test in so it exercises the read path rather than the gate.
 	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"t3_c","impressions":1000,"clicks":10,"spend":"5.00"}]}`))
+		// Shape per Reddit's public OpenAPI spec (LFXV2-3282): data is an OBJECT carrying a
+		// metrics array, and spend is an int64 already in microcurrency — not the bare array
+		// and decimal string this fixture used before the contract was verified.
+		_, _ = w.Write([]byte(`{"data":{"metrics":[{"campaign_id":"t3_c","impressions":1000,"clicks":10,"spend":5000000}]},"pagination":{}}`))
 	}))
 	defer api.Close()
 	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -694,7 +727,7 @@ func TestReddit_ReadMetrics_Success(t *testing.T) {
 // to a campaign that was never provisioned (or is otherwise missing its platform id) —
 // resolveRedditClient is never reached, and the connection is never contacted.
 func TestReddit_ReadMetrics_MissingPlatformCampaignID(t *testing.T) {
-	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// Reddit metrics are default-OFF until the contract is exercised on a live account;
 	// opt this test in so it exercises the read path rather than the gate.
 	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
 	d := NewRedditDispatcher(
@@ -710,7 +743,7 @@ func TestReddit_ReadMetrics_MissingPlatformCampaignID(t *testing.T) {
 // TestReddit_ReadMetrics_ResolutionErrorPropagates verifies that a connection-resolution
 // failure (e.g. no connection on file) is returned to the caller instead of being masked.
 func TestReddit_ReadMetrics_ResolutionErrorPropagates(t *testing.T) {
-	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// Reddit metrics are default-OFF until the contract is exercised on a live account;
 	// opt this test in so it exercises the read path rather than the gate.
 	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
 	wantErr := errors.New("connection lookup failed")
@@ -725,10 +758,11 @@ func TestReddit_ReadMetrics_ResolutionErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestReddit_ReadMetrics_DisabledByDefault pins the gate. Reddit's reporting contract is a
-// guess (LFXV2-2995): a 200 from a guessed shape looks authoritative and the response carries
-// none of the caveats, so the capability must stay off until the shape is verified against a
-// live ad account. This asserts BOTH halves — the default is off with no env set, and any
+// TestReddit_ReadMetrics_DisabledByDefault pins the gate. The reporting contract now follows
+// Reddit's official public OpenAPI document (LFXV2-3282), but no request has been made against
+// a live ad account: a 200 looks authoritative and the response carries none of the caveats,
+// so the capability must stay off until behaviour the schema cannot express — zero-activity
+// rows, the account's attribution window — is confirmed live. This asserts BOTH halves — the default is off with no env set, and any
 // value other than "true" is also off, so a typo'd "1"/"yes" fails closed rather than open.
 func TestReddit_ReadMetrics_DisabledByDefault(t *testing.T) {
 	for _, val := range []string{"", "1", "yes", "TRUE", "false"} {
