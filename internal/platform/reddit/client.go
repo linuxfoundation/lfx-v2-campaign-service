@@ -387,10 +387,20 @@ type CampaignResult struct {
 	Platform     string `json:"platform"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
-	AdGroupName  string `json:"adGroupName"`
-	AdGroupID    string `json:"adGroupId"`
-	AdCount      int    `json:"adCount"`
-	AdID         string `json:"adId,omitempty"`
+	// AccountID is the ad account the campaign was CREATED under. The dispatcher's
+	// redditCreationAccountID reads it back so a later read/toggle resolving to a
+	// DIFFERENT account is refused rather than addressing the stored campaign id under
+	// the wrong account.
+	//
+	// Unlike google-ads/microsoft/linkedin/meta there is NO recoverable fallback: RedditURL
+	// is the bare ads-manager constant and carries no account id, so a row written before
+	// this field existed records no provenance and is waved through as "unknown". Only
+	// re-dispatch can give such a row a provenance.
+	AccountID   string `json:"accountId,omitempty"`
+	AdGroupName string `json:"adGroupName"`
+	AdGroupID   string `json:"adGroupId"`
+	AdCount     int    `json:"adCount"`
+	AdID        string `json:"adId,omitempty"`
 	// AdWarning is set (non-empty) when a promoted-post ad was attempted but not
 	// confirmed — the ad POST failed, or returned a 2xx with no ad id. Ad creation
 	// is intentionally non-fatal (the campaign + ad group already succeeded), so
@@ -1347,6 +1357,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return &CampaignResult{
 			Platform:     "reddit-ads",
 			CampaignName: campaignName,
+			AccountID:    c.account.AccountID,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
 		}, fmt.Errorf("reddit campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
@@ -1362,6 +1373,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return &CampaignResult{
 			Platform:     "reddit-ads",
 			CampaignName: campaignName,
+			AccountID:    c.account.AccountID,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
 		}, fmt.Errorf("reddit campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
@@ -1390,6 +1402,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			CampaignName: campaignName,
 			CampaignID:   campaignID,
 			AdGroupName:  adGroupName,
+			AccountID:    c.account.AccountID,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
 		}
@@ -1713,10 +1726,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AdCount:      adCount,
 		AdID:         adID,
 		AdWarning:    adWarning,
+		AccountID:    c.account.AccountID,
 		RedditURL:    redditAdsManagerURL,
 		Steps:        steps,
 	}, nil
 }
+
+// AccountID reports the ad account id this client is bound to. Exposed so a caller holding
+// only the client can compare it against the account a persisted campaign records — see the
+// dispatcher's redditCreationAccountID and the account-provenance guard that uses it.
+// Mirrors microsoft.Client.AccountID.
+func (c *Client) AccountID() string { return c.account.AccountID }
 
 // Campaign run states for UpdateCampaignStatus. Reddit's Campaign object uses a
 // `configured_status` field (the advertiser-set state) distinct from the read-only
