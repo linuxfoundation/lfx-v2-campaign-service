@@ -127,7 +127,7 @@ func validateConditionalGroups(provider model.Provider, folded map[string]json.R
 	if !ok {
 		return nil
 	}
-	var present, absent []string
+	var present, absent, padded []string
 	for _, want := range group {
 		// Same decode discipline as the required-key loop above: a non-string or a
 		// whitespace-only value is not a supplied credential, so it counts as absent
@@ -135,10 +135,27 @@ func validateConditionalGroups(provider model.Provider, folded map[string]json.R
 		var v string
 		raw, found := folded[credentialKey(want)]
 		if found && json.Unmarshal(raw, &v) == nil && strings.TrimSpace(v) != "" {
+			// Surrounding whitespace is REFUSED here for the same reason the required-key
+			// loop refuses it, and this loop is where the refresh trio is reached at all:
+			// requiredCredentialKeys[linkedin-ads] is {"access_token"} ONLY, so the padding
+			// check above never sees refresh_token, client_id or client_secret. Without
+			// this, `"client_id":" 123 "` installs cleanly on the SYSTEM row — the fallback
+			// for every project with no connection of its own, the highest blast radius in
+			// the deployment — satisfies CanRefresh() because that gates on the TRIMMED
+			// value, and is then sent verbatim to LinkedIn's token endpoint, which rejects
+			// it as invalid_client on every refresh until a human re-pastes it.
+			if v != strings.TrimSpace(v) {
+				padded = append(padded, want)
+			}
 			present = append(present, want)
 			continue
 		}
 		absent = append(absent, want)
+	}
+	if len(padded) > 0 {
+		sort.Strings(padded)
+		return fmt.Errorf("bootstrap: %s credentials have surrounding whitespace in %s; a secret is stored verbatim, so the padding would be sent to the provider",
+			provider, strings.Join(padded, ", "))
 	}
 	if len(present) == 0 || len(absent) == 0 {
 		return nil

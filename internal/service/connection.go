@@ -566,6 +566,39 @@ func validateLinkedInRefreshCredentials(c *conn.LinkedinAdsCredentials) error {
 			present++
 		}
 	}
+	// Surrounding whitespace is REFUSED, not trimmed away, and it is checked BEFORE the
+	// all-or-none verdict so a padded-but-complete trio cannot pass. Every validator in
+	// this package gates on the TRIMMED value while the store keeps the value VERBATIM,
+	// so " id " satisfies CanRefresh() and is then sent raw to LinkedIn's token endpoint
+	// (internal/platform/linkedin/token.go form.Set), which rejects it as invalid_client
+	// forever. That is an unrecoverable state a validator claimed to prevent: the row
+	// looks correctly configured and no reconnect changes it.
+	//
+	// Refused rather than canonicalized because a credential is opaque to this service:
+	// silently rewriting one would hide a truncated paste, and no provider issues a
+	// secret whose surrounding whitespace is significant. This mirrors the bootstrap
+	// installer's identical rule (canonicalCredentials, internal/bootstrap/sysacct.go).
+	var padded []string
+	for _, f := range []struct {
+		name string
+		val  *string
+	}{
+		{"refresh_token", c.RefreshToken},
+		{"client_id", c.ClientID},
+		{"client_secret", c.ClientSecret},
+	} {
+		if f.val != nil && *f.val != strings.TrimSpace(*f.val) {
+			padded = append(padded, f.name)
+		}
+	}
+	if len(padded) > 0 {
+		return &conn.BadRequestError{
+			Code: "400",
+			Message: "linkedin refresh credentials must not have leading or trailing whitespace in " +
+				strings.Join(padded, ", ") +
+				"; a secret is stored verbatim, so the padding would be sent to LinkedIn and rejected",
+		}
+	}
 	if present == 0 || present == 3 {
 		return nil
 	}

@@ -777,3 +777,53 @@ func TestLinkedInRefreshCredentialsAreAllOrNone(t *testing.T) {
 		})
 	}
 }
+
+// TestLinkedInRefreshCredentialsRejectPadding pins the API half of the whitespace class.
+// Every validator in the system gates on the TRIMMED value — this one, and
+// Credentials.CanRefresh() in the platform client — while the store keeps the value
+// VERBATIM. So " ci " passed validation, encrypted cleanly, and was later sent raw to
+// LinkedIn's token endpoint, which rejects it as invalid_client on every refresh. No
+// reconnect repairs that, because the row looks correctly configured.
+//
+// Padding is REFUSED rather than trimmed: a credential is opaque to this service, so
+// silently rewriting one would hide a truncated paste, and no provider issues a secret
+// whose surrounding whitespace is significant. This mirrors the bootstrap installer's
+// rule (canonicalCredentials, internal/bootstrap/sysacct.go).
+func TestLinkedInRefreshCredentialsRejectPadding(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	cases := []struct {
+		name  string
+		creds *conn.LinkedinAdsCredentials
+	}{
+		{"padded client id", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s(" ci"), ClientSecret: s("cs")}},
+		{"padded client secret", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs\n")}},
+		{"padded refresh token", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("\trt"), ClientID: s("ci"), ClientSecret: s("cs")}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The padded trio is COMPLETE, so the all-or-none rule is satisfied and cannot
+			// be what rejects it — only the padding check can.
+			err := validateLinkedInRefreshCredentials(tc.creds)
+			if err == nil {
+				t.Fatal("a padded refresh credential was accepted; it stores verbatim, satisfies " +
+					"CanRefresh() because that trims, and then fails at LinkedIn as invalid_client forever")
+			}
+			var bad *conn.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Errorf("err = %T, want *conn.BadRequestError so the caller gets a 400", err)
+			}
+		})
+	}
+
+	// The narrowing half: an unpadded complete trio is still accepted.
+	if err := validateLinkedInRefreshCredentials(&conn.LinkedinAdsCredentials{
+		AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs"),
+	}); err != nil {
+		t.Errorf("an unpadded trio must be accepted, got %v", err)
+	}
+}

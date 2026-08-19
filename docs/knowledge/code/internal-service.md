@@ -713,8 +713,11 @@ But not every rejection is about the token. `authenticate` returns a third value
 perform the check — no verifier wired, or Heimdall's JWKS unreachable
 (`domain.ErrKeyUnavailable`) — false when the token itself was refused. The three `JWTAuth`
 impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
-`BadRequestError` (400). Both were 400 before, which answered a JWKS outage by telling every
-caller holding a valid credential that theirs was bad, and telling them not to retry.
+`BadRequestError` (400). Both were 400 before, and the harm belonged to the **unavailable**
+side: during a JWKS outage no token is checked at all, so every caller holding a valid
+credential was told theirs was bad and told not to retry. The 400 branch itself is not that
+case — it answers a credential that was absent or genuinely refused, where "your credential
+is bad, do not retry" is correct.
 The verdict is returned separately rather than sniffed from the message: "invalid bearer
 token" is deliberately the *same* string for every token-side refusal, so it cannot carry
 the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on

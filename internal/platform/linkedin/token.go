@@ -141,6 +141,32 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 	}
 
 	// Refresh is possible. Reuse the injected access token while it is known-good.
+	//
+	// UNREACHABLE IN PRODUCTION TODAY — kept deliberately, and NOT a cache that exists.
+	// Nothing persists an access-token expiry: design/connection.go's
+	// linkedin-ads-credentials type declares access_token, refresh_token, client_id and
+	// client_secret and NO expiry attribute, so the encrypted blob never carries one.
+	// internal/dispatch/linkedin.go's linkedinCreds does declare AccessTokenExpiresAt and
+	// copies it into Credentials, but the JSON it decodes can never contain the key, so
+	// the value is always the zero time and this guard's !IsZero() test always fails.
+	// The bootstrap installer (internal/bootstrap/sysacct.go) writes no expiry either.
+	//
+	// The consequence is real and worth stating: EVERY refresh-capable client performs a
+	// token exchange on its first request, because this is the only branch that could
+	// have reused an injected token. internal/dispatch/linkedin.go builds a fresh client
+	// per operation, so a brief-level fan-out is one OAuth exchange per campaign.
+	//
+	// Retained rather than deleted because it is the correct behaviour the moment an
+	// expiry IS persisted, and deleting it would read as a decision that reuse is wrong.
+	// Persisting the expiry (and the rotated refresh token) is a schema and behaviour
+	// change; it is deliberately NOT made here.
+	//
+	// One coupling for whoever makes this branch live: invalidateAccessToken clears only
+	// the CACHE (c.accessToken/c.tokenExpiry) and not c.creds, which is sound ONLY while
+	// this branch is dead. Once an injected expiry is real, a 401 would invalidate the
+	// cache and this branch would immediately re-serve the SAME rejected token from
+	// c.creds. Making the expiry live therefore requires invalidateAccessToken to
+	// suppress the injected token too.
 	if c.accessToken == "" && c.creds.AccessToken != "" &&
 		!c.creds.AccessTokenExpiresAt.IsZero() &&
 		c.now().Add(tokenExpiryBuffer).Before(c.creds.AccessTokenExpiresAt) {
@@ -196,16 +222,28 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	// Read the refresh token under tokenMu: a previous exchange may have rotated it
 	// (see the adoption below), and c.creds is otherwise read by callers on other
-	// goroutines. ClientID/ClientSecret are immutable after construction.
+	// goroutines. ClientID/ClientSecret are immutable after construction, so they are read
+	// without the lock below.
 	c.tokenMu.Lock()
 	refreshToken := c.refreshToken
 	c.tokenMu.Unlock()
 
+	// Trimmed to match what CanRefresh() gated on. CanRefresh() tests the TRIMMED value,
+	// so a padded " id " passes every validator; sending it RAW then fails at LinkedIn as
+	// invalid_client on every exchange, forever, with no signal that padding is the cause.
+	// c.refreshToken is already trimmed at construction (NewClient), so these two were the
+	// only raw reads left on the send path.
+	//
+	// The AUTHORITATIVE fix is at the write boundaries, which now REFUSE padding rather
+	// than storing it (validateLinkedInRefreshCredentials in internal/service/connection.go
+	// and validateConditionalGroups in internal/bootstrap/sysacct.go) — a stored padded
+	// value would otherwise stay wrong for every future reader. This is defence in depth
+	// for rows written BEFORE those validators existed, which no reconnect has rewritten.
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
-	form.Set("client_id", c.creds.ClientID)
-	form.Set("client_secret", c.creds.ClientSecret)
+	form.Set("client_id", strings.TrimSpace(c.creds.ClientID))
+	form.Set("client_secret", strings.TrimSpace(c.creds.ClientSecret))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -248,16 +286,38 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// LinkedIn returns 400 invalid_request for a refresh token that is expired,
-		// revoked OR invalid — its docs give the SAME status and error for all three,
-		// and the resolution for all three is identical: re-authorize the member. So
-		// classify on status, not on a parsed reason, and surface the actionable error.
+		// Status alone does not identify the fault. An OAuth2 token endpoint answers 400
+		// (and LinkedIn sometimes 401) for BOTH a dead refresh token and a wrong client
+		// credential, and the two have OPPOSITE remedies. Classifying every 400/401 as
+		// "expired" told an operator whose client_id held a typo to "re-authorize the
+		// connection" — a member re-authorization that cannot possibly help, because the
+		// stored refresh token was never the problem. The RFC 6749 §5.2 `error` code is
+		// the only thing that separates them, so it is parsed.
 		//
-		// The body is NEVER echoed: this request carried client_secret and the refresh
-		// token, and an OAuth/proxy diagnostic body is untrusted and may reflect that
-		// credential material. This error can be persisted into a campaign's Steps, so
-		// a leak would be durable. Report status only.
+		// Only the CLASSIFICATION is carried, never the upstream text. This request's body
+		// held client_secret and the refresh token, an OAuth/proxy diagnostic body is
+		// untrusted and may reflect that material, and this error can be persisted into a
+		// campaign's Steps, so a leak would be durable. `error_description` is deliberately
+		// ignored; the parsed `error` code is matched against a fixed local allow-list and
+		// never rendered, so no upstream byte reaches the message on any arm.
 		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
+			if oauthErrorCode(buf.Bytes()) == oauthErrorInvalidClient {
+				// Operator misconfiguration: the client_id/client_secret pair is wrong,
+				// unknown to LinkedIn, or the app was deleted. Deliberately NOT an
+				// ErrCredentialsExpired — that resolves to "re-authorize", and no member
+				// re-authorization repairs an application credential. Whoever configured
+				// the connection must correct it.
+				return "", fmt.Errorf(
+					"linkedin token refresh -> %d: LinkedIn rejected the application credentials "+
+						"(invalid_client: the stored client_id/client_secret is wrong or unknown to LinkedIn; "+
+						"correct the connection's application credentials — re-authorizing the member will not help)",
+					resp.StatusCode)
+			}
+			// Everything else on a 400/401 keeps the previous, correct reading: LinkedIn
+			// documents expired, revoked and invalid refresh tokens under the SAME status
+			// and `invalid_grant`, and all three are repaired the same way. An absent or
+			// unparseable code lands here too, preserving today's behaviour on a body this
+			// client cannot read.
 			return "", &credentialsExpiredError{
 				Connection: c.creds.ConnectionLabel(),
 				Reason: fmt.Sprintf("LinkedIn rejected the refresh token (HTTP %d: expired, revoked or invalid)",
@@ -340,6 +400,30 @@ func (c *Client) warnIfRefreshTokenNearExpiry(ctx context.Context, deadline time
 		"connection", c.creds.ConnectionLabel(),
 		"days_remaining", int(remaining.Hours()/24),
 	)
+}
+
+// oauthErrorInvalidClient is RFC 6749 §5.2's code for "client authentication failed" —
+// an unknown client_id, a wrong client_secret, or a deleted app. It is the one
+// token-endpoint failure a member re-authorization can never repair.
+const oauthErrorInvalidClient = "invalid_client"
+
+// oauthErrorCode extracts the RFC 6749 §5.2 `error` code from a token-endpoint error
+// body, returning "" when the body is absent, not JSON, or carries no string `error`.
+//
+// The returned value is only ever COMPARED against a local constant, never rendered:
+// the body of a token-endpoint response is untrusted and this request carried
+// client_secret and the refresh token. Returning the raw code keeps the parse honest at
+// one site while every caller is a fixed equality test, so no upstream text can reach a
+// message or a persisted campaign Step. `error_description` is deliberately not read —
+// it is free-form upstream prose and exactly the thing that must not be echoed.
+func oauthErrorCode(body []byte) string {
+	var parsed struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	return parsed.Error
 }
 
 // isTokenExpiryResponse reports whether a LinkedIn 401 indicates the access token

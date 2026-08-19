@@ -457,7 +457,12 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	// Resolve through accessTokenValue, NOT c.creds.AccessToken: this is the metrics
 	// read path — the one that surfaced the expired-token 500 — so it must take the
 	// same refresh and fail-closed discipline as doRequest. Reading the field directly
-	// would send a known-expired token and also race the refresher's creds update.
+	// would send a known-expired token and would never see a refreshed one.
+	//
+	// It is NOT a data race: c.creds is injected at construction and never written
+	// afterwards — a rotated refresh token is adopted into c.refreshToken/c.refreshExpiry
+	// precisely so c.creds stays immutable (see fetchToken in token.go). The reason to go
+	// through accessTokenValue is correctness of the VALUE, not memory safety.
 	token, err := c.accessTokenValue(attemptCtx)
 	if err != nil {
 		cancel()

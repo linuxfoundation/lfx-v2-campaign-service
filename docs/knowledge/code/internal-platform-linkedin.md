@@ -30,7 +30,25 @@ Marketing API.
 to approved Marketing Developer Platform partners, so `Credentials` may carry an
 access token alone; `CanRefresh()` gates the whole path on `RefreshToken`,
 `ClientID` and `ClientSecret` all being present, and a bearer-only connection
-behaves exactly as it did before refresh existed. When refresh material IS
+behaves exactly as it did before refresh existed.
+
+**Every validator gates on the TRIMMED value, so padding is refused at the WRITE
+boundary, never trimmed at the read.** `CanRefresh()` tests
+`strings.TrimSpace(...) != ""`, so a stored `" client-id "` satisfies it and every
+other presence check, while the store keeps the value verbatim — and the exchange
+then fails at LinkedIn as `invalid_client` on every refresh, forever, with nothing
+in the row looking wrong. Both write boundaries therefore REJECT surrounding
+whitespace rather than canonicalizing it:
+`validateLinkedInRefreshCredentials` (`internal/service/connection.go`, a 400) and
+`validateConditionalGroups` (`internal/bootstrap/sysacct.go`, an install refusal).
+The bootstrap site matters most: `requiredCredentialKeys[linkedin-ads]` is
+`{"access_token"}` alone, so the refresh trio is reached ONLY through the
+conditional-group loop, and the row it guards is the LF system account — the
+fallback for every project with no connection of its own. Refusal is deliberate:
+a credential is opaque to this service, so silently rewriting one would hide a
+truncated paste. `fetchToken` also trims `ClientID`/`ClientSecret` as defence in
+depth for rows written before those validators existed (`NewClient` already
+trimmed `RefreshToken`). When refresh material IS
 present the client exchanges it at LinkedIn's token endpoint before the access
 token expires, coalescing concurrent callers single-flight (`tokenMu` is never
 held across the network call) so N callers produce ONE exchange — the same
@@ -42,7 +60,17 @@ the connection itself; the client logs a warning inside the final 30 days. A
 credential that is expired and unrefreshable — including a mid-flight 401, which
 revocation can trigger with no advance notice — fails CLOSED with the exported
 `ErrCredentialsExpired`, naming the connection so an operator knows what to
-re-authorize, rather than degrading into an unauthenticated call. The dispatch
+re-authorize, rather than degrading into an unauthenticated call.
+
+**A rejected token exchange is classified on the OAuth `error` code, not on status
+alone.** A token endpoint answers 400/401 for both a dead refresh token and a wrong
+application credential, and the two have opposite remedies, so `fetchToken` parses
+RFC 6749 §5.2's `error`: `invalid_client` is an operator misconfiguration and is
+deliberately NOT `ErrCredentialsExpired`, because no member re-authorization can
+repair a wrong `client_id`/`client_secret`. Everything else on a 400/401 — including
+an absent or unparseable code — keeps the expired/revoked/invalid reading. Only the
+parsed code is matched against a local constant; `error_description` is never read
+and no upstream byte reaches the message. The dispatch
 layer re-tags that as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, which
 keeps it out of the retryable bucket and out of an opaque 500. No token, secret
 or upstream body is ever logged or echoed into an error.

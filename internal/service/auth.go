@@ -56,9 +56,12 @@ func (g *authGuard) HasTokenVerifier() bool {
 //
 // The bool says whose fault the failure is: true when THIS service could not perform the
 // check (no verifier wired, Heimdall's JWKS unreachable), false when the token itself was
-// refused. Callers map the first to 503 and the second to 400. Both were 400 before, which
-// told a caller holding a perfectly valid token that their credential was bad, and told
-// them not to retry a condition that clears when the dependency recovers. The verdict is
+// refused. Callers map the first to 503 and the second to 400. Both were 400 before, and
+// the harm was on the UNAVAILABLE side specifically: during a JWKS outage no token is
+// checked at all, so a caller holding a perfectly valid credential was told it was bad and
+// told not to retry a condition that clears when the dependency recovers. The 400 branch
+// itself is not that case — it answers a credential that was absent or genuinely refused,
+// for which "your credential is bad, do not retry" is the correct answer. The verdict is
 // not derivable from the message — "invalid bearer token" is deliberately the same string
 // for every token-side refusal — so it is returned separately rather than sniffed.
 //

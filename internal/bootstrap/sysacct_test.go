@@ -915,3 +915,59 @@ func TestRotateAcceptsRedditRowThatAlreadyHasThePixel(t *testing.T) {
 		t.Errorf("rotation dropped the existing pixel: got %q, want a2_pixel", got)
 	}
 }
+
+// TestPaddedLinkedInRefreshTrioIsRefused is the TWIN of
+// TestPaddedCredentialValuesAreRefusedRatherThanStored, and it exists because that test
+// could never have caught this: it drives the required-key loop, and
+// requiredCredentialKeys[linkedin-ads] is {"access_token"} ONLY. The refresh trio is
+// reached exclusively through validateConditionalGroups, whose membership test gates on
+// the TRIMMED value — so ` ci ` counted as "present", satisfied the all-or-none rule, and
+// installed verbatim on the SYSTEM row, the fallback for every project without a
+// connection of its own.
+//
+// The stored value then satisfies Credentials.CanRefresh() (also trimmed) and is sent raw
+// to LinkedIn's token endpoint, which answers invalid_client on every exchange until a
+// human re-pastes it. Asserting the install is REFUSED is the only assertion that
+// distinguishes the fix — the row must never be written.
+func TestPaddedLinkedInRefreshTrioIsRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		creds   string
+		wantErr string
+	}{
+		"a padded client id": {
+			`{"access_token":"tok","refresh_token":"rt","client_id":" ci","client_secret":"cs"}`, "client_id"},
+		"a padded client secret": {
+			`{"access_token":"tok","refresh_token":"rt","client_id":"ci","client_secret":"cs\n"}`, "client_secret"},
+		"a padded refresh token": {
+			`{"access_token":"tok","refresh_token":"\trt","client_id":"ci","client_secret":"cs"}`, "refresh_token"},
+		"padding on two members names them sorted": {
+			`{"access_token":"tok","refresh_token":"rt ","client_id":" ci","client_secret":"cs"}`, "client_id, refresh_token"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderLinkedInAds, "509123456", false, map[string]string{"org_id": "123"}, []byte(tc.creds))
+			if err == nil || repo.created != nil {
+				t.Fatalf("err = %v, created = %+v; want a refusal: the padding is stored verbatim, "+
+					"passes CanRefresh() because that trims, and is then sent to LinkedIn as invalid_client forever",
+					err, repo.created)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to name %s", err, tc.wantErr)
+			}
+		})
+	}
+
+	// The narrowing half: a clean trio must still install.
+	t.Run("an unpadded trio installs", func(t *testing.T) {
+		repo := &stubRepo{getErr: domain.ErrNotFound}
+		if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+			model.ProviderLinkedInAds, "509123456", false, map[string]string{"org_id": "123"},
+			[]byte(`{"access_token":"tok","refresh_token":"rt","client_id":"ci","client_secret":"cs"}`)); err != nil {
+			t.Fatalf("InstallSystemCredentials: %v — this is a credential LinkedIn accepts", err)
+		}
+		if repo.created == nil {
+			t.Fatal("no row written")
+		}
+	})
+}

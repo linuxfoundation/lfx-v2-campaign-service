@@ -788,3 +788,116 @@ func (cancelBodyRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 type ctxCancelReader struct{}
 
 func (*ctxCancelReader) Read([]byte) (int, error) { return 0, context.Canceled }
+
+// TestPaddedClientCredentialsAreTrimmedOnTheWire pins the SEND half of the
+// whitespace-padding class. CanRefresh() gates on the TRIMMED value, so a padded
+// " client-id " satisfies every validator in the package; before this fix the same
+// value was written RAW into the exchange form, and LinkedIn answered invalid_client
+// on every refresh forever — an unrecoverable state a validator claimed to prevent.
+//
+// Asserting CanRefresh() would prove nothing here: it returns true both before and
+// after the fix. The assertion therefore reads what actually reached the token
+// endpoint's form body.
+func TestPaddedClientCredentialsAreTrimmedOnTheWire(t *testing.T) {
+	var mu sync.Mutex
+	var gotClientID, gotSecret, gotRefresh string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		form, _ := url.ParseQuery(string(body))
+		mu.Lock()
+		gotClientID = form.Get("client_id")
+		gotSecret = form.Get("client_secret")
+		gotRefresh = form.Get("refresh_token")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(linkedInSampleTokenResponse))
+	}))
+	t.Cleanup(srv.Close)
+
+	creds := refreshableCreds()
+	creds.ClientID = "  client-id  "
+	creds.ClientSecret = "\tclient-secret\n"
+	creds.RefreshToken = " stored-refresh-token "
+
+	// The padded trio still passes the validator, which is precisely the problem.
+	if !creds.CanRefresh() {
+		t.Fatal("padded credentials should still satisfy CanRefresh (it gates on the trimmed value)")
+	}
+
+	c := NewClient(creds, RuntimeConfig{}, withTokenURL(srv.URL))
+	if _, err := c.accessTokenValue(context.Background()); err != nil {
+		t.Fatalf("accessTokenValue: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotClientID != "client-id" {
+		t.Errorf("client_id on the wire = %q, want %q — a padded value is sent verbatim and LinkedIn rejects it as invalid_client", gotClientID, "client-id")
+	}
+	if gotSecret != "client-secret" {
+		t.Errorf("client_secret on the wire = %q, want %q", gotSecret, "client-secret")
+	}
+	if gotRefresh != "stored-refresh-token" {
+		t.Errorf("refresh_token on the wire = %q, want %q", gotRefresh, "stored-refresh-token")
+	}
+}
+
+// TestInvalidClientIsNotReportedAsAnExpiredCredential pins the OAuth error-code split.
+// A token endpoint answers 400/401 for BOTH a dead refresh token and a wrong client
+// credential. Classifying on status alone told an operator whose client_id held a typo
+// to "re-authorize the connection" — which can never help, because the refresh token
+// was never the problem.
+func TestInvalidClientIsNotReportedAsAnExpiredCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_client","error_description":"client authentication failed for app 99 secret sk-LEAKME"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for invalid_client")
+	}
+
+	// The operator must NOT be sent to re-authorize: that is the wrong remedy.
+	if errors.Is(err, ErrCredentialsExpired) {
+		t.Errorf("invalid_client classified as ErrCredentialsExpired; it is an application-credential misconfiguration, and re-authorizing the member cannot fix it (err = %v)", err)
+	}
+	if !strings.Contains(err.Error(), "invalid_client") {
+		t.Errorf("error should name the invalid_client classification, got %v", err)
+	}
+	// The upstream error_description is untrusted and must never be echoed.
+	for _, leak := range []string{"sk-LEAKME", "client authentication failed for app"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("upstream token-endpoint text %q leaked into the error: %v", leak, err)
+		}
+	}
+}
+
+// TestInvalidGrantStillReportsAnExpiredCredential is the other half of the split: the
+// genuinely-expired case must keep its existing, correct classification.
+func TestInvalidGrantStillReportsAnExpiredCredential(t *testing.T) {
+	for _, body := range []string{
+		`{"error":"invalid_grant","error_description":"refresh token expired"}`,
+		`{"error":"invalid_request"}`,
+		`not json at all`,
+		``,
+	} {
+		t.Run(fmt.Sprintf("body=%.20q", body), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(srv.Close)
+
+			c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+			_, err := c.accessTokenValue(context.Background())
+			if !errors.Is(err, ErrCredentialsExpired) {
+				t.Errorf("err = %v, want ErrCredentialsExpired — an absent or non-invalid_client code must keep the re-authorize remedy", err)
+			}
+		})
+	}
+}
