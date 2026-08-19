@@ -34,9 +34,13 @@ revoked or deleted.
 ## What each adapter does
 
 1. **Resolve credentials** (shared) — `credsSource.resolve(projectID, provider)` does
-   the ONE mechanical step common to every platform: `ConnectionReader.Get` then
-   `Encryptor.Decrypt`, returning the raw plaintext blob plus the connection's
-   non-secret fields (`AccountID`, `ProviderConfig`, `Status`). It does NOT interpret
+   the ONE mechanical step common to every platform: `ConnectionReader.Get` then, on a
+   cache miss, `Encryptor.Decrypt`, returning the raw plaintext blob plus the connection's
+   non-secret fields (`AccountID`, `ProviderConfig`, `Status`). The `Get` runs on EVERY
+   call — it is what the cached entry is validated against — while the decrypt is skipped
+   when a live entry matches the row id and version that `Get` just returned; see
+   "Credential and client caching" below for the cache, its validation and its lifetime.
+   It does NOT interpret
    the plaintext — credential shapes differ per platform (OAuth2 refresh tokens,
    OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob into
    its own credential struct. When the project has NO connection, resolution falls
@@ -793,6 +797,95 @@ are pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsN
 Account discovery (`internal/service/connection.go`) still logs the full cause on its 500 arm and
 is not covered by those tests, so this is a per-handler property rather than a service-wide
 guarantee — see `internal-service.md`.
+
+### Shared: the credential resolver cache
+
+`credsSource` caches DECRYPTED credentials (`credcache.go`), keyed by `(projectID, provider)`.
+One cache is shared by every adapter built over the same connection repository and encryptor —
+the eight constructors (`NewGoogleAdsDispatcher` … `NewAudienceBuilder`) each call
+`newCredsSource`, so a cache allocated per `credsSource` would be eight private caches: reuse
+would never cross adapters (HubSpot is resolved by both `HubSpotDispatcher` and `AudienceBuilder`),
+the resident-plaintext bound would silently become eight times `credCacheMaxEntries`, and the
+provider component of the key would be dead. Sharing is keyed on the `(repo, encryptor)` pair
+rather than being process-global, because the same key means a different credential under a
+different database or key.
+Before it, every dispatch, toggle and metrics read re-decrypted the connection and rebuilt the
+platform client — and each client owns its OWN OAuth token cache, so a dashboard polling metrics
+performed a decrypt plus a token exchange per read, with no reuse even for the same project
+seconds apart.
+
+**The cache holds credentials, not connection rows, and that is what makes eviction unnecessary.**
+Every resolve still issues `repo.Get`; the entry records the row `id` and `version` it was
+decrypted from, and the cached value is served only when BOTH match the read that just returned.
+Every mutating statement in `ConnectionRepo` bumps the version (`version = version + 1` in
+`update`, `SetCredential` and `Delete`), so a rotated, re-pointed or revoked credential cannot
+match and the entry is dropped.
+
+The id is checked alongside the version because the version alone does not survive a reconnect:
+`Delete` soft-deletes and `Create` INSERTs a fresh row whose version starts at the column
+`DEFAULT 1`. A project that connected, dispatched once while still at version 1, disconnected and
+reconnected a different ad account would otherwise present the same key at the same version and be
+served the credential of the account it had just disconnected.
+
+This is deliberately not an eviction-hook design. A hook is in-process, so it cannot evict on the
+OTHER replicas — the pod serving the next request need not be the pod that handled the write, and
+a revoked credential would keep being served elsewhere until a TTL expired. Validating against a
+freshly read version removes that failure mode instead of bounding it: the write lands in
+Postgres, which every replica reads, so the first resolve after a rotation misses on every replica
+at once. There is no staleness window to defend and no shared cache store to operate. The cost is
+one indexed single-row SELECT per resolve, which the service already paid.
+
+The key is exact rather than conventional: migration 000001 creates
+`uq_<provider>_connections_project ON <table> (project_id) WHERE status <> 'deleted'` on all seven
+provider tables, so a project cannot hold two live connections for one provider. `Delete`
+soft-deletes, leaving tombstones outside that index, so a reconnect is a new row — a new version
+under the same key, which reads as a miss. The key carries the RESOLVED scope, so a project
+running on the LF system fallback caches under `model.SystemProjectID` and can neither read nor
+poison a project-owned entry.
+
+**The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
+platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
+the token however cheap the credential lookup became — measured at five token-endpoint hits across
+five resolves. `GoogleAdsDispatcher` therefore also caches the built `*googleads.Client`
+(`clientCache`), keyed and validated by the same (row id, version) identity as the credential, so a
+rotation invalidates the client in the same step. A client is exactly as stale as the credential it
+was built from; validating it any more loosely would let a revoked credential keep authenticating
+inside a cached token. The discovery path is deliberately excluded (it builds an account-agnostic
+client with an empty CustomerID), as is adoption's owned-connection path, which is a one-shot
+rather than the polling loop this exists for. `Dispatch` also builds its client directly: it makes
+roughly twenty calls on the one instance, so its token is already amortised across them, and the
+locals it validates inline would become redundant.
+
+Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
+case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
+mints its own token from its own instance cache — measured at 16 exchanges across 16 concurrent
+callers, i.e. a cold key behaved as though there were no cache at all. That is the shape a
+dashboard produces when several panels load at once or a pod restarts.
+
+**The TTL bounds memory residency, not staleness.** Correctness comes from the id+version check;
+the 5-minute TTL and 512-entry LRU cap exist because entries hold plaintext, and an unbounded cache
+would converge on every project's decrypted credentials resident for the life of the pod. It is a
+SLIDING idle window refreshed on each hit, so a credential polled more often than the TTL stays
+resident for as long as it is used — for the pod's lifetime in the dashboard case. That is
+deliberate: continuous reuse is what the cache is for, and an absolute cap would force a
+re-decrypt mid-poll without reducing exposure, since the credential is in memory throughout
+either way. What the window bounds is a credential that has stopped being used.
+
+Concurrent misses are coalesced through `singleflight` keyed by `(project, provider, row id,
+version)` — the same four components the cache entry is validated on, so a burst either side of a
+rotation OR a reconnect cannot be served the other's plaintext — so
+N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
+receives its own clone and builds its own client, and the access token is cached on the client
+INSTANCE, so collapsing the token exchange is the separate job of the client cache below (wired
+today only into Google Ads; Reddit and Microsoft still rebuild per resolve and still re-mint).
+The version in that
+key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
+pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of
+the cached `resolved`, because `resolve` stamps `fromSystem` on the value it returns — a property
+of how that call resolved, not of the credential. Sharing one pointer would both leak that
+attribution across callers and be a write race. The copy is shallow deliberately: the plaintext
+bytes and `providerConfig` map are read-only to every consumer (each adapter only unmarshals the
+blob), so a deep copy would cost an allocation per resolve to defend a mutation nobody makes.
 
 ### HubSpot: email search, not account discovery
 
