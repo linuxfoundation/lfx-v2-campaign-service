@@ -801,7 +801,7 @@ func TestTwitter_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if metrics.Conversions != nil {
-		t.Errorf("Conversions = %d for X, which reports conversions only as per-event-type "+
+		t.Errorf("Conversions = %v for X, which reports conversions only as per-event-type "+
 			"objects; a single count here would be invented rather than measured", *metrics.Conversions)
 	}
 	if metrics.Impressions != 1000 || metrics.Clicks != 50 {

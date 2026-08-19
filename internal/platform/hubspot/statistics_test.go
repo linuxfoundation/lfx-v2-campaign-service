@@ -595,7 +595,7 @@ func TestGetEmailMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Fatalf("GetEmailMetrics: %v", err)
 	}
 	if m.Conversions != nil {
-		t.Errorf("Conversions = %d on the email channel, which measures no conversions at "+
+		t.Errorf("Conversions = %v on the email channel, which measures no conversions at "+
 			"all; a fabricated count would make every email campaign look like it converted "+
 			"nobody", *m.Conversions)
 	}

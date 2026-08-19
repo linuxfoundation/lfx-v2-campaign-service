@@ -316,22 +316,24 @@ func TestGetCampaignMetrics_ConversionsDecodedFromJSONNumber(t *testing.T) {
 		t.Fatal("Conversions is nil for a response that carried conversions:12")
 	}
 	if *m.Conversions != 12 {
-		t.Errorf("Conversions = %d, want 12", *m.Conversions)
+		t.Errorf("Conversions = %v, want 12", *m.Conversions)
 	}
 }
 
 // Google credits FRACTIONAL conversions under data-driven and position-based attribution,
-// which is why the field is a double. Truncating 0.8 to 0 would report a converting campaign
-// as having produced nothing — and the no_conversions rule reads exactly this number.
-func TestGetCampaignMetrics_FractionalConversionsRoundNotTruncate(t *testing.T) {
+// which is why the field is a double. The fraction is carried through UNCHANGED: rounding
+// 0.4 to 0 would report a converting campaign as having produced nothing, and the
+// no_conversions rule reads exactly this number to decide whether to raise a finding.
+func TestGetCampaignMetrics_FractionalConversionsArePreserved(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		raw  string
-		want int64
+		want float64
 	}{
-		{"rounds up from a fraction below one", "0.8", 1},
-		{"rounds down below the half", "2.4", 2},
-		{"rounds up at the half", "2.5", 3},
+		{"a fraction below one is not rounded to zero", "0.4", 0.4},
+		{"a fraction below one is not rounded up either", "0.8", 0.8},
+		{"a fraction above one keeps its remainder", "2.4", 2.4},
+		{"an exact half is not rounded", "2.5", 2.5},
 		{"an exact zero stays zero", "0", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -347,17 +349,23 @@ func TestGetCampaignMetrics_FractionalConversionsRoundNotTruncate(t *testing.T) 
 				t.Fatalf("Conversions is nil for conversions:%s", tc.raw)
 			}
 			if *m.Conversions != tc.want {
-				t.Errorf("conversions:%s became %d, want %d", tc.raw, *m.Conversions, tc.want)
+				t.Errorf("conversions:%s became %v, want %v: rounding a fractional conversion "+
+					"reports a converting campaign as having produced none",
+					tc.raw, *m.Conversions, tc.want)
 			}
 		})
 	}
 }
 
-// The absent/zero distinction at the CLIENT boundary. Google omits zero-valued metrics from
-// REST JSON, so both shapes occur in practice and they mean different things: a row without
-// the key proves nothing was reported, while conversions:0 is Google stating a measurement.
-// Collapsing them here would make the rule's nil gate unreachable.
-func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
+// An ABSENT conversions member on a Google row is a measured ZERO, not "unmeasured".
+//
+// metrics.conversions is always in this method's SELECT list, and Google Ads REST encodes
+// responses as proto3 JSON, which omits fields holding the default value — the same reason
+// parseMetricInt already treats an omitted impressions/clicks as a measured 0. Leaving it nil
+// meant no_conversions could never fire for a Google campaign that genuinely converted
+// nobody, which is the rule's entire purpose. nil is reserved for the four platforms that
+// cannot report a campaign-level conversion count at all.
+func TestGetCampaignMetrics_AbsentConversionsIsMeasuredZero(t *testing.T) {
 	absent := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40"}}]}`)
@@ -366,9 +374,12 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCampaignMetrics: %v", err)
 	}
-	if m.Conversions != nil {
-		t.Errorf("Conversions = %d for a row that never carried the field; an unreported "+
-			"count was turned into a measurement", *m.Conversions)
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil for a selected-but-omitted field: proto3 JSON omits a " +
+			"zero, so this is a measured 0 and no_conversions must be able to fire on it")
+	}
+	if *m.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *m.Conversions)
 	}
 
 	measured := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -383,7 +394,7 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 		t.Fatal("Conversions is nil for an explicit conversions:0, erasing a real measurement")
 	}
 	if *m2.Conversions != 0 {
-		t.Errorf("Conversions = %d, want 0", *m2.Conversions)
+		t.Errorf("Conversions = %v, want 0", *m2.Conversions)
 	}
 }
 

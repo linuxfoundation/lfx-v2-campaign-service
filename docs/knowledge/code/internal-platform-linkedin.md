@@ -98,6 +98,17 @@ NUMERIC id persisted by `campaignFromLinkedIn` (`trailingID` of the creation res
 campaign URN, not a URN) — this method builds the `urn:li:sponsoredCampaign:{id}` and
 `urn:li:sponsoredAccount:{acctID}` URNs the Ad Analytics finder itself requires.
 
+Conversions come from `externalWebsiteConversions`, which must be NAMED in the request's
+`fields` list: LinkedIn returns only impressions and clicks by default, so an unrequested
+metric comes back absent rather than zero. Unlike Google's and Microsoft's, the field is typed
+`long` in the Ads Reporting schema and carries no fraction, so the running total is accumulated
+as an int64 (keeping the exact overflow guard) and widened to the float64 the domain model uses
+only at the end. The metric is aggregated ONLY across response elements that actually carried
+it, and the result stays nil when none did — treating an absent element value as a zero addend
+would convert "LinkedIn did not report this" into a measured zero, which is the substitution the
+pointer exists to prevent, and it would do so most often on exactly the responses where the
+field was never requested.
+
 The same Rest.li-vs-transport encoding split applies to the find-or-create name filter, and
 `doRequest` handles it inline rather than by bypass. `restliEncode` produces the FINAL bytes
 for a name embedded in a Rest.li literal — the COMPLETE query component via `url.QueryEscape`

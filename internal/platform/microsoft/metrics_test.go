@@ -1407,8 +1407,8 @@ func TestGetCampaignMetrics_RequestsConversionsQualifiedNotDeprecatedConversions
 }
 
 // ConversionsQualified is documented as a DOUBLE — Microsoft credits fractional conversions
-// for partially externally-attributed offline conversions — so it must be parsed as a float
-// and rounded, not read as an integer. A CSV cell of "2.6" is the published shape.
+// for partially externally-attributed offline conversions — so it is parsed as a float and
+// its fraction is KEPT. A CSV cell of "2.6" is the published shape.
 func TestGetCampaignMetrics_ConversionsQualifiedIsAFractionalDouble(t *testing.T) {
 	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
 "1234567","1000","25","50.00","2.6"
@@ -1422,9 +1422,34 @@ func TestGetCampaignMetrics_ConversionsQualifiedIsAFractionalDouble(t *testing.T
 	if got.Conversions == nil {
 		t.Fatal("Conversions is nil for a report carrying ConversionsQualified 2.6")
 	}
-	if *got.Conversions != 3 {
-		t.Errorf("Conversions = %d, want 3: a fractional 2.6 must round rather than "+
-			"truncate, or a converting campaign under-reports", *got.Conversions)
+	if *got.Conversions != 2.6 {
+		t.Errorf("Conversions = %v, want 2.6: the fraction must survive, or a campaign "+
+			"credited a partial conversion is misreported", *got.Conversions)
+	}
+}
+
+// Rounding per ROW and then summing compounds the error across a multi-row report: the whole
+// point of keeping the float is that twenty rows of 0.4 are eight conversions, not zero.
+func TestGetCampaignMetrics_FractionalConversionsSumWithoutPerRowRounding(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got.Conversions == nil {
+		t.Fatal("Conversions is nil for a report carrying five fractional rows")
+	}
+	if math.Abs(*got.Conversions-2.0) > 1e-9 {
+		t.Errorf("Conversions = %v, want 2: rounding each row to a whole number before "+
+			"summing reports five real conversions as zero", *got.Conversions)
 	}
 }
 
@@ -1443,7 +1468,7 @@ func TestGetCampaignMetrics_AbsentConversionsColumnIsNilNotZero(t *testing.T) {
 		t.Fatalf("a report without ConversionsQualified must still read: %v", err)
 	}
 	if got.Conversions != nil {
-		t.Errorf("Conversions = %d for a report whose header lacks the column entirely; "+
+		t.Errorf("Conversions = %v for a report whose header lacks the column entirely; "+
 			"an unreported count became a measurement", *got.Conversions)
 	}
 
@@ -1460,7 +1485,7 @@ func TestGetCampaignMetrics_AbsentConversionsColumnIsNilNotZero(t *testing.T) {
 		t.Fatal("Conversions is nil for an explicit ConversionsQualified of 0, erasing a real measurement")
 	}
 	if *got2.Conversions != 0 {
-		t.Errorf("Conversions = %d, want 0", *got2.Conversions)
+		t.Errorf("Conversions = %v, want 0", *got2.Conversions)
 	}
 }
 

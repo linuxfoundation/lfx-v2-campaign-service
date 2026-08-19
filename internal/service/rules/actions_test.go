@@ -336,13 +336,15 @@ func TestEvaluate_EveryRuleRespectsTheRunState(t *testing.T) {
 
 // int64p is a local helper for building the Conversions pointer, which every test below
 // needs because the field's whole purpose is to distinguish nil from a pointer to zero.
-func int64p(v int64) *int64 { return &v }
+// convp is the conversions helper: the field is a float64 because Google Ads and Microsoft
+// both credit fractional conversions.
+func convp(v float64) *float64 { return &v }
 
 // The rule's reason for existing: real traffic, no conversions from it.
 func TestEvaluate_NoConversionsFiresOnClicksWithoutConversions(t *testing.T) {
 	in := Input{
 		CampaignID: "c1", Platform: "google-ads", Status: "created",
-		Impressions: 40000, Clicks: 800, Conversions: int64p(0),
+		Impressions: 40000, Clicks: 800, Conversions: convp(0),
 	}
 	got := rulesFired(Evaluate(in))
 	if !contains(got, "no_conversions") {
@@ -371,7 +373,7 @@ func TestEvaluate_NoConversionsDistinguishesAbsentFromMeasuredZero(t *testing.T)
 	}
 
 	measured := base
-	measured.Conversions = int64p(0)
+	measured.Conversions = convp(0)
 	if got := rulesFired(Evaluate(measured)); !contains(got, "no_conversions") {
 		t.Errorf("no_conversions did not fire on a MEASURED zero, which is the finding the "+
 			"rule exists for; fired %v", got)
@@ -382,10 +384,32 @@ func TestEvaluate_NoConversionsDistinguishesAbsentFromMeasuredZero(t *testing.T)
 func TestEvaluate_NoConversionsSilentWhenConversionsExist(t *testing.T) {
 	in := Input{
 		CampaignID: "c1", Platform: "google-ads", Status: "created",
-		Impressions: 40000, Clicks: 800, Conversions: int64p(1),
+		Impressions: 40000, Clicks: 800, Conversions: convp(1),
 	}
 	if got := rulesFired(Evaluate(in)); contains(got, "no_conversions") {
 		t.Errorf("no_conversions fired on a campaign with 1 conversion; fired %v", got)
+	}
+}
+
+// A FRACTIONAL conversion count is a converting campaign, and must not raise no_conversions.
+//
+// Google Ads and Microsoft both credit partial conversions under data-driven, position-based
+// and offline attribution, so a campaign can genuinely sit at 0.4. Only an upstream value of
+// EXACTLY zero is the finding this rule reports. This is the assertion that fails if the
+// comparison is ever loosened to a threshold (`< 1`) or if a round-trip through an integer is
+// reintroduced anywhere between the adapter and here — either turns a converting campaign
+// into a fabricated "no conversions" alert.
+func TestEvaluate_NoConversionsSilentOnAFractionalConversion(t *testing.T) {
+	for _, conv := range []float64{0.1, 0.4, 0.5, 0.9} {
+		in := Input{
+			CampaignID: "c1", Platform: "google-ads", Status: "created",
+			Impressions: 40000, Clicks: 800, Conversions: convp(conv),
+		}
+		if got := rulesFired(Evaluate(in)); contains(got, "no_conversions") {
+			t.Errorf("no_conversions fired on a campaign credited %v conversions; a partial "+
+				"conversion is a conversion, and reporting it as none fabricates the finding "+
+				"(fired %v)", conv, got)
+		}
 	}
 }
 
@@ -398,7 +422,7 @@ func TestEvaluate_NoConversionsSilentWhenConversionsExist(t *testing.T) {
 func TestEvaluate_NoConversionsClickFloor(t *testing.T) {
 	base := Input{
 		CampaignID: "c1", Platform: "google-ads", Status: "created",
-		Impressions: 40000, Conversions: int64p(0),
+		Impressions: 40000, Conversions: convp(0),
 	}
 
 	below := base
@@ -433,7 +457,7 @@ func TestEvaluate_NoConversionsOnlyForLiveStatuses(t *testing.T) {
 	for status, want := range fires {
 		in := Input{
 			CampaignID: "c1", Platform: "google-ads", Status: status,
-			Impressions: 40000, Clicks: 800, Conversions: int64p(0),
+			Impressions: 40000, Clicks: 800, Conversions: convp(0),
 		}
 		got := contains(rulesFired(Evaluate(in)), "no_conversions")
 		if got != want {
@@ -448,7 +472,7 @@ func TestEvaluate_NoConversionsOnlyForLiveStatuses(t *testing.T) {
 func TestEvaluate_NoConversionsItemShape(t *testing.T) {
 	in := Input{
 		CampaignID: "c-42", Platform: "linkedin-ads", Status: "active",
-		Impressions: 40000, Clicks: 917, Conversions: int64p(0),
+		Impressions: 40000, Clicks: 917, Conversions: convp(0),
 	}
 	var item *ActionItem
 	for _, i := range Evaluate(in) {

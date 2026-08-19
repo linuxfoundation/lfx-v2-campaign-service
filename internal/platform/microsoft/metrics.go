@@ -658,9 +658,11 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 
 		// Conversions accumulate only when the column was present. Parsed as a FLOAT because
 		// ConversionsQualified is documented as a double — Microsoft credits fractional
-		// conversions for partial externally-attributed offline conversions — and rounded to
-		// the nearest whole conversion rather than truncated, so a campaign holding 0.6 of a
-		// conversion is not reported as having none.
+		// conversions for partial externally-attributed offline conversions — and the fraction
+		// is KEPT rather than rounded. Rounding per row and then summing compounds the error
+		// across the report: twenty rows of 0.4 are twenty zeroes and a reported total of 0
+		// for a campaign that converted eight times. The no_conversions rule reads this total,
+		// so that rounding would manufacture the finding rather than measure it.
 		if convOK {
 			conv, cerr := parseReportFloat(row, convCol)
 			if cerr != nil {
@@ -669,19 +671,14 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 			if math.IsNaN(conv) || math.IsInf(conv, 0) || conv < 0 {
 				return nil, fmt.Errorf("conversionsQualified: non-finite or negative value %v", conv)
 			}
-			rounded := math.Round(conv)
-			if rounded >= float64(math.MaxInt64) {
-				return nil, fmt.Errorf("conversionsQualified: %v exceeds the representable range", conv)
-			}
-			convInt := int64(rounded)
-			var running int64
+			var running float64
 			if out.Conversions != nil {
 				running = *out.Conversions
 			}
-			if convInt > 0 && running > math.MaxInt64-convInt {
+			total := running + conv
+			if math.IsInf(total, 0) {
 				return nil, fmt.Errorf("conversionsQualified: total would overflow")
 			}
-			total := running + convInt
 			out.Conversions = &total
 		}
 	}

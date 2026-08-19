@@ -1300,7 +1300,7 @@ func TestMeta_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Fatalf("ReadMetrics: %v", err)
 	}
 	if m.Conversions != nil {
-		t.Errorf("Conversions = %d for Meta, which exposes no scalar campaign-level "+
+		t.Errorf("Conversions = %v for Meta, which exposes no scalar campaign-level "+
 			"conversion count; a number derived here would be this service inventing an "+
 			"attribution policy it was never given", *m.Conversions)
 	}

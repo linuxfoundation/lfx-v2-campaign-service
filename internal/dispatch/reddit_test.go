@@ -777,7 +777,7 @@ func TestReddit_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Fatalf("ReadMetrics: %v", err)
 	}
 	if metrics.Conversions != nil {
-		t.Errorf("Conversions = %d read from an UNDOCUMENTED Reddit reporting contract; a "+
+		t.Errorf("Conversions = %v read from an UNDOCUMENTED Reddit reporting contract; a "+
 			"guessed field name reported as a measurement is exactly what the unverified-"+
 			"contract banner forbids", *metrics.Conversions)
 	}

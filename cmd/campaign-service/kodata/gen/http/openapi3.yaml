@@ -8240,10 +8240,10 @@ components:
                     example: 212
                     format: int64
                 conversions:
-                    type: integer
-                    description: Conversions attributed to this campaign over the window. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do) — absent means "not measured here", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.
+                    type: number
+                    description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do) — absent means "not measured here", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.'
                     example: 37
-                    format: int64
+                    format: double
                 cost_micros:
                     type: integer
                     description: 'Cost over the window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.'

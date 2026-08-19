@@ -303,10 +303,18 @@ type CampaignMetrics struct {
 	// than inferred from what this repo's clients happen to request today:
 	//
 	//   - Google Ads populates it from metrics.conversions, which the field reference types
-	//     as DOUBLE, not an integer. Google credits fractional conversions under some
-	//     attribution models, so the double is rounded to the nearest whole conversion here
-	//     rather than truncated — truncation would report a campaign with 0.8 attributed
-	//     conversions as having none.
+	//     as DOUBLE, not an integer. Google credits FRACTIONAL conversions under data-driven
+	//     and position-based attribution, so a campaign can genuinely hold 0.4 of a
+	//     conversion. That fraction is carried through as-is: this field is a float64 for
+	//     exactly that reason. Rounding it to a whole number here would report a campaign
+	//     holding 0.4 conversions as having produced ZERO, which the no_conversions rule
+	//     then reads as a finding — a fabricated measurement in the opposite direction to
+	//     the nil-versus-zero distinction this pointer exists to protect.
+	//     metrics.conversions is ALWAYS in the SELECT list, and proto3 JSON omits
+	//     default-valued fields, so an ABSENT conversions member on a Google row is the
+	//     encoding of a measured 0.0 — not "unmeasured". The adapter therefore materialises
+	//     a non-nil zero there, the same way parseMetricInt already treats an omitted
+	//     impressions/clicks value as a measured 0.
 	//   - LinkedIn populates it from externalWebsiteConversions (typed `long` in the Ads
 	//     Reporting schema), which must be named in the request's `fields` list: LinkedIn
 	//     returns only impressions and clicks by default, so an unnamed metric comes back
@@ -316,7 +324,9 @@ type CampaignMetrics struct {
 	//     2022, directs callers to ConversionsQualified, and warns the legacy column's values
 	//     "may be inaccurate" — so reading the obvious-looking column would have been the
 	//     wrong number, not merely an older one. It is typed `double` for the same
-	//     fractional-attribution reason Google's is.
+	//     fractional-attribution reason Google's is, and its fraction is likewise preserved.
+	//     Unlike Google's, the column is only present for accounts using Universal Event
+	//     Tracking, so an ABSENT column here really does mean unmeasured and stays nil.
 	//
 	// The other four leave it nil, and each for a reason that is a property of the platform
 	// rather than an unfinished task here:
@@ -340,7 +350,7 @@ type CampaignMetrics struct {
 	// reason for the pointer: the conversions rule in internal/service/rules refuses to fire
 	// on a nil precisely so a platform that cannot measure conversions is never reported as
 	// a campaign that failed to earn any.
-	Conversions *int64
+	Conversions *float64
 	// Email carries the counters that only an email channel has, and is nil for every ad
 	// platform. It exists because the four fields above cannot express an email send
 	// without lying: delivery, bounces and unsubscribes have no ad-platform analogue at

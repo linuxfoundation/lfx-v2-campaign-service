@@ -94,12 +94,14 @@ type CampaignMetrics struct {
 	CostMicros  int64         `json:"costMicros"`
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64 `json:"ctr"`
-	// Conversions is metrics.conversions, rounded to the nearest whole conversion. It is a
-	// POINTER so an absent field stays distinguishable from a measured zero — see
-	// model.CampaignMetrics.Conversions. Google omits zero-valued metrics from REST JSON, so
-	// a campaign that genuinely converted nothing arrives as an empty string and is reported
-	// as a non-nil 0; only a response that did not carry the field at all leaves this nil.
-	Conversions *int64 `json:"conversions,omitempty"`
+	// Conversions is metrics.conversions, carried through with its FRACTION intact — the
+	// field reference types it DOUBLE because Google credits fractional conversions under
+	// data-driven and position-based attribution. It is a POINTER for cross-adapter
+	// consistency with model.CampaignMetrics.Conversions, where nil means "this platform
+	// cannot measure conversions at all". Google can, so this adapter never leaves it nil:
+	// metrics.conversions is always selected, and proto3 JSON omits default values, so an
+	// absent member is a measured 0.0 and is reported as a non-nil zero.
+	Conversions *float64 `json:"conversions,omitempty"`
 }
 
 // gaqlMetricsRow is the shape of one googleAds:search result row for the
@@ -241,10 +243,22 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	if impressions > 0 {
 		m.Ctr = float64(clicks) / float64(impressions)
 	}
-	// Conversions is optional on the wire and stays nil when the field is absent, so a
-	// consumer can tell "Google did not report this" from "Google reported none".
+	// metrics.conversions is ALWAYS in this method's SELECT list, and Google Ads REST encodes
+	// responses as proto3 JSON, which OMITS fields holding the default value. An absent
+	// conversions member on a row we explicitly selected is therefore the encoding of a
+	// measured 0.0 — not "Google could not measure this". Materialising a non-nil zero is the
+	// same treatment parseMetricInt already gives an omitted impressions/clicks value.
+	//
+	// nil is reserved for adapters whose PLATFORM cannot report a campaign-level conversion
+	// count at all (Meta, X, Reddit, email), which is a different fact and the reason the
+	// domain field is a pointer. Leaving Google nil on a zero would have meant no_conversions
+	// never fired for a Google campaign that genuinely converted nobody — the rule's whole
+	// purpose.
+	conv := 0.0
 	if row.Metrics.Conversions != nil {
-		conv := *row.Metrics.Conversions
+		conv = *row.Metrics.Conversions
+	}
+	{
 		// Reject malformed magnitudes rather than folding them into a count. NaN and ±Inf
 		// both survive JSON decoding of a bare number in some encoders, a negative
 		// conversion count is upstream corruption rather than a small number, and a value
@@ -263,13 +277,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 				Err:    fmt.Errorf("decode campaign metrics row: conversions is not a usable count"),
 			}
 		}
-		// ROUNDED, not truncated. metrics.conversions is a DOUBLE because Google credits
+		// Carried through UNROUNDED. metrics.conversions is a DOUBLE because Google credits
 		// fractional conversions under data-driven and position-based attribution, so a
-		// campaign can genuinely hold 0.8 of a conversion. Truncating that to 0 would report
-		// a converting campaign as having produced nothing — and the conversions rule reads
-		// exactly this number to decide whether to flag a campaign for zero conversions.
-		rounded := int64(math.Round(conv))
-		m.Conversions = &rounded
+		// campaign can genuinely hold 0.4 of a conversion. Rounding that to 0 would report a
+		// converting campaign as having produced nothing, and the no_conversions rule reads
+		// exactly this number — so the rounding would manufacture the very finding the rule
+		// exists to report honestly. Only an upstream value of exactly zero may fire it.
+		m.Conversions = &conv
 	}
 	return m, nil
 }

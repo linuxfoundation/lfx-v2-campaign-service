@@ -944,7 +944,7 @@ func TestGetBriefMetrics_NoConversionsWiringDistinguishesAbsentFromZero(t *testi
 	// Plenty of clicks, a MEASURED zero: the finding the rule exists for.
 	measured := &model.CampaignMetrics{
 		Impressions: 40000, Clicks: 800, CostMicros: 250_000_000, Ctr: 0.02,
-		Conversions: func() *int64 { v := int64(0); return &v }(),
+		Conversions: func() *float64 { v := 0.0; return &v }(),
 	}
 	if !fired(t, measured) {
 		t.Error("no_conversions did not fire for 800 clicks and a measured 0 conversions; " +
@@ -966,7 +966,7 @@ func TestGetBriefMetrics_NoConversionsWiringDistinguishesAbsentFromZero(t *testi
 // The measurement must also reach the RESPONSE, not just the rules — and absence must remain
 // absent on the wire so a consumer can tell "not measured here" from a measured zero.
 func TestGetBriefMetrics_ConversionsSurfaceOnTheRow(t *testing.T) {
-	row := func(t *testing.T, conv *int64) *briefs.CampaignMetrics {
+	row := func(t *testing.T, conv *float64) *briefs.CampaignMetrics {
 		t.Helper()
 		disp := newPerCampaignDispatcher()
 		disp.results["c1"] = &model.CampaignMetrics{
@@ -984,12 +984,20 @@ func TestGetBriefMetrics_ConversionsSurfaceOnTheRow(t *testing.T) {
 		return res.Rows[0].Metrics
 	}
 
-	v := int64(37)
+	v := 37.0
 	if got := row(t, &v); got.Conversions == nil || *got.Conversions != 37 {
 		t.Errorf("row conversions = %v, want 37", got.Conversions)
 	}
+	// A FRACTIONAL value must survive the whole mapping. Google and Microsoft both credit
+	// partial conversions, and a float that is rounded anywhere between the adapter and the
+	// wire reports a converting campaign as having produced none.
+	frac := 0.4
+	if got := row(t, &frac); got.Conversions == nil || *got.Conversions != 0.4 {
+		t.Errorf("row conversions = %v, want 0.4: a fractional conversion was rounded away "+
+			"between the domain model and the response", got.Conversions)
+	}
 	if got := row(t, nil); got.Conversions != nil {
-		t.Errorf("row conversions = %d for a platform that reported none; the response "+
+		t.Errorf("row conversions = %v for a platform that reported none; the response "+
 			"cannot distinguish absent from a measured zero", *got.Conversions)
 	}
 }

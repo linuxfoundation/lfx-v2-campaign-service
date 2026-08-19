@@ -1510,7 +1510,7 @@ func TestGetCampaignMetrics_DecodesExternalWebsiteConversions(t *testing.T) {
 		t.Fatal("Conversions is nil for a response carrying externalWebsiteConversions:7")
 	}
 	if *m.Conversions != 7 {
-		t.Errorf("Conversions = %d, want 7", *m.Conversions)
+		t.Errorf("Conversions = %v, want 7", *m.Conversions)
 	}
 }
 
@@ -1524,7 +1524,7 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m.Conversions != nil {
-		t.Errorf("Conversions = %d for an element that never carried the field; an "+
+		t.Errorf("Conversions = %v for an element that never carried the field; an "+
 			"unreported count became a measurement", *m.Conversions)
 	}
 
@@ -1537,7 +1537,7 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 		t.Fatal("Conversions is nil for an explicit externalWebsiteConversions:0, erasing a real measurement")
 	}
 	if *m2.Conversions != 0 {
-		t.Errorf("Conversions = %d, want 0", *m2.Conversions)
+		t.Errorf("Conversions = %v, want 0", *m2.Conversions)
 	}
 }
 
@@ -1551,7 +1551,7 @@ func TestGetCampaignMetrics_NoElementsLeavesConversionsAbsent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m.Conversions != nil {
-		t.Errorf("Conversions = %d on an empty elements array", *m.Conversions)
+		t.Errorf("Conversions = %v on an empty elements array", *m.Conversions)
 	}
 }
 
@@ -1570,7 +1570,7 @@ func TestGetCampaignMetrics_ConversionsAggregateAcrossElements(t *testing.T) {
 		t.Fatal("Conversions is nil across two elements that both carried the metric")
 	}
 	if *m.Conversions != 7 {
-		t.Errorf("Conversions = %d, want 7 (4+3): elements are not being summed", *m.Conversions)
+		t.Errorf("Conversions = %v, want 7 (4+3): elements are not being summed", *m.Conversions)
 	}
 }
 

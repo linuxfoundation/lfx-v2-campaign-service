@@ -66,10 +66,15 @@ type Input struct {
 	// conversions is the finding the rule exists for; a campaign that earned 500 clicks on a
 	// platform with no conversions concept — Meta, X, Reddit, HubSpot — has no conversion
 	// figure at all, and firing on it would report the ABSENCE OF MEASUREMENT as a campaign
-	// defect. int64 cannot hold those apart: both arrive as 0.
+	// defect. A plain number cannot hold those apart: both arrive as 0.
+	//
+	// FLOAT64, not an integer count: Google Ads and Microsoft both type their conversion
+	// metric as a double and credit fractional conversions, so rounding to a whole number
+	// would report a campaign holding 0.4 conversions as having produced none — and this
+	// rule would then fire on it. The fraction has to survive all the way to the comparison.
 	//
 	// See model.CampaignMetrics.Conversions for which platforms populate this and why.
-	Conversions *int64
+	Conversions *float64
 	// BillsPerDelivery records whether this channel charges for delivery at all.
 	//
 	// False for the email channel: HubSpot charges nothing per send and its adapter always
@@ -204,6 +209,12 @@ func Evaluate(in Input) []ActionItem {
 	//
 	// Note the rule does NOT require Impressions: clicks are the denominator that matters for
 	// conversion, and the CTR rule already owns the impressions-to-clicks step of the funnel.
+	// == 0 on the float is exact and deliberate: only an upstream value of EXACTLY zero may
+	// fire this rule. A campaign credited 0.4 of a conversion under data-driven attribution
+	// has converted, and an earlier revision that rounded the platform value to an int64
+	// turned that 0.4 into a 0 and raised no_conversions against a converting campaign —
+	// fabricating the finding the rule exists to report. Any threshold above zero here would
+	// reintroduce that defect.
 	if isActive(in.Status) && in.Conversions != nil &&
 		in.Clicks >= minClicksForConversions && *in.Conversions == 0 {
 		items = append(items, ActionItem{

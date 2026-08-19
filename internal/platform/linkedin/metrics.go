@@ -269,14 +269,18 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 			if conv < 0 {
 				return nil, fmt.Errorf("get campaign metrics: negative externalWebsiteConversions in response element")
 			}
+			// The running total is accumulated as an int64 and only widened at the end.
+			// externalWebsiteConversions is typed `long` in LinkedIn's Ads Reporting schema —
+			// unlike Google's and Microsoft's doubles, it carries no fraction — so the exact
+			// integer overflow guard is kept rather than being lost to float arithmetic.
 			var running int64
 			if metrics.Conversions != nil {
-				running = *metrics.Conversions
+				running = int64(*metrics.Conversions)
 			}
 			if conv > math.MaxInt64-running {
 				return nil, fmt.Errorf("get campaign metrics: aggregate externalWebsiteConversions overflows int64")
 			}
-			total := running + conv
+			total := float64(running + conv)
 			metrics.Conversions = &total
 		}
 		if elem.CostInUsd != nil {
