@@ -126,10 +126,12 @@ openssl rand -base64 32
   a typo) fails closed, and
   `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
   supported for this campaign's platform" for a Reddit campaign.
-  Off by default because Reddit's reporting endpoint has no public
-  documentation (LFXV2-2995) — the request shape, response shape, and
-  spend currency unit are a best-effort guess, and a guessed read
-  returning 200 would look authoritative to every consumer. The chart
+  Off by default because no request has yet been made against a live
+  Reddit ad account (LFXV2-3282). The request and response shapes now
+  follow Reddit's official public OpenAPI document, but behaviour a
+  schema cannot express — zero-activity rows, the account's attribution
+  window — is still unconfirmed, and a read returning 200 would look
+  authoritative to every consumer. The chart
   sets it to `"false"`
   (`charts/lfx-v2-campaign-service/values.yaml`); flip it only after
   the contract is verified against a live Reddit ad account.

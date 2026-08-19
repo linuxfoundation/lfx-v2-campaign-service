@@ -355,6 +355,60 @@ func TestGetCampaignMetrics_ErrorsLeakNoUpstreamValues(t *testing.T) {
 	}
 }
 
+// TestGetCampaignMetrics_NonSuccessErrorsHideTheAccountID covers the arms the decode-side
+// invariant never reached. reportDecodeError pins the literal "reports" path only for a 2xx
+// whose body cannot be decoded; a 4xx/5xx builds an apiError, and a transport failure a
+// transportError, both carrying the REAL request path with the ad account id interpolated
+// into it — and both stringify into the service's warning log.
+//
+// These are the arms that actually fire during an outage, so the invariant has to hold here
+// or it does not hold at all.
+func TestGetCampaignMetrics_NonSuccessErrorsHideTheAccountID(t *testing.T) {
+	t.Run("non-2xx response", func(t *testing.T) {
+		client := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+		})
+		_, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if strings.Contains(err.Error(), testAccount.AccountID) {
+			t.Errorf("a non-2xx error leaked the account id: %s", err.Error())
+		}
+		// The diagnostic that matters must survive.
+		if !strings.Contains(err.Error(), "403") {
+			t.Errorf("the status code was lost from the error: %s", err.Error())
+		}
+		if !strings.Contains(err.Error(), "reports") {
+			t.Errorf("the error no longer identifies the reports call: %s", err.Error())
+		}
+	})
+
+	t.Run("transport failure", func(t *testing.T) {
+		// A handler that hijacks and closes the connection produces a Do-time failure.
+		client := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Skip("ResponseWriter is not a Hijacker")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Skip("hijack failed")
+			}
+			_ = conn.Close()
+		})
+		_, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if strings.Contains(err.Error(), testAccount.AccountID) {
+			t.Errorf("a transport error leaked the account id: %s", err.Error())
+		}
+	})
+}
+
 // TestGetCampaignMetrics_NoActivity covers an empty metrics array.
 //
 // ASSUMPTION, NOT A DOCUMENTED FACT: this test encodes that a campaign with no activity
@@ -596,6 +650,12 @@ func TestGetCampaignMetrics_ExtraRowFieldsAreIgnored(t *testing.T) {
 
 // TestValidateMetricsWindowMatchesDateRangeForWindow pins that the two can never disagree
 // about which windows are supported.
+//
+// EVERY domain constant is listed by NAME, including the two Reddit does not support. Naming
+// them via model.* rather than a string literal is what makes the test load-bearing: adding
+// only MetricsWindowLast14Days to supportedMetricsWindows without teaching dateRangeForWindow
+// about it would otherwise slip through, since a literal "yesterday" tests nothing about the
+// constant set. The unsupported ones must fail BOTH functions, exactly like the junk values.
 func TestValidateMetricsWindowMatchesDateRangeForWindow(t *testing.T) {
 	all := []model.MetricsWindow{
 		model.MetricsWindowToday,
@@ -603,9 +663,11 @@ func TestValidateMetricsWindowMatchesDateRangeForWindow(t *testing.T) {
 		model.MetricsWindowLast30Days,
 		model.MetricsWindowThisMonth,
 		model.MetricsWindowLastMonth,
+		// Domain constants Reddit does not map — named, not spelled.
+		model.MetricsWindowYesterday,
+		model.MetricsWindowLast14Days,
 		model.MetricsWindow(""),
 		model.MetricsWindow("last_year"),
-		model.MetricsWindow("yesterday"),
 	}
 	for _, w := range all {
 		validErr := ValidateMetricsWindow(w)

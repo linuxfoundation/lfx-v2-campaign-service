@@ -329,6 +329,15 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 	if campaign.PlatformCampaignID == "" {
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
 	}
+	// Validated BEFORE credential resolution, and this order is load-bearing — the same
+	// order linkedin.go and twitter.go use, and the order reddit.ValidateMetricsWindow was
+	// made package-level and clock-free to allow. An unsupported window is a permanent 400
+	// whatever the connection looks like, and it names the one thing the caller can actually
+	// change. Resolving first answers a connection error instead, sending the caller to
+	// repair a connection when the request would still be rejected on the window.
+	if werr := reddit.ValidateMetricsWindow(window); werr != nil {
+		return nil, fmt.Errorf("get campaign metrics from reddit: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+	}
 	client, err := d.resolveRedditClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err

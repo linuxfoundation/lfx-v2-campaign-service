@@ -145,8 +145,8 @@ all developers and does not require allowlisting or approval from Reddit to acce
 
 **This supersedes the LFXV2-2995 BLOCKED finding**, which recorded that Reddit published no
 public documentation for v3 reporting and that the shape here was a guess inferred from this
-client's own conventions. That finding is no longer accurate. Reading the spec falsified four
-of the five things previously guessed:
+client's own conventions. That finding is no longer accurate. Reading the spec falsified five
+of the six things previously guessed:
 
 | Element | Previous guess | Spec |
 | --- | --- | --- |

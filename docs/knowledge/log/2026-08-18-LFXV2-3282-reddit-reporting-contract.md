@@ -17,7 +17,7 @@ browser and following the download link. **The generalisable lesson: "no public 
 is a claim about what was reachable, not about what exists, and a client-rendered docs site
 looks identical to an absent one from a fetcher.**
 
-**Four of the five guesses were wrong.** Only the path and method survived.
+**Five of the six guesses were wrong.** Only the path and method survived.
 
 | Element | Guess | Spec |
 | --- | --- | --- |
