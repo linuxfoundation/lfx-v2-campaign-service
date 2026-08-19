@@ -544,7 +544,7 @@ func TestCreateCampaignBindsInstagramAndDSAFields(t *testing.T) {
 	in := metaFieldInput()
 	in.InstagramUserID = "  17841400000000000  " // padded: must be trimmed before send
 	in.DSABeneficiary = "The Linux Foundation"
-	in.DSAPayor = "The Linux Foundation"
+	in.DSAPayor = "LF Projects, LLC"
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
 	}
@@ -553,8 +553,17 @@ func TestCreateCampaignBindsInstagramAndDSAFields(t *testing.T) {
 	if adsetBody["dsa_beneficiary"] != "The Linux Foundation" {
 		t.Errorf("adset dsa_beneficiary = %v, want 'The Linux Foundation'", adsetBody["dsa_beneficiary"])
 	}
-	if adsetBody["dsa_payor"] != "The Linux Foundation" {
-		t.Errorf("adset dsa_payor = %v, want 'The Linux Foundation'", adsetBody["dsa_payor"])
+	if adsetBody["dsa_payor"] != "LF Projects, LLC" {
+		t.Errorf("adset dsa_payor = %v, want 'LF Projects, LLC'", adsetBody["dsa_payor"])
+	}
+	// The two disclosures carry DISTINCT values on purpose. Under the DSA the beneficiary
+	// and the payer are legally different roles and are routinely different entities (an LF
+	// project as beneficiary, LF Projects as payer), so a transposition in the binding is a
+	// real defect that reaches a regulated ad set. With both set to the same literal the
+	// swap is unobservable and this test passes against transposed code.
+	if adsetBody["dsa_beneficiary"] == adsetBody["dsa_payor"] {
+		t.Error("dsa_beneficiary and dsa_payor hold the same value; the fixture must keep them " +
+			"distinct or a beneficiary/payor transposition cannot be detected")
 	}
 
 	creativeBody := creativeCap.get()

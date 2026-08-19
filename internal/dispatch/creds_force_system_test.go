@@ -228,6 +228,13 @@ func TestForcedSystemAppliesToEveryPaidAdsProvider(t *testing.T) {
 // TestForcedSystemAtSystemScopeShortCircuits: a request already scoped to the reserved
 // system project must NOT re-enter the forced path (that would re-issue the identical
 // lookup). It drops to the ordinary path, which asks exactly once. FR-004.
+//
+// The lookup COUNT alone cannot bind this: both paths issue exactly one
+// Get(SystemProjectID, provider), so `len(repo.gets) == 1` holds whether the short-circuit
+// is present or removed. `fromSystem` is the only observable difference, and it is
+// load-bearing rather than bookkeeping — `resolved.systemScoped` keys on it, so a
+// system-scope request that took the forced path would gain a spurious
+// ErrSystemConnectionNotUsable and be classified 500/page-an-operator.
 func TestForcedSystemAtSystemScopeShortCircuits(t *testing.T) {
 	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
 	repo := &scopedConnReader{rows: map[string]*model.Connection{
@@ -243,6 +250,13 @@ func TestForcedSystemAtSystemScopeShortCircuits(t *testing.T) {
 	}
 	if len(repo.gets) != 1 {
 		t.Errorf("scopes asked = %v, want exactly one lookup (no forced-path re-entry at the system scope)", repo.gets)
+	}
+	// The assertion that actually binds the short-circuit — see the note above.
+	if got.fromSystem {
+		t.Error("fromSystem = true: the system-scope request took the FORCED path instead of " +
+			"short-circuiting to the ordinary one. The lookup count is identical either way, so " +
+			"this is the only signal that distinguishes them — and systemScoped keys on it, so a " +
+			"failure here would be misreported as ErrSystemConnectionNotUsable (500).")
 	}
 }
 
