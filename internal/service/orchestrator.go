@@ -1880,24 +1880,31 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 // Both methods are project-scoped and confined to the project's OWN campaigns. The connection
 // alone is NOT the scope: Google Ads is one customer shared across every foundation
 // (docs/architecture.md, "Account Tenancy"), so a read scoped only by the connection returns
-// every project's keywords, spend and demographics. campaignIDs carries the upstream ids the
+// every project's keywords, spend and demographics. scope carries the upstream campaigns the
 // caller owns, and the adapter must confine its query to them.
 //
-// campaignIDs is never empty — the orchestrator answers an empty result WITHOUT calling the
+// Each scope entry pairs the id with its PROVENANCE rather than being a bare id, because an id
+// alone cannot be scoped safely: it is a bare numeric unique only within the customer it was
+// created under, and a connection can be re-pointed between create and read. The adapter must
+// drop entries whose recorded customer disagrees with the one its client resolves to, the same
+// invariant ReadMetrics and the keyword mutation enforce.
+//
+// scope is never empty — the orchestrator answers an empty result WITHOUT calling the
 // adapter, because an empty scope is exactly when an unscoped query would expose everyone else's
 // data. An adapter must still refuse an empty slice rather than widening, so the guarantee does
-// not rest on one caller.
+// not rest on one caller. The same applies AFTER the provenance filter: if it removes every
+// entry, the adapter must refuse rather than query unscoped.
 //
 // Both are pure reads that never mutate platform or DB state, and neither result is persisted.
 type KeywordInsightsReader interface {
 	// ReadKeywordPerformance returns the top keywords by impressions over window, across the
 	// caller's own campaigns only. The result is capped; KeywordPerformance.Truncated reports
 	// whether more exist.
-	ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.KeywordPerformance, error)
+	ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordPerformance, error)
 	// ReadAudienceInsights returns age, gender and device breakdowns over window for the
 	// caller's own campaigns. Each dimension independently covers the same traffic, so a
 	// consumer must total within a dimension, never across them.
-	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.AudienceInsights, error)
+	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error)
 }
 
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
@@ -1936,7 +1943,7 @@ func (o *Orchestrator) keywordInsightsFor(platform model.Provider) (KeywordInsig
 // The single place the authorization scope for the two insight reads is established. It is a
 // database read scoped by project_id in SQL, not a filter applied to platform results after the
 // fact: the platform read must never see another project's rows in the first place.
-func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID string, platform model.Provider) ([]string, error) {
+func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
 	ids, err := o.campaigns.ListProjectPlatformCampaignIDs(ctx, projectID, platform)
 	if err != nil {
 		return nil, fmt.Errorf("resolve campaign scope for project %s on %s: %w", projectID, platform, err)

@@ -560,9 +560,9 @@ type GoogleAdsKeywords struct {
 	Rows []*GoogleAdsKeyword
 	// How many rows are in `rows`.
 	RowCount int
-	// True when the account has more keywords than were returned. The rows are the
-	// TOP ones by impressions, not the account's full keyword set — do not total
-	// them and present the result as account-wide spend.
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set
+	// — do not total them and present the result as the project's whole spend.
 	Truncated bool
 }
 

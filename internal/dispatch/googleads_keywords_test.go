@@ -19,6 +19,27 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
 
+// scopeOf builds a campaign scope carrying NO provenance, the legacy shape: rows written
+// before the creating customer was recorded. Those are read under the current connection
+// (unknown cannot prove a mismatch), so it is the right default for tests about everything
+// other than the account-identity filter itself — which uses scopeUnderCustomer.
+func scopeOf(ids ...string) []model.ProjectCampaignScope {
+	out := make([]model.ProjectCampaignScope, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id})
+	}
+	return out
+}
+
+// scopeUnderCustomer builds a scope entry whose recorded provenance names customerID, the
+// shape a campaign dispatched after provenance tracking has.
+func scopeUnderCustomer(id, customerID string) model.ProjectCampaignScope {
+	return model.ProjectCampaignScope{
+		PlatformCampaignID: id,
+		Result:             json.RawMessage(`{"customerId":"` + customerID + `"}`),
+	}
+}
+
 // keywordActionServers wires a token endpoint plus an API server for the mutate path, and
 // records whether the API was reached at all — which is what the "never contacted" guards
 // below assert.
@@ -224,6 +245,106 @@ func TestGoogleAdsKeywordActions_HappyPathReturnsOutcomes(t *testing.T) {
 
 // ─── reads ───
 
+// TestGoogleAdsInsightReads_ForeignAccountCampaignsAreNotQueried is the insight reads' half of
+// the account-identity invariant ReadMetrics and ApplyKeywordActions already enforce.
+//
+// A platform_campaign_id is a bare numeric unique only WITHIN its customer, and
+// UpdateGoogleAds can re-point a project's connection between create and read. An id carried
+// over from the old customer either matches nothing — an empty read indistinguishable from a
+// campaign with no activity — or, on a numeric collision, selects ANOTHER account's campaign.
+// On a customer shared across every foundation that means reporting a different project's
+// keyword text and spend as this project's own.
+//
+// The assertion is that the foreign id never reaches the GAQL, not merely that the result is
+// empty: a query that goes out with the wrong id has already read what it must not.
+func TestGoogleAdsInsightReads_ForeignAccountCampaignsAreNotQueried(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	// 555 was created under the customer this connection resolves to; 999 under another.
+	scope := []model.ProjectCampaignScope{
+		scopeUnderCustomer("555", "1234567890"),
+		scopeUnderCustomer("999", "5555555555"),
+	}
+	if _, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scope); err != nil {
+		t.Fatalf("ReadKeywordPerformance: %v", err)
+	}
+	mu.Lock()
+	got := append([]string{}, bodies...)
+	mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("recorded %d queries, want 1", len(got))
+	}
+	if !strings.Contains(got[0], "555") {
+		t.Errorf("query dropped the campaign this project CAN read: %s", got[0])
+	}
+	if strings.Contains(got[0], "999") {
+		t.Errorf("query carried a campaign created under a DIFFERENT customer; on an id "+
+			"collision this reads another account's keywords: %s", got[0])
+	}
+}
+
+// A scope that is non-empty on the way in but empty after the provenance filter must be an
+// ERROR, never a query. Passing an empty id list on would make campaignScopePredicate refuse
+// anyway, but relying on that leaves the account-wide read one dropped guard away.
+func TestGoogleAdsInsightReads_AllForeignScopeIsRefusedWithoutQuerying(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	scope := []model.ProjectCampaignScope{scopeUnderCustomer("999", "5555555555")}
+	_, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scope)
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Errorf("error is not ErrCampaignAccountMismatch: %v", err)
+	}
+	if *reached {
+		t.Error("the platform was queried after every campaign was filtered out; an empty " +
+			"scope is exactly when an unscoped read exposes every other project")
+	}
+}
+
+// A row with NO recorded provenance is READ, matching googleAdsCreationCustomerID's contract
+// ("empty means unknown, and the caller must treat that as permission to proceed") and the two
+// sibling read paths. Dropping them would silently empty the results of every project whose
+// campaigns predate provenance tracking. The asymmetry against ApplyKeywordActions — which
+// fails CLOSED on unknown provenance — is deliberate: a misleading read is recoverable, an
+// irreversible REMOVE is not.
+func TestGoogleAdsInsightReads_UnknownProvenanceIsStillRead(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	if _, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scopeOf("555")); err != nil {
+		t.Fatalf("ReadAudienceInsights: %v", err)
+	}
+	mu.Lock()
+	got := append([]string{}, bodies...)
+	mu.Unlock()
+	if len(got) == 0 || !strings.Contains(got[0], "555") {
+		t.Errorf("a legacy row with no recorded customer was dropped from the scope; every "+
+			"project whose campaigns predate provenance tracking would read empty: %v", got)
+	}
+}
+
 func TestGoogleAdsReadKeywordPerformance_MapsRowsAndKeepsRequestWindow(t *testing.T) {
 	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -232,7 +353,7 @@ func TestGoogleAdsReadKeywordPerformance_MapsRowsAndKeepsRequestWindow(t *testin
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	kp, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, []string{"555"})
+	kp, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scopeOf("555"))
 	if err != nil {
 		t.Fatalf("ReadKeywordPerformance: %v", err)
 	}
@@ -258,7 +379,7 @@ func TestGoogleAdsReadKeywordPerformance_BadWindowRefusedBeforeCredentials(t *te
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, errEncryptor{}, opts...)
 
-	_, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindow("next_tuesday"), []string{"555"})
+	_, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindow("next_tuesday"), scopeOf("555"))
 	if err == nil {
 		t.Fatal("expected an unsupported-window error, got nil")
 	}
@@ -282,7 +403,7 @@ func TestGoogleAdsReadAudienceInsights_MapsBucketsAndKeepsRequestWindow(t *testi
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, []string{"555"})
+	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scopeOf("555"))
 	if err != nil {
 		t.Fatalf("ReadAudienceInsights: %v", err)
 	}
@@ -314,7 +435,7 @@ func TestGoogleAdsReadAudienceInsights_DimensionTokensMatchTheModelVocabulary(t 
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, []string{"555"})
+	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, scopeOf("555"))
 	if err != nil {
 		t.Fatalf("ReadAudienceInsights: %v", err)
 	}
@@ -346,10 +467,10 @@ func TestGoogleAdsKeywordInsights_UnusableConnectionIsTagged(t *testing.T) {
 	}
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: inactive}, identityEncryptor{}, opts...)
 
-	if _, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, []string{"555"}); !errors.Is(err, domain.ErrConnectionNotUsable) {
+	if _, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, scopeOf("555")); !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Errorf("keyword read: error is not ErrConnectionNotUsable: %v", err)
 	}
-	if _, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, []string{"555"}); !errors.Is(err, domain.ErrConnectionNotUsable) {
+	if _, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, scopeOf("555")); !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Errorf("audience read: error is not ErrConnectionNotUsable: %v", err)
 	}
 }

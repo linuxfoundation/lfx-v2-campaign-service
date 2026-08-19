@@ -246,14 +246,14 @@ func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.P
 	return []model.MarketingEmail{}, nil
 }
 
-func (d upstreamCapableDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
+func (d upstreamCapableDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
 	return &model.KeywordPerformance{}, nil
 }
 
-func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
+func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	if d.err != nil {
 		return nil, d.err
 	}

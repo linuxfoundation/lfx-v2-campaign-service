@@ -341,7 +341,7 @@ func keywordActionEnum() {
 	Enum("PAUSE", "REMOVE")
 }
 
-// GoogleAdsKeyword is one keyword row from the account-wide performance read.
+// GoogleAdsKeyword is one keyword row from the project-scoped performance read.
 //
 // Every counter is scoped to the requested window. `criterion_id` is what the keyword-actions
 // endpoint consumes, so the two surfaces are usable together: read here, act there.
@@ -364,7 +364,7 @@ var GoogleAdsKeyword = Type("google-ads-keyword", func() {
 	Required("criterion_id", "ad_group_id", "campaign_id", "text", "match_type", "status", "impressions", "clicks", "cost_micros", "ctr")
 })
 
-// GoogleAdsKeywords is the account-wide keyword performance read.
+// GoogleAdsKeywords is the keyword performance read, scoped to the project's OWN campaigns.
 //
 // This is NOT a list endpoint in the sense api-catalog.md rule 3 forbids. It enumerates nothing
 // this service stores: the rows come from Google Ads over the project's connection, and no
@@ -375,9 +375,9 @@ var GoogleAdsKeywords = Type("google-ads-keywords", func() {
 	Attribute("rows", ArrayOf(GoogleAdsKeyword), "Keyword rows, ordered by impressions descending. Capped — see `truncated`.")
 	Attribute("row_count", Int, "How many rows are in `rows`.", func() { Example(50) })
 	// A cap without a signal is a silent lie: a caller that receives exactly 50 rows cannot
-	// tell a 50-keyword account from a 5000-keyword one, and would present the top slice as
-	// the whole account. This flag is the difference between a truncated answer and a wrong one.
-	Attribute("truncated", Boolean, "True when the account has more keywords than were returned. The rows are the TOP ones by impressions, not the account's full keyword set — do not total them and present the result as account-wide spend.", func() { Example(true) })
+	// tell a 50-keyword project from a 5000-keyword one, and would present the top slice as
+	// the whole. This flag is the difference between a truncated answer and a wrong one.
+	Attribute("truncated", Boolean, "True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set — do not total them and present the result as the project's whole spend.", func() { Example(true) })
 	Required("window", "rows", "row_count", "truncated")
 })
 
@@ -398,7 +398,7 @@ var GoogleAdsAudienceBucket = Type("google-ads-audience-bucket", func() {
 	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr")
 })
 
-// GoogleAdsAudience is the account-wide demographic read: age, gender and device.
+// GoogleAdsAudience is the project-scoped demographic read: age, gender and device.
 //
 // The three breakdowns are read as three separate GAQL queries and returned in one array
 // discriminated by `dimension`. They are NOT independently failable in the response: if any one
@@ -921,8 +921,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"models keywords as addressable criteria. " +
 			"**409** when the change is refused before Google is contacted: the campaign is unprovisioned " +
 			"(no platform campaign id, or no ad group), the campaign belongs to a different ad account than " +
-			"the project's connection now resolves to, or the connection row itself is unusable. Those are " +
-			"non-retryable, which is why none of them is a 503.")
+			"the project's connection now resolves to, the campaign does not record which ad account it was " +
+			"created under (it must be re-dispatched before its keywords can be acted on — a different " +
+			"remedy from reconnecting, which is why it is reported separately), or the connection row " +
+			"itself is unusable. Those are non-retryable, which is why none of them is a 503.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

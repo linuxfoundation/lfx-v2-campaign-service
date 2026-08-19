@@ -650,13 +650,13 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 	return &cp, nil
 }
 
-// ListCampaignsForBrief returns the single stored campaign, matching what this fake's
-// GetCampaign serves. Returns an empty slice rather than nil when there is none, mirroring
-// the real repository's "a brief with no campaigns is an ordinary state" contract.
-func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]string, error) {
+func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
 	return nil, nil
 }
 
+// ListCampaignsForBrief returns the single stored campaign, matching what this fake's
+// GetCampaign serves. Returns an empty slice rather than nil when there is none, mirroring
+// the real repository's "a brief with no campaigns is an ordinary state" contract.
 func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
 	if r.cur == nil {
 		return []*model.Campaign{}, nil

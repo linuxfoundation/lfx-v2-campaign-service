@@ -1137,6 +1137,48 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	return blob.AdGroupID, blob.AdID
 }
 
+// googleAdsScopeForCustomer reduces the project's campaign scope to the ids that are
+// meaningful under customerID, and is the insight reads' half of the account-identity
+// invariant ReadMetrics and ApplyKeywordActions already enforce.
+//
+// The need is the same one ReadMetrics documents: a platform_campaign_id is a bare numeric
+// unique only WITHIN its customer, and UpdateGoogleAds can re-point a project's connection
+// between create and read. An id carried over from the old customer either matches nothing
+// (an empty read that looks like a campaign with no activity) or, on a numeric collision,
+// selects ANOTHER account's campaign — which on a customer shared across every foundation
+// means reporting a different project's keyword text and spend as this project's own.
+//
+// Entries with NO recorded provenance are KEPT, deliberately. That matches
+// googleAdsCreationCustomerID's documented contract ("an empty return means unknown, and the
+// caller must treat that as permission to proceed") and the two sibling read paths: a row
+// written before provenance tracking existed cannot prove a mismatch, and dropping every such
+// row would silently empty the results of projects whose campaigns all predate it. The
+// asymmetry against ApplyKeywordActions — which fails CLOSED on unknown provenance — is the
+// one this branch already reasons about: a misleading read is recoverable, an irreversible
+// REMOVE is not.
+//
+// A scope that is non-empty on the way in but empty after filtering is an ERROR, never an
+// empty id list. Passing an empty list on would make campaignScopePredicate refuse anyway,
+// but relying on that would put the account-wide read one dropped guard away; refusing here
+// states the intent where the filtering happens.
+func googleAdsScopeForCustomer(scope []model.ProjectCampaignScope, customerID, op string) ([]string, error) {
+	ids := make([]string, 0, len(scope))
+	skipped := 0
+	for _, s := range scope {
+		created := googleAdsCreationCustomerID(&model.Campaign{Result: s.Result})
+		if created != "" && created != customerID {
+			skipped++
+			continue
+		}
+		ids = append(ids, s.PlatformCampaignID)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%s: all %d of this project's campaigns were created under a different customer than the one its connection now resolves to (%s), so none can be read under it: %w",
+			op, skipped, customerID, domain.ErrCampaignAccountMismatch)
+	}
+	return ids, nil
+}
+
 // ReadKeywordPerformance implements service.KeywordInsightsReader for Google Ads.
 //
 // Confined to campaignIDs, the upstream campaigns the calling project owns. An earlier version
@@ -1150,7 +1192,7 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 // It still resolves the ordinary client, which accepts the LF system fallback, and that remains
 // correct: the call names no upstream id the caller chose, and once the query is campaign-scoped
 // a fallback project reads only its own campaigns rather than the whole LF account.
-func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.KeywordPerformance, error) {
+func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	// Translate and validate the window BEFORE resolving credentials: an unsupported window
 	// is a permanent input fault regardless of connection state, so it must produce the same
 	// 400 either way rather than being masked by a contingent connection failure.
@@ -1159,6 +1201,10 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 		return nil, fmt.Errorf("read google ads keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 	}
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	campaignIDs, err := googleAdsScopeForCustomer(scope, client.CustomerID(), "read google ads keyword performance")
 	if err != nil {
 		return nil, err
 	}
@@ -1194,12 +1240,16 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 // campaign-scoping and same window-first ordering as ReadKeywordPerformance — the demographic
 // queries aggregate the whole customer without it, which on a shared account means every other
 // project's targeting distribution.
-func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, campaignIDs []string) (*model.AudienceInsights, error) {
+func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	gaWindow, err := googleads.WindowFor(window)
 	if err != nil {
 		return nil, fmt.Errorf("read google ads audience insights: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 	}
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	campaignIDs, err := googleAdsScopeForCustomer(scope, client.CustomerID(), "read google ads audience insights")
 	if err != nil {
 		return nil, err
 	}

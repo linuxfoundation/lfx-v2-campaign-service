@@ -71,7 +71,7 @@ func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID
 	}
 }
 
-// GetGoogleAdsKeywords reads the project's account-wide Google Ads keyword performance.
+// GetGoogleAdsKeywords reads Google Ads keyword performance across the project's OWN campaigns.
 //
 // A pure read-through: nothing is persisted, and this service stores no keyword of its own.
 // It enumerates nothing this service holds, which is why it does not breach the
@@ -122,7 +122,7 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 	}, nil
 }
 
-// GetGoogleAdsAudience reads the project's account-wide Google Ads demographics.
+// GetGoogleAdsAudience reads Google Ads demographics across the project's OWN campaigns.
 //
 // Age, gender and device arrive in one flat array discriminated by `dimension`. Each
 // dimension independently covers the same traffic, so a consumer must total within a

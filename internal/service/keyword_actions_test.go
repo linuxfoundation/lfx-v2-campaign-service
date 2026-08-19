@@ -65,14 +65,14 @@ func (d *keywordActionDispatcher) ApplyKeywordActions(_ context.Context, _ strin
 	return out, nil
 }
 
-func (d *keywordActionDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
+func (d *keywordActionDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
 	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days, Rows: []model.KeywordRow{{CriterionID: "777", AdGroupID: "333"}}}, nil
 }
 
-func (d *keywordActionDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
+func (d *keywordActionDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -474,11 +474,11 @@ func (d nilResultDispatcher) Dispatch(context.Context, *model.CampaignBrief, mod
 	return nil, errors.New("unused")
 }
 
-func (d nilResultDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
+func (d nilResultDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	return nil, nil
 }
 
-func (d nilResultDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
+func (d nilResultDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	return nil, nil
 }
 
@@ -494,11 +494,11 @@ func (d nilSliceDispatcher) Dispatch(context.Context, *model.CampaignBrief, mode
 	return nil, errors.New("unused")
 }
 
-func (d nilSliceDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.KeywordPerformance, error) {
+func (d nilSliceDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days}, nil
 }
 
-func (d nilSliceDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []string) (*model.AudienceInsights, error) {
+func (d nilSliceDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	return &model.AudienceInsights{Window: model.MetricsWindowLast30Days}, nil
 }
 
@@ -602,22 +602,22 @@ func TestOrchestratorKeywords_UnsupportedPlatform(t *testing.T) {
 type countingInsightsDispatcher struct {
 	keywordCalls  int
 	audienceCalls int
-	gotIDs        []string
+	gotScope      []model.ProjectCampaignScope
 }
 
 func (d *countingInsightsDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("not used")
 }
 
-func (d *countingInsightsDispatcher) ReadKeywordPerformance(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, ids []string) (*model.KeywordPerformance, error) {
+func (d *countingInsightsDispatcher) ReadKeywordPerformance(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	d.keywordCalls++
-	d.gotIDs = ids
+	d.gotScope = scope
 	return &model.KeywordPerformance{Window: w, Rows: []model.KeywordRow{{CriterionID: "leaked-from-another-project"}}}, nil
 }
 
-func (d *countingInsightsDispatcher) ReadAudienceInsights(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, ids []string) (*model.AudienceInsights, error) {
+func (d *countingInsightsDispatcher) ReadAudienceInsights(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	d.audienceCalls++
-	d.gotIDs = ids
+	d.gotScope = scope
 	return &model.AudienceInsights{Window: w, Buckets: []model.AudienceBucket{{Dimension: "age_range", Value: "leaked"}}}, nil
 }
 
@@ -687,9 +687,9 @@ func TestKeywordInsights_ScopeIsPassedToTheAdapter(t *testing.T) {
 	if d.keywordCalls != 1 {
 		t.Fatalf("keyword calls = %d, want 1", d.keywordCalls)
 	}
-	if len(d.gotIDs) != 2 || d.gotIDs[0] != "111" || d.gotIDs[1] != "222" {
+	if len(d.gotScope) != 2 || d.gotScope[0].PlatformCampaignID != "111" || d.gotScope[1].PlatformCampaignID != "222" {
 		t.Errorf("adapter received scope %v, want the project's own campaign ids; a dropped "+
-			"scope restores the account-wide read", d.gotIDs)
+			"scope restores the account-wide read", d.gotScope)
 	}
 }
 

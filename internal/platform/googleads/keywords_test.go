@@ -716,12 +716,20 @@ func TestCampaignScopePredicate_RejectsNonNumericIDs(t *testing.T) {
 	}
 }
 
-func TestCampaignScopePredicate_RendersAnINList(t *testing.T) {
+// The ids must render UNQUOTED. campaign.id is an int64 in GAQL, so quoting turns the
+// predicate into a string comparison against a numeric column — which Google rejects or
+// matches nothing, either way defeating the project scoping this predicate exists to enforce.
+// get_campaign_test.go pins the same unquoted form for the same field on the single-id path;
+// this is that assertion for the IN list.
+func TestCampaignScopePredicate_RendersAnUnquotedINList(t *testing.T) {
 	got, err := campaignScopePredicate([]string{" 111 ", "222"}, "op")
 	if err != nil {
 		t.Fatalf("campaignScopePredicate: %v", err)
 	}
-	if got != "campaign.id IN ('111', '222')" {
-		t.Errorf("predicate = %q", got)
+	if got != "campaign.id IN (111, 222)" {
+		t.Errorf("predicate = %q, want the unquoted int64 form", got)
+	}
+	if strings.Contains(got, "'") {
+		t.Errorf("predicate quotes the int64 campaign.id, making it a string comparison: %s", got)
 	}
 }

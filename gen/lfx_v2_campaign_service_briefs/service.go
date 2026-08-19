@@ -105,8 +105,11 @@ type Service interface {
 	// addressable criteria. **409** when the change is refused before Google is
 	// contacted: the campaign is unprovisioned (no platform campaign id, or no ad
 	// group), the campaign belongs to a different ad account than the project's
-	// connection now resolves to, or the connection row itself is unusable. Those
-	// are non-retryable, which is why none of them is a 503.
+	// connection now resolves to, the campaign does not record which ad account it
+	// was created under (it must be re-dispatched before its keywords can be acted
+	// on — a different remedy from reconnecting, which is why it is reported
+	// separately), or the connection row itself is unusable. Those are
+	// non-retryable, which is why none of them is a 503.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the

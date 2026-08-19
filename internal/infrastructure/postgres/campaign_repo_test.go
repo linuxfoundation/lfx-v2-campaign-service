@@ -156,8 +156,16 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 	require.Contains(t, q, "platform_campaign_id <> ''",
 		"rows with no upstream id must be excluded: an empty id in the rendered IN list is not a "+
 			"campaign this project owns")
-	require.Contains(t, strings.ToUpper(q), "SELECT DISTINCT PLATFORM_CAMPAIGN_ID",
-		"only the upstream id is needed; selecting whole rows hands the caller fields it has no use for")
+	require.Contains(t, strings.ToUpper(q), "SELECT DISTINCT PLATFORM_CAMPAIGN_ID, RESULT",
+		"the id and its provenance are needed and nothing else; selecting whole rows hands the caller "+
+			"fields it has no use for")
+	// `result` carries the creating customer, which the adapter matches against the customer
+	// the project's connection NOW resolves to. Without it the caller has only a bare numeric
+	// id — unique only within its own customer — and a re-pointed connection would let that id
+	// address a different account's campaign of the same number.
+	require.Contains(t, q, "result",
+		"the provenance blob must travel with each id, or the adapter cannot apply the "+
+			"creation-customer check that ReadMetrics already enforces")
 }
 
 // TestDeleteCampaign_IsSoftDelete pins that the delete is a status UPDATE and never a

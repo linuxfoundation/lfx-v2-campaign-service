@@ -269,15 +269,21 @@ func campaignScopePredicate(campaignIDs []string, op string) (string, error) {
 		return "", fmt.Errorf("%s: no campaign ids to scope the query to; an unscoped read would "+
 			"return every project's data from the shared customer", op)
 	}
-	quoted := make([]string, 0, len(campaignIDs))
+	// The ids are rendered UNQUOTED, exactly as GetCampaign and GetCampaignMetrics render the
+	// same field: campaign.id is an int64 in GAQL, so quoting makes this a string comparison
+	// against a numeric column. That is not a cosmetic difference here — a predicate Google
+	// rejects or matches nothing would defeat the very scoping this function exists to enforce,
+	// which is the security boundary for two otherwise account-wide reads. No escaping question
+	// arises: every value has already been proven to be nothing but digits.
+	ids := make([]string, 0, len(campaignIDs))
 	for _, raw := range campaignIDs {
 		id := strings.TrimSpace(raw)
 		if !customerIDRE.MatchString(id) {
 			return "", fmt.Errorf("%s: campaign id %q must be digits only", op, raw)
 		}
-		quoted = append(quoted, "'"+id+"'")
+		ids = append(ids, id)
 	}
-	return "campaign.id IN (" + strings.Join(quoted, ", ") + ")", nil
+	return "campaign.id IN (" + strings.Join(ids, ", ") + ")", nil
 }
 
 func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow, campaignIDs []string) (*KeywordPerformance, error) {
