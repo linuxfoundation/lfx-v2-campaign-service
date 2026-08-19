@@ -383,6 +383,11 @@ func TestGetGoogleAdsKeywords_ErrorMapping(t *testing.T) {
 		// never succeed. Reachable only for non-HTTP callers, since the design Enum stops it
 		// at the decoder, which is exactly why nothing else pins it.
 		{"window unsupported", domain.ErrMetricsWindowUnsupported, &conn.BadRequestError{}},
+		// Reachable once the scope filter refuses every campaign: they were all created under
+		// an account this project's connection no longer resolves to. PERMANENT until someone
+		// reconnects, so it must be a 409 rather than the 503 default, which would invite
+		// retrying a read that will keep failing.
+		{"every campaign in another account", ErrCampaignAccountMismatch, &conn.ConflictError{}},
 		{"no connection", domain.ErrNotFound, &conn.NotFoundError{}},
 		{"connection unusable", domain.ErrConnectionNotUsable, &conn.BadRequestError{}},
 		{"system connection unusable", domain.ErrSystemConnectionNotUsable, &conn.InternalServerError{}},
@@ -438,6 +443,16 @@ func assertInsightsErr(t *testing.T, err error, want any, src error) {
 		if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
 			t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
 		}
+	case *conn.ConflictError:
+		if _, ok := err.(*conn.ConflictError); !ok {
+			t.Fatalf("error = %T (%v), want *conn.ConflictError", err, err)
+		}
+	default:
+		// Without this arm an unlisted `want` type asserts NOTHING and its row passes no
+		// matter what the classifier returns — a test that agrees with any implementation.
+		// That is not hypothetical: the ConflictError row above was added first and silently
+		// passed with its classification arm deleted, because the switch had no case for it.
+		t.Fatalf("assertInsightsErr has no case for want type %T; the row asserted nothing", want)
 	}
 }
 

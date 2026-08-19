@@ -66,6 +66,18 @@ func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID
 		slog.WarnContext(ctx, "keyword insights window unsupported by platform",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.BadRequestError{Code: "400", Message: "this reporting window is not supported"}
+	case errors.Is(err, ErrCampaignAccountMismatch):
+		// Reachable only once the scope filter refuses EVERY campaign: each of the project's
+		// campaigns was created under an ad account its connection no longer resolves to.
+		// That is permanent until someone reconnects the original account, so it must not
+		// reach the 503 default, which invites retrying a read that will keep failing.
+		//
+		// The two customer ids stay server-side, as on every sibling arm — which ad account a
+		// project is connected to is connection configuration, not something a keyword read
+		// should disclose.
+		slog.WarnContext(ctx, "keyword insights blocked: every campaign in scope belongs to a different ad account than the current connection",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: "this project's campaigns belong to a different ad account than its current connection — reconnect the original account to read their keywords"}
 	default:
 		return s.classifyDiscoveryError(ctx, projectID, googleAdsKeywordInsights, err)
 	}

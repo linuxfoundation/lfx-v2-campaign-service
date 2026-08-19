@@ -84,3 +84,26 @@ direction, so a future tightening of the filter cannot silently empty those proj
 - The apply-keyword-actions Method Description did not list the provenance-unknown 409, which the
   handler returns separately from account-mismatch and which has a different remedy
   (re-dispatch, not reconnect).
+
+## Follow-up: the new mismatch error had no classification arm
+
+Adding the provenance filter created a **new reachable error** on the two insight endpoints —
+`ErrCampaignAccountMismatch`, raised when the filter refuses every campaign — and
+`classifyInsightsError` had no arm for it. It fell through to `classifyDiscoveryError`'s default
+and returned a **503**, telling the caller to retry a read that will keep failing: the condition
+is permanent until someone reconnects the original ad account. The design already declares
+`Conflict` on both endpoints, so the 409 needed no contract change.
+
+**The first test written for this arm was vacuous.** `assertInsightsErr` switches on the expected
+concrete type, and it had no `*conn.ConflictError` case — so the new row matched nothing, asserted
+nothing, and passed with the classification arm **deleted**. The mutation surviving is what
+exposed it; the row looked correct in review and in a green run.
+
+The switch now has the `ConflictError` case and, more importantly, a `default` arm that fails on
+any unhandled `want` type. Without it the next person to add a row for a type the switch does not
+know about gets the same silent pass. Re-running the same mutation now fails both the keywords and
+the audience subtests.
+
+This is the `a-test-that-agrees-with-itself` shape from the knowledge base: the fixture and the
+assertion shared an assumption (that every `want` type had a case), so the test agreed with any
+implementation.
