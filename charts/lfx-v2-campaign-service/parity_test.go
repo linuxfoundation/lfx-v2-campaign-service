@@ -144,6 +144,14 @@ func extractRulePatterns(t *testing.T, ruleset string) []string {
 // object project:{projectId}. Without this, the path-parity checks could pass on a
 // rule that was silently downgraded to allow_all/deny_all or re-scoped to a different
 // relation/object — the exact regression the parity test exists to catch.
+//
+// LFXV2-3324 introduced project_slug_resolver_contextualizer as an upstream
+// contextualizer that resolves project slug to UID; the object field now reads the
+// resolved .Outputs.project_slug_resolver_contextualizer.uid, not the raw capture.
+// This function must assert the contextualizer runs AND that the object field
+// specifically uses the resolved UID, not merely that the raw capture appears
+// somewhere in the block (which would still pass even if someone accidentally reverted
+// the object field back to the slug).
 func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	t.Helper()
 	block := ruleBlock(t, ruleset, projectAPIRuleID)
@@ -153,11 +161,15 @@ func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	if !strings.Contains(block, "relation: campaign_manager") {
 		t.Errorf("%s rule must gate on relation campaign_manager:\n%s", projectAPIRuleID, block)
 	}
-	// The object must be project:{projectId} (captured from the URL), not a fixed or
-	// different-type object. Match the rendered template expression loosely on the
-	// project: prefix + the projectId capture.
-	if !strings.Contains(block, "object: \"project:") || !strings.Contains(block, "Captures.projectId") {
-		t.Errorf("%s rule must scope the object to project:{projectId} (URL capture):\n%s", projectAPIRuleID, block)
+	// The contextualizer must be present to resolve the project slug to a UID.
+	if !strings.Contains(block, "contextualizer: project_slug_resolver_contextualizer") {
+		t.Errorf("%s rule must include project_slug_resolver_contextualizer to resolve project slug to UID:\n%s", projectAPIRuleID, block)
+	}
+	// The object must reference the resolved UID from the contextualizer, not the raw slug.
+	// This assertion pins the exact field to prevent accidental reverts that would leave
+	// Captures.projectId lingering in the slug input but missing from the security-relevant object field.
+	if !strings.Contains(block, "object: \"project:") || !strings.Contains(block, ".Outputs.project_slug_resolver_contextualizer.uid") {
+		t.Errorf("%s rule must scope the object to project:{resolved-uid} via .Outputs.project_slug_resolver_contextualizer.uid:\n%s", projectAPIRuleID, block)
 	}
 }
 
