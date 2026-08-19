@@ -699,7 +699,7 @@ func BuildApplyKeywordActionsPayload(lfxV2CampaignServiceBriefsApplyKeywordActio
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsApplyKeywordActionsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"actions\": [\n         {\n            \"action\": \"REMOVE\",\n            \"ad_group_id\": \"176216228\",\n            \"criterion_id\": \"305729261\"\n         },\n         {\n            \"action\": \"REMOVE\",\n            \"ad_group_id\": \"176216228\",\n            \"criterion_id\": \"305729261\"\n         }\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"actions\": [\n         {\n            \"action\": \"PAUSE\",\n            \"ad_group_id\": \"176216228\",\n            \"criterion_id\": \"305729261\"\n         }\n      ]\n   }'")
 		}
 		if body.Actions == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("actions", "body"))

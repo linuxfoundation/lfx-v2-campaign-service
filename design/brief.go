@@ -932,9 +932,17 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// nothing, and answering it 200 would tell a caller their keywords were paused when
 			// no request was ever made. MaxLength bounds one mutate call, matching the platform
 			// client's own maxKeywords sanity cap.
+			// The explicit Example matters: Goa fabricates one by repeating the element
+			// type's example, which produced a generated CLI sample naming the SAME
+			// criterion twice — a batch ValidateKeywordActions rejects with a 400, so anyone
+			// pasting the documented example got an error. One action, so the sample is
+			// valid by construction rather than by two ids happening to differ.
 			Attribute("actions", ArrayOf(KeywordActionInput), "The keyword mutations to apply, all-or-nothing.", func() {
 				MinLength(1)
 				MaxLength(60)
+				Example([]map[string]any{
+					{"ad_group_id": "176216228", "criterion_id": "305729261", "action": "PAUSE"},
+				})
 			})
 			Required("project_id", "brief_id", "campaign_id", "actions")
 		})

@@ -2003,12 +2003,20 @@ func (o *Orchestrator) ApplyKeywordActions(ctx context.Context, projectID string
 	if aerr != nil {
 		return nil, aerr
 	}
-	// A nil slice on a successful MUTATION is a contract violation with teeth: the handler
-	// reports applied_count from its length, so a nil would tell a caller that zero keywords
-	// were changed by a call that returned success — the exact ambiguity the all-or-nothing
-	// batch exists to remove.
-	if outcomes == nil {
-		return nil, fmt.Errorf("%s keyword actioner returned no outcomes with no error", platform)
+	// A short or nil outcome slice on a successful MUTATION is a contract violation with
+	// teeth. The handler reports applied_count from this length and the published contract
+	// promises one result per requested action — the batch is atomic upstream, so a partial
+	// application is not a representable outcome. Returning N-1 outcomes as a 200 would tell
+	// a caller that some subset of their keywords changed without saying which, which is the
+	// exact ambiguity the all-or-nothing batch exists to remove.
+	//
+	// Checked on the COUNT, not merely on nil: a nil slice is just the len()==0 case of the
+	// same defect, and an adapter returning one outcome for a two-action batch is the more
+	// likely bug. The platform client already fails closed on a short mutate response
+	// (UNCONFIRMED), so reaching here means a dispatcher dropped an outcome after the fact.
+	if len(outcomes) != len(actions) {
+		return nil, fmt.Errorf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success",
+			platform, len(outcomes), len(actions))
 	}
 	return outcomes, nil
 }

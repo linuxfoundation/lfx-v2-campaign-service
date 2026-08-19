@@ -171,13 +171,16 @@ func TestGoogleAdsKeywordActions_InvalidBatchRefusedBeforeCredentials(t *testing
 	}
 }
 
-// A legacy row that records no customer id means "unknown", and every other guard on this
-// dispatcher reads it as permission to proceed. Treating it as a mismatch would break
-// keyword actions for every campaign created before provenance tracking existed.
-func TestGoogleAdsKeywordActions_UnknownCreationAccountProceeds(t *testing.T) {
-	var gotPath string
-	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
+// A legacy row recording no creating customer must FAIL CLOSED on this path, unlike the
+// reads, which proceed.
+//
+// Google Ads is one customer shared across every foundation and criterion ids are
+// account-scoped bare numerics, so an unrecorded tenant cannot prove the criteria belong to
+// the campaign the caller addressed. A read that guesses wrong shows wrong numbers; a REMOVE
+// that guesses wrong irreversibly deletes another project's keyword. The platform must not be
+// contacted at all.
+func TestGoogleAdsKeywordActions_UnknownCreationAccountFailsClosed(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/333~777"}]}`)
 	})
@@ -187,15 +190,15 @@ func TestGoogleAdsKeywordActions_UnknownCreationAccountProceeds(t *testing.T) {
 	blob, _ := json.Marshal(map[string]any{"adGroupId": "333", "adId": "444"})
 	campaign := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "555", Result: blob}
 
-	out, err := d.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds, campaign, pauseAction("333", "777"))
-	if err != nil {
-		t.Fatalf("a legacy row with no recorded customer id must proceed: %v", err)
+	_, err := d.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds, campaign, pauseAction("333", "777"))
+	if err == nil {
+		t.Fatal("expected an unrecorded creating account to be refused, got nil")
 	}
-	if len(out) != 1 || out[0].CriterionID != "777" {
-		t.Fatalf("outcomes = %+v", out)
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Errorf("error is not ErrCampaignProvenanceUnknown: %v", err)
 	}
-	if !strings.HasSuffix(gotPath, "adGroupCriteria:mutate") {
-		t.Errorf("unexpected upstream path %q", gotPath)
+	if *reached {
+		t.Error("the platform was contacted for a campaign whose ad account is unrecorded")
 	}
 }
 

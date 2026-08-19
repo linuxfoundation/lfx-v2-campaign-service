@@ -57,3 +57,31 @@ identical — the stated design intent.
 computes it identically" while `GetCampaignMetrics` still computes the same expression inline.
 The comment now describes what it actually covers; de-duplicating `metrics.go` is left to a
 change that otherwise touches that path.
+
+**Second round — Copilot's suppressed findings.** `unresolved=0` hid four comments inside the
+review body; three were real.
+
+**A destructive mutation proceeding on an unprovable tenant.** The account-identity guard
+treated an empty recorded customer id as permission to proceed, matching `ToggleStatus` and
+`ReadMetrics`. That reading is wrong for this path and the asymmetry is now deliberate: Google
+Ads is ONE customer shared across every foundation, ad-group/criterion ids are account-scoped
+bare numerics, and `REMOVE` is irreversible — so a legacy row whose tenant was never recorded
+could, after a connection re-point, aim a mutate at another project's keyword on a numeric
+collision. Reading the wrong numbers is recoverable; deleting the wrong keyword is not. The path
+now fails closed with `ErrCampaignProvenanceUnknown`, checked ABOVE the mismatch arm so the
+operator is told to re-dispatch rather than to "reconnect the original account" — an account
+that was never recorded and cannot be reconnected to.
+
+**A short outcome slice was a representable partial success.** The orchestrator guarded only
+`outcomes == nil`, so a dispatcher returning one outcome for a two-action batch produced a 200
+with `applied_count: 1` — precisely the "which half took effect?" ambiguity the atomic batch
+exists to remove, and a direct contradiction of the published contract. The check is now on the
+COUNT; nil is just its `len()==0` case. The test that previously asserted the partial result now
+asserts the refusal, and `applied_count`'s derivation is pinned at the handler instead by a fake
+that reports different criterion ids than were requested — the only way to tell "rendered from
+the outcomes" from "echoed the request" once the counts must agree.
+
+**A generated CLI example that fails validation.** Goa fabricates an array example by repeating
+the element example, so the published `apply-keyword-actions` sample named the SAME criterion
+twice — a batch `ValidateKeywordActions` rejects with a 400. Anyone pasting the documented
+example got an error. The design now carries an explicit single-action example.

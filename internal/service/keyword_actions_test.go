@@ -27,6 +27,10 @@ type keywordActionDispatcher struct {
 	// the request length passes every ordinary test while claiming success for keywords the
 	// platform never confirmed.
 	dropOutcomes int
+	// rewriteCriterion, when set, is reported as every outcome's criterion id regardless of
+	// what was requested. It separates "the handler rendered the platform's outcomes" from
+	// "the handler echoed the request", which are identical on every ordinary path.
+	rewriteCriterion string
 	// gotActions records what reached the dispatcher, so a test can assert the service
 	// forwarded the caller's batch rather than a silently-altered one.
 	gotActions []model.KeywordAction
@@ -47,9 +51,13 @@ func (d *keywordActionDispatcher) ApplyKeywordActions(_ context.Context, _ strin
 	}
 	out := make([]model.KeywordActionOutcome, 0, len(kept))
 	for _, a := range kept {
+		criterionID := a.CriterionID
+		if d.rewriteCriterion != "" {
+			criterionID = d.rewriteCriterion
+		}
 		out = append(out, model.KeywordActionOutcome{
 			AdGroupID:    a.AdGroupID,
-			CriterionID:  a.CriterionID,
+			CriterionID:  criterionID,
 			Action:       a.Action,
 			ResourceName: "customers/1/adGroupCriteria/" + a.AdGroupID + "~" + a.CriterionID,
 		})
@@ -124,24 +132,51 @@ func TestApplyKeywordActions_HappyPath(t *testing.T) {
 	}
 }
 
-// applied_count must be derived from the outcomes the platform CONFIRMED, never from the
-// request length. The two are equal on every happy path, so without this test a handler
-// reporting len(p.Actions) reports success for keywords that were never confirmed changed.
-func TestApplyKeywordActions_AppliedCountFollowsConfirmedOutcomes(t *testing.T) {
+// A short outcome slice is a dispatcher contract violation, NOT a partial success. The batch
+// is atomic upstream, so "1 of your 2 keywords was paused" is not a representable answer — and
+// returning it as a 200 leaves a caller who was stopping a budget leak unable to tell which
+// keyword still spends. The orchestrator must refuse it before a handler can render it.
+//
+// This is the arm the published contract's "applied_count always equals the number requested"
+// rests on: it holds because a short result is REFUSED, not because the handler echoes the
+// request length.
+func TestApplyKeywordActions_ShortOutcomeSliceIsRefusedNotPartialSuccess(t *testing.T) {
 	s := keywordActionService(t, model.ProviderGoogleAds, &keywordActionDispatcher{dropOutcomes: 1})
+
+	_, err := s.ApplyKeywordActions(context.Background(), keywordActionPayload(
+		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "777", Action: "PAUSE"},
+		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "888", Action: "REMOVE"},
+	))
+	if err == nil {
+		t.Fatal("a 1-outcome result for a 2-action batch must be refused, never reported as a partial success")
+	}
+	// It is an upstream contract violation, not a caller error: the batch was valid.
+	if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+		t.Fatalf("error = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+	}
+}
+
+// applied_count must be DERIVED from the outcomes, never echoed from the request length. With
+// the count guard above in place the two are always equal by the time a handler runs, so this
+// pins the derivation directly at the handler: a dispatcher returning outcomes whose ids differ
+// from the request proves which slice was rendered.
+func TestApplyKeywordActions_ResultsAreRenderedFromOutcomesNotTheRequest(t *testing.T) {
+	d := &keywordActionDispatcher{rewriteCriterion: "999"}
+	s := keywordActionService(t, model.ProviderGoogleAds, d)
 
 	res, err := s.ApplyKeywordActions(context.Background(), keywordActionPayload(
 		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "777", Action: "PAUSE"},
-		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "888", Action: "REMOVE"},
 	))
 	if err != nil {
 		t.Fatalf("ApplyKeywordActions: %v", err)
 	}
-	if len(res.Results) != 1 {
-		t.Fatalf("results = %d, want 1", len(res.Results))
-	}
 	if res.AppliedCount != 1 {
-		t.Fatalf("AppliedCount = %d, want 1 (it must count CONFIRMED outcomes, not the 2 requested)", res.AppliedCount)
+		t.Fatalf("AppliedCount = %d, want 1", res.AppliedCount)
+	}
+	// The dispatcher reported criterion 999; the request named 777. A handler echoing the
+	// request would render 777 here.
+	if res.Results[0].CriterionID != "999" {
+		t.Fatalf("CriterionID = %q, want %q — results must be rendered from the platform outcomes, not the request", res.Results[0].CriterionID, "999")
 	}
 }
 
@@ -195,6 +230,10 @@ func TestApplyKeywordActions_ErrorMapping(t *testing.T) {
 		{"unsupported platform", domain.ErrKeywordActionsUnsupported, &briefs.BadRequestError{}},
 		{"not provisioned", domain.ErrCampaignNotProvisioned, &briefs.ConflictError{}},
 		{"account mismatch", domain.ErrCampaignAccountMismatch, &briefs.ConflictError{}},
+		// Must map to its OWN message: this row names no account to reconnect to, so the
+		// mismatch arm's "reconnect the original account" is an instruction the operator
+		// cannot follow. Re-dispatch is the only remedy.
+		{"provenance unknown", domain.ErrCampaignProvenanceUnknown, &briefs.ConflictError{}},
 		{"connection unusable", domain.ErrConnectionNotUsable, &briefs.ConflictError{}},
 		{"no connection row", domain.ErrNotFound, &briefs.NotFoundError{}},
 		{"system connection unusable", domain.ErrSystemConnectionNotUsable, &briefs.InternalServerError{}},
@@ -396,6 +435,31 @@ func assertInsightsErr(t *testing.T, err error, want any, src error) {
 		if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
 			t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
 		}
+	}
+}
+
+// The provenance arm must produce a DIFFERENT remedy from the mismatch arm. Both are 409s, so
+// only the message distinguishes them — and telling an operator to reconnect an account that
+// was never recorded sends them after something that does not exist.
+func TestApplyKeywordActions_ProvenanceUnknownSaysRedispatchNotReconnect(t *testing.T) {
+	s := keywordActionService(t, model.ProviderGoogleAds,
+		&keywordActionDispatcher{err: errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch)})
+
+	_, err := s.ApplyKeywordActions(context.Background(), keywordActionPayload(
+		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "777", Action: "PAUSE"},
+	))
+	ce, ok := err.(*briefs.ConflictError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *briefs.ConflictError", err, err)
+	}
+	if !strings.Contains(ce.Message, "re-dispatched") {
+		t.Errorf("message does not name the only available remedy: %q", ce.Message)
+	}
+	// The error also carries ErrCampaignAccountMismatch (joined), so a broad match would win
+	// and hand back "reconnect the original account" — which is why the provenance arm must
+	// sit ABOVE the mismatch arm.
+	if strings.Contains(ce.Message, "reconnect") {
+		t.Errorf("message tells the operator to reconnect an account that was never recorded: %q", ce.Message)
 	}
 }
 

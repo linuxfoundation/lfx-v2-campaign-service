@@ -1848,10 +1848,7 @@ paths:
                             $ref: '#/components/schemas/ApplyKeywordActionsRequestBody'
                         example:
                             actions:
-                                - action: REMOVE
-                                  ad_group_id: "176216228"
-                                  criterion_id: "305729261"
-                                - action: REMOVE
+                                - action: PAUSE
                                   ad_group_id: "176216228"
                                   criterion_id: "305729261"
             responses:
@@ -1865,11 +1862,15 @@ paths:
                                 applied_count: 3
                                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 results:
-                                    - action: REMOVE
+                                    - action: PAUSE
                                       ad_group_id: "176216228"
                                       criterion_id: "305729261"
                                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                                    - action: REMOVE
+                                    - action: PAUSE
+                                      ad_group_id: "176216228"
+                                      criterion_id: "305729261"
+                                      resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
+                                    - action: PAUSE
                                       ad_group_id: "176216228"
                                       criterion_id: "305729261"
                                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
@@ -2763,10 +2764,10 @@ paths:
                                 label: TLF Main
                                 login_customer_id: "9746983954"
                             credentials:
-                                client_id: Qui eveniet amet accusantium qui pariatur.
-                                client_secret: Reprehenderit nam architecto.
-                                developer_token: Et id sint suscipit quia ipsa voluptas.
-                                refresh_token: Iure dolore.
+                                client_id: Qui pariatur odio reprehenderit nam.
+                                client_secret: Voluptate et.
+                                developer_token: Sint suscipit.
+                                refresh_token: Dolore voluptatem qui eveniet amet.
             responses:
                 "201":
                     description: Created response.
@@ -2785,7 +2786,7 @@ paths:
                             example:
                                 account_id: Quo veritatis nisi velit distinctio animi.
                                 has_credentials: true
-                                id: Architecto molestiae cum.
+                                id: Ut architecto molestiae cum.
                                 label: Sapiente perspiciatis dolores dignissimos soluta non vel.
                                 login_customer_id: Voluptas tenetur esse.
                                 project_id: Perspiciatis consequatur beatae sunt officiis sequi qui.
@@ -3039,10 +3040,10 @@ paths:
                             $ref: '#/components/schemas/SetCredentialGoogleAdsRequestBody'
                         example:
                             credentials:
-                                client_id: Qui eveniet amet accusantium qui pariatur.
-                                client_secret: Reprehenderit nam architecto.
-                                developer_token: Et id sint suscipit quia ipsa voluptas.
-                                refresh_token: Iure dolore.
+                                client_id: Qui pariatur odio reprehenderit nam.
+                                client_secret: Voluptate et.
+                                developer_token: Sint suscipit.
+                                refresh_token: Dolore voluptatem qui eveniet amet.
             responses:
                 "204":
                     description: No Content response.
@@ -6802,14 +6803,14 @@ components:
                         $ref: '#/components/schemas/KeywordActionInput'
                     description: The keyword mutations to apply, all-or-nothing.
                     example:
-                        - action: REMOVE
+                        - action: PAUSE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
                     minItems: 1
                     maxItems: 60
             example:
                 actions:
-                    - action: REMOVE
+                    - action: PAUSE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
             required:
@@ -8841,10 +8842,10 @@ components:
                     label: TLF Main
                     login_customer_id: "9746983954"
                 credentials:
-                    client_id: Qui eveniet amet accusantium qui pariatur.
-                    client_secret: Reprehenderit nam architecto.
-                    developer_token: Et id sint suscipit quia ipsa voluptas.
-                    refresh_token: Iure dolore.
+                    client_id: Qui pariatur odio reprehenderit nam.
+                    client_secret: Voluptate et.
+                    developer_token: Sint suscipit.
+                    refresh_token: Dolore voluptatem qui eveniet amet.
             required:
                 - config
                 - credentials
@@ -9313,7 +9314,7 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Minus autem.
+                    example: Consectetur id minus autem.
                 label:
                     type: string
                     description: Optional friendly name
@@ -10130,14 +10131,14 @@ components:
                         $ref: '#/components/schemas/PlatformResult'
                     description: Per-platform results, written once when the job reaches a terminal state
                     example:
-                        - campaign_id: Asperiores voluptatem non nostrum dolorum.
-                          error: Eaque animi molestias error laudantium.
+                        - campaign_id: Maxime incidunt asperiores.
+                          error: Non nostrum dolorum iure eaque animi.
                           ok: true
-                          platform: Laudantium rerum omnis veritatis excepturi veniam.
-                        - campaign_id: Asperiores voluptatem non nostrum dolorum.
-                          error: Eaque animi molestias error laudantium.
+                          platform: Suscipit iste eveniet laudantium rerum omnis veritatis.
+                        - campaign_id: Maxime incidunt asperiores.
+                          error: Non nostrum dolorum iure eaque animi.
                           ok: true
-                          platform: Laudantium rerum omnis veritatis excepturi veniam.
+                          platform: Suscipit iste eveniet laudantium rerum omnis veritatis.
                 status:
                     type: string
                     description: Job status
@@ -10152,14 +10153,14 @@ components:
                 error: Culpa nemo quia enim.
                 job_id: Error fugiat qui laborum quae rem.
                 result:
-                    - campaign_id: Asperiores voluptatem non nostrum dolorum.
-                      error: Eaque animi molestias error laudantium.
+                    - campaign_id: Maxime incidunt asperiores.
+                      error: Non nostrum dolorum iure eaque animi.
                       ok: true
-                      platform: Laudantium rerum omnis veritatis excepturi veniam.
-                    - campaign_id: Asperiores voluptatem non nostrum dolorum.
-                      error: Eaque animi molestias error laudantium.
+                      platform: Suscipit iste eveniet laudantium rerum omnis veritatis.
+                    - campaign_id: Maxime incidunt asperiores.
+                      error: Non nostrum dolorum iure eaque animi.
                       ok: true
-                      platform: Laudantium rerum omnis veritatis excepturi veniam.
+                      platform: Suscipit iste eveniet laudantium rerum omnis veritatis.
                 status: queued
             required:
                 - job_id
@@ -10244,19 +10245,19 @@ components:
                         $ref: '#/components/schemas/KeywordActionResult'
                     description: One entry per requested action, in request order. All applied, or the request failed and none were.
                     example:
-                        - action: PAUSE
+                        - action: REMOVE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
                           resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                        - action: PAUSE
+                        - action: REMOVE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
                           resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                        - action: PAUSE
+                        - action: REMOVE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
                           resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                        - action: PAUSE
+                        - action: REMOVE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
                           resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
@@ -10264,19 +10265,19 @@ components:
                 applied_count: 3
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 results:
-                    - action: PAUSE
+                    - action: REMOVE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                    - action: PAUSE
+                    - action: REMOVE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                    - action: PAUSE
+                    - action: REMOVE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                    - action: PAUSE
+                    - action: REMOVE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
@@ -11661,10 +11662,10 @@ components:
                     $ref: '#/components/schemas/GoogleAdsCredentials'
             example:
                 credentials:
-                    client_id: Qui eveniet amet accusantium qui pariatur.
-                    client_secret: Reprehenderit nam architecto.
-                    developer_token: Et id sint suscipit quia ipsa voluptas.
-                    refresh_token: Iure dolore.
+                    client_id: Qui pariatur odio reprehenderit nam.
+                    client_secret: Voluptate et.
+                    developer_token: Sint suscipit.
+                    refresh_token: Dolore voluptatem qui eveniet amet.
             required:
                 - credentials
         SetCredentialHubspotRequestBody:

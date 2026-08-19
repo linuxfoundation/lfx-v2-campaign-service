@@ -1238,10 +1238,29 @@ func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 	if err != nil {
 		return nil, err
 	}
-	// Same identity invariant ToggleStatus and ReadMetrics enforce. An empty recorded
-	// customer id means "unknown" (a legacy row) and is treated as permission to proceed —
-	// the same reading every other guard on this dispatcher gives it.
-	if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+	// Same identity invariant ToggleStatus and ReadMetrics enforce — but this path FAILS
+	// CLOSED on an unrecorded tenant, where those two proceed.
+	//
+	// The asymmetry is deliberate and rests on what the operation costs when it is wrong.
+	// Google Ads is ONE customer shared across every foundation (docs/architecture.md,
+	// "Account Tenancy"), and ad-group/criterion ids are account-scoped bare numerics. A
+	// legacy row that records no creating customer therefore cannot prove the criteria it
+	// names belong to the campaign the caller addressed; if the connection was re-pointed, a
+	// numeric collision aims this mutate at ANOTHER project's keyword. Reading the wrong
+	// numbers is recoverable and REMOVE is not — Google cannot re-enable a removed criterion,
+	// only create a new one with a new id — so a read may proceed on an unknown tenant and a
+	// destructive mutation may not.
+	//
+	// ErrCampaignProvenanceUnknown is the sentinel for exactly this state, and the remedy it
+	// carries is the honest one: there is no tenant to reconnect to, so the row must be
+	// re-dispatched. Checked BEFORE the mismatch arm below, which would otherwise report
+	// "reconnect the original account" about an account that was never recorded.
+	created := googleAdsCreationCustomerID(campaign)
+	if created == "" {
+		return nil, fmt.Errorf("apply google ads keyword actions: campaign %s does not record which ad account it was created under, so its keyword criteria cannot be resolved safely: %w",
+			campaign.PlatformCampaignID, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	}
+	if created != client.CustomerID() {
 		return nil, fmt.Errorf("apply google ads keyword actions: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
 			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
 	}

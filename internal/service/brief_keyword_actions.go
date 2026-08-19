@@ -119,6 +119,19 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 			Code:    "409",
 			Message: "campaign is not fully provisioned — it has no platform campaign id or no ad group, so it has no keywords to act on",
 		}
+	case errors.Is(aerr, domain.ErrCampaignProvenanceUnknown):
+		// Split out from the mismatch arm below and placed ABOVE it: this row names no tenant
+		// to be mismatched against, so "reconnect the original ad account" tells the operator
+		// to point their connection back at something that was never recorded — an
+		// instruction they cannot follow. Re-dispatching is the only way to give the row a
+		// provenance, and every campaign staged before provenance tracking is in this state.
+		slog.WarnContext(ctx, "keyword actions blocked: campaign does not record which ad account it was created under",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+			"platform", platform, "error", safeErrSummary(aerr))
+		return &briefs.ConflictError{
+			Code:    "409",
+			Message: "this campaign does not record which ad account it was created under, so its keywords cannot be changed safely — it must be re-dispatched first",
+		}
 	case errors.Is(aerr, ErrCampaignAccountMismatch), errors.Is(aerr, domain.ErrCampaignAccountMismatch):
 		// The two customer ids stay server-side: which ad account a project is connected to
 		// is connection configuration. Logged through safeErrSummary because the error embeds
