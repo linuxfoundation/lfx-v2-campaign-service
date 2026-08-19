@@ -45,7 +45,24 @@ revocation can trigger with no advance notice — fails CLOSED with the exported
 re-authorize, rather than degrading into an unauthenticated call. The dispatch
 layer re-tags that as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, which
 keeps it out of the retryable bucket and out of an opaque 500. No token, secret
-or upstream body is ever logged or echoed into an error. `CreateCampaign` builds the full sponsored-content hierarchy in
+or upstream body is ever logged or echoed into an error.
+
+**Every error arm of `fetchToken` rebuilds its cause from CLASSIFICATION rather than
+forwarding text**, because the token exchange is the one request whose body carries
+`client_secret` and the refresh token and whose 2xx response carries the rotated refresh
+token — and these errors persist into a campaign's `Steps`. The transport arm goes through
+`redactHTTPDoError`, the body-read arm through `redactBodyReadError` (both preserving
+`context.Canceled`/`DeadlineExceeded` for `errors.Is`), the non-2xx arm reports status only,
+and the 2xx decode arm reports `malformed JSON (%d bytes)` rather than wrapping the
+`encoding/json` cause. That last arm matters less than the others and is defence in depth
+rather than a demonstrated leak: `json.UnmarshalTypeError` reproduces an out-of-range NUMBER
+literal verbatim and unbounded, but a credential is not all-digits and any non-numeric byte
+fails as a syntax error first, so no secret is expressible through it. It is redacted anyway
+so the rule holds uniformly — `WithHTTPClient` accepts an arbitrary `RoundTripper`, which
+makes both the transport error and the response it returns caller-controlled. The sibling
+decode in `metrics.go` does the same for the same reason.
+
+`CreateCampaign` builds the full sponsored-content hierarchy in
 one call — Campaign Group (ACTIVE) -> Campaign (PAUSED) -> Dark Post
 (`feedDistribution: NONE`) -> Creative — with targeting assembled from the
 runtime config's profile (skills/groups/job-functions) and resolved geo URNs.

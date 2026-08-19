@@ -640,6 +640,50 @@ func TestTokenBodyReadErrorNeverLeaksTheRequestBody(t *testing.T) {
 	}
 }
 
+// TestTokenDecodeErrorNeverEchoesTheResponseBody covers the arm the other leak tests could
+// not reach. TestRefreshErrorNeverLeaksCredentials serves 400, so it returns at the non-2xx
+// arm; the decode at the bottom of fetchToken runs only on a 2xx — the response carrying
+// access_token and the rotated refresh_token — and it was the last arm still wrapping its
+// cause with %w.
+//
+// The concrete vector is a NUMBER literal: json.UnmarshalTypeError reproduces an
+// out-of-range one verbatim and unbounded, so a hostile or broken upstream could push
+// arbitrary-length digits into an error that persists in a campaign's Steps. A full
+// credential is not expressible that way (any non-numeric byte fails as a syntax error
+// first), which is why this is defence in depth — but the error must still describe shape
+// rather than echo the body, as every other arm of fetchToken does.
+func TestTokenDecodeErrorNeverEchoesTheResponseBody(t *testing.T) {
+	const marker = "86400123456789012345678901234567890"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK) // 2xx: reach the decode, not the non-2xx arm
+		_, _ = w.Write([]byte(`{"access_token":"a","expires_in":` + marker + `}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("an undecodable token response must not read as a successful exchange")
+	}
+
+	// Every layer, not just the outermost: a credential-bearing wrapper is exactly what an
+	// Error() check on the top layer alone would miss.
+	for layer := err; layer != nil; layer = errors.Unwrap(layer) {
+		text := layer.Error()
+		if strings.Contains(text, marker) {
+			t.Errorf("error layer %T echoes the response body verbatim: %v", layer, layer)
+		}
+		for _, s := range []string{"client-secret", "stored-refresh-token", "client_secret"} {
+			if strings.Contains(text, s) {
+				t.Errorf("error layer %T renders credential material %q: %v", layer, s, layer)
+			}
+		}
+	}
+}
+
 // Redaction must not cost classification: a cancelled context still has to be detectable
 // through the chain, which is why redactBodyReadError returns the canonical sentinels.
 func TestTokenBodyReadCancellationRemainsDetectable(t *testing.T) {

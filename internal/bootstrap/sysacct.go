@@ -97,7 +97,56 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 		return nil, fmt.Errorf("bootstrap: %s credentials have surrounding whitespace in %s; a secret is stored verbatim, so the padding would be sent to the provider",
 			provider, strings.Join(padded, ", "))
 	}
+	if err := validateConditionalGroups(provider, folded); err != nil {
+		return nil, err
+	}
 	return json.Marshal(folded)
+}
+
+// conditionalCredentialGroups are all-or-none field sets: supply every member or none. They
+// are NOT in requiredCredentialKeys because each member is individually optional — it is the
+// PARTIAL set that is invalid, which a required-key list cannot express.
+var conditionalCredentialGroups = map[model.Provider][]string{
+	// LinkedIn refresh material. LinkedIn issues refresh tokens only to approved Marketing
+	// Developer Platform partners, so a bearer-only system row is legitimate and common;
+	// what is never legitimate is one or two of the three.
+	model.ProviderLinkedInAds: {"refresh_token", "client_id", "client_secret"},
+}
+
+// validateConditionalGroups enforces the all-or-none rule the API applies at
+// validateLinkedInRefreshCredentials (internal/service/connection.go), which this installer
+// bypasses entirely by writing past the API straight to the repository.
+//
+// It matters most precisely here. The system row is the fallback for every project that has
+// connected no account of its own, so a partial paste degrades the highest-blast-radius row
+// in the deployment: CanRefresh() returns false, the install exits 0, and the row silently
+// behaves as bearer-only until the access token ages out ~60 days later — reappearing as the
+// outage the refresh support was built to prevent, far from the operator who typed it.
+func validateConditionalGroups(provider model.Provider, folded map[string]json.RawMessage) error {
+	group, ok := conditionalCredentialGroups[provider]
+	if !ok {
+		return nil
+	}
+	var present, absent []string
+	for _, want := range group {
+		// Same decode discipline as the required-key loop above: a non-string or a
+		// whitespace-only value is not a supplied credential, so it counts as absent
+		// rather than satisfying the group and installing an unusable trio.
+		var v string
+		raw, found := folded[credentialKey(want)]
+		if found && json.Unmarshal(raw, &v) == nil && strings.TrimSpace(v) != "" {
+			present = append(present, want)
+			continue
+		}
+		absent = append(absent, want)
+	}
+	if len(present) == 0 || len(absent) == 0 {
+		return nil
+	}
+	sort.Strings(present)
+	sort.Strings(absent)
+	return fmt.Errorf("bootstrap: %s credentials are all-or-none for %s: supplied %s but missing %s; supply all of them, or none for a bearer-only connection",
+		provider, strings.Join(group, ", "), strings.Join(present, ", "), strings.Join(absent, ", "))
 }
 
 var (

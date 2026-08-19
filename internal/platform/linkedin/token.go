@@ -242,7 +242,19 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 
 	var tok tokenResponse
 	if err := json.Unmarshal(buf.Bytes(), &tok); err != nil {
-		return "", fmt.Errorf("decode linkedin token response: %w", err)
+		// Report SHAPE only, never the cause. This is the one arm of fetchToken that still
+		// wrapped an untrusted cause, and it decodes the most sensitive body in the package:
+		// a 2xx token response carrying access_token and the rotated refresh_token. A
+		// json.UnmarshalTypeError reproduces an out-of-range NUMBER LITERAL verbatim and
+		// unbounded (a 200-digit literal renders in full), and SyntaxError echoes the
+		// offending character — upstream text that reaches a campaign's persisted Steps.
+		//
+		// A full credential is NOT expressible here — a token is not all-digits, and any
+		// non-numeric byte fails as a syntax error before the literal is rendered — so this
+		// is defence in depth, not a demonstrated leak. It matches what the sibling decode
+		// at metrics.go already does for the same reason, and it means every arm of this
+		// function now rebuilds its error from classification rather than forwarding text.
+		return "", fmt.Errorf("decode linkedin token response: malformed JSON (%d bytes)", buf.Len())
 	}
 	if tok.AccessToken == "" {
 		// Fail closed: never fall back to the stale token on a malformed success.

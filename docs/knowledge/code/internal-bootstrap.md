@@ -41,6 +41,17 @@ enforced on the system row:
   than canonicalized: a credential is opaque here, and silently rewriting one would hide a
   truncated paste. Padding INSIDE a value, and padding on a key the provider does not require, are
   left alone — a secret's interior is not this command's business.
+- **All-or-none credential groups** (`conditionalCredentialGroups`, checked by
+  `validateConditionalGroups`) cover a set whose members are each individually optional but which
+  is invalid when only SOME are supplied — a shape `requiredCredentialKeys` cannot express. Today
+  the one group is LinkedIn's refresh trio (`refresh_token`, `client_id`, `client_secret`),
+  mirroring `validateLinkedInRefreshCredentials` in `internal/service/connection.go`, which this
+  installer bypasses by writing past the API straight to the repository. Bearer-only stays valid,
+  because LinkedIn issues refresh tokens only to MDP-approved partners. It matters most on this
+  path: the system row is the fallback for every project that has connected nothing, so a partial
+  paste installs at exit 0, silently fails `CanRefresh()`, and resurfaces ~60 days later as the
+  expired-token outage refresh exists to prevent. A member present but empty or whitespace-only
+  counts as ABSENT, matching the required-key loop, so it cannot half-satisfy the group.
 - **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live:
   `design/connection.go` `Pattern()` for LinkedIn, Meta and X, and the runtime validators for
   Google Ads, Microsoft and Reddit, whose designs check presence alone. Mirroring only the design

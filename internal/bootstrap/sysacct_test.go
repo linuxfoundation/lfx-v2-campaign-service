@@ -202,6 +202,23 @@ func TestInstallRejectsUnusableInput(t *testing.T) {
 		"json array":              {model.ProviderGoogleAds, "[]"},
 		"json string":             {model.ProviderGoogleAds, `"rt"`},
 		"empty object":            {model.ProviderGoogleAds, "{}"},
+
+		// The LinkedIn refresh trio is all-or-none. Each of these installs a row whose
+		// CanRefresh() is false while looking like refresh was configured.
+		"linkedin refresh trio missing client_secret": {model.ProviderLinkedInAds,
+			`{"access_token":"at","refresh_token":"rt","client_id":"ci"}`},
+		"linkedin refresh trio missing client_id": {model.ProviderLinkedInAds,
+			`{"access_token":"at","refresh_token":"rt","client_secret":"cs"}`},
+		"linkedin refresh trio refresh_token only": {model.ProviderLinkedInAds,
+			`{"access_token":"at","refresh_token":"rt"}`},
+		"linkedin refresh trio missing refresh_token": {model.ProviderLinkedInAds,
+			`{"access_token":"at","client_id":"ci","client_secret":"cs"}`},
+		// A member present but empty/whitespace is NOT supplied: it must not satisfy the
+		// group and install a trio that cannot authenticate.
+		"linkedin refresh trio empty client_secret": {model.ProviderLinkedInAds,
+			`{"access_token":"at","refresh_token":"rt","client_id":"ci","client_secret":""}`},
+		"linkedin refresh trio whitespace client_secret": {model.ProviderLinkedInAds,
+			`{"access_token":"at","refresh_token":"rt","client_id":"ci","client_secret":"   "}`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -212,6 +229,36 @@ func TestInstallRejectsUnusableInput(t *testing.T) {
 			}
 			if len(repo.calls) != 0 {
 				t.Fatalf("touched the repository before validating: %v", repo.calls)
+			}
+		})
+	}
+}
+
+// TestInstallAcceptsBothValidLinkedInCredentialShapes guards the other direction of the
+// all-or-none rule. Only a PARTIAL trio is invalid: a bearer-only row is the common case,
+// since LinkedIn issues refresh tokens only to approved Marketing Developer Platform
+// partners, and rejecting it would make the LF system row uninstallable for most apps.
+//
+// Without this, the rejection table above is satisfied by a guard that refuses every
+// LinkedIn install.
+func TestInstallAcceptsBothValidLinkedInCredentialShapes(t *testing.T) {
+	cases := map[string]string{
+		"bearer only":       `{"access_token":"at"}`,
+		"full refresh trio": `{"access_token":"at","refresh_token":"rt","client_id":"ci","client_secret":"cs"}`,
+	}
+	for name, creds := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{}
+			// LinkedIn account ids are digits-only (valueShapes) and the provider requires
+			// an org_id config; both are refused before the credential group is reached, so
+			// supply valid ones to isolate what this test is actually about.
+			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderLinkedInAds, "512103652", false,
+				map[string]string{"org_id": "987"}, []byte(creds)); err != nil {
+				t.Fatalf("install rejected a valid LinkedIn credential shape: %v", err)
+			}
+			if len(repo.calls) == 0 {
+				t.Fatal("a valid credential must reach the repository")
 			}
 		})
 	}
