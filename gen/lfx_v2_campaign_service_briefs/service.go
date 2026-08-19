@@ -771,6 +771,15 @@ type PreconditionRequiredError struct {
 	Message string
 }
 
+type UnauthorizedError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+	// Authentication challenge (RFC 9110 §15.5.2)
+	WwwAuthenticate string
+}
+
 // Error returns an error description.
 func (e *BadRequestError) Error() string {
 	return ""
@@ -888,4 +897,21 @@ func (e *PreconditionRequiredError) ErrorName() string {
 // GoaErrorName returns "precondition-required-error".
 func (e *PreconditionRequiredError) GoaErrorName() string {
 	return "PreconditionRequired"
+}
+
+// Error returns an error description.
+func (e *UnauthorizedError) Error() string {
+	return ""
+}
+
+// ErrorName returns "unauthorized-error".
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *UnauthorizedError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns "unauthorized-error".
+func (e *UnauthorizedError) GoaErrorName() string {
+	return "Unauthorized"
 }

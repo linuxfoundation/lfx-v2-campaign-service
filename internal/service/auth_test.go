@@ -66,7 +66,7 @@ func TestAuthenticate_RejectionMessagesAreOpaque(t *testing.T) {
 	_, msgFail, failUnavail := failing.authenticate(context.Background(), "t")
 	_, msgNil, nilUnavail := nilActor.authenticate(context.Background(), "t")
 	if failUnavail || nilUnavail {
-		t.Errorf("both are token-side refusals and must map to 400: %v / %v", failUnavail, nilUnavail)
+		t.Errorf("both are token-side refusals and must map to 401: %v / %v", failUnavail, nilUnavail)
 	}
 	if msgFail == "" || msgNil == "" {
 		t.Fatalf("both must be rejections: %q / %q", msgFail, msgNil)
@@ -119,9 +119,9 @@ func TestAuthenticate_EmptyTokenIsTheVerifiersCallNotTheGuards(t *testing.T) {
 }
 
 // TestAuthenticate_KeyUnavailableIsOurOutageNotTheCallersFault pins the disposition split.
-// Every reason a TOKEN is refused collapses to one opaque 400; a JWKS fetch that failed is
+// Every reason a TOKEN is refused collapses to one opaque 401; a JWKS fetch that failed is
 // not such a reason — nothing was learned about the token, because it was never checked.
-// Answering 400 there tells a caller holding a perfectly good credential that theirs is
+// Answering 401 there tells a caller holding a perfectly good credential that theirs is
 // bad, and tells them not to retry a condition that clears when Heimdall recovers. It is
 // reachable on a cold cache and at every TTL expiry, not only at startup.
 func TestAuthenticate_KeyUnavailableIsOurOutageNotTheCallersFault(t *testing.T) {
@@ -146,7 +146,7 @@ func TestAuthenticate_KeyUnavailableIsOurOutageNotTheCallersFault(t *testing.T) 
 // TestJWTAuth_UnverifiableIsUnavailableOnEveryService pins the disposition at all three
 // boundaries. The mapping is written out once per service (Goa gives each its own error
 // types), so a split that only the brief service honours is a split two thirds of the API
-// does not have — and the failure mode is silent: a 400 for a JWKS outage looks like an
+// does not have — and the failure mode is silent: a 401 for a JWKS outage looks like an
 // ordinary rejection in every log and dashboard.
 func TestJWTAuth_UnverifiableIsUnavailableOnEveryService(t *testing.T) {
 	keysDown := &stubVerifier{err: fmt.Errorf("fetch jwks: %w", domain.ErrKeyUnavailable)}
@@ -180,4 +180,132 @@ func TestJWTAuth_UnverifiableIsUnavailableOnEveryService(t *testing.T) {
 			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
 		}
 	})
+}
+
+// TestJWTAuth_RefusedTokenIsUnauthorizedOnEveryService pins the token-side status at all
+// three boundaries, and is the sibling of the 503 test above. The mapping is written out
+// once per service — Goa gives each its own error types — so a service left on
+// `BadRequestError` would answer 400 while the other two answer 401, and nothing about
+// that is visible from the Go types: each service compiles, returns a typed error, and
+// only the wire status disagrees.
+//
+// It asserts the CHALLENGE as well as the type. RFC 9110 §15.5.2 requires a 401 to carry
+// one, and it reaches the wire solely because Goa maps this field onto the
+// WWW-Authenticate header — a service that constructed the right type with the field left
+// empty would emit a bare 401 that every status-only assertion here would still pass.
+func TestJWTAuth_RefusedTokenIsUnauthorizedOnEveryService(t *testing.T) {
+	// A verifier that is WIRED and refuses: the token-side branch, not the 503 one. A
+	// bare authGuard would take the no-verifier branch and pass this for the wrong reason.
+	refusing := &stubVerifier{err: errors.New("signature is invalid")}
+
+	t.Run("connections", func(t *testing.T) {
+		s := NewConnectionService(nil, nil)
+		s.SetTokenVerifier(refusing)
+		_, err := s.JWTAuth(context.Background(), "bad-token", nil)
+		ue, ok := err.(*conn.UnauthorizedError)
+		if !ok {
+			t.Fatalf("err = %T (%v), want *conn.UnauthorizedError", err, err)
+		}
+		if ue.WwwAuthenticate != "Bearer" || ue.Code != "401" {
+			t.Errorf("challenge/code = %q/%q, want \"Bearer\"/\"401\"", ue.WwwAuthenticate, ue.Code)
+		}
+	})
+	t.Run("audiences", func(t *testing.T) {
+		s := NewAudienceService(nil)
+		s.SetTokenVerifier(refusing)
+		_, err := s.JWTAuth(context.Background(), "bad-token", nil)
+		ue, ok := err.(*audiences.UnauthorizedError)
+		if !ok {
+			t.Fatalf("err = %T (%v), want *audiences.UnauthorizedError", err, err)
+		}
+		if ue.WwwAuthenticate != "Bearer" || ue.Code != "401" {
+			t.Errorf("challenge/code = %q/%q, want \"Bearer\"/\"401\"", ue.WwwAuthenticate, ue.Code)
+		}
+	})
+	t.Run("briefs", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetTokenVerifier(refusing)
+		_, err := s.JWTAuth(context.Background(), "bad-token", nil)
+		ue, ok := err.(*briefs.UnauthorizedError)
+		if !ok {
+			t.Fatalf("err = %T (%v), want *briefs.UnauthorizedError", err, err)
+		}
+		if ue.WwwAuthenticate != "Bearer" || ue.Code != "401" {
+			t.Errorf("challenge/code = %q/%q, want \"Bearer\"/\"401\"", ue.WwwAuthenticate, ue.Code)
+		}
+	})
+}
+
+// TestJWTAuth_UnauthorizedMessageIsOpaqueAcrossServices is the wire-level companion to
+// TestAuthenticate_RejectionMessagesAreOpaque, which pins opacity one layer down at the
+// guard. Moving the status to 401 is exactly the kind of change that invites a more
+// helpful body ("token expired", "bad signature"), and the guard-level test would not
+// catch a service that enriched the message on its way out — it never calls JWTAuth.
+//
+// The two token-side reasons here are the same pair that test uses: a verifier that
+// refuses, and one that accepts while naming nobody. Both must be indistinguishable to a
+// caller in status, challenge AND message.
+func TestJWTAuth_UnauthorizedMessageIsOpaqueAcrossServices(t *testing.T) {
+	refused := &stubVerifier{err: errors.New("token is expired by 3h2m")}
+	noActor := &stubVerifier{actors: map[string]*model.Actor{"t": nil}}
+
+	// One accessor per service so the three concrete Unauthorized types — which share no
+	// interface beyond `error` — can be compared in one loop.
+	services := map[string]func(TokenVerifier) (code, msg, challenge string, err error){
+		"connections": func(v TokenVerifier) (string, string, string, error) {
+			s := NewConnectionService(nil, nil)
+			s.SetTokenVerifier(v)
+			_, err := s.JWTAuth(context.Background(), "t", nil)
+			ue, ok := err.(*conn.UnauthorizedError)
+			if !ok {
+				return "", "", "", err
+			}
+			return ue.Code, ue.Message, ue.WwwAuthenticate, nil
+		},
+		"audiences": func(v TokenVerifier) (string, string, string, error) {
+			s := NewAudienceService(nil)
+			s.SetTokenVerifier(v)
+			_, err := s.JWTAuth(context.Background(), "t", nil)
+			ue, ok := err.(*audiences.UnauthorizedError)
+			if !ok {
+				return "", "", "", err
+			}
+			return ue.Code, ue.Message, ue.WwwAuthenticate, nil
+		},
+		"briefs": func(v TokenVerifier) (string, string, string, error) {
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetTokenVerifier(v)
+			_, err := s.JWTAuth(context.Background(), "t", nil)
+			ue, ok := err.(*briefs.UnauthorizedError)
+			if !ok {
+				return "", "", "", err
+			}
+			return ue.Code, ue.Message, ue.WwwAuthenticate, nil
+		},
+	}
+
+	for name, call := range services {
+		t.Run(name, func(t *testing.T) {
+			_, msgRefused, challengeRefused, errA := call(refused)
+			_, msgNoActor, challengeNoActor, errB := call(noActor)
+			if errA != nil || errB != nil {
+				t.Fatalf("both must be *UnauthorizedError: %v / %v", errA, errB)
+			}
+			if msgRefused != msgNoActor {
+				t.Errorf("rejection messages differ by reason: %q vs %q", msgRefused, msgNoActor)
+			}
+			if challengeRefused != challengeNoActor {
+				t.Errorf("challenges differ by reason: %q vs %q", challengeRefused, challengeNoActor)
+			}
+			// The verifier's own words must not survive into anything the client sees.
+			// Checked on the message AND the challenge, because the challenge is a new
+			// wire-visible field and `error="..."` is the RFC-blessed place a reason
+			// would naturally be added.
+			for field, v := range map[string]string{"message": msgRefused, "challenge": challengeRefused} {
+				if strings.Contains(v, "expired") || strings.Contains(v, "signature") {
+					t.Errorf("the verifier's reason leaked into the client-facing %s: %q", field, v)
+				}
+			}
+		})
+	}
 }

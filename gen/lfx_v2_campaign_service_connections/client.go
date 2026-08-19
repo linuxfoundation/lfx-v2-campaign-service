@@ -126,6 +126,7 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 // "lfx-v2-campaign-service-connections" service.
 // CreateGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -143,6 +144,7 @@ func (c *Client) CreateGoogleAds(ctx context.Context, p *CreateGoogleAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // GetGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -160,6 +162,7 @@ func (c *Client) GetGoogleAds(ctx context.Context, p *GetGoogleAdsPayload) (res 
 // "lfx-v2-campaign-service-connections" service.
 // UpdateGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -179,6 +182,7 @@ func (c *Client) UpdateGoogleAds(ctx context.Context, p *UpdateGoogleAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // DeleteGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -192,6 +196,7 @@ func (c *Client) DeleteGoogleAds(ctx context.Context, p *DeleteGoogleAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // TestGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -209,6 +214,7 @@ func (c *Client) TestGoogleAds(ctx context.Context, p *TestGoogleAdsPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // SetCredentialGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -222,6 +228,7 @@ func (c *Client) SetCredentialGoogleAds(ctx context.Context, p *SetCredentialGoo
 // "lfx-v2-campaign-service-connections" service.
 // CreateLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -239,6 +246,7 @@ func (c *Client) CreateLinkedinAds(ctx context.Context, p *CreateLinkedinAdsPayl
 // "lfx-v2-campaign-service-connections" service.
 // GetLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -256,6 +264,7 @@ func (c *Client) GetLinkedinAds(ctx context.Context, p *GetLinkedinAdsPayload) (
 // "lfx-v2-campaign-service-connections" service.
 // UpdateLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -275,6 +284,7 @@ func (c *Client) UpdateLinkedinAds(ctx context.Context, p *UpdateLinkedinAdsPayl
 // "lfx-v2-campaign-service-connections" service.
 // DeleteLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -288,6 +298,7 @@ func (c *Client) DeleteLinkedinAds(ctx context.Context, p *DeleteLinkedinAdsPayl
 // "lfx-v2-campaign-service-connections" service.
 // TestLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -305,6 +316,7 @@ func (c *Client) TestLinkedinAds(ctx context.Context, p *TestLinkedinAdsPayload)
 // the "lfx-v2-campaign-service-connections" service.
 // SetCredentialLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -318,6 +330,7 @@ func (c *Client) SetCredentialLinkedinAds(ctx context.Context, p *SetCredentialL
 // "lfx-v2-campaign-service-connections" service.
 // CreateMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -335,6 +348,7 @@ func (c *Client) CreateMetaAds(ctx context.Context, p *CreateMetaAdsPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // GetMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -352,6 +366,7 @@ func (c *Client) GetMetaAds(ctx context.Context, p *GetMetaAdsPayload) (res *Met
 // "lfx-v2-campaign-service-connections" service.
 // UpdateMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -371,6 +386,7 @@ func (c *Client) UpdateMetaAds(ctx context.Context, p *UpdateMetaAdsPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // DeleteMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -384,6 +400,7 @@ func (c *Client) DeleteMetaAds(ctx context.Context, p *DeleteMetaAdsPayload) (er
 // "lfx-v2-campaign-service-connections" service.
 // TestMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -401,6 +418,7 @@ func (c *Client) TestMetaAds(ctx context.Context, p *TestMetaAdsPayload) (res *C
 // "lfx-v2-campaign-service-connections" service.
 // SetCredentialMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -414,6 +432,7 @@ func (c *Client) SetCredentialMetaAds(ctx context.Context, p *SetCredentialMetaA
 // "lfx-v2-campaign-service-connections" service.
 // CreateRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -431,6 +450,7 @@ func (c *Client) CreateRedditAds(ctx context.Context, p *CreateRedditAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // GetRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -448,6 +468,7 @@ func (c *Client) GetRedditAds(ctx context.Context, p *GetRedditAdsPayload) (res 
 // "lfx-v2-campaign-service-connections" service.
 // UpdateRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -467,6 +488,7 @@ func (c *Client) UpdateRedditAds(ctx context.Context, p *UpdateRedditAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // DeleteRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -480,6 +502,7 @@ func (c *Client) DeleteRedditAds(ctx context.Context, p *DeleteRedditAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // TestRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -497,6 +520,7 @@ func (c *Client) TestRedditAds(ctx context.Context, p *TestRedditAdsPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // SetCredentialRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -510,6 +534,7 @@ func (c *Client) SetCredentialRedditAds(ctx context.Context, p *SetCredentialRed
 // "lfx-v2-campaign-service-connections" service.
 // CreateTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -527,6 +552,7 @@ func (c *Client) CreateTwitterAds(ctx context.Context, p *CreateTwitterAdsPayloa
 // "lfx-v2-campaign-service-connections" service.
 // GetTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -544,6 +570,7 @@ func (c *Client) GetTwitterAds(ctx context.Context, p *GetTwitterAdsPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // UpdateTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -563,6 +590,7 @@ func (c *Client) UpdateTwitterAds(ctx context.Context, p *UpdateTwitterAdsPayloa
 // "lfx-v2-campaign-service-connections" service.
 // DeleteTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -576,6 +604,7 @@ func (c *Client) DeleteTwitterAds(ctx context.Context, p *DeleteTwitterAdsPayloa
 // "lfx-v2-campaign-service-connections" service.
 // TestTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -593,6 +622,7 @@ func (c *Client) TestTwitterAds(ctx context.Context, p *TestTwitterAdsPayload) (
 // the "lfx-v2-campaign-service-connections" service.
 // SetCredentialTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -606,6 +636,7 @@ func (c *Client) SetCredentialTwitterAds(ctx context.Context, p *SetCredentialTw
 // "lfx-v2-campaign-service-connections" service.
 // CreateMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -623,6 +654,7 @@ func (c *Client) CreateMicrosoftAds(ctx context.Context, p *CreateMicrosoftAdsPa
 // "lfx-v2-campaign-service-connections" service.
 // GetMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -640,6 +672,7 @@ func (c *Client) GetMicrosoftAds(ctx context.Context, p *GetMicrosoftAdsPayload)
 // "lfx-v2-campaign-service-connections" service.
 // UpdateMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -659,6 +692,7 @@ func (c *Client) UpdateMicrosoftAds(ctx context.Context, p *UpdateMicrosoftAdsPa
 // "lfx-v2-campaign-service-connections" service.
 // DeleteMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -672,6 +706,7 @@ func (c *Client) DeleteMicrosoftAds(ctx context.Context, p *DeleteMicrosoftAdsPa
 // "lfx-v2-campaign-service-connections" service.
 // TestMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -689,6 +724,7 @@ func (c *Client) TestMicrosoftAds(ctx context.Context, p *TestMicrosoftAdsPayloa
 // of the "lfx-v2-campaign-service-connections" service.
 // SetCredentialMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -702,6 +738,7 @@ func (c *Client) SetCredentialMicrosoftAds(ctx context.Context, p *SetCredential
 // "lfx-v2-campaign-service-connections" service.
 // CreateHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -719,6 +756,7 @@ func (c *Client) CreateHubspot(ctx context.Context, p *CreateHubspotPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // GetHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -736,6 +774,7 @@ func (c *Client) GetHubspot(ctx context.Context, p *GetHubspotPayload) (res *Hub
 // "lfx-v2-campaign-service-connections" service.
 // UpdateHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -755,6 +794,7 @@ func (c *Client) UpdateHubspot(ctx context.Context, p *UpdateHubspotPayload) (re
 // "lfx-v2-campaign-service-connections" service.
 // DeleteHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -768,6 +808,7 @@ func (c *Client) DeleteHubspot(ctx context.Context, p *DeleteHubspotPayload) (er
 // "lfx-v2-campaign-service-connections" service.
 // TestHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -785,6 +826,7 @@ func (c *Client) TestHubspot(ctx context.Context, p *TestHubspotPayload) (res *C
 // "lfx-v2-campaign-service-connections" service.
 // SetCredentialHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -799,6 +841,7 @@ func (c *Client) SetCredentialHubspot(ctx context.Context, p *SetCredentialHubsp
 // ListGoogleAdsAccounts may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -816,6 +859,7 @@ func (c *Client) ListGoogleAdsAccounts(ctx context.Context, p *ListGoogleAdsAcco
 // GetGoogleAdsKeywords may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -834,6 +878,7 @@ func (c *Client) GetGoogleAdsKeywords(ctx context.Context, p *GetGoogleAdsKeywor
 // GetGoogleAdsAudience may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -852,6 +897,7 @@ func (c *Client) GetGoogleAdsAudience(ctx context.Context, p *GetGoogleAdsAudien
 // ListMetaAdsAccounts may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -869,6 +915,7 @@ func (c *Client) ListMetaAdsAccounts(ctx context.Context, p *ListMetaAdsAccounts
 // ListLinkedinAdsAccounts may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -886,6 +933,7 @@ func (c *Client) ListLinkedinAdsAccounts(ctx context.Context, p *ListLinkedinAds
 // ListMicrosoftAdsAccounts may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -903,6 +951,7 @@ func (c *Client) ListMicrosoftAdsAccounts(ctx context.Context, p *ListMicrosoftA
 // ListHubspotEmails may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error

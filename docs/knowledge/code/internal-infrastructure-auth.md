@@ -62,19 +62,19 @@ reason is wrapped so the service can **log** it, never return it.
 A key-func failure is *not* one of those refusals, and it arrives inside the same error.
 `validator.ValidateToken` wraps whatever the key func returns (`%w`, twice over), so a
 JWKS fetch that failed, timed out, or was cancelled reached `VerifyActor` indistinguishable
-from a bad signature — and was reported as `ErrUnauthenticated`, i.e. HTTP 400 "invalid
-bearer token", to a caller whose credential was perfectly good. That is reachable on a cold
-cache and at every TTL expiry, and 400 additionally tells the caller not to retry a
-condition that clears by itself. `coalesceKeyFunc` therefore tags **both** arms of its
+from a bad signature — and was reported as `ErrUnauthenticated`, i.e. an "invalid
+bearer token" rejection (HTTP 400 at the time; 401 since LFXV2-3057), to a caller whose
+credential was perfectly good. That is reachable on a cold cache and at every TTL expiry,
+and either status tells the caller their credential is the problem when it is not. `coalesceKeyFunc` therefore tags **both** arms of its
 select with `ErrKeyUnavailable` (a re-export of `domain.ErrKeyUnavailable`; it is the only
 place that can tag it), and `VerifyActor` passes it through untouched instead of wrapping.
 The cancellation arm is tagged too: that our wait ended rather than Heimdall's answer
 arriving still leaves nothing established about the token. The service layer maps the
-sentinel to **503** and every token-side refusal to 400.
+sentinel to **503** and every token-side refusal to **401**.
 
 ## A JWKS fetch that "succeeds" with no keys
 
-The 400-for-our-outage bug above has a second, quieter source that tagging cannot reach,
+The blame-the-caller-for-our-outage bug above has a second, quieter source that tagging cannot reach,
 because the fetch does not fail. go-jwt-middleware v2.3.1 never checks the HTTP status:
 `jwks.Provider.KeyFunc` goes straight from `Client.Do` to
 `json.NewDecoder(response.Body).Decode(&jwks)` (`jwks/provider.go:84-93`). A
@@ -149,7 +149,7 @@ parse, so those are the statuses followed. A 304, a 399, or a 302 with no `Locat
 redirect — and passed onward it reaches the JWKS provider, which decides on the **body** and
 ignores the status. A gateway's JSON error object decodes to a key set with zero keys, which is
 then cached for the provider's whole TTL, and every token signed by a live key is refused as
-invalid until it expires. That surfaces as `ErrUnauthenticated`/400 blaming the caller's
+invalid until it expires. That surfaces as `ErrUnauthenticated`/401 blaming the caller's
 credential, when the endpoint is what is broken. Those shapes therefore take the error path,
 where they become `ErrKeyUnavailable`/503.
 
