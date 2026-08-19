@@ -117,6 +117,17 @@ func TestGetCampaignMetrics_NoActivityInWindowReturnsZeroValue(t *testing.T) {
 	if m.CampaignID != "555" {
 		t.Errorf("CampaignID = %q, want 555", m.CampaignID)
 	}
+	// The assertion the other four counters do not make for us: Conversions is a POINTER,
+	// so a zero-value struct satisfies "conversions == 0" by being nil, and nil means
+	// "this platform cannot measure conversions" — the opposite of what an empty result
+	// set means for Google. Assert the pointer is non-nil AND that it holds zero.
+	if m.Conversions == nil {
+		t.Fatal("Conversions = nil for a no-activity window; Google measured this window and " +
+			"got zero, and nil is reserved for platforms that cannot report conversions at all")
+	}
+	if *m.Conversions != 0 {
+		t.Errorf("*Conversions = %v, want 0", *m.Conversions)
+	}
 }
 
 func TestGetCampaignMetrics_ZeroImpressionsAvoidsDivideByZero(t *testing.T) {

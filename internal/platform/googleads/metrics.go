@@ -180,7 +180,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, fmt.Errorf("get campaign metrics: %w", err)
 	}
 	if len(rows) == 0 {
-		return &CampaignMetrics{CampaignID: id, Window: w}, nil
+		// A no-activity window is a MEASUREMENT, not an absence of one. Google Ads omits a
+		// campaign from results entirely when it had no impressions, so this branch means the
+		// query ran and the answer was zero — not that conversions could not be measured here.
+		// Conversions must therefore be a non-nil zero, exactly as the row-decoding path below
+		// materialises it, or the struct's own invariant ("this adapter never leaves it nil")
+		// is false on the one path where it matters most: the no_conversions rule refuses to
+		// fire on a nil count, so leaving it nil here would silence that rule for precisely the
+		// campaign it exists to catch — one delivering nothing and converting nobody.
+		zero := 0.0
+		return &CampaignMetrics{CampaignID: id, Window: w, Conversions: &zero}, nil
 	}
 	// Enforce the single-row assumption documented above rather than trusting it.
 	// Reading rows[0] alone is only correct while the query segments by nothing; a

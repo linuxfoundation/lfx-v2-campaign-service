@@ -214,6 +214,11 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel", func() { Example(212) })
 	Attribute("cost_micros", Int64, "Cost over the window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.", func() { Example(0) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.1152) })
+	// The Example(37.0) below is a PER-PROPERTY example only. It deliberately does NOT reach
+	// the object-level example, which is pinned explicitly at the bottom of this type and
+	// omits `conversions` entirely — see the reasoning there. Left to Goa, the generated
+	// object example carried both `conversions` and the mutually exclusive `email` object.
+	//
 	// OPTIONAL, and deliberately excluded from Required below. Only Google Ads, LinkedIn and
 	// Microsoft report a campaign-level conversion count; Meta and X expose conversions only
 	// as per-action-type structures with no scalar to read, Reddit's reporting contract is
@@ -221,9 +226,39 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// attribute is ABSENT rather than 0 — a 0 would be indistinguishable from a campaign that
 	// genuinely converted nobody, which is the same substitution the row `status` field and
 	// `pacing.pct` already refuse to make elsewhere in this contract.
-	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do) — absent means \"not measured here\", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
+	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do), and ALSO absent on Microsoft whenever the ConversionsQualified column is missing from the report or ANY row's conversion cell is blank — that column is only populated for accounts wired for Universal Event Tracking, and a partial column summed as though it were complete would report a campaign's conversions as lower than they are. Absent means \"not measured here\", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
+	// An EXPLICIT object example, because the attribute-level examples above cannot produce a
+	// coherent one on their own. Goa emits EVERY attribute into a generated object example,
+	// including the two that are mutually exclusive: `email` is present only on the email
+	// channel, and the email channel is one of the channels that never reports `conversions`.
+	// The generated example therefore advertised `conversions: 37` alongside `email{}` — a
+	// response no adapter in this service can produce, contradicting the `conversions`
+	// description directly above it. Dropping the attribute-level Example does not fix it
+	// either: Goa then fabricates a random double (e.g. 0.2109820735060166), which is a
+	// worse claim than a wrong one.
+	//
+	// This example is the EMAIL shape, matching the attribute examples above (which are
+	// themselves forced into an email shape — impressions == opens, clicks == clicks,
+	// cost_micros == 0), and it therefore OMITS `conversions` entirely. That omission is the
+	// contract's own statement: absent, not zero, is what an email response carries. The
+	// attribute-level Example(37.0) is retained because it documents the field's own shape —
+	// a fractional-capable count — in the per-property schema, where no `email` sits beside
+	// it to contradict it.
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "104670127234",
+		"window":               "last_30_days",
+		"impressions":          1840,
+		"clicks":               212,
+		"cost_micros":          0,
+		"ctr":                  0.1152,
+		"email": map[string]any{
+			"sent": 9400, "delivered": 9268, "opens": 1840,
+			"clicks": 212, "bounces": 95, "unsubscribes": 17,
+		},
+	})
 })
 
 // EmailMetrics is the email channel's counter set. It is a separate OPTIONAL object rather
@@ -267,6 +302,15 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 	// humans and may be reworded; keying on prose would break silently when it is.
 	Attribute("rule", String, "Which rule fired, as a stable token.", func() {
 		Enum("zero_delivery", "underspending", "budget_constrained", "low_ctr", "no_conversions")
+		// PINNED. With no explicit example Goa auto-selects an enum member, and which member
+		// it picks is a function of the whole design rather than of this attribute — an
+		// unrelated edit elsewhere in this file silently moves it. `budget_constrained` is
+		// what this contract already published, and it is the member that stays coherent
+		// with the sibling examples below (`platform: reddit-ads`, `issue: No impressions or
+		// spend recorded`): Reddit never reports a conversion count, so an auto-selected
+		// `no_conversions` here would advertise a finding this service cannot produce on
+		// that platform.
+		Example("budget_constrained")
 	})
 	Attribute("priority", String, "How urgently this wants attention.", func() { Enum("HIGH", "MED") })
 	Attribute("campaign_id", String, "The campaign this concerns", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })

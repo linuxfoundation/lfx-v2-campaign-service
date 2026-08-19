@@ -309,6 +309,16 @@ Three corrections that a plausible-looking implementation would have got wrong:
   This mirrors `reportDataIsIncomplete`, which refuses a flagged report on the flag alone,
   "whatever the rows happen to contain".
 
+- **A Google window with NO result rows is a measured zero, and must carry a non-nil zero.**
+  Google Ads omits a campaign from GAQL results entirely when it had no impressions in the
+  window, so `GetCampaignMetrics`'s `len(rows) == 0` branch means the query ran and the answer
+  was nothing — not that conversions could not be measured. That branch originally returned a
+  zero-value `CampaignMetrics`, which for a POINTER field is nil, so a genuinely quiet Google
+  campaign serialised as "not measured here" — the one shape `no_conversions` refuses to fire
+  on, and therefore precisely the campaign the rule exists to catch. It now materialises a
+  non-nil zero, matching what the row-decoding path produces and what the struct's own comment
+  already promised ("Google can, so this adapter never leaves it nil").
+
 For the four that cannot report one, the field is left **absent rather than zero**. A fabricated
 zero is indistinguishable from a measured one to every consumer, and it would make the
 `no_conversions` rule fire on every campaign on those platforms forever. Deriving a single number

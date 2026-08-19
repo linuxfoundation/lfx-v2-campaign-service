@@ -5374,20 +5374,20 @@ definitions:
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
-                      priority: MED
-                      rule: zero_delivery
+                      priority: HIGH
+                      rule: budget_constrained
                     - action: Check targeting and creative approval status
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
-                      priority: MED
-                      rule: zero_delivery
+                      priority: HIGH
+                      rule: budget_constrained
                     - action: Check targeting and creative approval status
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
-                      priority: MED
-                      rule: zero_delivery
+                      priority: HIGH
+                      rule: budget_constrained
             brief_id:
                 type: string
                 description: Brief UUID
@@ -5407,7 +5407,6 @@ definitions:
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                         clicks: 212
-                        conversions: 37
                         cost_micros: 0
                         ctr: 0.1152
                         email:
@@ -5419,9 +5418,9 @@ definitions:
                             unsubscribes: 17
                         impressions: 1840
                         platform_campaign_id: "104670127234"
-                        window: this_month
+                        window: last_30_days
                       pacing:
-                        label: underspending
+                        label: normal
                         pct: 94.2
                       platform: linkedin-ads
                       reason: this window is not supported for the campaign's platform
@@ -5430,7 +5429,6 @@ definitions:
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                         clicks: 212
-                        conversions: 37
                         cost_micros: 0
                         ctr: 0.1152
                         email:
@@ -5442,55 +5440,9 @@ definitions:
                             unsubscribes: 17
                         impressions: 1840
                         platform_campaign_id: "104670127234"
-                        window: this_month
+                        window: last_30_days
                       pacing:
-                        label: underspending
-                        pct: 94.2
-                      platform: linkedin-ads
-                      reason: this window is not supported for the campaign's platform
-                      status: connection_problem
-                    - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                      metrics:
-                        campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                        clicks: 212
-                        conversions: 37
-                        cost_micros: 0
-                        ctr: 0.1152
-                        email:
-                            bounces: 95
-                            clicks: 212
-                            delivered: 9268
-                            opens: 1840
-                            sent: 9400
-                            unsubscribes: 17
-                        impressions: 1840
-                        platform_campaign_id: "104670127234"
-                        window: this_month
-                      pacing:
-                        label: underspending
-                        pct: 94.2
-                      platform: linkedin-ads
-                      reason: this window is not supported for the campaign's platform
-                      status: connection_problem
-                    - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                      metrics:
-                        campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                        clicks: 212
-                        conversions: 37
-                        cost_micros: 0
-                        ctr: 0.1152
-                        email:
-                            bounces: 95
-                            clicks: 212
-                            delivered: 9268
-                            opens: 1840
-                            sent: 9400
-                            unsubscribes: 17
-                        impressions: 1840
-                        platform_campaign_id: "104670127234"
-                        window: this_month
-                      pacing:
-                        label: underspending
+                        label: normal
                         pct: 94.2
                       platform: linkedin-ads
                       reason: this window is not supported for the campaign's platform
@@ -5498,7 +5450,7 @@ definitions:
             window:
                 type: string
                 description: The window REQUESTED for this read. Per-platform defaults still apply when it is omitted, so an individual row may have been read over a narrower window than this — X Ads caps queryable ranges at 7 days. Each row's own metrics.window is what that row actually covers.
-                example: last_14_days
+                example: last_month
                 enum:
                     - today
                     - yesterday
@@ -5513,14 +5465,20 @@ definitions:
                   campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                   issue: No impressions or spend recorded
                   platform: reddit-ads
-                  priority: MED
-                  rule: zero_delivery
+                  priority: HIGH
+                  rule: budget_constrained
                 - action: Check targeting and creative approval status
                   campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                   issue: No impressions or spend recorded
                   platform: reddit-ads
-                  priority: MED
-                  rule: zero_delivery
+                  priority: HIGH
+                  rule: budget_constrained
+                - action: Check targeting and creative approval status
+                  campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                  issue: No impressions or spend recorded
+                  platform: reddit-ads
+                  priority: HIGH
+                  rule: budget_constrained
             brief_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
             ok_count: 2
             rows:
@@ -5528,7 +5486,6 @@ definitions:
                   metrics:
                     campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                     clicks: 212
-                    conversions: 37
                     cost_micros: 0
                     ctr: 0.1152
                     email:
@@ -5540,9 +5497,9 @@ definitions:
                         unsubscribes: 17
                     impressions: 1840
                     platform_campaign_id: "104670127234"
-                    window: this_month
+                    window: last_30_days
                   pacing:
-                    label: underspending
+                    label: normal
                     pct: 94.2
                   platform: linkedin-ads
                   reason: this window is not supported for the campaign's platform
@@ -5551,7 +5508,6 @@ definitions:
                   metrics:
                     campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                     clicks: 212
-                    conversions: 37
                     cost_micros: 0
                     ctr: 0.1152
                     email:
@@ -5563,14 +5519,36 @@ definitions:
                         unsubscribes: 17
                     impressions: 1840
                     platform_campaign_id: "104670127234"
-                    window: this_month
+                    window: last_30_days
                   pacing:
-                    label: underspending
+                    label: normal
                     pct: 94.2
                   platform: linkedin-ads
                   reason: this window is not supported for the campaign's platform
                   status: connection_problem
-            window: this_month
+                - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                  metrics:
+                    campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                    clicks: 212
+                    cost_micros: 0
+                    ctr: 0.1152
+                    email:
+                        bounces: 95
+                        clicks: 212
+                        delivered: 9268
+                        opens: 1840
+                        sent: 9400
+                        unsubscribes: 17
+                    impressions: 1840
+                    platform_campaign_id: "104670127234"
+                    window: last_30_days
+                  pacing:
+                    label: normal
+                    pct: 94.2
+                  platform: linkedin-ads
+                  reason: this window is not supported for the campaign's platform
+                  status: connection_problem
+            window: last_7_days
         required:
             - brief_id
             - window
@@ -5600,7 +5578,7 @@ definitions:
             status:
                 type: string
                 description: Whether this row carries a measurement. ONLY `ok` does.
-                example: unsupported
+                example: ok
                 enum:
                     - ok
                     - unsupported
@@ -5612,7 +5590,6 @@ definitions:
             metrics:
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 clicks: 212
-                conversions: 37
                 cost_micros: 0
                 ctr: 0.1152
                 email:
@@ -5624,13 +5601,13 @@ definitions:
                     unsubscribes: 17
                 impressions: 1840
                 platform_campaign_id: "104670127234"
-                window: this_month
+                window: last_30_days
             pacing:
-                label: underspending
+                label: normal
                 pct: 94.2
             platform: linkedin-ads
             reason: this window is not supported for the campaign's platform
-            status: failed
+            status: not_ready
         required:
             - campaign_id
             - platform
@@ -5719,7 +5696,7 @@ definitions:
             rule:
                 type: string
                 description: Which rule fired, as a stable token.
-                example: low_ctr
+                example: budget_constrained
                 enum:
                     - zero_delivery
                     - underspending
@@ -5732,7 +5709,7 @@ definitions:
             issue: No impressions or spend recorded
             platform: reddit-ads
             priority: MED
-            rule: underspending
+            rule: budget_constrained
         required:
             - rule
             - priority
@@ -5829,7 +5806,7 @@ definitions:
                 format: int64
             conversions:
                 type: number
-                description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do) — absent means "not measured here", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.'
+                description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do), and ALSO absent on Microsoft whenever the ConversionsQualified column is missing from the report or ANY row''s conversion cell is blank — that column is only populated for accounts wired for Universal Event Tracking, and a partial column summed as though it were complete would report a campaign''s conversions as lower than they are. Absent means "not measured here", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.'
                 example: 37
                 format: double
             cost_micros:
@@ -5868,7 +5845,6 @@ definitions:
         example:
             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
             clicks: 212
-            conversions: 37
             cost_micros: 0
             ctr: 0.1152
             email:
@@ -5880,7 +5856,7 @@ definitions:
                 unsubscribes: 17
             impressions: 1840
             platform_campaign_id: "104670127234"
-            window: last_month
+            window: last_30_days
         required:
             - campaign_id
             - platform_campaign_id
@@ -5896,7 +5872,7 @@ definitions:
             label:
                 type: string
                 description: The band pct falls into. `unknown` means no pacing could be derived, which is NOT the same as being on plan.
-                example: overspending
+                example: normal
                 enum:
                     - underspending
                     - normal
@@ -5909,7 +5885,7 @@ definitions:
                 example: 94.2
                 format: double
         example:
-            label: constrained
+            label: overspending
             pct: 94.2
         required:
             - label
@@ -5920,18 +5896,18 @@ definitions:
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Corporis nemo et consectetur consequatur.
+                example: Voluptatem eveniet velit corporis nemo et consectetur.
             config:
                 description: Campaign configuration snapshot
-                example: Consectetur repudiandae hic nostrum.
+                example: Nostrum qui sed est.
             status:
                 type: string
                 description: Campaign status
-                example: Eveniet magnam.
+                example: Autem eveniet magnam dolor consectetur repudiandae.
         example:
-            campaign_name: Sed est architecto sit est est labore.
-            config: Tempore ut.
-            status: Doloremque ad.
+            campaign_name: Sit est est labore id.
+            config: Magnam dolor sint.
+            status: Ad dolores tempore ut est totam.
         required:
             - campaign_name
             - status
@@ -5989,13 +5965,13 @@ definitions:
             message:
                 type: string
                 description: Human-readable detail
-                example: Officiis et error nemo iste harum.
+                example: Commodi occaecati.
             ok:
                 type: boolean
                 description: Whether the credential authenticated against the provider
-                example: false
+                example: true
         example:
-            message: Occaecati nihil culpa est ex.
+            message: Est ex quae aliquid porro.
             ok: false
         required:
             - ok
@@ -6140,7 +6116,7 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Mollitia exercitationem.
+                example: Occaecati voluptate eaque omnis nihil itaque facere.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
@@ -6148,19 +6124,19 @@ definitions:
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Laborum est.
+                example: Quia ducimus inventore quis delectus soluta repudiandae.
             label:
                 type: string
                 description: Optional friendly name
-                example: Soluta repudiandae.
+                example: Libero similique.
             login_customer_id:
                 type: string
                 description: Manager account used for API access
-                example: Occaecati voluptate eaque omnis nihil itaque facere.
+                example: Distinctio consequuntur enim.
             project_id:
                 type: string
                 description: Owning project
-                example: Ducimus inventore quis.
+                example: Mollitia exercitationem.
             status:
                 type: string
                 description: Connection status
@@ -6173,17 +6149,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 1660012061583647924
+                example: 323340109827116453
                 format: int64
         example:
-            account_id: Expedita nihil molestiae soluta consequuntur sapiente.
-            has_credentials: true
-            id: Perspiciatis ipsam sunt distinctio.
-            label: Magni ut amet.
-            login_customer_id: Cumque reiciendis error.
-            project_id: Enim in qui est recusandae amet.
-            status: inactive
-            version: 8622668242153487269
+            account_id: Deserunt provident voluptates cumque reiciendis error minus.
+            has_credentials: false
+            id: Qui est recusandae amet.
+            label: Expedita nihil molestiae soluta consequuntur sapiente.
+            login_customer_id: Qui voluptas culpa.
+            project_id: Magni ut amet.
+            status: deleted
+            version: 8154718885862958757
         required:
             - id
             - project_id
@@ -6218,25 +6194,25 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Iste nihil itaque et.
+                example: Delectus non aut ipsum.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Delectus non aut ipsum.
+                example: Rerum nesciunt veritatis consequatur porro.
             developer_token:
                 type: string
                 description: Google Ads developer token
-                example: Rerum nesciunt veritatis consequatur porro.
+                example: Magnam omnis fugit.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: In enim corrupti ea qui voluptas culpa.
+                example: Iste nihil itaque et.
         description: Google Ads OAuth credential set. Write-only; never returned.
         example:
-            client_id: Provident laborum maiores sed voluptatem.
-            client_secret: Soluta expedita et quisquam dolores magni nemo.
-            developer_token: Et qui qui aut.
-            refresh_token: Magnam omnis fugit.
+            client_id: Soluta expedita et quisquam dolores magni nemo.
+            client_secret: Et qui qui aut.
+            developer_token: Consequatur officiis et error nemo iste.
+            refresh_token: Provident laborum maiores sed voluptatem.
         required:
             - refresh_token
             - client_id
@@ -6426,11 +6402,11 @@ definitions:
             error:
                 type: string
                 description: Terminal error, if any
-                example: Accusamus est.
+                example: Consequatur non quam suscipit ea ea.
             job_id:
                 type: string
                 description: Job UUID
-                example: Magnam dolor sint.
+                example: Ipsa magnam.
             result:
                 type: array
                 items:
@@ -6449,14 +6425,10 @@ definitions:
                       error: Aliquam voluptatem.
                       ok: true
                       platform: Atque laboriosam unde facilis.
-                    - campaign_id: Quas officiis mollitia ducimus sunt.
-                      error: Aliquam voluptatem.
-                      ok: true
-                      platform: Atque laboriosam unde facilis.
             status:
                 type: string
                 description: Job status
-                example: failed
+                example: queued
                 enum:
                     - queued
                     - running
@@ -6464,8 +6436,8 @@ definitions:
                     - partial
                     - failed
         example:
-            error: Harum earum autem aut maiores ut.
-            job_id: Consequatur non quam suscipit ea ea.
+            error: Maiores ut sint laborum.
+            job_id: Quia sed harum.
             result:
                 - campaign_id: Quas officiis mollitia ducimus sunt.
                   error: Aliquam voluptatem.
@@ -6475,15 +6447,7 @@ definitions:
                   error: Aliquam voluptatem.
                   ok: true
                   platform: Atque laboriosam unde facilis.
-                - campaign_id: Quas officiis mollitia ducimus sunt.
-                  error: Aliquam voluptatem.
-                  ok: true
-                  platform: Atque laboriosam unde facilis.
-                - campaign_id: Quas officiis mollitia ducimus sunt.
-                  error: Aliquam voluptatem.
-                  ok: true
-                  platform: Atque laboriosam unde facilis.
-            status: succeeded
+            status: queued
         required:
             - job_id
             - status
@@ -6681,12 +6645,12 @@ definitions:
             status:
                 type: string
                 description: Desired run state
-                example: paused
+                example: active
                 enum:
                     - active
                     - paused
         example:
-            status: active
+            status: paused
         required:
             - status
     LfxV2CampaignServiceBriefsUpdateBriefRequestBody:
@@ -6718,9 +6682,9 @@ definitions:
                 $ref: '#/definitions/CampaignUpdateInput'
         example:
             campaign:
-                campaign_name: Sunt molestiae eius in reprehenderit.
-                config: Sint hic ut sapiente.
-                status: Hic eos magni eos.
+                campaign_name: Quidem velit.
+                config: Magni eos voluptatem sint hic ut.
+                status: Molestiae eius in reprehenderit nobis hic.
         required:
             - campaign
     LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody:
@@ -7171,11 +7135,11 @@ definitions:
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Aliquid porro deserunt nostrum sed sint voluptas.
+                example: Nostrum sed sint voluptas provident.
             label:
                 type: string
                 description: Optional friendly name
-                example: Non rerum.
+                example: Fugiat adipisci non rerum.
             org_id:
                 type: string
                 description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
@@ -7183,7 +7147,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Eius eos sit quam fugiat.
+                example: Eos sit.
             status:
                 type: string
                 description: Connection status
@@ -7536,11 +7500,11 @@ definitions:
             campaign_id:
                 type: string
                 description: Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.
-                example: Est recusandae enim quidem.
+                example: Enim quidem sequi.
             error:
                 type: string
                 description: Failure reason (present when not ok)
-                example: Illum natus doloremque facere quis et beatae.
+                example: Natus doloremque facere quis et beatae perferendis.
             ok:
                 type: boolean
                 description: Whether the campaign was created (or reused) successfully
@@ -7548,12 +7512,12 @@ definitions:
             platform:
                 type: string
                 description: Platform this result is for
-                example: Nam ipsa magnam praesentium eos cum.
+                example: Cum dolores sed.
         example:
-            campaign_id: Eos facere sit animi dolor ex saepe.
-            error: Ipsam ut voluptas.
-            ok: false
-            platform: Doloremque pariatur qui magni facere.
+            campaign_id: Sit animi dolor ex saepe ipsa.
+            error: Ut voluptas est est accusamus.
+            ok: true
+            platform: Pariatur qui magni facere saepe dignissimos.
         required:
             - platform
             - ok
