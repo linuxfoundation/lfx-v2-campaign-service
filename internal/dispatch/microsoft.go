@@ -96,13 +96,17 @@ func NewMicrosoftDispatcher(repo connReader, enc domain.Encryptor, opts ...micro
 // Dispatch implements service.PlatformDispatcher for Microsoft Advertising. It builds the FULL
 // Campaign -> AdGroup -> Ad hierarchy (all PAUSED) via the client, so the result is a usable
 // paused campaign rather than an empty shell — mirroring the reddit/meta/googleads adapters.
-func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	// Resolve creds FIRST (pre-create): a missing/undecryptable connection is a not-created
 	// error → the orchestrator releases the claim.
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
 		return nil, err // already a preCreateError
 	}
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	// validateMicrosoftConnection is shared with ToggleStatus so a create and a toggle accept
 	// EXACTLY the same connections and cannot drift. Its failures are wrapped with notCreated
 	// HERE — create-only claim semantics the toggle path must not apply.

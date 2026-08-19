@@ -608,3 +608,36 @@ func (r *resolved) cacheIdentity(projectID string, provider model.Provider) (cre
 	}
 	return cacheKeyFor(scope, provider), r.connID, r.version
 }
+
+// stampProvenance records, on the campaign a dispatcher is about to return, WHICH AD
+// ACCOUNT served it: the project's own connection, or the LF-owned system account the
+// fallback reaches when the project has none.
+//
+// `fromSystem` is known here and nowhere else. It is stamped on the resolved credential
+// at the single site that takes the fallback (resolve, above), and before this existed it
+// was consumed for error attribution and then DISCARDED — so the persisted campaign row
+// recorded the project but never the credential that served it, and no query could answer
+// which campaigns the LF paid for. This is the one place with both facts in scope.
+//
+// Applied by each Dispatch through a DEFER on its named return rather than at each
+// `return campaignFromX(...)` site. That is deliberate: the seven dispatchers have two or
+// three success/partial returns each, several of which return a campaign ALONGSIDE an
+// error (the UNCONFIRMED and degraded paths), and those are exactly the rows an operator
+// reconciling system-account spend cannot afford to have unstamped. Stamping per return
+// site would mean seventeen edits that a future eighth path silently omits, and the
+// omission would look identical to a campaign that genuinely ran on a project's own
+// account — a false FALSE, which the migration explains is the failure this column must
+// not have. A deferred call on the named return covers every exit, including ones not
+// written yet.
+//
+// Nil-safe on both sides. A dispatcher that returns (nil, err) has no row to stamp, and a
+// credential that was never resolved (r == nil) knows nothing to stamp with — in both
+// cases the campaign keeps whatever it had, which for a nil resolved is "unknown" (NULL),
+// never a fabricated false.
+func (r *resolved) stampProvenance(c *model.Campaign) {
+	if c == nil || r == nil {
+		return
+	}
+	fromSystem := r.fromSystem
+	c.RanOnSystemAccount = &fromSystem
+}

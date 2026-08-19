@@ -242,7 +242,7 @@ func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, 
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, created_at, updated_at`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -341,8 +341,9 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 // whatever may still exist upstream.
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
-	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
+	 ran_on_system_account)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17)
 	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
@@ -381,6 +382,19 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 		-- stamped (the retained-partial persist and the success persist are both upserts
 		-- over the same claim). An unattributed re-persist is an ordinary event.
 		updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by),
+		-- ran_on_system_account is NOT in the update list either, and unlike created_by the
+		-- reason is not only repository hygiene — it is what the column MEANS. It records
+		-- which ad account actually served this campaign at creation, which is a historical
+		-- fact about money already spent. Re-deriving it on a later write would let a project
+		-- that connects its own ad account today rewrite who paid for a campaign the LF
+		-- funded months ago, turning an audit record into a description of the current
+		-- config. The INSERT arm above stamps it once, from the credential the dispatcher
+		-- actually used; every subsequent update and status toggle leaves it alone.
+		--
+		-- Note this is a bare omission, NOT a COALESCE. COALESCE would be wrong here in a way
+		-- it is not for updated_by: the column is nullable with three meanings, and a row
+		-- legitimately holding FALSE ("ran on the project's own account") must not be
+		-- upgradable to TRUE by a later write that happens to carry one.
 		version=campaigns.version+1, updated_at=now()
 	RETURNING ` + campaignCols
 
@@ -445,6 +459,9 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
 		createdBy, updatedBy, model.NormalizeVariant(c.Variant),
+		// Passed as *bool so a nil stays a SQL NULL ("unknown") rather than collapsing to
+		// false. Only the INSERT arm consumes it; the conflict arm ignores it by design.
+		c.RanOnSystemAccount,
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -478,6 +495,12 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // leaving 'demand-gen' free for a later dispatch to fill with a SECOND paid campaign — the
 // exact duplicate the caller-side fix was written to prevent. The conflict target reads the
 // same column, so a hardcoded literal also made the DO NOTHING arm arbitrate the wrong slot.
+// ran_on_system_account is absent from the column list, so an adopted row reads back NULL
+// ("unknown"). That is the honest answer rather than a gap: adoption BINDS a campaign that
+// already exists upstream, created outside this service's dispatch path — possibly by hand in
+// the platform's own UI — so which credential paid for it is genuinely not known here.
+// Stamping the adopting caller's connection would assert a fact about spend that already
+// happened on an account we never observed.
 const adoptCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
 	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
@@ -1425,7 +1448,8 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
-		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.CreatedAt, &c.UpdatedAt,
+		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
+		&c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

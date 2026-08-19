@@ -340,6 +340,48 @@ func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
 		"updated_by must move on the conflict arm, and must COALESCE: an unattributed "+
 			"re-dispatch passes NULL, and writing that over a real actor turns "+
 			"\"we know who\" into \"we do not\"")
+
+	// ran_on_system_account is protected the same way and for a stronger reason: it records
+	// which ad account actually PAID for this campaign, at creation. Assigning it here would
+	// let a project that connects its own ad account later rewrite who funded a campaign the
+	// LF already paid for.
+	//
+	// The assertion is on the column name alone, so it catches BOTH shapes of the mistake —
+	// the bare `=EXCLUDED.` copy and the plausible-looking COALESCE. COALESCE is wrong here
+	// in a way it is not for updated_by: a row holding FALSE ("ran on the project's own
+	// account") is not NULL, so a later write carrying TRUE would still overwrite it.
+	// The behaviour is pinned live by TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate; this
+	// keeps the guard in the unit suite, which runs without a database.
+	//
+	// Asserted against the SET LIST ALONE, with SQL comments stripped. Two things would
+	// otherwise defeat it, and neither is hypothetical — both were observed while writing
+	// this test. The comment explaining the omission necessarily names the column, so a
+	// check over the raw text matches the PROSE and fails whatever the statement does. And
+	// the RETURNING clause is `campaignCols`, which legitimately SELECTS the column, so a
+	// check over the whole arm matches a READ and reports it as a write. Cutting at
+	// RETURNING leaves only the assignments, which is what the guard is about.
+	setList, _, cut := strings.Cut(stripSQLComments(updateArm), "RETURNING")
+	require.True(t, cut, "upsertCampaignQuery's conflict arm has no RETURNING clause; if the "+
+		"statement was restructured, update this test deliberately")
+	assert.NotContains(t, setList, "ran_on_system_account",
+		"ran_on_system_account is assigned in the conflict arm: the column records which "+
+			"account served the campaign AT CREATION, so any assignment here — including a "+
+			"COALESCE — lets a later update revise who paid for spend that already happened")
+}
+
+// stripSQLComments removes `-- ...` line comments so an assertion can be made about the
+// STATEMENT rather than about the prose explaining it. Without it, a guard that forbids a
+// column name is defeated by the comment that documents why the column is absent.
+func stripSQLComments(sql string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(sql, "\n") {
+		if i := strings.Index(line, "--"); i != -1 {
+			line = line[:i]
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // TestClaimCampaignDispatchStampsBothActorColumns pins that the row's first INSERT sets
@@ -380,7 +422,8 @@ func TestDeleteCampaignStampsTheDeletingActor(t *testing.T) {
 var campaignColumnOrder = []string{
 	"id", "project_id", "brief_id", "job_id", "platform", "variant", "platform_campaign_id",
 	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
-	"config_snapshot", "result", "version", "created_by", "updated_by", "created_at", "updated_at",
+	"config_snapshot", "result", "version", "created_by", "updated_by", "ran_on_system_account",
+	"created_at", "updated_at",
 }
 
 // fakeCampaignRow is a pgx.Row handing scanCampaign a fixed, positionally ordered result set.
@@ -440,12 +483,14 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	end := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	jobID, pcID, budgetType := "j1", "gads-123", "daily"
 	amount := 250.5
+	ranOnSystem := true
 
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", &jobID, "google-ads", "demand-gen", &pcID, "Spring launch", "created",
 		&amount, &budgetType, &start, &end,
 		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
-		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), created, updated,
+		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), &ranOnSystem,
+		created, updated,
 	}})
 	require.NoError(t, err)
 
@@ -482,6 +527,15 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 			"every campaign to whoever last touched it")
 	require.NotNil(t, c.UpdatedBy)
 	assert.Equal(t, "grace@lf.dev", c.UpdatedBy.Email)
+
+	// ran_on_system_account sits between updated_by and created_at, and it is the one
+	// column whose value decides whether this campaign's spend is billed to the LF. A
+	// destination-order slip here reads a timestamp into it (a type error, caught) or —
+	// the case worth testing — leaves it on the wrong side of the actor pair.
+	require.NotNil(t, c.RanOnSystemAccount,
+		"a non-NULL ran_on_system_account must survive the scan; nil would downgrade a known "+
+			"fact to \"unknown\" and drop the campaign out of system-account spend reporting")
+	assert.True(t, *c.RanOnSystemAccount)
 }
 
 // TestScanCampaign_NullActorsDecodeToNil pins that a NULL actor column is an ordinary value,
@@ -491,7 +545,7 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", nil, "google-ads", "default", nil, "n", "created",
 		nil, nil, nil, nil, nil, nil, int64(1),
-		nil, nil, time.Time{}, time.Time{},
+		nil, nil, nil, time.Time{}, time.Time{},
 	}})
 	require.NoError(t, err)
 	assert.Nil(t, c.CreatedBy, "a NULL created_by means \"not recorded\", which is nil, not an error")
@@ -500,6 +554,13 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	assert.Nil(t, c.JobID)
 	assert.Empty(t, c.PlatformCampaignID)
 	assert.Nil(t, c.BudgetType)
+	// A NULL ran_on_system_account must stay nil rather than decoding to false. Every row
+	// written before migration 000027 has this column NULL, and false is a POSITIVE claim
+	// ("ran on the project's own account") that would silently move LF-funded historical
+	// campaigns out of system-account spend. nil means "unknown"; the two are not the same.
+	assert.Nil(t, c.RanOnSystemAccount,
+		"a NULL ran_on_system_account means \"unknown, this row predates the column\" — "+
+			"decoding it to false would fabricate a fact about who paid")
 }
 
 // TestScanCampaign_MalformedActorJSONIsAnError pins that undecodable actor JSON FAILS the scan
@@ -515,7 +576,7 @@ func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 		return []any{
 			"c1", "cncf", "b1", nil, "google-ads", "default", nil, "n", "created",
 			nil, nil, nil, nil, nil, nil, int64(1),
-			createdBy, updatedBy, time.Time{}, time.Time{},
+			createdBy, updatedBy, nil, time.Time{}, time.Time{},
 		}
 	}
 	_, err := scanCampaign(fakeCampaignRow{vals: base([]byte(`["not","an","actor"]`), nil)})

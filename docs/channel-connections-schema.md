@@ -220,6 +220,9 @@ CREATE TABLE campaigns (
     version              BIGINT      NOT NULL DEFAULT 1, -- ETag/If-Match
     created_by           JSONB,                          -- {name,email,username} — captured at Orchestrator.Start (migration 000016)
     updated_by           JSONB,                          -- {name,email,username} — last actor to modify (migration 000016)
+    ran_on_system_account BOOLEAN,                       -- which ad account served this campaign, at creation (migration 000027).
+                                                         -- NULL = unknown (row predates the column); FALSE = the project's own
+                                                         -- connection; TRUE = the LF system account. Never recomputed.
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );

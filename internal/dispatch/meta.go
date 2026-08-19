@@ -153,11 +153,15 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 }
 
 // Dispatch implements service.PlatformDispatcher for Meta.
-func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform)
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	accountID, err := requireMetaAccountID(res, brief.ProjectID)
 	if err != nil {
 		return nil, notCreated(err)
@@ -244,7 +248,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
 	// All requested variants are valid here (the client fails fast on a malformed
 	// variant), so len(cfg.Variants) is the requested count.
-	camp := campaignFromMeta(ctx, result, cfg)
+	camp = campaignFromMeta(ctx, result, cfg)
 	if result.AdCount < len(cfg.Variants) {
 		camp.Status = campaignStatusCreatedDegraded
 	}

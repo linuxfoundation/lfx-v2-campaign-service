@@ -79,11 +79,15 @@ func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linked
 // retry"; the orchestrator RETAINS the claim on it, and safe re-dispatch depends on the
 // planned per-(brief, platform) single-flight guard (LFXV2-2665). Callers must not treat
 // a LinkedIn ambiguous error as freely retryable the way name-idempotent platforms are.
-func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
 		return nil, err // preCreateError
 	}
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	if res.status != model.StatusActive {
 		return nil, notCreated(fmt.Errorf("linkedin connection for project %s is %s, not active", brief.ProjectID, res.status))
 	}

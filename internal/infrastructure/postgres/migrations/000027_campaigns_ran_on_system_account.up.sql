@@ -1,0 +1,56 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Which ad account paid for this campaign: the project's own connection, or the
+-- LF-owned system account.
+--
+-- When a project has no connection of its own, dispatch falls back to the reserved
+-- system scope (model.SystemProjectID) and the campaign is created on an LF-owned
+-- credential. internal/dispatch already knows this at the moment it happens — resolve
+-- stamps `fromSystem` on the credential it hands back (internal/dispatch/creds.go) —
+-- but until now that fact was DISCARDED once the credential had been used. The
+-- campaign row records the PROJECT, never the credential that served it, so after the
+-- fact nothing could answer "which campaigns ran on the LF account".
+--
+-- Two operational questions need exactly that answer, and neither is reconstructible
+-- from the rows we keep today:
+--   - attributing system-account spend back to the projects that incurred it, which
+--     is money the LF paid on someone else's behalf; and
+--   - blast radius when the LF credential is revoked or rotated: which live campaigns
+--     lose the account they were created on.
+--
+-- A HISTORICAL FACT, NOT A DERIVED ONE. This records the credential that served the
+-- campaign AT CREATION TIME, and it must never be recomputed. The obvious "improvement"
+-- — re-deriving it by asking whether the project has its own connection now — is wrong,
+-- and quietly so: a project that connects its own ad account next month did not
+-- retroactively pay for the campaign the LF funded last month. The spend already
+-- happened, on a specific account, and that is not revisable by later configuration.
+-- The repository enforces this by OMITTING the column from the upsert's DO UPDATE arm,
+-- exactly as created_by is omitted and for the same reason (see upsertCampaignQuery):
+-- it is written by the INSERT that creates the row and never rewritten by a later
+-- update or status toggle.
+--
+-- NULLABLE, AND DELIBERATELY NOT BACKFILLED. Three states, not two:
+--   NULL  = unknown; this row predates the column. We do not know which account it ran
+--           on, because nothing recorded it.
+--   FALSE = known to have run on the project's OWN connection.
+--   TRUE  = known to have run on the LF system account.
+--
+-- Defaulting existing rows to FALSE would be cheaper to query and would be a lie: it
+-- asserts of every historical campaign that we know it ran on the project's own
+-- account, when in fact some of them took the system fallback and we cannot tell which.
+-- That is the failure mode this schema most needs to avoid, because the column exists
+-- to attribute SPEND — a false FALSE moves LF-funded campaigns out of the LF column and
+-- understates what the foundation paid, silently and unrecoverably. NULL is honest: it
+-- says the row cannot answer the question. A consumer totalling system-account spend
+-- must treat NULL as "excluded, unknown" and not as FALSE; the two are different claims.
+--
+-- No DEFAULT clause for the same reason, and it is not merely about the backfill. A
+-- column DEFAULT FALSE would also make every FUTURE write that forgets to set the flag
+-- claim "project's own account" by omission — the absence of a value would silently
+-- become a positive assertion. The writer states the fact or leaves it unknown.
+--
+-- Adding a nullable column with no default rewrites no rows: it is a catalog-only change
+-- in PostgreSQL 11+, so this does not lock the table for a scan.
+ALTER TABLE campaigns
+    ADD COLUMN IF NOT EXISTS ran_on_system_account BOOLEAN;

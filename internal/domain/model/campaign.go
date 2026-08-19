@@ -123,8 +123,30 @@ type Campaign struct {
 	// and it means "not recorded", never "nobody".
 	CreatedBy *Actor
 	UpdatedBy *Actor
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// RanOnSystemAccount records WHICH AD ACCOUNT paid for this campaign: the project's
+	// own connection, or the LF-owned system account it falls back to when the project
+	// has none (model.SystemProjectID). internal/dispatch learns this while resolving
+	// credentials and stamps it on the campaign it returns; the orchestrator persists it
+	// unchanged.
+	//
+	// A pointer for the same reason CreatedBy is: the column has THREE states and a bool
+	// can only carry two.
+	//   nil   = unknown — the row predates migration 000027, so nothing recorded it.
+	//   false = known to have run on the project's OWN connection.
+	//   true  = known to have run on the LF system account.
+	//
+	// nil is NOT false. Code totalling system-account spend must exclude nil as unknown
+	// rather than folding it into "the project paid" — see the migration for why a
+	// backfilled false would understate what the foundation actually paid.
+	//
+	// A HISTORICAL FACT, fixed at creation. It is never recomputed from whether the
+	// project has its own connection TODAY: a project connecting its own account later
+	// does not change who paid for a campaign already created. UpsertCampaign's conflict
+	// arm omits the column so a later update or status toggle cannot rewrite it, exactly
+	// as it omits created_by.
+	RanOnSystemAccount *bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Campaign.Status is a plain string that carries TWO kinds of value: a provisioning state
