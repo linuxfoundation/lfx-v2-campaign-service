@@ -2232,3 +2232,133 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 	}
 	return out
 }
+
+// settingsReadbackResult renders the domain readback into the API type.
+//
+// A nil Recorded/Upstream stays nil across this boundary — never coerced into "" — which
+// is what carries "this side could not be read" all the way to the client. Goa renders a
+// nil *string as an ABSENT JSON key, so an unreadable setting is missing from the object
+// rather than present-and-empty, and `unknown` is the verdict that names why.
+func settingsReadbackResult(rb *model.CampaignSettingsReadback) *briefs.CampaignSettingsReadback {
+	fields := make([]*briefs.CampaignSettingsField, 0, len(rb.Fields))
+	for _, f := range rb.Fields {
+		fields = append(fields, &briefs.CampaignSettingsField{
+			Field:      f.Field,
+			Recorded:   f.Recorded,
+			Upstream:   f.Upstream,
+			Comparison: string(f.Comparison),
+		})
+	}
+	return &briefs.CampaignSettingsReadback{
+		CampaignID:         rb.CampaignID,
+		PlatformCampaignID: rb.PlatformCampaignID,
+		Platform:           string(rb.Platform),
+		ReadAt:             rb.ReadAt.UTC().Format(time.RFC3339),
+		Fields:             fields,
+		DivergedCount:      rb.DivergedCount,
+		UnknownCount:       rb.UnknownCount,
+	}
+}
+
+// GetCampaignSettings reads a campaign's live configuration from its platform and reports
+// where it diverges from what the campaign row recorded.
+//
+// A pure read in both directions, which is the contract this endpoint is built around: the
+// platform is read and never written, and the result is NEVER persisted back onto the
+// campaign row. There is therefore no If-Match/version here, exactly as on
+// GetCampaignMetrics — nothing is being changed.
+func (s *BriefService) GetCampaignSettings(ctx context.Context, p *briefs.GetCampaignSettingsPayload) (*briefs.CampaignSettingsReadback, error) {
+	_, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	existing, gerr := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+	rb, rerr := orch.ReadCampaignSettings(ctx, p.ProjectID, existing.Platform, existing)
+	if rerr != nil {
+		switch {
+		case errors.Is(rerr, domain.ErrSettingsReadbackUnsupported):
+			return nil, &briefs.BadRequestError{Code: "400", Message: "settings readback is not supported for this campaign's platform"}
+		case errors.Is(rerr, ErrCampaignNotProvisioned):
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
+		case errors.Is(rerr, domain.ErrPlatformCampaignAbsent):
+			// The platform answered and holds no such campaign. This is the most actionable
+			// outcome this endpoint has, so it must NOT fall into the 503 default, which
+			// would tell an operator to retry a read that will keep succeeding at reporting
+			// nothing. 404 names the campaign as gone rather than the service as broken.
+			slog.WarnContext(ctx, "campaign settings readback: the platform holds no such campaign",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.NotFoundError{Code: "404", Message: "the platform holds no campaign with this id — it may have been deleted upstream"}
+		case errors.Is(rerr, domain.ErrCampaignProvenanceUnknown):
+			// Above the mismatch arm, for the reason the metrics switch spells out: this row
+			// names no tenant to be mismatched against, so "reconnect the original account"
+			// would be an instruction the operator cannot follow.
+			slog.WarnContext(ctx, "campaign settings readback blocked: campaign does not record which platform tenant it was created under",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(rerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign does not record which platform account it was created under, so its settings cannot be read safely — it must be re-dispatched before it can be read"}
+		case errors.Is(rerr, ErrCampaignAccountMismatch):
+			// The two customer ids stay server-side, as on every sibling arm: which ad account
+			// a project is connected to is connection configuration. Here the guard matters
+			// more than usual — reading the id under the wrong customer could return ANOTHER
+			// campaign's configuration, and this endpoint would then report a divergence
+			// between this campaign's recorded budget and a different campaign's actual one.
+			slog.WarnContext(ctx, "campaign settings readback blocked: campaign belongs to a different platform account than the current connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(rerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different account than this project's current connection — reconnect the original account to read its settings"}
+		case errors.Is(rerr, domain.ErrSystemConnectionNotUsable):
+			// ABOVE the two arms below because systemScoped WRAPS rather than replaces: a
+			// broad match would win and tell this caller to repair "this project's
+			// connection", which they do not have.
+			slog.ErrorContext(ctx, "the LF system connection is not usable; campaign settings readbacks are failing for every project without its own connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(rerr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign settings could not be read"}
+		case errors.Is(rerr, domain.ErrNotFound):
+			// No connection row for (project, provider), and no shared system account either.
+			// PERMANENT, so not the 503 default: nothing exists to retry against.
+			slog.WarnContext(ctx, "campaign settings readback blocked: no connection configured for this project and provider",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's channel; connect it before reading settings"}
+		case errors.Is(rerr, domain.ErrCredentialDecryptionFailed):
+			// 500 for the reason the toggle and metrics arms give: re-saving credentials
+			// repairs a corrupted row, but a rotated key is an operator's repair and GCM
+			// cannot tell the two apart from here, so this arm answers for the worse one.
+			credentialProject := p.ProjectID
+			if errors.Is(rerr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
+			// NO error text on this arm: safeErrSummary normalises and truncates, it does not
+			// redact, and the chain here ends in the Encryptor's own error, whose contents this
+			// package cannot guarantee.
+			slog.ErrorContext(ctx, "campaign settings readback blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign settings could not be read"}
+		case errors.Is(rerr, domain.ErrAccountNotSelected):
+			// Split out and placed ABOVE the general unusable-connection arm: this sentinel is
+			// always wrapped alongside ErrConnectionNotUsable, so a broad match would swallow
+			// it and blame credentials that are fine.
+			slog.WarnContext(ctx, "campaign settings readback blocked: no ad account selected on the project's connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(rerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before reading settings"}
+		case errors.Is(rerr, domain.ErrConnectionNotUsable):
+			slog.WarnContext(ctx, "campaign settings readback blocked: the project's connection is not usable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(rerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's connection for the campaign's channel is not usable — reconnect it before reading settings"}
+		}
+		slog.WarnContext(ctx, "campaign settings readback failed",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+			"platform", existing.Platform, "error", safeErrSummary(rerr))
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the platform could not be reached to read this campaign's settings"}
+	}
+	return settingsReadbackResult(rb), nil
+}

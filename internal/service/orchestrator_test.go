@@ -2750,3 +2750,84 @@ func TestOrchestrator_UnclassifiablePreCreateFailureOmitsTheReason(t *testing.T)
 	}
 	t.Fatal("no \"before upstream create\" log record was emitted for the unclassifiable error")
 }
+
+// settingsReaderDispatcher implements PlatformDispatcher + SettingsReader, recording the
+// context deadline so a test can verify the orchestrator bounded the call.
+type settingsReaderDispatcher struct {
+	readback    *model.CampaignSettingsReadback
+	err         error
+	called      bool
+	gotDeadline time.Time
+}
+
+func (settingsReaderDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("Dispatch should not be called in these tests")
+}
+
+func (d *settingsReaderDispatcher) ReadSettings(ctx context.Context, _ string, _ model.Provider, _ *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	d.called = true
+	if deadline, ok := ctx.Deadline(); ok {
+		d.gotDeadline = deadline
+	}
+	return d.readback, d.err
+}
+
+// TestOrchestrator_ReadCampaignSettings_NotProvisionedNeverContactsThePlatform: a row with
+// no upstream id has no counterpart, so the platform must not be contacted at all.
+func TestOrchestrator_ReadCampaignSettings_NotProvisionedNeverContactsThePlatform(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &settingsReaderDispatcher{}
+	o := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	camp := &model.Campaign{ID: "c1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "   "}
+	_, err := o.ReadCampaignSettings(context.Background(), "p1", model.ProviderGoogleAds, camp)
+	if !errors.Is(err, ErrCampaignNotProvisioned) {
+		t.Fatalf("err = %v, want ErrCampaignNotProvisioned", err)
+	}
+	if disp.called {
+		t.Error("the platform was contacted for an unprovisioned campaign")
+	}
+}
+
+// TestOrchestrator_ReadCampaignSettings_DispatcherNotASettingsReader: a platform without the
+// capability yields a clean, permanent "not supported".
+func TestOrchestrator_ReadCampaignSettings_DispatcherNotASettingsReader(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	o := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: nonMetricsDispatcher{}})
+
+	camp := &model.Campaign{ID: "c1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "ga-1"}
+	_, err := o.ReadCampaignSettings(context.Background(), "p1", model.ProviderGoogleAds, camp)
+	if !errors.Is(err, domain.ErrSettingsReadbackUnsupported) {
+		t.Fatalf("err = %v, want ErrSettingsReadbackUnsupported", err)
+	}
+}
+
+// TestOrchestrator_ReadCampaignSettings_NilResultIsAnError: a SettingsReader returning
+// (nil, nil) is a contract violation. The handler dereferences the result on a nil error,
+// so this must become an ordinary error rather than a panic.
+func TestOrchestrator_ReadCampaignSettings_NilResultIsAnError(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &settingsReaderDispatcher{} // nil readback, nil error
+	o := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	camp := &model.Campaign{ID: "c1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "ga-1"}
+	if _, err := o.ReadCampaignSettings(context.Background(), "p1", model.ProviderGoogleAds, camp); err == nil {
+		t.Fatal("expected an error when the SettingsReader returns (nil, nil), got nil")
+	}
+}
+
+// TestOrchestrator_ReadCampaignSettings_BoundsTheCall: the read runs on the HTTP request
+// goroutine, so it must carry a deadline or a hung platform would outlive the response.
+func TestOrchestrator_ReadCampaignSettings_BoundsTheCall(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &settingsReaderDispatcher{readback: &model.CampaignSettingsReadback{CampaignID: "c1"}}
+	o := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	camp := &model.Campaign{ID: "c1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "ga-1"}
+	if _, err := o.ReadCampaignSettings(context.Background(), "p1", model.ProviderGoogleAds, camp); err != nil {
+		t.Fatalf("ReadCampaignSettings: %v", err)
+	}
+	if disp.gotDeadline.IsZero() {
+		t.Error("ReadSettings was called with no deadline; a synchronous platform read must be bounded")
+	}
+}

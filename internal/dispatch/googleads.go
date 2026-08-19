@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -428,10 +430,17 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	// with whatever budget and settings it was created with, and this path deliberately
 	// creates no budget and no ad group (see the Steps below). So the row records the
 	// request while the platform keeps its own state, and the two can legitimately
-	// disagree. Nothing reconciles them today: ReadMetrics returns impressions, clicks,
-	// cost and CTR, none of which describe the campaign's configuration, so it cannot
-	// close this gap however it is read. A readback of the upstream settings is a
-	// separate capability and is not in this service (LFXV2-3067).
+	// disagree. ReadMetrics cannot close that gap however it is read — it returns
+	// impressions, clicks, cost and CTR, none of which describe the campaign's
+	// configuration.
+	//
+	// ReadSettings (LFXV2-3067) is the capability that can: it reads the live campaign
+	// config and reports, per field, where it diverges from what this row recorded. It
+	// does NOT reconcile them, and deliberately so — it never writes back onto this row,
+	// because these columns mean "what this dispatch asked for" and an observation
+	// written over them would destroy the only record of the request. Divergence is
+	// surfaced for an operator to act on, on demand; nothing polls, and no status is
+	// stored.
 	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
 	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
 	// later read/toggle against a DIFFERENT customer, and treats an absent one as
@@ -1101,4 +1110,174 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 		return "", ""
 	}
 	return blob.AdGroupID, blob.AdID
+}
+
+// ---------------------------------------------------------------------------
+// Settings readback (LFXV2-3067)
+// ---------------------------------------------------------------------------
+
+// Field names used in the settings readback, in THIS SERVICE's vocabulary rather than
+// Google's. They match the campaign row's own column names, because the whole report is
+// "what this row records" against "what the platform holds", and naming the row's side in
+// Google's spelling would make the comparison harder to read, not easier.
+const (
+	settingsFieldBudgetAmount = "budget_amount"
+	settingsFieldBudgetType   = "budget_type"
+	settingsFieldName         = "campaign_name"
+	settingsFieldStatus       = "status"
+)
+
+// googleAdsBudgetTypeFromPeriod maps Google's campaign_budget.period into this service's
+// model.BudgetType vocabulary, which is the only way the two sides of the budget-type
+// comparison can be compared at all.
+//
+// The mapping is stated once, here, because the vocabularies are NOT the same and the
+// difference is easy to get wrong: Google's v23 BudgetPeriodEnum has DAILY and
+// CUSTOM_PERIOD (plus UNKNOWN/UNSPECIFIED). It has NO `LIFETIME` value, even though
+// model.BudgetLifetime spells that idea "lifetime" — CUSTOM_PERIOD is the thing that
+// corresponds to it.
+//
+// Anything outside the two real values returns "", which the caller turns into an ABSENT
+// upstream side and therefore an `unknown` verdict. That is deliberate and is the
+// fail-closed choice: UNKNOWN literally means "a value this API version cannot name", and
+// mapping it to either budget type would manufacture a match or a divergence out of a
+// value Google explicitly declined to state.
+func googleAdsBudgetTypeFromPeriod(period string) model.BudgetType {
+	switch strings.TrimSpace(period) {
+	case "DAILY":
+		return model.BudgetDaily
+	case "CUSTOM_PERIOD":
+		return model.BudgetLifetime
+	default:
+		return ""
+	}
+}
+
+// googleAdsUpstreamBudgetAmount renders the upstream budget as a whole-currency-unit
+// string comparable with the row's budget_amount, and reports whether it could be read.
+//
+// Google reports the budget in MICROS, in one of two mutually exclusive fields:
+// amount_micros for a DAILY budget, total_amount_micros for a CUSTOM_PERIOD one. Reading
+// only the first would report a lifetime-budget campaign as having no budget at all —
+// an absence that is not true, and one that would quietly suppress a real divergence.
+//
+// The two sides are compared as whole units rather than micros because that is what the
+// row stores; the conversion happens here, once, rather than in the comparison.
+func googleAdsUpstreamBudgetAmount(s *googleads.CampaignSettings) *string {
+	if s == nil {
+		return nil
+	}
+	micros := s.BudgetAmountMicros
+	if micros == nil {
+		micros = s.BudgetTotalAmountMicros
+	}
+	if micros == nil {
+		return nil
+	}
+	return strPtr(formatBudgetUnits(float64(*micros) / 1e6))
+}
+
+// formatBudgetUnits renders a budget amount the same way on both sides of the comparison.
+//
+// Two decimal places, matching the campaigns.budget_amount column (NUMERIC(14,2)). Both
+// sides go through this function, which is what makes the comparison meaningful: a row
+// holding 500 and a platform holding 500.00 are the same budget, and formatting them
+// differently would report a divergence that does not exist.
+func formatBudgetUnits(v float64) string {
+	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+// strPtr returns a pointer to s. Used to build the readback's optional sides, where the
+// difference between a nil and a pointer-to-empty is the difference between "not read"
+// and "read as empty".
+func strPtr(s string) *string { return &s }
+
+// ReadSettings implements service.SettingsReader for Google Ads: it reads the campaign's
+// live configuration and compares it against what the campaign row recorded.
+//
+// STRICTLY READ-ONLY. The only upstream call is googleads.GetCampaignSettings, a GAQL
+// search. Nothing here mutates the platform, and nothing here writes to the campaign row:
+// the readback is returned to the caller and discarded. The row keeps meaning "what this
+// dispatch asked for", which is what makes the divergence legible at all — an
+// observation written back would erase the very thing being compared against.
+//
+// It resolves the same connection ReadMetrics does and enforces the same account-identity
+// invariant, for the same reason: the stored PlatformCampaignID is unique only within the
+// customer it was created under, so querying it under a re-pointed connection can return
+// ANOTHER account's campaign. Here that would mean reporting a divergence between this
+// campaign's recorded budget and a different campaign's actual one.
+func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+		return nil, fmt.Errorf("read google ads campaign settings: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+	}
+
+	settings, err := client.GetCampaignSettings(ctx, campaign.PlatformCampaignID)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads campaign settings: %w", err)
+	}
+	if settings == nil {
+		// The platform answered and holds no such campaign. Reported as an absent PLATFORM
+		// CAMPAIGN rather than as an empty readback: every field would otherwise come back
+		// `unknown`, which says "we could not read these" when the truth is far more
+		// specific and far more urgent — the campaign this row tracks is not there.
+		return nil, fmt.Errorf("%w: google-ads campaign %s", domain.ErrPlatformCampaignAbsent, campaign.PlatformCampaignID)
+	}
+
+	rb := &model.CampaignSettingsReadback{
+		CampaignID: campaign.ID,
+		// The id the PLATFORM echoed, not the one requested. GetCampaignSettings refuses a
+		// response whose id filter was not honoured, so these agree on every response that
+		// gets this far; taking it from the response is what keeps that true by construction.
+		PlatformCampaignID: settings.CampaignID,
+		Platform:           platform,
+		ReadAt:             time.Now().UTC(),
+	}
+
+	// Budget amount. The recorded side is nil when the row holds no budget — which is an
+	// ordinary state, not a defect: applyCampaignConfig deliberately leaves budget_amount
+	// NULL for a zero budget and for one too large for the column.
+	var recordedBudget *string
+	if campaign.BudgetAmount != nil {
+		recordedBudget = strPtr(formatBudgetUnits(*campaign.BudgetAmount))
+	}
+	// Budget type. Google's period is translated into this service's vocabulary rather than
+	// the row's being translated into Google's, so the report speaks one language throughout.
+	var recordedBudgetType *string
+	if campaign.BudgetType != nil {
+		recordedBudgetType = strPtr(string(*campaign.BudgetType))
+	}
+	var upstreamBudgetType *string
+	if settings.BudgetPeriod != nil {
+		if bt := googleAdsBudgetTypeFromPeriod(*settings.BudgetPeriod); bt != "" {
+			upstreamBudgetType = strPtr(string(bt))
+		}
+	}
+	// Campaign name. Recorded as a plain column, so an empty one is treated as unrecorded
+	// rather than compared as "" — comparing an empty string against a real name would
+	// report a divergence for a row that simply never captured the name.
+	var recordedName *string
+	if n := strings.TrimSpace(campaign.CampaignName); n != "" {
+		recordedName = strPtr(n)
+	}
+
+	// Status is deliberately NOT compared. The row's Status is this service's own lifecycle
+	// vocabulary (created/failed/...) and Google's is ENABLED/PAUSED/REMOVED — a different
+	// axis, exactly as model.PlatformCampaignRef documents. Comparing them would report a
+	// permanent, meaningless divergence on every campaign ever created. The upstream value
+	// is still reported, with no recorded counterpart, so an operator can SEE that the
+	// campaign is paused upstream without this service pretending the two are the same
+	// field.
+	rb.Fields = []model.CampaignSettingsField{
+		model.CompareSettingsField(settingsFieldBudgetAmount, recordedBudget, googleAdsUpstreamBudgetAmount(settings)),
+		model.CompareSettingsField(settingsFieldBudgetType, recordedBudgetType, upstreamBudgetType),
+		model.CompareSettingsField(settingsFieldName, recordedName, settings.Name),
+		model.CompareSettingsField(settingsFieldStatus, nil, settings.Status),
+	}
+	rb.SummariseSettings()
+	return rb, nil
 }

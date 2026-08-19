@@ -236,6 +236,50 @@ section: [reddit](internal-platform-reddit.md), [linkedin](internal-platform-lin
 platform wiring or changing its toggle behavior would otherwise mean editing
 this shared file too.
 
+## Settings readback (optional capability, LFXV2-3067)
+
+`SettingsReader` — `ReadSettings(ctx, projectID, platform, campaign *model.Campaign)
+(*model.CampaignSettingsReadback, error)` — reads a campaign's live configuration and
+compares it against what the campaign row recorded. Discovered by the same type assertion
+`MetricsReader` uses; a dispatcher without it yields
+`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads is the only implementation**,
+because adoption — the thing that lets a row's recorded request and the live campaign
+disagree — exists only there.
+
+**Read-only in two senses, both load-bearing.** It issues no mutating call upstream, and it
+never writes back onto the campaign row. `budget_amount`/`budget_type`/`config_snapshot`
+record what a dispatch ASKED FOR; overwriting them with an observation would change their
+meaning from request to observation, break shape-consistency with every sibling adapter's
+rows, and let one transient bad read destroy the only record of the request. Divergence is
+information an operator acts on, not state this service reconciles.
+
+**The comparison is per field, and `unknown` is never folded into `match`.**
+`model.CompareSettingsField` is the single place the rule lives: `match` and `diverged` both
+require BOTH sides to have been read, so an absent side always yields `unknown`. Reporting a
+field nobody could read as a match would be a fabricated "they match" — agreement asserted
+from an observation that never happened.
+
+The Google Ads adapter compares `budget_amount`, `budget_type` and `campaign_name`, and
+translates Google's `campaign_budget.period` into `model.BudgetType` via
+`googleAdsBudgetTypeFromPeriod` — `DAILY` -> `daily`, `CUSTOM_PERIOD` -> `lifetime` (Google
+has no `LIFETIME` value), and `UNKNOWN`/anything else -> unmapped, which fails closed to an
+`unknown` verdict rather than manufacturing one. Both sides are rendered to two decimals by
+one helper so a row holding `500` and a platform holding `500.00` are not reported as
+diverging.
+
+**`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
+lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see
+`model.PlatformCampaignRef`). Comparing them would report a permanent, meaningless
+divergence on every campaign. The upstream value is carried with no recorded counterpart, so
+an operator can still SEE that a campaign is paused upstream.
+
+It enforces the same account-identity invariant `ReadMetrics` does, and it matters more
+here: reading the stored id under a re-pointed connection could return ANOTHER campaign's
+configuration, which this endpoint would then report as a divergence of THIS campaign. An
+upstream campaign that no longer exists surfaces as `domain.ErrPlatformCampaignAbsent` (404)
+rather than an all-`unknown` readback, which would say "we could not read these" when the
+truth is far more specific.
+
 ## Metrics read (optional capability)
 
 `MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —

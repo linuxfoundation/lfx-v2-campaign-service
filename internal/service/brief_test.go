@@ -4188,3 +4188,266 @@ func TestProjectOwnedConnectionDefectsStillReachTheProject(t *testing.T) {
 		t.Errorf("message = %q, want it to tell the owner to repair their connection", conflict.Message)
 	}
 }
+
+// ---- GetCampaignSettings (LFXV2-3067) ------------------------------------
+
+// settingsOnlyDispatcher implements PlatformDispatcher + SettingsReader, recording the
+// campaign it was handed so a test can prove the handler did not mutate it.
+type settingsOnlyDispatcher struct {
+	readback *model.CampaignSettingsReadback
+	err      error
+	gotCamp  *model.Campaign
+}
+
+func (settingsOnlyDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("Dispatch should not be called in these tests")
+}
+
+func (d *settingsOnlyDispatcher) ReadSettings(_ context.Context, _ string, _ model.Provider, camp *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	d.gotCamp = camp
+	return d.readback, d.err
+}
+
+// TestBriefService_GetCampaignSettings_ReportsUpstreamDivergence is the binding test at the
+// service layer: the UPSTREAM value must reach the HTTP response, with a `diverged` verdict.
+//
+// Asserting only that a value came back would pass against a handler that echoed the row.
+// "750.00" exists only on the upstream side.
+func TestBriefService_GetCampaignSettings_ReportsUpstreamDivergence(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	recorded, upstream := "500.00", "750.00"
+	rb := &model.CampaignSettingsReadback{
+		CampaignID: "c1", PlatformCampaignID: "ga-1", Platform: model.ProviderGoogleAds,
+		ReadAt: time.Now().UTC(),
+		Fields: []model.CampaignSettingsField{
+			model.CompareSettingsField("budget_amount", &recorded, &upstream),
+		},
+	}
+	rb.SummariseSettings()
+	s := newMetricsService(camp, &settingsOnlyDispatcher{readback: rb})
+
+	res, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	if err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+	if len(res.Fields) != 1 {
+		t.Fatalf("Fields = %d, want 1", len(res.Fields))
+	}
+	f := res.Fields[0]
+	if f.Comparison != string(model.SettingsDiverged) {
+		t.Errorf("comparison = %q, want diverged", f.Comparison)
+	}
+	if f.Upstream == nil || *f.Upstream != "750.00" {
+		t.Errorf("upstream = %v, want 750.00 — the value the PLATFORM reported must reach the response", f.Upstream)
+	}
+	if f.Recorded == nil || *f.Recorded != "500.00" {
+		t.Errorf("recorded = %v, want 500.00", f.Recorded)
+	}
+	if res.DivergedCount != 1 {
+		t.Errorf("diverged_count = %d, want 1", res.DivergedCount)
+	}
+	if res.ReadAt == "" {
+		t.Error("read_at is empty; a readback must say when it was observed")
+	}
+}
+
+// TestBriefService_GetCampaignSettings_UnknownStaysAbsentInTheResponse pins that an
+// unreadable side survives to the wire as ABSENT (a nil the encoder omits) rather than as
+// an empty string. An "" in the response would be indistinguishable from a real empty
+// value and would read as a comparison that happened.
+func TestBriefService_GetCampaignSettings_UnknownStaysAbsentInTheResponse(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	recorded := "500.00"
+	rb := &model.CampaignSettingsReadback{
+		CampaignID: "c1", PlatformCampaignID: "ga-1", Platform: model.ProviderGoogleAds,
+		ReadAt: time.Now().UTC(),
+		Fields: []model.CampaignSettingsField{
+			model.CompareSettingsField("budget_amount", &recorded, nil),
+		},
+	}
+	rb.SummariseSettings()
+	s := newMetricsService(camp, &settingsOnlyDispatcher{readback: rb})
+
+	res, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	if err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+	f := res.Fields[0]
+	if f.Upstream != nil {
+		t.Errorf("upstream = %q, want nil (absent) — an unread field must never be defaulted", *f.Upstream)
+	}
+	if f.Comparison != string(model.SettingsUnknown) {
+		t.Errorf("comparison = %q, want unknown", f.Comparison)
+	}
+	if res.UnknownCount != 1 {
+		t.Errorf("unknown_count = %d, want 1", res.UnknownCount)
+	}
+	if res.DivergedCount != 0 {
+		t.Errorf("diverged_count = %d, want 0 — an unknown is not a divergence", res.DivergedCount)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_DoesNotPersistTheReadback pins design decision 1 at
+// the service layer: the endpoint is read-only with respect to the stored row.
+//
+// It asserts on the REPOSITORY, not on the returned struct: a handler that wrote the
+// observation back would leave the change in the repo even if it returned an untouched
+// copy. Any update at all is the failure.
+func TestBriefService_GetCampaignSettings_DoesNotPersistTheReadback(t *testing.T) {
+	recordedBudget := 500.0
+	bt := model.BudgetDaily
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+		CampaignName: "recorded name", BudgetAmount: &recordedBudget, BudgetType: &bt,
+	}
+	recorded, upstream := "500.00", "750.00"
+	rb := &model.CampaignSettingsReadback{
+		CampaignID: "c1", PlatformCampaignID: "ga-1", Platform: model.ProviderGoogleAds,
+		ReadAt: time.Now().UTC(),
+		Fields: []model.CampaignSettingsField{
+			model.CompareSettingsField("budget_amount", &recorded, &upstream),
+		},
+	}
+	rb.SummariseSettings()
+
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{byID: map[string]*model.Campaign{camp.ID: camp}}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		camp.Platform: &settingsOnlyDispatcher{readback: rb},
+	})
+	s := NewBriefService(repo, camps, jobs, orch)
+
+	if _, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	}); err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+
+	stored := camps.byID["c1"]
+	if stored.BudgetAmount == nil || *stored.BudgetAmount != 500.0 {
+		t.Errorf("stored BudgetAmount = %v, want 500 — the row records the REQUEST and must never be overwritten by an observation", stored.BudgetAmount)
+	}
+	if stored.CampaignName != "recorded name" {
+		t.Errorf("stored CampaignName = %q, want %q", stored.CampaignName, "recorded name")
+	}
+	if stored.Version != 1 {
+		t.Errorf("stored Version = %d, want 1 — a pure read must not bump the row's version", stored.Version)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_PlatformUnsupportedIs400: a platform with no
+// SettingsReader wired is a clean, permanent "not supported", not an outage.
+func TestBriefService_GetCampaignSettings_PlatformUnsupportedIs400(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, nonMetricsDispatcher{})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected a BadRequestError (400), got %T: %v", err, err)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_NotProvisionedIs409: a row with no upstream id has
+// no counterpart to compare against, and the platform is never contacted.
+func TestBriefService_GetCampaignSettings_NotProvisionedIs409(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "", Status: "pending", Version: 1,
+	}
+	s := newMetricsService(camp, &settingsOnlyDispatcher{})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409), got %T: %v", err, err)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_AbsentUpstreamIs404: the platform answered and holds
+// no such campaign. That must not fall into the 503 default, which would tell an operator
+// to retry a read that will keep succeeding at reporting nothing.
+func TestBriefService_GetCampaignSettings_AbsentUpstreamIs404(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, &settingsOnlyDispatcher{err: domain.ErrPlatformCampaignAbsent})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var nf *briefs.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected a NotFoundError (404) when the platform holds no such campaign, got %T: %v", err, err)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_AccountMismatchIs409: reading under a re-pointed
+// connection could return another campaign's configuration, which would be reported as a
+// divergence of THIS campaign. Refused, and actionable.
+func TestBriefService_GetCampaignSettings_AccountMismatchIs409(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, &settingsOnlyDispatcher{err: domain.ErrCampaignAccountMismatch})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409), got %T: %v", err, err)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_PlatformFailureIs503: an unclassified upstream
+// failure is the retryable default.
+func TestBriefService_GetCampaignSettings_PlatformFailureIs503(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, &settingsOnlyDispatcher{err: errors.New("google ads 500")})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected a ServiceUnavailable (503), got %T: %v", err, err)
+	}
+}
+
+// TestBriefService_GetCampaignSettings_NoConnectionIs404: no connection row for this
+// project and provider, and no shared system account either. PERMANENT — nothing exists to
+// retry against, so it must not be the 503 default.
+func TestBriefService_GetCampaignSettings_NoConnectionIs404(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, &settingsOnlyDispatcher{err: domain.ErrNotFound})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var nf *briefs.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected a NotFoundError (404), got %T: %v", err, err)
+	}
+}

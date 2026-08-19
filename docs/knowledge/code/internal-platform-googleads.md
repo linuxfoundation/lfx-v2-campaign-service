@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; and geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -630,6 +630,54 @@ supplied) or failed before any criterion resource name could be parsed. The
 per-platform dispatcher config (`internal/dispatch/googleads.go`,
 `googleAdsConfig.Keywords`/`.AudienceSegments`) maps the wire JSON shape 1:1
 into `CampaignInput.Keywords`/`.AudienceSegments`.
+
+## Campaign settings readback (LFXV2-3067)
+
+`GetCampaignSettings` (in `campaign_settings.go`) reads a campaign's CURRENT
+configuration — budget amount, budget period, delivery method, sharing, channel type,
+bidding strategy, name, status and flight date-times — via a single GAQL
+`googleAds:search`. It is the read metrics cannot be: impressions, clicks, cost and CTR
+do not describe a campaign's *configuration*, so no reading of them can show that the
+budget upstream is not the budget the campaign row records.
+
+**Every field on `CampaignSettings` is a POINTER.** A setting Google did not return is
+ABSENT (nil), never a zero value. This is the type's central decision: a `0` standing in
+for an unread budget is indistinguishable from a campaign with a genuinely zero budget,
+and the two mean opposite things to an operator. The readback is partial in a way a
+metrics read is not — `campaign_budget` is a separate resource joined onto the campaign,
+so its fields can be missing while the campaign's own fields are present.
+
+**The field names are version-scoped to v23, and two are not the request-side spellings:**
+
+* `campaign.start_date_time` / `campaign.end_date_time` — in v23 these REPLACED
+  `campaign.start_date` / `campaign.end_date`, which are rejected as unrecognized. Format
+  is `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so they are carried verbatim and
+  never parsed here: a timezone this client does not know makes any computed instant a
+  guess. The pre-v23 `2037-12-30` no-end-date sentinel is gone — no end date is an absent
+  field.
+* `campaign_budget.amount_micros` and `campaign_budget.total_amount_micros` are MUTUALLY
+  EXCLUSIVE — the first for a `DAILY` budget, the second for `CUSTOM_PERIOD`. Reading only
+  the first reports a lifetime-budget campaign as having no budget at all.
+* `campaign_budget.period` is `DAILY` or `CUSTOM_PERIOD`; there is no `LIFETIME` value.
+  The translation into `model.BudgetType` lives in the dispatcher, not here.
+
+`campaign_budget` is an ATTRIBUTED resource of `campaign`, which is what allows its fields
+in a `FROM campaign` query. Attribution does not segment, so the at-most-one-row guard
+still holds — and the query deliberately selects no `metrics.*` or `segments.*` field,
+either of which would segment the result and make that guard fire on healthy campaigns.
+
+Same fail-closed contract as `GetCampaign`: one campaign yields settings, a genuine
+absence yields `(nil, nil)`, and anything unverifiable is an error. The same
+decode-integrity guards run too (invalid UTF-8, unpaired surrogate escapes, duplicate JSON
+keys, an unhonoured id filter). Unlike `GetCampaign`, REMOVED campaigns are NOT filtered:
+"removed upstream" is the most actionable divergence this read can surface, and excluding
+it would report the campaign as absent and hide the finding.
+
+A budget that is PRESENT but unparseable is an error rather than an absence —
+`parseSettingsInt` differs from `parseMetricInt` in exactly this way, because a budget is
+not a counter: an empty one is a field that could not be read, and answering `0` would be
+a claim about the campaign rather than about the read. The malformed value is never echoed
+into the error, only the field name.
 
 ## Metrics reads (GA-5)
 

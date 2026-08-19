@@ -330,6 +330,31 @@ type GetCampaignMetricsResponseBody struct {
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
+// GetCampaignSettingsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body.
+type GetCampaignSettingsResponseBody struct {
+	// Campaign UUID
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The id the PLATFORM echoed back for this campaign, not the one requested.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// The channel that runs this campaign.
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// When the platform was read (RFC3339, UTC). A readback is a point-in-time
+	// observation and says nothing about the campaign after this instant.
+	ReadAt string `form:"read_at" json:"read_at" xml:"read_at"`
+	// Every setting compared, in a stable order, INCLUDING the ones that could not
+	// be compared — a field missing from this list would be indistinguishable from
+	// one this service does not know about.
+	Fields []*CampaignSettingsFieldResponseBody `form:"fields" json:"fields" xml:"fields"`
+	// How many fields carry the `diverged` verdict.
+	DivergedCount int `form:"diverged_count" json:"diverged_count" xml:"diverged_count"`
+	// How many fields could not be compared. Reported separately from
+	// diverged_count rather than folded into it: "2 differ" reads very differently
+	// next to "and 5 could not be read".
+	UnknownCount int `form:"unknown_count" json:"unknown_count" xml:"unknown_count"`
+}
+
 // GetBriefMetricsResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body.
@@ -1048,6 +1073,59 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetCampaignSettingsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetCampaignSettingsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignSettingsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "Conflict" error.
+type GetCampaignSettingsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetCampaignSettingsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetCampaignSettingsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignSettingsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetCampaignSettingsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignSettingsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "NotFound" error.
+type GetCampaignSettingsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetBriefMetricsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1442,6 +1520,24 @@ type EmailMetricsResponseBody struct {
 	Unsubscribes int64 `form:"unsubscribes" json:"unsubscribes" xml:"unsubscribes"`
 }
 
+// CampaignSettingsFieldResponseBody is used to define fields on response body
+// types.
+type CampaignSettingsFieldResponseBody struct {
+	// The setting's name in this service's own vocabulary, matching the campaign
+	// row's column names rather than the platform's field names.
+	Field string `form:"field" json:"field" xml:"field"`
+	// What the campaign row records — what this dispatch ASKED FOR. Absent when
+	// the row records nothing for this field.
+	Recorded *string `form:"recorded,omitempty" json:"recorded,omitempty" xml:"recorded,omitempty"`
+	// What the platform currently holds, read live. Absent when the platform did
+	// not return the field — never a zero standing in for one.
+	Upstream *string `form:"upstream,omitempty" json:"upstream,omitempty" xml:"upstream,omitempty"`
+	// The verdict. `match` and `diverged` both require BOTH sides to have been
+	// read; `unknown` means the comparison could not be made and is deliberately
+	// NOT folded into `match`.
+	Comparison string `form:"comparison" json:"comparison" xml:"comparison"`
+}
+
 // BriefMetricsRowResponseBody is used to define fields on response body types.
 type BriefMetricsRowResponseBody struct {
 	// Campaign UUID
@@ -1786,6 +1882,33 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 	}
 	if res.Email != nil {
 		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)
+	}
+	return body
+}
+
+// NewGetCampaignSettingsResponseBody builds the HTTP response body from the
+// result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsResponseBody(res *lfxv2campaignservicebriefs.CampaignSettingsReadback) *GetCampaignSettingsResponseBody {
+	body := &GetCampaignSettingsResponseBody{
+		CampaignID:         res.CampaignID,
+		PlatformCampaignID: res.PlatformCampaignID,
+		Platform:           res.Platform,
+		ReadAt:             res.ReadAt,
+		DivergedCount:      res.DivergedCount,
+		UnknownCount:       res.UnknownCount,
+	}
+	if res.Fields != nil {
+		body.Fields = make([]*CampaignSettingsFieldResponseBody, len(res.Fields))
+		for i, val := range res.Fields {
+			if val == nil {
+				body.Fields[i] = nil
+				continue
+			}
+			body.Fields[i] = marshalLfxv2campaignservicebriefsCampaignSettingsFieldToCampaignSettingsFieldResponseBody(val)
+		}
+	} else {
+		body.Fields = []*CampaignSettingsFieldResponseBody{}
 	}
 	return body
 }
@@ -2554,6 +2677,62 @@ func NewGetCampaignMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.N
 	return body
 }
 
+// NewGetCampaignSettingsBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetCampaignSettingsBadRequestResponseBody {
+	body := &GetCampaignSettingsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignSettingsConflictResponseBody builds the HTTP response body
+// from the result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetCampaignSettingsConflictResponseBody {
+	body := &GetCampaignSettingsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetCampaignSettingsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetCampaignSettingsServiceUnavailableResponseBody {
+	body := &GetCampaignSettingsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignSettingsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetCampaignSettingsInternalServerErrorResponseBody {
+	body := &GetCampaignSettingsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignSettingsNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCampaignSettingsNotFoundResponseBody {
+	body := &GetCampaignSettingsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetBriefMetricsBadRequestResponseBody builds the HTTP response body from
 // the result of the "get-brief-metrics" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3081,6 +3260,18 @@ func NewGetCampaignMetricsPayload(projectID string, briefID string, campaignID s
 	v.BriefID = briefID
 	v.CampaignID = campaignID
 	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetCampaignSettingsPayload builds a lfx-v2-campaign-service-briefs
+// service get-campaign-settings endpoint payload.
+func NewGetCampaignSettingsPayload(projectID string, briefID string, campaignID string, bearerToken *string) *lfxv2campaignservicebriefs.GetCampaignSettingsPayload {
+	v := &lfxv2campaignservicebriefs.GetCampaignSettingsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
 	v.BearerToken = bearerToken
 
 	return v
