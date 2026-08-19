@@ -178,10 +178,24 @@ func TestClientCache_RedditRotationForcesRebuild(t *testing.T) {
 	redditProbe(t, c2)
 
 	// A reconnect is the case version alone cannot catch: Delete soft-deletes and Create INSERTs a
-	// fresh row whose version starts at the column DEFAULT of 1, so a disconnect/reconnect
-	// produces a DIFFERENT row at the SAME key and the SAME version 1 as the very first fixture.
-	// Only the row id separates them.
-	repo.row = redditCacheConn("conn-2", goodRedditCreds, "t2_other", 1)
+	// fresh row, so a disconnect/reconnect can present a DIFFERENT row at the SAME key carrying a
+	// version the cache has already seen. Only the row id separates them.
+	//
+	// The fixture has to be built so the row id is the ONLY thing that can force the rebuild,
+	// which takes two things beyond changing the id:
+	//
+	//   - the credential and the account id are held CONSTANT, so neither the upstream
+	//     credential cache nor differing plaintext can force it; and
+	//   - the version MATCHES the version the cached entry carries. This is the part that is
+	//     easy to get wrong: the rotation above left a version-2 entry cached, so a reconnect
+	//     landing at version 1 would miss on the VERSION comparison alone and never consult
+	//     connID at all. Reconnecting at version 2 makes (version) agree and (row id) the sole
+	//     discriminator — which is exactly the state the connID check exists for.
+	//
+	// Verified by mutation: deleting `|| entry.connID != connID` from clientCache.get fails this
+	// test. It did NOT fail an earlier fixture that reconnected at version 1 with a different
+	// account id, because the version mismatch was silently doing the work.
+	repo.row = redditCacheConn("conn-2", goodRedditCreds, "t2_acct", 2)
 
 	c3, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
 	if err != nil {
@@ -189,11 +203,8 @@ func TestClientCache_RedditRotationForcesRebuild(t *testing.T) {
 	}
 	if c3 == c2 || c3 == c1 {
 		t.Fatal("a previously cached client was served after a disconnect/reconnect: the new row " +
-			"restarts at version 1, so version alone cannot tell it from the row it replaced, and " +
-			"the cached client keeps acting on the account the project just removed")
-	}
-	if got := c3.AccountID(); got != "t2_other" {
-		t.Errorf("client account = %q, want the reconnected account t2_other", got)
+			"carries the same version as the row it replaced, so version alone cannot tell them " +
+			"apart, and the cached client keeps acting on the connection the project just removed")
 	}
 	redditProbe(t, c3)
 	// Three DISTINCT clients each minted their own token. Asserting the count — not just
@@ -331,7 +342,11 @@ func TestClientCache_MicrosoftRotationForcesRebuild(t *testing.T) {
 	}
 	microsoftProbe(t, c2)
 
-	repo.row = microsoftCacheConn("conn-2", goodMicrosoftCreds, "222222", 1)
+	// The reconnect step: same credential, same account id, and the SAME version the cached entry
+	// carries — so the row id is the only thing left that can force the rebuild. See the Reddit
+	// counterpart for why reconnecting at version 1 here would leave the connID check unpinned:
+	// the rotation above cached version 2, so version alone would already miss.
+	repo.row = microsoftCacheConn("conn-2", goodMicrosoftCreds, "111111", 2)
 
 	c3, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
 	if err != nil {
@@ -339,11 +354,8 @@ func TestClientCache_MicrosoftRotationForcesRebuild(t *testing.T) {
 	}
 	if c3 == c2 || c3 == c1 {
 		t.Fatal("a previously cached client was served after a disconnect/reconnect: the new row " +
-			"restarts at version 1, so version alone cannot tell it from the row it replaced, and " +
-			"the cached client keeps acting on the account the project just removed")
-	}
-	if got := c3.AccountID(); got != "222222" {
-		t.Errorf("client account = %q, want the reconnected account 222222", got)
+			"carries the same version as the row it replaced, so version alone cannot tell them " +
+			"apart, and the cached client keeps acting on the connection the project just removed")
 	}
 	microsoftProbe(t, c3)
 	// Three DISTINCT clients each minted their own token — see the Reddit counterpart for why

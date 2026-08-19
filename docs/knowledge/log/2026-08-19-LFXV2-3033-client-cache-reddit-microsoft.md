@@ -30,15 +30,60 @@ discovery client is deliberately left UNCACHED for a different reason: it is bui
 `AccountConfig`, so caching it under the connection's identity would let discovery and dispatch
 serve each other's client.
 
+**The provider roster now lives in exactly one place.** Three live source comments enumerated
+which dispatchers were cached, and wiring Reddit and Microsoft falsified two of them outright:
+`credcache.go`'s "wired today only into Google Ads", and `creds.go`'s "which today exists only for
+Google Ads … Reddit and Microsoft still rebuild per resolve and still re-mint" — the latter naming
+the very two providers this change wired. A third, `clientCache`'s own concurrency paragraph,
+presented `googleads.Client`'s mutex as the safety argument for a field typed `any` that now also
+holds `*reddit.Client` and `*microsoft.Client`.
+
+Rather than correct three enumerations into three new enumerations that the LinkedIn/Meta/X
+follow-up would falsify again, the roster (wired: Google Ads, Reddit, Microsoft; deferred:
+LinkedIn, Meta, X/Twitter) and the discovery-path exclusions now live on `clientCache`'s doc
+comment ONLY, and the other sites point at it. The concurrency paragraph was restated as the
+abstract property every stored client must hold — guards its token cache with a mutex, stashes no
+per-call state on the receiver — with the verification delegated to the per-dispatcher `clients`
+field comments, plus the explicit warning that a future provider whose client stashes per-call
+state must not be wired without changing the client first. `googleads.go`'s `clients` comment
+gained the concurrency paragraph its Reddit and Microsoft counterparts already had.
+
 **This is a deliberate partial rollout.** LinkedIn, Meta and X/Twitter are NOT wired, because open
 PRs owned those files (cs#148 linkedin, cs#152 meta+twitter, cs#158 meta) and touching them would
 have created merge conflicts. They still rebuild per resolve and still re-mint per operation. The
 follow-up should reuse this same pattern once those PRs land.
 
 Six tests were added in `internal/dispatch/clientcache_providers_test.go` — reuse, rotation +
-reconnect, and cold-key concurrent coalescing, per provider. Each was mutation-verified with a
-compiling revert: bypassing the Reddit cache killed the Reddit reuse and coalescing tests,
-bypassing the Microsoft cache killed the Microsoft pair, and disabling the `(connID, version)`
-guard in `clientCache.get` killed both rotation tests (along with the two pre-existing Google Ads
-ones). The rotation tests assert the token-exchange COUNT rather than only pointer inequality, so
-a cache that returned a fresh wrapper around a shared token would not pass them.
+reconnect, and cold-key concurrent coalescing, per provider. The rotation tests assert the
+token-exchange COUNT rather than only pointer inequality, so a cache that returned a fresh wrapper
+around a shared token would not pass them.
+
+**A rotation-test fixture agreed with itself, and the mutation that exposed it is worth keeping.**
+The claim above that disabling the `(connID, version)` guard "killed both rotation tests" was
+FALSE as first written. Deleting only `|| entry.connID != connID` from `clientCache.get` — a
+compiling mutation that leaves `credCache` intact, so just the CLIENT cache loses its row-identity
+check — left all six new tests green; only the pre-existing
+`TestClientCache_ReconnectAtSameVersionRebuildsClient` failed. Two things were doing the work
+instead of the assertion:
+
+- The reconnect step changed the account id and credential ALONGSIDE the row id
+  (`"conn-1"/"t2_acct"` → `"conn-2"/"t2_other"`), so the upstream credential cache and the
+  differing plaintext forced the rebuild on their own.
+- More subtly, and the part that survived a first fix attempt: the reconnect landed at **version 1
+  while the rotation step above had already cached version 2**. The entry therefore missed on the
+  VERSION comparison and `connID` was never consulted at all — holding the credential and account
+  id constant was necessary but NOT sufficient.
+
+The fix is to reconnect at the SAME version the cached entry carries (version 2), changing only
+the row id, which makes `connID` the sole discriminator. Both rotation tests now fail under that
+mutation with the intended message. The `c3.AccountID()` assertions were dropped: once the account
+id is held constant they no longer discriminate.
+
+The general lesson is the one that generalises past this cache: a reconnect fixture has to hold
+**every** component of the cache identity constant except the one under test, and "version
+restarts at 1" is a fact about the schema, not a safe fixture — what matters is the version the
+CACHED entry holds at that moment.
+
+The other four mutations do bind as described: bypassing the Reddit cache killed the Reddit reuse
+and coalescing tests, bypassing the Microsoft cache killed the Microsoft pair, and forcing
+`clientCache.get` to always miss failed four of the six with their intended messages.

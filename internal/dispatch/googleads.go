@@ -137,6 +137,13 @@ type GoogleAdsDispatcher struct {
 	// rebuilt client re-mints it even when the credential was a cache hit (measured at five token
 	// hits across five resolves before this). Entries are validated against the same row id and
 	// version as the credential, so a rotated credential cannot be served through a stale client.
+	//
+	// Sharing one instance across concurrent callers is safe for this client specifically: the
+	// only fields written after construction are the token cache and the in-flight refresh
+	// handle, both exclusively under c.tokenMu (client.go accessTokenValue), and no method
+	// stores per-call state on the receiver — the account config is written once at construction
+	// and thereafter read-only. That is a per-client property, not a property of the cache; see
+	// clientCache's doc comment.
 	clients *clientCache
 	opts    []googleads.Option
 }
