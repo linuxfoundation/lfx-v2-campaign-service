@@ -265,7 +265,7 @@ the orchestrator.
 
 ### Conversions: which platforms can report one (LFXV2-3314)
 
-`model.CampaignMetrics.Conversions` is a `*int64`, and the pointer is load-bearing: **absent
+`model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent
 means "this channel does not report a campaign-level conversion count", which is not the same
 claim as a measured zero.** Only three of the seven adapters populate it, and which three was
 settled field-by-field against each vendor's published reference rather than inferred from what
@@ -288,11 +288,26 @@ Three corrections that a plausible-looking implementation would have got wrong:
   inaccurate" because it cannot carry the decimal conversion values Microsoft now supports —
   so reading the obvious column would have produced a *wrong* number, not merely an older one.
 - **Google's and Microsoft's counts are doubles, not integers.** Both credit fractional
-  conversions under attribution models that split credit, so both are ROUNDED rather than
-  truncated: truncating would report a campaign holding 0.8 of a conversion as having none.
+  conversions under attribution models that split credit, so both adapters carry the value
+  through UNROUNDED — the domain field is a `*float64` and the fraction survives to it. Neither
+  rounding nor truncating is safe: either would report a campaign holding 0.8 of a conversion
+  as having none, and `no_conversions` fires on exactly zero, so it would manufacture the very
+  finding the rule exists to report honestly.
 - **Microsoft's conversions column is resolved but NOT required.** It is only populated for
   accounts using Universal Event Tracking, so requiring it would break the whole read —
   impressions, clicks and spend included — for every account that does not track conversions.
+- **A BLANK Microsoft conversions cell is an absence, not a zero, and it withdraws the whole
+  total.** A present `ConversionsQualified` column can still carry empty cells, because the
+  column is only populated for UET-enabled accounts. `foldReportRows` therefore reads it with
+  `parseConversionCell`, not the spend-shaped `parseReportFloat` — the latter maps an empty
+  cell to `0`, which is correct for spend/impressions/clicks (a blank there genuinely means
+  nothing was spent or served) and wrong here. If **any** row's cell is blank, `Conversions`
+  is left nil for the entire report rather than summing the rows that did carry a value:
+  a partial sum is published to every consumer as a complete measurement with nothing left in
+  the type to say otherwise, so a report with four blank cells and one reading `0` would total
+  exactly `0` and fire `no_conversions` High against a campaign whose real count is unknown.
+  This mirrors `reportDataIsIncomplete`, which refuses a flagged report on the flag alone,
+  "whatever the rows happen to contain".
 
 For the four that cannot report one, the field is left **absent rather than zero**. A fabricated
 zero is indistinguishable from a measured one to every consumer, and it would make the

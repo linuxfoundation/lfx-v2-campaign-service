@@ -605,6 +605,11 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 	}
 
 	out := &model.CampaignMetrics{CampaignID: campaignID, Window: window}
+	// Accumulated OUTSIDE out so a blank cell found on a later row can still withdraw the
+	// total. Writing straight to out.Conversions would leave a partial sum published by any
+	// row that ran before the blank one was reached.
+	var convTotal *float64
+	convIncomplete := false
 	for _, row := range rows {
 		imp, err := parseReportInt(row, impCol)
 		if err != nil {
@@ -666,23 +671,50 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 		// for a campaign that converted eight times. The no_conversions rule reads this total,
 		// so that rounding would manufacture the finding rather than measure it.
 		if convOK {
-			conv, cerr := parseReportFloat(row, convCol)
+			conv, present, cerr := parseConversionCell(row, convCol)
 			if cerr != nil {
 				return nil, fmt.Errorf("conversionsQualified: %w", cerr)
+			}
+			// A BLANK cell is an absence, not a zero, and it poisons the WHOLE total rather
+			// than being skipped over.
+			//
+			// The alternative — sum the rows that do carry a value and report that — was
+			// rejected deliberately. It presents a PARTIAL count to every consumer as a
+			// complete measurement, with nothing in the type left to say otherwise. Consider
+			// a five-row report where four cells are blank and the fifth reads "0": summing
+			// the present rows yields exactly 0, and the no_conversions rule fires High
+			// against a campaign whose real conversion count is simply unknown. That is the
+			// rule manufacturing its own finding — the same defect that per-row rounding
+			// caused and that the comment above exists to prevent.
+			//
+			// nil already means precisely "Microsoft did not tell us", which is the honest
+			// answer for an incomplete column, and model.CampaignMetrics.Conversions
+			// documents that the rule refuses to fire on nil. This mirrors the file's own
+			// precedent directly above: reportDataIsIncomplete refuses a flagged report on
+			// the flag alone, "whatever the rows happen to contain". Incomplete conversion
+			// data is the same claim arriving one column lower.
+			if !present {
+				convIncomplete = true
+				continue
 			}
 			if math.IsNaN(conv) || math.IsInf(conv, 0) || conv < 0 {
 				return nil, fmt.Errorf("conversionsQualified: non-finite or negative value %v", conv)
 			}
 			var running float64
-			if out.Conversions != nil {
-				running = *out.Conversions
+			if convTotal != nil {
+				running = *convTotal
 			}
 			total := running + conv
 			if math.IsInf(total, 0) {
 				return nil, fmt.Errorf("conversionsQualified: total would overflow")
 			}
-			out.Conversions = &total
+			convTotal = &total
 		}
+	}
+	// Published only if EVERY row carried a value. One blank cell anywhere in the column
+	// leaves Conversions nil — see the reasoning at the accumulation site.
+	if !convIncomplete {
+		out.Conversions = convTotal
 	}
 	if out.Impressions > 0 {
 		out.Ctr = float64(out.Clicks) / float64(out.Impressions)
@@ -899,6 +931,36 @@ func parseReportFloat(row []string, col int) (float64, error) {
 		return 0, fmt.Errorf("unparseable value %q", cell)
 	}
 	return v, nil
+}
+
+// parseConversionCell reads a ConversionsQualified cell, distinguishing a BLANK cell from a
+// measured zero. present is false for an empty cell; the returned float is meaningless then.
+//
+// Deliberately NOT parseReportFloat. That function maps an empty cell to 0 and is correct for
+// spend, impressions and clicks: those columns are always populated for a row Microsoft
+// returned at all, and a blank there legitimately means the campaign spent nothing / served
+// nothing that day. ConversionsQualified is different in kind — it is only populated for
+// accounts wired up to Universal Event Tracking, and Microsoft notes the qualified column is
+// "not yet available" to every advertiser. A blank cell there means Microsoft did not report a
+// count for the row, which is the same fact the ABSENT-column case already answers with nil.
+//
+// The precedent is the pointer discipline in googleads/metrics.go, where Conversions is a
+// *float64 decoded from a JSON number precisely so an omitted count stays distinguishable from
+// a measured one: a value that was never reported is not silently defaulted into a number.
+func parseConversionCell(row []string, col int) (value float64, present bool, err error) {
+	if col >= len(row) {
+		return 0, false, fmt.Errorf("row has %d columns, wanted column %d", len(row), col)
+	}
+	cell := strings.TrimSpace(row[col])
+	if cell == "" {
+		return 0, false, nil
+	}
+	cell = strings.ReplaceAll(cell, ",", "")
+	v, err := strconv.ParseFloat(cell, 64)
+	if err != nil {
+		return 0, false, fmt.Errorf("unparseable value %q", cell)
+	}
+	return v, true, nil
 }
 
 // reportDateRange maps the shared window vocabulary to a start/end date pair in UTC.
