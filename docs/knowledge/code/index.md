@@ -9,6 +9,7 @@
 * [internal/dispatch](internal-dispatch.md) - Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder.
 * [internal/infrastructure/auth](internal-infrastructure-auth.md) - Verifies the Heimdall-issued bearer token against Heimdall's JWKS (PS256, issuer, audience, expiry, non-empty principal) and turns its claims into the domain actor recorded on writes.
 * [internal/infrastructure/config](internal-infrastructure-config.md) - Application configuration from CLI flags and env vars, including PG* composition into a PostgreSQL DSN and optional SNOWFLAKE_* warehouse credentials.
+* [internal/infrastructure/metrics](internal-infrastructure-metrics.md) - Prometheus registry and instruments served at the unauthenticated /metrics endpoint: dispatch outcomes, job transitions, upstream platform latency and DB pool health, with every label bounded and the latency histogram bucketed to the service's own call budgets.
 * [internal/infrastructure/postgres](internal-infrastructure-postgres.md) - PostgreSQL pool (otelpgx), migrations, repositories, and Ready() for readiness probes.
 * [internal/middleware](internal-middleware.md) - Package middleware provides HTTP middleware for the service.
 * [internal/platform/reddit](internal-platform-reddit.md) - Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run).
@@ -23,6 +24,7 @@
 * [internal/platform/snowflake](internal-platform-snowflake.md) - Read-only Snowflake client for the email channel: resolves past-edition EVENT_NAME strings from PLATINUM_LFX_ONE for HubSpot BEHAVIORAL_EVENT filters.
 * [internal/service](internal-service.md) - Campaign service business logic, including Readyz (DB-backed readiness) and Livez (process-only liveness).
 * [internal/service/email_copy](internal-service-email-copy.md) - AI-generated email copy (subject, preheader, body, CTA) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured.
+* [internal/service/rules](internal-service-rules.md) - One implementation of campaign pacing and operator action items, replacing four UI copies that disagreed on thresholds three ways. Pacing is spend against what a flight expects BY NOW, computed over the same period the spend figure covers, with incomputable kept distinct from zero.
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG*, DATABASE_URL and AI_* environment variable names.
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
 * [pkg/redact](pkg-redact.md) - Renders credential-bearing values into log-safe forms; strips URL userinfo entirely, unlike url.URL.Redacted().

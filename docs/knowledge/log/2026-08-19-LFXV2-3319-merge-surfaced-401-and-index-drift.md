@@ -1,4 +1,4 @@
-# 2026-08-19 — LFXV2-3319 the merge surfaced a 500-instead-of-401 and four stale index bullets
+# 2026-08-19 — LFXV2-3319 the merge surfaced a 500-instead-of-401 and index drift in both directions
 
 **Fix** — two defects that neither `feat/LFXV2-3319-x-ads-discovery` nor `main` had on its
 own. The branch was cut 14 commits behind; both failures exist only in the *combination* of
@@ -65,3 +65,35 @@ The sweep ran over every bullet in the file, not only the four the validator nam
 bullet is only reported once the file it points at is read, and the four were what the
 validator reached first. No fifth bullet was stale. The twitter bullet retains this branch's
 own "ad-account discovery" addition, which is 3319's contribution and had to survive the sync.
+
+### That sweep had the wrong shape: it never asked which bullets were MISSING
+
+"No fifth bullet was stale" is true and was the wrong question. A sweep over the bullets
+*present* in the file can only ever find drift among them; it cannot report a bullet that is
+not there to be swept. Two were not: the merge silently dropped the `internal/infrastructure/
+metrics` and `internal/service/rules` bullets, whose concept files both exist. `main` added
+them (`2ff11794`, `0e50a34a`) during the 14 commits this branch sat behind, the branch parent
+`48f7bde8` never carried them, and resolving the index conflict as a three-way union of the
+*conflicted lines* kept only what the two sides disagreed about. A line present on one side
+and absent on the other produces no conflict marker, so nothing in the resolution surfaced it.
+That is the general trap: **conflict markers show disagreement, not absence.**
+
+Nor could CI report it. `internal/okfvalidate/validate.go`'s `validateIndex` walks the `* `
+lines of `index.md` and checks each one — format, then `checkBulletDescription` against the
+linked concept. `validateConcept` validates a concept file in isolation and never consults the
+index. There is no pass in either direction that asks whether every concept HAS a bullet, so
+`TestValidateRealBundle` passed clean with two concepts unindexed. The index is the surface an
+agent reads first to decide which file to open, so an unindexed concept is effectively
+invisible — a worse failure than the stale descriptions the validator does catch.
+
+The repair restores both bullets in `main`'s ordering (metrics after `internal/infrastructure/
+config`, rules after `internal/service/email_copy`), with each description read out of its
+concept file's frontmatter by `okf.ParseFrontmatter` rather than retyped, since the comparison
+is exact and untrimmed. The sweep was then re-run in BOTH directions over the whole file: 30
+concept files against 30 bullets, zero unindexed concepts, zero bullets naming a missing
+concept, zero description mismatches. No third concept was unindexed.
+
+The durable lesson is the direction, not the two bullets: after resolving a conflict in an
+index, a manifest, a registry or any file whose job is to enumerate something else, verify the
+enumeration against what it enumerates in BOTH directions. Checking only the entries you can
+see confirms the entries you kept and says nothing about the ones you lost.

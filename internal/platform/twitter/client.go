@@ -430,11 +430,14 @@ func (r *apiResponse) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &e); err != nil {
 		return err
 	}
-	// Decode a second time into a key-presence map. This cannot fail for a body the
-	// first pass accepted UNLESS the body is a valid JSON non-object (a bare array,
-	// string or number), which no X envelope is — treat that as no key present rather
-	// than as an error, so the presence bit degrades to the conservative answer instead
-	// of rejecting a body the shared path already accepted.
+	// Decode a second time into a key-presence map. The first pass decodes into a
+	// STRUCT, so it has already rejected every valid-JSON non-object that could carry
+	// no key — a bare array, string, number or bool all fail there and return above,
+	// never reaching this probe. The only non-object that gets this far is a literal
+	// `null`, which both passes accept and which leaves the map nil, so the presence
+	// bit reads false. The error is therefore ignored rather than handled: it is not
+	// reachable for a body the first pass accepted, and the conservative "no key
+	// present" is the correct answer for the one body that does reach it.
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(b, &keys); err == nil {
 		_, e.NextCursorPresent = keys["next_cursor"]
