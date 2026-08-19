@@ -3,6 +3,23 @@
 **Fix** — two defects in the conversions metric added earlier on this branch, both raised in
 review and both confirmed against the vendors' published field references before being changed.
 
+This entry SUPERSEDES `2026-08-18-LFXV2-3314-conversions-metric.md` on two points, which are
+left standing there because the log is append-only and an entry describes the revision that
+wrote it: that entry's `Conversions *int64` is now `*float64` on `model.CampaignMetrics`,
+`rules.Input` and the `campaign-metrics` wire type alike, and its "Both are rounded, not
+truncated" no longer describes any adapter — none rounds. Read that entry for why the metric
+exists and this one for the types it actually ships with.
+
+**Two comments outlived the rounding they described.** Removing the rounding left prose behind
+at sites the type change did not touch, so the code and its own commentary disagreed. The
+Microsoft column block still said `foldReportRows` "parses it as a float and rounds" while the
+same function's body twenty lines down said the fraction is kept — and it is; the file's only
+`math.Round` scales spend. A `rules` test helper's godoc still opened by naming `int64p`, a
+symbol the refactor renamed to `convp` and which no longer exists anywhere. Both are the same
+class as the superseded fragment above: a sentence describing a revision that a later commit on
+the SAME branch replaced. When a type change removes an operation, the comments asserting that
+operation are part of the change, not adjacent to it.
+
 **The contract could not represent a fractional conversion.** `conversions` was typed `Int64`
 through the design, the domain model and the rules input, and both the Google Ads and Microsoft
 adapters ROUNDED their platform value to reach it. Google types `metrics.conversions` as DOUBLE

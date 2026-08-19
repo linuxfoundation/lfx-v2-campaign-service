@@ -236,7 +236,9 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			//
 			// The docs give ConversionsQualified's type as **double** ("You should expect the
 			// data type as double whether or not there are partial externally attributed
-			// offline conversions"), so foldReportRows parses it as a float and rounds.
+			// offline conversions"), so foldReportRows parses it as a float and KEEPS the
+			// fraction. It does not round: rounding per row and then summing compounds the
+			// error across the report, and the no_conversions rule reads that total.
 			"Columns": []string{
 				"CampaignId", "Impressions", "Clicks", "Spend", "ConversionsQualified",
 			},

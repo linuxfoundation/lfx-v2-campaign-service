@@ -334,10 +334,10 @@ func TestEvaluate_EveryRuleRespectsTheRunState(t *testing.T) {
 	}
 }
 
-// int64p is a local helper for building the Conversions pointer, which every test below
+// convp is a local helper for building the Conversions pointer, which every test below
 // needs because the field's whole purpose is to distinguish nil from a pointer to zero.
-// convp is the conversions helper: the field is a float64 because Google Ads and Microsoft
-// both credit fractional conversions.
+// The field is a float64 because Google Ads and Microsoft both credit fractional
+// conversions.
 func convp(v float64) *float64 { return &v }
 
 // The rule's reason for existing: real traffic, no conversions from it.
