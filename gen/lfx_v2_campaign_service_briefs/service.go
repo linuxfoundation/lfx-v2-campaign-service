@@ -320,6 +320,12 @@ type CampaignMetrics struct {
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
+	// Conversions attributed to this campaign over the window. ABSENT when the
+	// channel does not report a campaign-level conversion count (Meta, X, Reddit
+	// and the email channel never do) — absent means "not measured here", which is
+	// NOT the same as a measured 0, and a consumer must not render it as zero or
+	// fold it into a conversion total.
+	Conversions *int64
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetrics

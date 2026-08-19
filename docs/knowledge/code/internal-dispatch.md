@@ -259,6 +259,43 @@ platform's actual query syntax (e.g. Google Ads' GAQL `DURING` literals, Meta's 
 guard against GAQL injection) belongs in that platform's client package, not in the adapter or
 the orchestrator.
 
+### Conversions: which platforms can report one (LFXV2-3314)
+
+`model.CampaignMetrics.Conversions` is a `*int64`, and the pointer is load-bearing: **absent
+means "this channel does not report a campaign-level conversion count", which is not the same
+claim as a measured zero.** Only three of the seven adapters populate it, and which three was
+settled field-by-field against each vendor's published reference rather than inferred from what
+the clients happened to request:
+
+| Platform | Reports conversions? | Field / column | Type |
+|---|---|---|---|
+| Google Ads | Yes | `metrics.conversions` (added to the GAQL SELECT) | `DOUBLE` — a bare JSON number, unlike the int64 metrics Google encodes as strings |
+| LinkedIn | Yes | `externalWebsiteConversions`, named in the request's `fields` list | `long` |
+| Microsoft | Yes | `ConversionsQualified` report column | `double` |
+| Meta | **No scalar** | conversions live in the Insights `actions` array as `{action_type, value}` | — |
+| X (Twitter) | **No scalar** | split across `conversion_purchases`, `conversion_sign_ups`, … each a JSON object, under metric groups this client does not request | — |
+| Reddit | **Unknown** | the v3 reporting contract has no public documentation at all | — |
+| HubSpot (email) | **No such concept** | the statistics counter vocabulary contains no conversion counter | — |
+
+Three corrections that a plausible-looking implementation would have got wrong:
+
+- **Microsoft's `Conversions` column is DEPRECATED as of 2022.** Microsoft's own reference
+  directs callers to `ConversionsQualified` and warns the legacy column's values "may be
+  inaccurate" because it cannot carry the decimal conversion values Microsoft now supports —
+  so reading the obvious column would have produced a *wrong* number, not merely an older one.
+- **Google's and Microsoft's counts are doubles, not integers.** Both credit fractional
+  conversions under attribution models that split credit, so both are ROUNDED rather than
+  truncated: truncating would report a campaign holding 0.8 of a conversion as having none.
+- **Microsoft's conversions column is resolved but NOT required.** It is only populated for
+  accounts using Universal Event Tracking, so requiring it would break the whole read —
+  impressions, clicks and spend included — for every account that does not track conversions.
+
+For the four that cannot report one, the field is left **absent rather than zero**. A fabricated
+zero is indistinguishable from a measured one to every consumer, and it would make the
+`no_conversions` rule fire on every campaign on those platforms forever. Deriving a single number
+for Meta or X would additionally require choosing which action types count as a conversion — a
+per-advertiser attribution policy this service is never given.
+
 **Microsoft Ads implements `MetricsReader` as of LFXV2-3260**, but the read is gated OFF
 by default. Its Campaign Management API v13 (REST/JSON, synchronous — what the create
 dispatcher and status toggle use) has no metrics surface; metrics live in a separate

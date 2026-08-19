@@ -1875,6 +1875,7 @@ paths:
                             example:
                                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 clicks: 212
+                                conversions: 37
                                 cost_micros: 0
                                 ctr: 0.1152
                                 email:
@@ -2334,19 +2335,19 @@ paths:
                                       issue: No impressions or spend recorded
                                       platform: reddit-ads
                                       priority: MED
-                                      rule: budget_constrained
+                                      rule: zero_delivery
                                     - action: Check targeting and creative approval status
                                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                       issue: No impressions or spend recorded
                                       platform: reddit-ads
                                       priority: MED
-                                      rule: budget_constrained
+                                      rule: zero_delivery
                                     - action: Check targeting and creative approval status
                                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                       issue: No impressions or spend recorded
                                       platform: reddit-ads
                                       priority: MED
-                                      rule: budget_constrained
+                                      rule: zero_delivery
                                 brief_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 ok_count: 2
                                 rows:
@@ -2354,6 +2355,7 @@ paths:
                                       metrics:
                                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                         clicks: 212
+                                        conversions: 37
                                         cost_micros: 0
                                         ctr: 0.1152
                                         email:
@@ -2376,6 +2378,7 @@ paths:
                                       metrics:
                                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                         clicks: 212
+                                        conversions: 37
                                         cost_micros: 0
                                         ctr: 0.1152
                                         email:
@@ -2398,6 +2401,7 @@ paths:
                                       metrics:
                                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                         clicks: 212
+                                        conversions: 37
                                         cost_micros: 0
                                         ctr: 0.1152
                                         email:
@@ -2420,6 +2424,7 @@ paths:
                                       metrics:
                                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                         clicks: 212
+                                        conversions: 37
                                         cost_micros: 0
                                         ctr: 0.1152
                                         email:
@@ -7570,13 +7575,13 @@ components:
                           issue: No impressions or spend recorded
                           platform: reddit-ads
                           priority: HIGH
-                          rule: low_ctr
+                          rule: no_conversions
                         - action: Check targeting and creative approval status
                           campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                           issue: No impressions or spend recorded
                           platform: reddit-ads
                           priority: HIGH
-                          rule: low_ctr
+                          rule: no_conversions
                 brief_id:
                     type: string
                     description: Brief UUID
@@ -7596,6 +7601,7 @@ components:
                           metrics:
                             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                             clicks: 212
+                            conversions: 37
                             cost_micros: 0
                             ctr: 0.1152
                             email:
@@ -7618,6 +7624,7 @@ components:
                           metrics:
                             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                             clicks: 212
+                            conversions: 37
                             cost_micros: 0
                             ctr: 0.1152
                             email:
@@ -7640,6 +7647,7 @@ components:
                           metrics:
                             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                             clicks: 212
+                            conversions: 37
                             cost_micros: 0
                             ctr: 0.1152
                             email:
@@ -7662,6 +7670,7 @@ components:
                           metrics:
                             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                             clicks: 212
+                            conversions: 37
                             cost_micros: 0
                             ctr: 0.1152
                             email:
@@ -7699,19 +7708,19 @@ components:
                       issue: No impressions or spend recorded
                       platform: reddit-ads
                       priority: HIGH
-                      rule: low_ctr
+                      rule: no_conversions
                     - action: Check targeting and creative approval status
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
                       priority: HIGH
-                      rule: low_ctr
+                      rule: no_conversions
                     - action: Check targeting and creative approval status
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
                       priority: HIGH
-                      rule: low_ctr
+                      rule: no_conversions
                 brief_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 ok_count: 2
                 rows:
@@ -7719,6 +7728,7 @@ components:
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                         clicks: 212
+                        conversions: 37
                         cost_micros: 0
                         ctr: 0.1152
                         email:
@@ -7741,6 +7751,7 @@ components:
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                         clicks: 212
+                        conversions: 37
                         cost_micros: 0
                         ctr: 0.1152
                         email:
@@ -7800,6 +7811,7 @@ components:
                 metrics:
                     campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                     clicks: 212
+                    conversions: 37
                     cost_micros: 0
                     ctr: 0.1152
                     email:
@@ -8121,12 +8133,13 @@ components:
                 rule:
                     type: string
                     description: Which rule fired, as a stable token.
-                    example: budget_constrained
+                    example: low_ctr
                     enum:
                         - zero_delivery
                         - underspending
                         - budget_constrained
                         - low_ctr
+                        - no_conversions
             example:
                 action: Check targeting and creative approval status
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -8226,6 +8239,11 @@ components:
                     description: Clicks over the window on an ad platform; clicks to date on the email channel
                     example: 212
                     format: int64
+                conversions:
+                    type: integer
+                    description: Conversions attributed to this campaign over the window. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do) — absent means "not measured here", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.
+                    example: 37
+                    format: int64
                 cost_micros:
                     type: integer
                     description: 'Cost over the window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.'
@@ -8262,6 +8280,7 @@ components:
             example:
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 clicks: 212
+                conversions: 37
                 cost_micros: 0
                 ctr: 0.1152
                 email:

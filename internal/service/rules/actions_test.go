@@ -333,3 +333,144 @@ func TestEvaluate_EveryRuleRespectsTheRunState(t *testing.T) {
 		t.Error("the same input on an active campaign raised nothing; the gate is over-broad")
 	}
 }
+
+// int64p is a local helper for building the Conversions pointer, which every test below
+// needs because the field's whole purpose is to distinguish nil from a pointer to zero.
+func int64p(v int64) *int64 { return &v }
+
+// The rule's reason for existing: real traffic, no conversions from it.
+func TestEvaluate_NoConversionsFiresOnClicksWithoutConversions(t *testing.T) {
+	in := Input{
+		CampaignID: "c1", Platform: "google-ads", Status: "created",
+		Impressions: 40000, Clicks: 800, Conversions: int64p(0),
+	}
+	got := rulesFired(Evaluate(in))
+	if !contains(got, "no_conversions") {
+		t.Errorf("800 clicks with a measured 0 conversions did not fire no_conversions; fired %v", got)
+	}
+}
+
+// THE binding test for the pointer. An absent conversion count and a measured zero are the
+// same `0` to any int64-shaped field, and they demand opposite responses: a measured zero on
+// a converting-capable platform is the finding, while an absent one means the platform never
+// reported conversions at all and there is nothing to find.
+//
+// A rule that fires on both would flag every Meta, X, Reddit and email campaign in the
+// account forever — reporting the absence of measurement as a campaign defect.
+func TestEvaluate_NoConversionsDistinguishesAbsentFromMeasuredZero(t *testing.T) {
+	base := Input{
+		CampaignID: "c1", Platform: "meta-ads", Status: "created",
+		Impressions: 40000, Clicks: 800,
+	}
+
+	absent := base
+	absent.Conversions = nil
+	if got := rulesFired(Evaluate(absent)); contains(got, "no_conversions") {
+		t.Errorf("no_conversions fired on a platform that reports NO conversion count; "+
+			"an unmeasured campaign was reported as a failing one; fired %v", got)
+	}
+
+	measured := base
+	measured.Conversions = int64p(0)
+	if got := rulesFired(Evaluate(measured)); !contains(got, "no_conversions") {
+		t.Errorf("no_conversions did not fire on a MEASURED zero, which is the finding the "+
+			"rule exists for; fired %v", got)
+	}
+}
+
+// A campaign that IS converting is not a finding, however few conversions it has.
+func TestEvaluate_NoConversionsSilentWhenConversionsExist(t *testing.T) {
+	in := Input{
+		CampaignID: "c1", Platform: "google-ads", Status: "created",
+		Impressions: 40000, Clicks: 800, Conversions: int64p(1),
+	}
+	if got := rulesFired(Evaluate(in)); contains(got, "no_conversions") {
+		t.Errorf("no_conversions fired on a campaign with 1 conversion; fired %v", got)
+	}
+}
+
+// The clicks floor, the direct analogue of minImpressionsForCTR. Below it, zero conversions
+// is ordinary variance rather than a broken funnel, and flagging it teaches operators to
+// dismiss the rule.
+//
+// Asserted at the BOUNDARY on both sides so the constant is pinned rather than merely
+// exercised: a test using 5 and 5000 would pass for any floor between them.
+func TestEvaluate_NoConversionsClickFloor(t *testing.T) {
+	base := Input{
+		CampaignID: "c1", Platform: "google-ads", Status: "created",
+		Impressions: 40000, Conversions: int64p(0),
+	}
+
+	below := base
+	below.Clicks = minClicksForConversions - 1
+	if got := rulesFired(Evaluate(below)); contains(got, "no_conversions") {
+		t.Errorf("no_conversions fired at %d clicks, one BELOW the floor of %d; fired %v",
+			below.Clicks, minClicksForConversions, got)
+	}
+
+	at := base
+	at.Clicks = minClicksForConversions
+	if got := rulesFired(Evaluate(at)); !contains(got, "no_conversions") {
+		t.Errorf("no_conversions did not fire AT the floor of %d clicks; the floor is "+
+			"inclusive; fired %v", minClicksForConversions, got)
+	}
+}
+
+// docs/api-catalog.md states the contract without exception: "Every rule is gated on the
+// campaign's status ... a `paused` campaign raises nothing." A paused campaign's historical
+// clicks must not raise a conversions finding against a decision the operator already made.
+func TestEvaluate_NoConversionsOnlyForLiveStatuses(t *testing.T) {
+	fires := map[string]bool{
+		"created":          true,
+		"created_degraded": true,
+		"active":           true,
+		"paused":           false, // deliberately stopped
+		"pending":          false, // may not have reached the platform
+		"unconfirmed":      false,
+		"group_created":    false,
+		"deleted":          false,
+	}
+	for status, want := range fires {
+		in := Input{
+			CampaignID: "c1", Platform: "google-ads", Status: status,
+			Impressions: 40000, Clicks: 800, Conversions: int64p(0),
+		}
+		got := contains(rulesFired(Evaluate(in)), "no_conversions")
+		if got != want {
+			t.Errorf("status %q: no_conversions fired=%v, want %v", status, got, want)
+		}
+	}
+}
+
+// The item must name the click volume it is reasoning about, so an operator can judge the
+// finding without re-deriving it. Asserts the VALUE reaches the prose, not merely that some
+// prose exists.
+func TestEvaluate_NoConversionsItemShape(t *testing.T) {
+	in := Input{
+		CampaignID: "c-42", Platform: "linkedin-ads", Status: "active",
+		Impressions: 40000, Clicks: 917, Conversions: int64p(0),
+	}
+	var item *ActionItem
+	for _, i := range Evaluate(in) {
+		if i.Rule == "no_conversions" {
+			candidate := i
+			item = &candidate
+		}
+	}
+	if item == nil {
+		t.Fatal("no_conversions did not fire")
+	}
+	if item.Priority != PriorityHigh {
+		t.Errorf("priority = %q, want %q: spending on traffic that never converts is a "+
+			"HIGH finding", item.Priority, PriorityHigh)
+	}
+	if item.CampaignID != "c-42" || item.Platform != "linkedin-ads" {
+		t.Errorf("item does not carry its campaign/platform: %+v", item)
+	}
+	if !strings.Contains(item.Issue, "917") {
+		t.Errorf("issue %q does not name the 917 clicks it is reasoning about", item.Issue)
+	}
+	if item.Action == "" {
+		t.Error("item carries no remedy")
+	}
+}

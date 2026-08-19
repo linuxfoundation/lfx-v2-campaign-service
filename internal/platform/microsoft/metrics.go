@@ -226,8 +226,19 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			// render a partial total as a complete measurement.
 			"ReturnOnlyCompleteData": false,
 			"Aggregation":            "Summary",
+			// ConversionsQualified, NOT Conversions. Microsoft's CampaignPerformanceReportColumn
+			// reference marks the `Conversions` column "deprecated as of 2022", directs callers
+			// to ConversionsQualified instead, and warns that "the values obtained by the
+			// 'Conversions' column may be inaccurate" because it cannot represent the decimal
+			// conversion values Microsoft now supports. Requesting the obvious-looking column
+			// would therefore have produced a WRONG number rather than merely an older one —
+			// exactly the failure-as-measurement class this file refuses everywhere else.
+			//
+			// The docs give ConversionsQualified's type as **double** ("You should expect the
+			// data type as double whether or not there are partial externally attributed
+			// offline conversions"), so foldReportRows parses it as a float and rounds.
 			"Columns": []string{
-				"CampaignId", "Impressions", "Clicks", "Spend",
+				"CampaignId", "Impressions", "Clicks", "Spend", "ConversionsQualified",
 			},
 			// Scope carries ONLY Campaigns. AccountThroughCampaignReportScope — the type of
 			// CampaignPerformanceReportRequest.Scope — documents, on both of its elements,
@@ -560,6 +571,18 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 	impCol, impOK := idx["impressions"]
 	clkCol, clkOK := idx["clicks"]
 	spendCol, spendOK := idx["spend"]
+	// Conversions is resolved but deliberately NOT required, unlike the three above. The
+	// ConversionsQualified column is only populated for accounts set up with Universal Event
+	// Tracking, and Microsoft's own reference notes the qualified column is not yet available
+	// to every advertiser ("Not everyone has this feature yet"). Requiring it would turn an
+	// ordinary read into a hard failure for accounts that simply do not track conversions,
+	// breaking impressions/clicks/spend along with it.
+	//
+	// Absent column means Conversions stays nil, which is the honest answer — not zero. The
+	// asymmetry with the guard below is the point: a missing impressions column would make a
+	// zero indistinguishable from a measurement, while a missing conversions column is
+	// representable as "not reported".
+	convCol, convOK := idx["conversionsqualified"]
 	if !impOK || !clkOK || !spendOK {
 		// Refuse rather than defaulting the missing column to zero: a zero that came from
 		// an absent column is indistinguishable, to every consumer, from a measured zero.
@@ -632,6 +655,35 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 			return nil, fmt.Errorf("spend: cost total would overflow")
 		}
 		out.CostMicros += scaledMicros
+
+		// Conversions accumulate only when the column was present. Parsed as a FLOAT because
+		// ConversionsQualified is documented as a double — Microsoft credits fractional
+		// conversions for partial externally-attributed offline conversions — and rounded to
+		// the nearest whole conversion rather than truncated, so a campaign holding 0.6 of a
+		// conversion is not reported as having none.
+		if convOK {
+			conv, cerr := parseReportFloat(row, convCol)
+			if cerr != nil {
+				return nil, fmt.Errorf("conversionsQualified: %w", cerr)
+			}
+			if math.IsNaN(conv) || math.IsInf(conv, 0) || conv < 0 {
+				return nil, fmt.Errorf("conversionsQualified: non-finite or negative value %v", conv)
+			}
+			rounded := math.Round(conv)
+			if rounded >= float64(math.MaxInt64) {
+				return nil, fmt.Errorf("conversionsQualified: %v exceeds the representable range", conv)
+			}
+			convInt := int64(rounded)
+			var running int64
+			if out.Conversions != nil {
+				running = *out.Conversions
+			}
+			if convInt > 0 && running > math.MaxInt64-convInt {
+				return nil, fmt.Errorf("conversionsQualified: total would overflow")
+			}
+			total := running + convInt
+			out.Conversions = &total
+		}
 	}
 	if out.Impressions > 0 {
 		out.Ctr = float64(out.Clicks) / float64(out.Impressions)

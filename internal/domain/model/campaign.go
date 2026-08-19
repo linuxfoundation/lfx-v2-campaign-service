@@ -293,6 +293,54 @@ type CampaignMetrics struct {
 	CostMicros  int64
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64
+	// Conversions is the count of desired actions attributed to this campaign over Window,
+	// and is a POINTER because "this platform cannot tell us" and "this platform measured
+	// zero" are different facts that a plain int64 cannot hold apart. nil means the channel
+	// does not report a campaign-level conversion count at all; a non-nil 0 is a measurement.
+	//
+	// Only three of the seven adapters set it, and which three is a statement about the
+	// VENDOR APIS, verified field by field against each vendor's published reference rather
+	// than inferred from what this repo's clients happen to request today:
+	//
+	//   - Google Ads populates it from metrics.conversions, which the field reference types
+	//     as DOUBLE, not an integer. Google credits fractional conversions under some
+	//     attribution models, so the double is rounded to the nearest whole conversion here
+	//     rather than truncated — truncation would report a campaign with 0.8 attributed
+	//     conversions as having none.
+	//   - LinkedIn populates it from externalWebsiteConversions (typed `long` in the Ads
+	//     Reporting schema), which must be named in the request's `fields` list: LinkedIn
+	//     returns only impressions and clicks by default, so an unnamed metric comes back
+	//     absent rather than zero.
+	//   - Microsoft populates it from the ConversionsQualified report column, NOT from
+	//     Conversions. Microsoft's own column reference marks `Conversions` deprecated as of
+	//     2022, directs callers to ConversionsQualified, and warns the legacy column's values
+	//     "may be inaccurate" — so reading the obvious-looking column would have been the
+	//     wrong number, not merely an older one. It is typed `double` for the same
+	//     fractional-attribution reason Google's is.
+	//
+	// The other four leave it nil, and each for a reason that is a property of the platform
+	// rather than an unfinished task here:
+	//
+	//   - Meta reports conversions inside the Insights `actions` array as {action_type,
+	//     value} objects, with no scalar campaign-level conversions field. Collapsing that
+	//     array into one number requires choosing WHICH action types count as a conversion,
+	//     which is a per-advertiser configuration decision this service has no input for.
+	//   - X splits conversions across per-event-type metrics (conversion_purchases,
+	//     conversion_sign_ups, and so on), each a JSON object rather than a count, and only
+	//     under the WEB_CONVERSION/MOBILE_CONVERSION metric groups. Same problem as Meta:
+	//     there is no single number to read.
+	//   - Reddit's v3 reporting contract has no public documentation at all (see the banner
+	//     on reddit.GetCampaignMetrics), so a conversions field name here would be a guess
+	//     dressed as a measurement.
+	//   - HubSpot stages marketing emails, whose statistics endpoint returns a counter
+	//     vocabulary with no conversion counter in it. An email send has no campaign-level
+	//     conversion concept to report.
+	//
+	// A nil here must never be rendered as 0 by a consumer. That substitution is the whole
+	// reason for the pointer: the conversions rule in internal/service/rules refuses to fire
+	// on a nil precisely so a platform that cannot measure conversions is never reported as
+	// a campaign that failed to earn any.
+	Conversions *int64
 	// Email carries the counters that only an email channel has, and is nil for every ad
 	// platform. It exists because the four fields above cannot express an email send
 	// without lying: delivery, bounces and unsubscribes have no ad-platform analogue at

@@ -325,6 +325,12 @@ type GetCampaignMetricsResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Conversions attributed to this campaign over the window. ABSENT when the
+	// channel does not report a campaign-level conversion count (Meta, X, Reddit
+	// and the email channel never do) — absent means "not measured here", which is
+	// NOT the same as a measured 0, and a consumer must not render it as zero or
+	// fold it into a conversion total.
+	Conversions *int64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -1489,6 +1495,12 @@ type CampaignMetricsResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Conversions attributed to this campaign over the window. ABSENT when the
+	// channel does not report a campaign-level conversion count (Meta, X, Reddit
+	// and the email channel never do) — absent means "not measured here", which is
+	// NOT the same as a measured 0, and a consumer must not render it as zero or
+	// fold it into a conversion total.
+	Conversions *int64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -1783,6 +1795,7 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 		Clicks:             res.Clicks,
 		CostMicros:         res.CostMicros,
 		Ctr:                res.Ctr,
+		Conversions:        res.Conversions,
 	}
 	if res.Email != nil {
 		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)

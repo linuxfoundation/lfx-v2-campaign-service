@@ -214,6 +214,14 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel", func() { Example(212) })
 	Attribute("cost_micros", Int64, "Cost over the window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.", func() { Example(0) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.1152) })
+	// OPTIONAL, and deliberately excluded from Required below. Only Google Ads, LinkedIn and
+	// Microsoft report a campaign-level conversion count; Meta and X expose conversions only
+	// as per-action-type structures with no scalar to read, Reddit's reporting contract is
+	// undocumented, and the email channel has no conversion concept at all. On those four the
+	// attribute is ABSENT rather than 0 — a 0 would be indistinguishable from a campaign that
+	// genuinely converted nobody, which is the same substitution the row `status` field and
+	// `pacing.pct` already refuse to make elsewhere in this contract.
+	Attribute("conversions", Int64, "Conversions attributed to this campaign over the window. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do) — absent means \"not measured here\", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37) })
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 })
@@ -258,7 +266,7 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 	// A stable token, so a consumer can group, filter or link on it. The issue text is for
 	// humans and may be reworded; keying on prose would break silently when it is.
 	Attribute("rule", String, "Which rule fired, as a stable token.", func() {
-		Enum("zero_delivery", "underspending", "budget_constrained", "low_ctr")
+		Enum("zero_delivery", "underspending", "budget_constrained", "low_ctr", "no_conversions")
 	})
 	Attribute("priority", String, "How urgently this wants attention.", func() { Enum("HIGH", "MED") })
 	Attribute("campaign_id", String, "The campaign this concerns", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })

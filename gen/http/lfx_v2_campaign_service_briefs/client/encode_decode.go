@@ -3214,6 +3214,7 @@ func unmarshalCampaignMetricsResponseBodyToLfxv2campaignservicebriefsCampaignMet
 		Clicks:             *v.Clicks,
 		CostMicros:         *v.CostMicros,
 		Ctr:                *v.Ctr,
+		Conversions:        v.Conversions,
 	}
 	if v.Email != nil {
 		res.Email = unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(v.Email)

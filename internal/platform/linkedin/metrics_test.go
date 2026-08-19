@@ -1457,3 +1457,129 @@ func TestGetCampaignMetrics_OverCapResponseKeepsConnectionReusable(t *testing.T)
 		t.Errorf("two over-cap reads used %d connections, want 1 — the unread remainder is preventing keep-alive reuse", len(conns))
 	}
 }
+
+// linkedinConvServer serves one adAnalytics response and captures the request query, so a
+// test can assert both what was ASKED FOR and what was made of the answer.
+func linkedinConvServer(t *testing.T, body string) (*Client, func() string) {
+	t.Helper()
+	var mu sync.Mutex
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, body)
+	}))
+	t.Cleanup(server.Close)
+	c := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+	return c, func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotQuery
+	}
+}
+
+// LinkedIn returns ONLY impressions and clicks when `fields` is omitted, so a metric that is
+// not named is absent rather than zero. If this request stops naming
+// externalWebsiteConversions, every LinkedIn campaign silently reads as unmeasured.
+func TestGetCampaignMetrics_RequestsExternalWebsiteConversions(t *testing.T) {
+	c, query := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50","externalWebsiteConversions":7}]}`)
+	if _, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(query(), "externalWebsiteConversions") {
+		t.Errorf("request does not name externalWebsiteConversions in `fields`, so LinkedIn "+
+			"will never return it; query = %s", query())
+	}
+}
+
+// The documented field name and type: `long`, per LinkedIn's Ads Reporting metrics schema.
+// The fixture mirrors that published shape — a bare JSON integer on the analytics element.
+func TestGetCampaignMetrics_DecodesExternalWebsiteConversions(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50","externalWebsiteConversions":7}]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil for a response carrying externalWebsiteConversions:7")
+	}
+	if *m.Conversions != 7 {
+		t.Errorf("Conversions = %d, want 7", *m.Conversions)
+	}
+}
+
+// The binding absent/zero case for this adapter. An element WITHOUT the key cannot be
+// reported as a measured zero: on LinkedIn that shape most often means the metric was never
+// returned, and turning it into 0 would flag a converting campaign as dead.
+func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
+	absent, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50"}]}`)
+	m, err := absent.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %d for an element that never carried the field; an "+
+			"unreported count became a measurement", *m.Conversions)
+	}
+
+	measured, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50","externalWebsiteConversions":0}]}`)
+	m2, err := measured.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m2.Conversions == nil {
+		t.Fatal("Conversions is nil for an explicit externalWebsiteConversions:0, erasing a real measurement")
+	}
+	if *m2.Conversions != 0 {
+		t.Errorf("Conversions = %d, want 0", *m2.Conversions)
+	}
+}
+
+// A campaign with no activity returns an empty elements array. That is LinkedIn stating the
+// campaign did nothing, but it says nothing about conversions having been MEASURED, so the
+// count must stay absent rather than becoming a zero the rule would act on.
+func TestGetCampaignMetrics_NoElementsLeavesConversionsAbsent(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %d on an empty elements array", *m.Conversions)
+	}
+}
+
+// Multiple elements aggregate, and only the ones that CARRIED the metric contribute — an
+// element missing the key must not act as a zero addend that masks a partial response.
+func TestGetCampaignMetrics_ConversionsAggregateAcrossElements(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30,"externalWebsiteConversions":4},
+		{"impressions":400,"clicks":20,"externalWebsiteConversions":3}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil across two elements that both carried the metric")
+	}
+	if *m.Conversions != 7 {
+		t.Errorf("Conversions = %d, want 7 (4+3): elements are not being summed", *m.Conversions)
+	}
+}
+
+// A negative count is malformed upstream data, not a small number. The sibling counters
+// reject it for the same reason and this one must too, or it lands in the response as a
+// figure that reads as authoritative.
+func TestGetCampaignMetrics_NegativeConversionsIsAnError(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"externalWebsiteConversions":-3}]}`)
+	if _, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday); err == nil {
+		t.Error("a negative externalWebsiteConversions was accepted as a measurement")
+	}
+}

@@ -58,6 +58,18 @@ type Input struct {
 	// anything. False before the flight starts and during its first day, mirroring the floor
 	// the pacing rules use.
 	DeliveryExpected bool
+	// Conversions is the campaign's conversion count over the measured window, and is nil
+	// when the platform does not report one.
+	//
+	// A POINTER, because the clicks-without-conversions rule turns entirely on the
+	// difference between the two zeros. A campaign that earned 500 clicks and 0 measured
+	// conversions is the finding the rule exists for; a campaign that earned 500 clicks on a
+	// platform with no conversions concept — Meta, X, Reddit, HubSpot — has no conversion
+	// figure at all, and firing on it would report the ABSENCE OF MEASUREMENT as a campaign
+	// defect. int64 cannot hold those apart: both arrive as 0.
+	//
+	// See model.CampaignMetrics.Conversions for which platforms populate this and why.
+	Conversions *int64
 	// BillsPerDelivery records whether this channel charges for delivery at all.
 	//
 	// False for the email channel: HubSpot charges nothing per send and its adapter always
@@ -167,8 +179,57 @@ func Evaluate(in Input) []ActionItem {
 		})
 	}
 
+	// Clicks without conversions. A campaign that is buying real traffic and converting none
+	// of it is spending on the wrong audience or sending them to a page that does not deliver
+	// what the ad promised — a different defect from low CTR, which is about whether anyone
+	// clicks at all.
+	//
+	// THREE gates, and each one exists because without it the rule fires on missing data
+	// rather than on a finding:
+	//
+	//   - in.Conversions != nil gates the whole rule on the platform being able to measure
+	//     conversions AT ALL. Four of the seven adapters (Meta, X, Reddit, HubSpot) cannot,
+	//     for reasons that are properties of those APIs rather than gaps here — see
+	//     model.CampaignMetrics.Conversions. On those platforms every campaign would
+	//     otherwise present as 0 conversions and every one would be flagged, forever, which
+	//     is the exact "fires because data is missing" failure that trains operators to
+	//     ignore an alert. This is the same shape of gate BillsPerDelivery gives
+	//     zero_delivery: a rule that is meaningless on a channel does not fire there.
+	//   - minClicksForConversions is the delivery floor, the direct analogue of
+	//     minImpressionsForCTR on the rule above. A campaign with four clicks and no
+	//     conversions has not yet earned enough traffic for zero to mean anything.
+	//   - isActive keeps it consistent with every other rule per docs/api-catalog.md:
+	//     "Every rule is gated on the campaign's status ... a `paused` campaign raises
+	//     nothing."
+	//
+	// Note the rule does NOT require Impressions: clicks are the denominator that matters for
+	// conversion, and the CTR rule already owns the impressions-to-clicks step of the funnel.
+	if isActive(in.Status) && in.Conversions != nil &&
+		in.Clicks >= minClicksForConversions && *in.Conversions == 0 {
+		items = append(items, ActionItem{
+			Rule: "no_conversions", Priority: PriorityHigh,
+			CampaignID: in.CampaignID, Platform: in.Platform,
+			Issue:  fmt.Sprintf("No conversions from %d clicks", in.Clicks),
+			Action: "Check the landing page matches what the ad promises and that conversion tracking is firing on it",
+		})
+	}
+
 	return items
 }
+
+// minClicksForConversions is the click volume below which "no conversions" is not yet a
+// signal.
+//
+// The counterpart to minImpressionsForCTR, and set for the same reason: a campaign with a
+// handful of clicks and no conversions is describing normal variance, not a broken funnel,
+// and flagging it teaches operators to dismiss the rule. It is lower than the CTR floor
+// because clicks are one funnel step further down and arrive one to two orders of magnitude
+// less often than impressions — reusing 1000 here would mean the rule effectively never
+// fired on the mid-sized campaigns this service actually runs.
+//
+// A judgement, not a platform limit, stated as a named constant so the next person changing
+// it knows that.
+const minClicksForConversions = 50
 
 // minImpressionsForCTR is the delivery below which a CTR figure is not yet meaningful.
 //

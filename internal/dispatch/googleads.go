@@ -949,6 +949,10 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		// Carried through as a POINTER, nil and all: a nil here means Google's response did
+		// not report metrics.conversions, and flattening it to 0 would hand the pacing rules
+		// a measured zero for a campaign whose conversions were never measured.
+		Conversions: m.Conversions,
 	}, nil
 }
 

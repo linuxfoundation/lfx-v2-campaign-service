@@ -101,6 +101,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return &model.CampaignMetrics{CampaignID: id, Window: window}, nil
 	}
 
+	// metrics.Conversions is never set by this reader, and that is a consequence of the
+	// UNVERIFIED-CONTRACT banner above rather than an omission. The three fields this
+	// request names are already inferences from this package's other endpoints; a
+	// conversions field name would be a further guess, and a guessed field that decodes to
+	// zero is indistinguishable from a campaign that converted nothing. Leaving it nil says
+	// "Reddit did not tell us", which is the only claim this adapter can support until the
+	// real reporting contract is available.
 	var metrics model.CampaignMetrics
 	for _, row := range rows {
 		// The campaign_ids filter and this report contract are both UNVERIFIED — do not

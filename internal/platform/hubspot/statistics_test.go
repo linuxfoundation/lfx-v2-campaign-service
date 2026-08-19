@@ -575,3 +575,45 @@ func TestGetEmailMetrics_MonthWindowsOnAMonthEndDate(t *testing.T) {
 		})
 	}
 }
+
+// The email channel reports NO conversion count, and the honest representation of that is
+// absence — not zero.
+//
+// The contrast with CostMicros in the same struct is the whole point, and this test asserts
+// both together so the difference cannot be "simplified" away. CostMicros=0 is a MEASUREMENT:
+// HubSpot genuinely bills nothing per send, so zero is the true cost. A conversion count has
+// no true value here at all — the statistics endpoint's counter vocabulary contains no
+// conversion counter, because a marketing email send has no campaign-level conversion concept.
+// Writing 0 would claim this email converted nobody, and the no_conversions rule would then
+// flag every email campaign in the account forever.
+func TestGetEmailMetrics_ConversionsAbsentNotZero(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, statsBody(t, `[4242]`, fullCounters))
+	})
+	m, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetEmailMetrics: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %d on the email channel, which measures no conversions at "+
+			"all; a fabricated count would make every email campaign look like it converted "+
+			"nobody", *m.Conversions)
+	}
+	// Pinned alongside so the two absences stay distinguishable: this 0 IS a measurement.
+	if m.CostMicros != 0 {
+		t.Errorf("cost_micros = %d, want a measured 0", m.CostMicros)
+	}
+}
+
+// The counter vocabulary this client recognises carries no conversion key. If HubSpot ever
+// adds one, this test is where the claim above stops being true — it fails, and the adapter
+// can be revisited deliberately rather than the absence quietly persisting as a lie.
+func TestCounterVocabularyHasNoConversionCounter(t *testing.T) {
+	for name := range knownCounterVocabulary {
+		if strings.Contains(strings.ToLower(name), "conversion") {
+			t.Errorf("the recognised counter vocabulary now contains %q: HubSpot may report "+
+				"conversions after all, so CampaignMetrics.Conversions should no longer be "+
+				"left absent for the email channel", name)
+		}
+	}
+}

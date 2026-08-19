@@ -153,6 +153,19 @@ type AdAnalyticsElement struct {
 	// parsed after decode by costInUsdToMicros into int64 micros. This is always USD,
 	// regardless of the ad account's billing currency configuration.
 	CostInUsd *string `json:"costInUsd"`
+	// ExternalWebsiteConversions is the total number of times users took a desired action
+	// after clicking on or seeing the ad, per LinkedIn's Ads Reporting metrics schema, which
+	// types it `long` with default "0". It covers both post-click and post-view conversions
+	// (the schema also exposes those separately as externalWebsitePostClickConversions and
+	// externalWebsitePostViewConversions); the combined figure is the one that answers
+	// "did this campaign convert at all".
+	//
+	// A POINTER because LinkedIn returns ONLY impressions and clicks unless a metric is
+	// named in the request's `fields` list. That makes an absent value ambiguous in a way
+	// int64 cannot express: it means either "this campaign converted nothing" or "the field
+	// was not requested / not returned", and reporting the second as 0 would flag a
+	// converting campaign as dead. Nil propagates that uncertainty to the caller instead.
+	ExternalWebsiteConversions *int64 `json:"externalWebsiteConversions"`
 }
 
 // AdAnalyticsResponse is the JSON response from LinkedIn's Ad Analytics endpoint.
@@ -242,6 +255,30 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		}
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
+		// Conversions aggregate only across elements that actually CARRIED the metric, and
+		// the result stays nil if none did. Treating an absent externalWebsiteConversions as
+		// a zero addend would silently convert "LinkedIn did not report this" into a measured
+		// zero — the substitution the pointer exists to prevent — and it would do so most
+		// often on exactly the responses where the field was never requested.
+		if elem.ExternalWebsiteConversions != nil {
+			conv := *elem.ExternalWebsiteConversions
+			// Same guards the counters above get, and for the same reason: a negative count
+			// is malformed upstream data rather than a small number, and two valid int64
+			// values can still overflow their sum. Either would otherwise become a figure the
+			// conversions rule reads as a measurement.
+			if conv < 0 {
+				return nil, fmt.Errorf("get campaign metrics: negative externalWebsiteConversions in response element")
+			}
+			var running int64
+			if metrics.Conversions != nil {
+				running = *metrics.Conversions
+			}
+			if conv > math.MaxInt64-running {
+				return nil, fmt.Errorf("get campaign metrics: aggregate externalWebsiteConversions overflows int64")
+			}
+			total := running + conv
+			metrics.Conversions = &total
+		}
 		if elem.CostInUsd != nil {
 			// LinkedIn's Ad Analytics API returns costInUsd as a BigDecimal serialized as a
 			// JSON string. A present but malformed/non-finite/negative/overflowing value
@@ -408,7 +445,11 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 		"&dateRange=(start:" + restLiDate(startDate) + ",end:" + restLiDate(endDate) + ")" +
 		"&campaigns=List(" + url.QueryEscape(campaignURN) + ")" +
 		"&accounts=List(" + url.QueryEscape(accountURN) + ")" +
-		"&fields=impressions,clicks,costInUsd"
+		// externalWebsiteConversions must be named explicitly: LinkedIn's Ad Analytics finder
+		// returns only impressions and clicks when `fields` is omitted, and omitting a metric
+		// from this list makes it absent from the response rather than zero. The finder
+		// accepts up to 20 metrics, so this is well inside the limit.
+		"&fields=impressions,clicks,costInUsd,externalWebsiteConversions"
 	u.RawQuery = rawQuery
 
 	idempotent := true // GET is always retried on 429, same as doRequest's SAFE-method rule.

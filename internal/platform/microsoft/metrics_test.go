@@ -1366,3 +1366,131 @@ func TestPollBudgetCoversTheSubmitPhase(t *testing.T) {
 			"a non-zero count means the budget was computed AFTER the submit and bounds polling only", polls)
 	}
 }
+
+// Microsoft's CampaignPerformanceReportColumn reference marks `Conversions` DEPRECATED as of
+// 2022, points callers at ConversionsQualified, and warns the legacy column's values "may be
+// inaccurate" because it cannot carry the decimal conversion values Microsoft now supports.
+// Requesting the obvious-looking column would produce a WRONG number, not an older one.
+func TestGetCampaignMetrics_RequestsConversionsQualifiedNotDeprecatedConversions(t *testing.T) {
+	m := newMSMetricsServer(t, buildReportZip(t, realisticCSV), 0)
+	c := newMetricsClient(t, m)
+	if _, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday); err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	req, _ := m.submitBody["ReportRequest"].(map[string]any)
+	if req == nil {
+		t.Fatalf("submit body has no ReportRequest: %+v", m.submitBody)
+	}
+	cols, _ := req["Columns"].([]any)
+	var names []string
+	for _, c := range cols {
+		if s, ok := c.(string); ok {
+			names = append(names, s)
+		}
+	}
+	var hasQualified bool
+	for _, n := range names {
+		if n == "ConversionsQualified" {
+			hasQualified = true
+		}
+		if n == "Conversions" {
+			t.Errorf("request asks for the DEPRECATED `Conversions` column, whose values "+
+				"Microsoft documents as possibly inaccurate; columns = %v", names)
+		}
+	}
+	if !hasQualified {
+		t.Errorf("request does not ask for ConversionsQualified, so no campaign can report "+
+			"a conversion; columns = %v", names)
+	}
+}
+
+// ConversionsQualified is documented as a DOUBLE — Microsoft credits fractional conversions
+// for partially externally-attributed offline conversions — so it must be parsed as a float
+// and rounded, not read as an integer. A CSV cell of "2.6" is the published shape.
+func TestGetCampaignMetrics_ConversionsQualifiedIsAFractionalDouble(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00","2.6"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got.Conversions == nil {
+		t.Fatal("Conversions is nil for a report carrying ConversionsQualified 2.6")
+	}
+	if *got.Conversions != 3 {
+		t.Errorf("Conversions = %d, want 3: a fractional 2.6 must round rather than "+
+			"truncate, or a converting campaign under-reports", *got.Conversions)
+	}
+}
+
+// The binding absent/zero case. ConversionsQualified is only populated for accounts using
+// Universal Event Tracking, and Microsoft notes the qualified column is not yet available to
+// every advertiser — so a report WITHOUT the column must leave the count absent rather than
+// zero, while a report carrying "0" is a measurement.
+func TestGetCampaignMetrics_AbsentConversionsColumnIsNilNotZero(t *testing.T) {
+	const noConvCol = `"CampaignId","Impressions","Clicks","Spend"
+"1234567","1000","25","50.00"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, noConvCol), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("a report without ConversionsQualified must still read: %v", err)
+	}
+	if got.Conversions != nil {
+		t.Errorf("Conversions = %d for a report whose header lacks the column entirely; "+
+			"an unreported count became a measurement", *got.Conversions)
+	}
+
+	const zeroConv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00","0"
+`
+	m2 := newMSMetricsServer(t, buildReportZip(t, zeroConv), 0)
+	c2 := newMetricsClient(t, m2)
+	got2, err := c2.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got2.Conversions == nil {
+		t.Fatal("Conversions is nil for an explicit ConversionsQualified of 0, erasing a real measurement")
+	}
+	if *got2.Conversions != 0 {
+		t.Errorf("Conversions = %d, want 0", *got2.Conversions)
+	}
+}
+
+// A missing conversions column must NOT break the read the way a missing impressions column
+// does. The asymmetry is deliberate: absent conversions are representable as "not reported",
+// while an absent impressions column would make a zero indistinguishable from a measurement.
+func TestGetCampaignMetrics_ConversionsColumnIsNotRequired(t *testing.T) {
+	const noConvCol = `"CampaignId","Impressions","Clicks","Spend"
+"1234567","1000","25","50.00"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, noConvCol), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("an account without conversion tracking must still get impressions/clicks/spend: %v", err)
+	}
+	if got.Impressions != 1000 || got.Clicks != 25 || got.CostMicros != 50_000_000 {
+		t.Errorf("the other metrics were lost along with the absent conversions column: %+v", got)
+	}
+}
+
+// A negative conversion count is malformed upstream data. The sibling metrics reject it and
+// this must too, or it becomes a figure the dashboard renders as a measurement.
+func TestGetCampaignMetrics_NegativeConversionsQualifiedIsAnError(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00","-2"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	if _, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday); err == nil {
+		t.Error("a negative ConversionsQualified was accepted as a measurement")
+	}
+}
