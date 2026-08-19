@@ -383,15 +383,28 @@ cpcBid?: number                 — OPTIONAL ad-group max cost-per-click, in who
                                   floor, so omitting it is safe and the service invents no default. A
                                   supplied value must be within [0.01, 1000]. A REUSED ad group keeps
                                   its existing bid rather than being re-bid on a retry.
+geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes the campaign should serve
+                                  in, attached as CAMPAIGN-level location criteria. At most 30. OMITTED
+                                  means NO location criteria, i.e. Microsoft serves the campaign
+                                  everywhere. An unsupported or unresolvable code REFUSES the create
+                                  before anything is created rather than silently serving everywhere.
 ```
 
-There is deliberately **no `geoTargets`** here, unlike `redditConfig`/`metaConfig`/`linkedInConfig`.
-Microsoft's location targeting takes its own numeric `LocationId` values (from Microsoft's
-downloadable geographical-locations file) and accepts ISO 3166 country codes for targeting
-*nowhere* — the ISO table in Microsoft's Geographical Location Codes guide is scoped to account
-business addresses, not targeting. A `geoTargets: ["US"]` could therefore only be honoured via an
-invented ISO→LocationId mapping, so the field is not offered rather than being accepted and
-silently dropped. Tracked separately; it needs the locations file as a real input.
+`geoTargets` is accepted (LFXV2-3279), using the SAME ISO 3166-1 alpha-2 vocabulary as
+`redditConfig`/`metaConfig`/`linkedInConfig`. Microsoft's location criteria take numeric
+`LocationId` values rather than ISO codes, so the service resolves each code against Microsoft's
+own geographical-locations file at create time — no ISO→LocationId table is hardcoded.
+
+**Omitting it means the campaign serves EVERYWHERE**, which is the pre-existing behaviour and is
+why an unusable value is refused rather than dropped. A code that is not a Microsoft-supported
+country, or that cannot be resolved against the locations file, fails the create **before any
+campaign is created** — nothing is left behind to clean up. Resolution is all-or-nothing: one
+unresolvable code fails the whole set rather than targeting a subset nobody approved. Because
+`CreateCampaigns` is asynchronous, that surfaces as a failed job rather than a synchronous 4xx.
+
+A campaign REUSED by a retry has its existing location criteria read and reconciled, so only
+missing locations are attached; if that read fails, the create refuses rather than risk
+duplicating criteria or reporting an untargeted campaign as targeted.
 
 The connection supplies the ad account id (`account_id`, the digits-only `CustomerAccountId`) and
 an OPTIONAL manager/MCC id (`customer_id`, the `CustomerId` header) via the Microsoft connection
