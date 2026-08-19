@@ -259,7 +259,19 @@ require BOTH sides to have been read, so an absent side always yields `unknown`.
 field nobody could read as a match would be a fabricated "they match" — agreement asserted
 from an observation that never happened.
 
-The Google Ads adapter compares `budget_amount`, `budget_type` and `campaign_name`, and
+The Google Ads adapter compares `budget_amount`, `budget_type`, `campaign_name`,
+`start_date` and `end_date`, and reports four further settings **upstream-only** —
+`budget_delivery_method`, `budget_explicitly_shared`, `advertising_channel_type` and
+`bidding_strategy_type`. Nothing in a Google Ads dispatch config can express those four, so
+they can never diverge and always carry an `unknown` verdict; they are reported anyway
+because a budget that reads as expected while being `ACCELERATED` or shared across campaigns
+is exactly the state that explains a spend anomaly the compared fields cannot. Flight dates
+are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
+returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings
+would report a divergence for every campaign that actually agrees. The recorded side of both
+dates is always NULL for Google Ads today — its config carries no dates — so they read
+`unknown` rather than diverged; they are wired through the comparison anyway so a future
+config that populates them starts diverging without anyone having to remember. It also
 translates Google's `campaign_budget.period` into `model.BudgetType` via
 `googleAdsBudgetTypeFromPeriod` — `DAILY` -> `daily`, `CUSTOM_PERIOD` -> `lifetime` (Google
 has no `LIFETIME` value), and `UNKNOWN`/anything else -> unmapped, which fails closed to an

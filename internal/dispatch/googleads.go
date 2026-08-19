@@ -1125,6 +1125,18 @@ const (
 	settingsFieldBudgetType   = "budget_type"
 	settingsFieldName         = "campaign_name"
 	settingsFieldStatus       = "status"
+	settingsFieldStartDate    = "start_date"
+	settingsFieldEndDate      = "end_date"
+	// The four below have NO counterpart on the campaign row: nothing in a Google Ads
+	// dispatch config can express them, so they are always reported upstream-only with an
+	// `unknown` verdict. They are reported anyway because the operator's question is "what
+	// is this campaign actually set to upstream", and a budget that reads as expected while
+	// being ACCELERATED or shared across campaigns is exactly the state that explains a
+	// spend anomaly the compared fields cannot.
+	settingsFieldBudgetDelivery  = "budget_delivery_method"
+	settingsFieldBudgetShared    = "budget_explicitly_shared"
+	settingsFieldChannelType     = "advertising_channel_type"
+	settingsFieldBiddingStrategy = "bidding_strategy_type"
 )
 
 // googleAdsBudgetTypeFromPeriod maps Google's campaign_budget.period into this service's
@@ -1174,17 +1186,58 @@ func googleAdsUpstreamBudgetAmount(s *googleads.CampaignSettings) *string {
 	if micros == nil {
 		return nil
 	}
-	return strPtr(formatBudgetUnits(float64(*micros) / 1e6))
+	return strPtr(formatBudgetUnits(float64(*micros) / microsPerBudgetUnit))
 }
+
+// Budget rendering constants for the settings readback.
+const (
+	// microsPerBudgetUnit converts Google's micros to whole currency units. Deliberately a
+	// third spelling of the same idea: googleads.microsPerUnit and service.microsToUnits are
+	// both package-private to packages this one cannot import, so a bare literal was the
+	// only thing that compiled. Naming it here at least makes the three greppable together.
+	microsPerBudgetUnit = 1_000_000.0
+	// budgetDecimalPlaces matches the campaigns.budget_amount column, NUMERIC(14,2).
+	budgetDecimalPlaces = 2
+)
 
 // formatBudgetUnits renders a budget amount the same way on both sides of the comparison.
 //
-// Two decimal places, matching the campaigns.budget_amount column (NUMERIC(14,2)). Both
-// sides go through this function, which is what makes the comparison meaningful: a row
+// Both sides go through this function, which is what makes the comparison meaningful: a row
 // holding 500 and a platform holding 500.00 are the same budget, and formatting them
 // differently would report a divergence that does not exist.
 func formatBudgetUnits(v float64) string {
-	return strconv.FormatFloat(v, 'f', 2, 64)
+	return strconv.FormatFloat(v, 'f', budgetDecimalPlaces, 64)
+}
+
+// googleAdsDateOnly reduces Google's 'yyyy-MM-dd HH:mm:ss' campaign date-time to the
+// YYYY-MM-DD the campaign row stores, so the two sides are comparable at all.
+//
+// Only the date part is kept, deliberately: the row's start_date/end_date are DATEs with no
+// time component, so comparing a full timestamp against them would report a divergence for
+// every campaign that actually agrees. The time is dropped rather than reconciled because
+// Google returns it in the ad ACCOUNT's timezone, which this client does not know — any
+// instant it computed would be a guess.
+//
+// A value that is not in the expected shape is returned unchanged rather than discarded: it
+// is still what the platform said, and showing it beside a differing recorded date is more
+// use to an operator than an unexplained absence.
+func googleAdsDateOnly(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	if date, _, found := strings.Cut(*s, " "); found {
+		return strPtr(date)
+	}
+	return s
+}
+
+// boolToStrPtr renders an optional bool for the readback, preserving absence: a nil stays
+// nil rather than becoming "false", which would be a claim the platform never made.
+func boolToStrPtr(b *bool) *string {
+	if b == nil {
+		return nil
+	}
+	return strPtr(strconv.FormatBool(*b))
 }
 
 // strPtr returns a pointer to s. Used to build the readback's optional sides, where the
@@ -1265,18 +1318,42 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		recordedName = strPtr(n)
 	}
 
-	// Status is deliberately NOT compared. The row's Status is this service's own lifecycle
-	// vocabulary (created/failed/...) and Google's is ENABLED/PAUSED/REMOVED — a different
-	// axis, exactly as model.PlatformCampaignRef documents. Comparing them would report a
-	// permanent, meaningless divergence on every campaign ever created. The upstream value
-	// is still reported, with no recorded counterpart, so an operator can SEE that the
-	// campaign is paused upstream without this service pretending the two are the same
-	// field.
+	// Flight dates. The RECORDED side is always nil for Google Ads today —
+	// googleAdsConfig carries no start/end date, so applyCampaignConfig is called with
+	// empty strings and the columns stay NULL — which makes these `unknown` rather than a
+	// divergence. They are compared rather than reported upstream-only because the columns
+	// EXIST and a future config that populates them must start diverging without anyone
+	// having to remember to wire the comparison. Both sides are formatted to the row's
+	// YYYY-MM-DD, never compared as raw strings: Google returns 'yyyy-MM-dd HH:mm:ss' in
+	// the ad account's timezone, so a raw comparison would report a divergence for every
+	// campaign that agrees.
+	var recordedStart, recordedEnd *string
+	if campaign.StartDate != nil {
+		recordedStart = strPtr(campaign.StartDate.UTC().Format(campaignDateLayout))
+	}
+	if campaign.EndDate != nil {
+		recordedEnd = strPtr(campaign.EndDate.UTC().Format(campaignDateLayout))
+	}
+
 	rb.Fields = []model.CampaignSettingsField{
 		model.CompareSettingsField(settingsFieldBudgetAmount, recordedBudget, googleAdsUpstreamBudgetAmount(settings)),
 		model.CompareSettingsField(settingsFieldBudgetType, recordedBudgetType, upstreamBudgetType),
 		model.CompareSettingsField(settingsFieldName, recordedName, settings.Name),
+		// Status is deliberately NOT compared. The row's Status is this service's own
+		// lifecycle vocabulary (created/failed/...) and Google's is ENABLED/PAUSED/REMOVED —
+		// a different axis, exactly as model.PlatformCampaignRef documents. Comparing them
+		// would report a permanent, meaningless divergence on every campaign ever created.
+		// The upstream value is still reported, with no recorded counterpart, so an operator
+		// can SEE that the campaign is paused upstream without this service pretending the
+		// two are the same field.
 		model.CompareSettingsField(settingsFieldStatus, nil, settings.Status),
+		model.CompareSettingsField(settingsFieldStartDate, recordedStart, googleAdsDateOnly(settings.StartDateTime)),
+		model.CompareSettingsField(settingsFieldEndDate, recordedEnd, googleAdsDateOnly(settings.EndDateTime)),
+		// Upstream-only observations: no row column expresses any of these.
+		model.CompareSettingsField(settingsFieldBudgetDelivery, nil, settings.BudgetDeliveryMethod),
+		model.CompareSettingsField(settingsFieldBudgetShared, nil, boolToStrPtr(settings.BudgetExplicitlyShared)),
+		model.CompareSettingsField(settingsFieldChannelType, nil, settings.AdvertisingChannelType),
+		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, settings.BiddingStrategyType),
 	}
 	rb.SummariseSettings()
 	return rb, nil

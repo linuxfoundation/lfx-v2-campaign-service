@@ -4451,3 +4451,137 @@ func TestBriefService_GetCampaignSettings_NoConnectionIs404(t *testing.T) {
 		t.Fatalf("expected a NotFoundError (404), got %T: %v", err, err)
 	}
 }
+
+// TestGetCampaignSettings_PermanentConnectionDefectsAreNot503 pins the ORDER of the
+// settings handler's error switch, which several of its own comments call load-bearing but
+// which nothing pinned.
+//
+// Five sentinels here are wrapped ALONGSIDE a broader one — systemScoped wraps rather than
+// replaces, and ErrAccountNotSelected always travels with ErrConnectionNotUsable — so a
+// general arm placed first silently swallows the specific one. Every arm below stays green
+// if the switch is reordered UNLESS the ordering cases are present, which is why they are.
+// The consequence of a swallow is not cosmetic: the caller gets told to repair a connection
+// they do not own, or to wait for a defect that will never clear.
+func TestGetCampaignSettings_PermanentConnectionDefectsAreNot503(t *testing.T) {
+	wantConflict := func(t *testing.T, err error) {
+		t.Helper()
+		var c *briefs.ConflictError
+		if !errors.As(err, &c) {
+			t.Fatalf("want 409, got %T: %v", err, err)
+		}
+	}
+	wantInternal := func(t *testing.T, err error) {
+		t.Helper()
+		var ise *briefs.InternalServerError
+		if !errors.As(err, &ise) {
+			t.Fatalf("want 500, got %T: %v", err, err)
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		err    error
+		assert func(*testing.T, error)
+	}{
+		{
+			name:   "unknown provenance is 409",
+			err:    fmt.Errorf("no customer recorded: %w", domain.ErrCampaignProvenanceUnknown),
+			assert: wantConflict,
+		},
+		{
+			name:   "no ad account selected is 409",
+			err:    fmt.Errorf("no account: %w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected),
+			assert: wantConflict,
+		},
+		{
+			name:   "a generally unusable connection is 409",
+			err:    fmt.Errorf("inactive: %w", domain.ErrConnectionNotUsable),
+			assert: wantConflict,
+		},
+		{
+			name:   "an unusable LF system connection is 500",
+			err:    fmt.Errorf("system row: %w", domain.ErrSystemConnectionNotUsable),
+			assert: wantInternal,
+		},
+		{
+			name:   "undecryptable credentials are 500",
+			err:    fmt.Errorf("decrypt: %w", domain.ErrCredentialDecryptionFailed),
+			assert: wantInternal,
+		},
+		{
+			// ORDERING. ErrAccountNotSelected is always wrapped alongside
+			// ErrConnectionNotUsable, so the general 409 arm placed first would swallow it and
+			// blame credentials that are fine.
+			name: "account-not-selected wins over the general unusable arm",
+			err:  fmt.Errorf("no account: %w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected),
+			assert: func(t *testing.T, err error) {
+				var c *briefs.ConflictError
+				if !errors.As(err, &c) {
+					t.Fatalf("want 409, got %T", err)
+				}
+				if !strings.Contains(c.Message, "no ad account selected") {
+					t.Fatalf("the general arm swallowed the specific one; message = %q", c.Message)
+				}
+			},
+		},
+		{
+			// ORDERING. systemScoped WRAPS, so errors.Is still reports ErrConnectionNotUsable
+			// here. A broad match first would answer 409 "repair this project's connection"
+			// for a project that has none — the misdirection the sentinel exists to prevent.
+			name:   "system-connection wins over the general unusable arm",
+			err:    fmt.Errorf("system: %w: %w", domain.ErrConnectionNotUsable, domain.ErrSystemConnectionNotUsable),
+			assert: wantInternal,
+		},
+		{
+			// ORDERING. ErrNotFound must not fall into the general unusable arm: there is no
+			// connection to repair, so 409 "reconnect it" names a resource that does not exist.
+			name: "not-found wins over the general unusable arm",
+			err:  fmt.Errorf("absent: %w: %w", domain.ErrConnectionNotUsable, domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("the general arm swallowed it; got %T", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			s := newMetricsService(camp, &settingsOnlyDispatcher{err: tc.err})
+			_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+			})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			tc.assert(t, err)
+		})
+	}
+}
+
+// TestGetCampaignSettings_SystemOriginAttributesTheCredentialFailureToTheSystemRow pins the
+// one branch inside the 500 arm that changes what gets LOGGED rather than what is returned:
+// a corrupt LF system row is ONE row, and attributing it to the requesting project would
+// scatter the same defect across every project that fell back to it.
+func TestGetCampaignSettings_SystemOriginAttributesTheCredentialFailureToTheSystemRow(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	err := fmt.Errorf("decrypt: %w: %w", domain.ErrCredentialDecryptionFailed, domain.ErrSystemConnectionOrigin)
+	s := newMetricsService(camp, &settingsOnlyDispatcher{err: err})
+	_, gerr := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var ise *briefs.InternalServerError
+	if !errors.As(gerr, &ise) {
+		t.Fatalf("want 500, got %T: %v", gerr, gerr)
+	}
+	// The client-facing message must stay generic whichever row failed — which row it was is
+	// an operator's diagnosis, not an API consumer's.
+	if ise.Message != "campaign settings could not be read" {
+		t.Errorf("message = %q, want the generic one", ise.Message)
+	}
+}

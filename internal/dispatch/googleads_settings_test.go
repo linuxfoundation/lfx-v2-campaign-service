@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -385,5 +386,170 @@ func TestGoogleAds_ReadSettings_ConnectionUnresolvedPropagates(t *testing.T) {
 	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
 	if _, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp); err == nil {
 		t.Fatal("expected an error when the connection cannot be resolved")
+	}
+}
+
+// TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations pins that settings with NO
+// counterpart on the campaign row are still REPORTED.
+//
+// Nothing in a Google Ads dispatch config can express delivery method, budget sharing,
+// channel type or bidding strategy, so they can never diverge — but a budget that reads as
+// expected while being ACCELERATED or shared across campaigns is exactly the state that
+// explains a spend anomaly the compared fields cannot. Reading them into the struct and
+// then dropping them would be dead API surface.
+func TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"DEMAND_GEN","biddingStrategyType":"MANUAL_CPC"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY","deliveryMethod":"ACCELERATED","explicitlyShared":true}}]}`)
+
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	for _, tc := range []struct{ field, want string }{
+		{settingsFieldBudgetDelivery, "ACCELERATED"},
+		{settingsFieldBudgetShared, "true"},
+		{settingsFieldChannelType, "DEMAND_GEN"},
+		{settingsFieldBiddingStrategy, "MANUAL_CPC"},
+	} {
+		got := settingsField(t, rb, tc.field)
+		if got.Upstream == nil || *got.Upstream != tc.want {
+			t.Errorf("%s Upstream = %v, want %q", tc.field, got.Upstream, tc.want)
+		}
+		if got.Recorded != nil {
+			t.Errorf("%s Recorded = %q, want nil: no row column expresses this", tc.field, *got.Recorded)
+		}
+		if got.Comparison != model.SettingsUnknown {
+			t.Errorf("%s comparison = %q, want unknown: an upstream-only observation was never compared", tc.field, got.Comparison)
+		}
+	}
+}
+
+// TestGoogleAds_ReadSettings_FlightDatesCompareAsDatesNotTimestamps pins the date
+// normalisation. Google returns 'yyyy-MM-dd HH:mm:ss' in the ad account's timezone while
+// the row stores a DATE; comparing the raw strings would report a divergence for every
+// campaign whose dates actually agree.
+func TestGoogleAds_ReadSettings_FlightDatesCompareAsDatesNotTimestamps(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","startDateTime":"2026-08-01 00:00:00","endDateTime":"2026-08-31 23:59:59"}}]}`)
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		StartDate: &start, EndDate: &end,
+	}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	sf := settingsField(t, rb, settingsFieldStartDate)
+	if sf.Upstream == nil || *sf.Upstream != "2026-08-01" {
+		t.Errorf("start_date Upstream = %v, want 2026-08-01 (the time component must be dropped)", sf.Upstream)
+	}
+	if sf.Comparison != model.SettingsMatch {
+		t.Errorf("start_date comparison = %q, want match: the same date must not read as a divergence", sf.Comparison)
+	}
+	ef := settingsField(t, rb, settingsFieldEndDate)
+	if ef.Upstream == nil || *ef.Upstream != "2026-08-31" {
+		t.Errorf("end_date Upstream = %v, want 2026-08-31", ef.Upstream)
+	}
+	if ef.Comparison != model.SettingsMatch {
+		t.Errorf("end_date comparison = %q, want match", ef.Comparison)
+	}
+}
+
+// TestGoogleAds_ReadSettings_AbsentFlightDateIsUnknownNotFalselyDiverged: Google Ads
+// campaigns carry no dates in this service's config, so the recorded side is normally NULL.
+// That must read as `unknown`, not as a divergence against the platform's real dates —
+// which would flag every Google campaign in the system.
+func TestGoogleAds_ReadSettings_AbsentFlightDateIsUnknownNotFalselyDiverged(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","startDateTime":"2026-08-01 00:00:00"}}]}`)
+
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	sf := settingsField(t, rb, settingsFieldStartDate)
+	if sf.Comparison != model.SettingsUnknown {
+		t.Errorf("start_date comparison = %q, want unknown when the row records no date", sf.Comparison)
+	}
+	if rb.DivergedCount != 0 {
+		t.Errorf("DivergedCount = %d, want 0: an unrecorded date must never be reported as a divergence", rb.DivergedCount)
+	}
+	// The upstream date is still shown, so the operator learns what the platform holds.
+	if sf.Upstream == nil || *sf.Upstream != "2026-08-01" {
+		t.Errorf("start_date Upstream = %v, want 2026-08-01", sf.Upstream)
+	}
+}
+
+// TestGoogleAds_ReadSettings_AbsentSharedFlagIsNotFalse pins that an absent bool stays
+// absent. Rendering nil as "false" would be a claim the platform never made — and
+// "not shared" is the reassuring answer, so defaulting to it hides the anomaly.
+func TestGoogleAds_ReadSettings_AbsentSharedFlagIsNotFalse(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`)
+
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	got := settingsField(t, rb, settingsFieldBudgetShared)
+	if got.Upstream != nil {
+		t.Errorf("budget_explicitly_shared Upstream = %q, want nil: an unreported bool must not become \"false\"", *got.Upstream)
+	}
+}
+
+// TestGoogleAdsDateOnly covers the helper's branches directly, including the passthrough
+// that the readback tests cannot reach through a well-formed response.
+//
+// The passthrough is the interesting one: a value in an unexpected shape is returned
+// UNCHANGED rather than discarded, because it is still what the platform said, and showing
+// it beside a differing recorded date tells an operator more than an unexplained absence.
+// The cost is that such a value compares raw against the row's YYYY-MM-DD and so reads as a
+// divergence — which is the honest outcome, since the two genuinely do not agree in any
+// form this code can establish.
+func TestGoogleAdsDateOnly(t *testing.T) {
+	dt := "2026-08-01 00:00:00"
+	dateOnly := "2026-08-01"
+	weird := "not-a-date"
+	for _, tc := range []struct {
+		name string
+		in   *string
+		want *string
+	}{
+		{"nil stays nil", nil, nil},
+		{"timestamp is reduced to its date", &dt, &dateOnly},
+		{"a value with no time is unchanged", &dateOnly, &dateOnly},
+		{"an unexpected shape passes through rather than vanishing", &weird, &weird},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := googleAdsDateOnly(tc.in)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("got %q, want nil", *got)
+			case tc.want == nil:
+				return
+			case got == nil:
+				t.Fatalf("got nil, want %q", *tc.want)
+			case *got != *tc.want:
+				t.Fatalf("got %q, want %q", *got, *tc.want)
+			}
+		})
+	}
+}
+
+// TestBoolToStrPtr pins that absence survives. Rendering a nil as "false" would be a claim
+// the platform never made — and since "not shared" is the reassuring answer, defaulting to
+// it would hide exactly the anomaly the field exists to surface.
+func TestBoolToStrPtr(t *testing.T) {
+	if got := boolToStrPtr(nil); got != nil {
+		t.Errorf("nil rendered as %q, want nil", *got)
+	}
+	tr, fa := true, false
+	if got := boolToStrPtr(&tr); got == nil || *got != "true" {
+		t.Errorf("true rendered as %v, want \"true\"", got)
+	}
+	if got := boolToStrPtr(&fa); got == nil || *got != "false" {
+		t.Errorf("false rendered as %v, want \"false\"", got)
 	}
 }

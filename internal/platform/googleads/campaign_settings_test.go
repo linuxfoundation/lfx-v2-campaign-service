@@ -358,3 +358,134 @@ func TestGetCampaignSettings_MalformedIDNeverReachesThePlatform(t *testing.T) {
 		t.Errorf("a malformed id must not reach the platform, but requests were made: %v", got)
 	}
 }
+
+// The tests below cover the decode-integrity and identity guards. Each was confirmed
+// unreached before being written: deleting the guard left the suite green, which means the
+// guard was unverified — the exact "if reverting a fix changes no test, it did nothing"
+// case. GetCampaign pins the same guards for the same reasons; these are their settings
+// counterparts.
+
+// TestGetCampaignSettings_DuplicateKeysRefused pins the CONTRACT — a response declaring a
+// key twice is refused rather than silently resolved in favour of the last value — but it
+// does NOT independently bind the row-level guard in GetCampaignSettings, and it says so
+// rather than pretending otherwise.
+//
+// Mutation-tested: disabling the row-level `hasDuplicateKeys(raw)` check leaves this test
+// GREEN. The reason is that gaqlSearch runs the same check over the WHOLE response envelope
+// (client.go) before any row is handed back, and that scan covers the bytes of every row, so
+// over HTTP the envelope check always fires first. The row-level guard is therefore
+// unreachable through this path today.
+//
+// It is kept anyway, for the reason the repo keeps other duplicated preconditions: it is a
+// local invariant that must hold for any future caller handing rows in by another route, and
+// deleting it would make that divergence silent. What is NOT acceptable is claiming
+// revert-verified coverage for a line that no revert can break — hence this comment.
+func TestGetCampaignSettings_DuplicateKeysRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"first","name":"second","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for a duplicated JSON key, got: %+v", got)
+	}
+	// Either layer's refusal satisfies the contract; the point is that the ambiguous row is
+	// never resolved into a confident answer.
+	if !strings.Contains(err.Error(), "same JSON key twice") {
+		t.Errorf("error should name the duplicate key, got: %v", err)
+	}
+}
+
+// TestGetCampaignSettings_UnpairedSurrogateRefused pins the CONTRACT — a row whose name
+// cannot survive JSON decoding intact is refused rather than returned under a substituted
+// name — and, like the duplicate-key test above, is NOT independently revert-binding.
+//
+// Mutation-tested: disabling the row-level `!utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw)`
+// check leaves this test GREEN, because gaqlSearch (client.go) runs the identical check over
+// the whole response envelope first and those bytes include every row.
+//
+// The mechanism is still worth pinning, and it is subtle: every byte of `"bad\uD800name"` is
+// valid ASCII, so utf8.Valid alone passes it. An unpaired surrogate is not a Unicode scalar,
+// so encoding/json substitutes U+FFFD with NO error — which is why the check must run on the
+// RAW bytes and why byte validity alone is insufficient.
+func TestGetCampaignSettings_UnpairedSurrogateRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"bad\uD800name","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for an unpaired surrogate escape, got: %+v", got)
+	}
+}
+
+// TestGetCampaignSettings_ResourceNameSuppliesTheIDWhenIDIsAbsent proves the fallback
+// WORKS, rather than merely that it exists. The resource name is parsed strictly against
+// THIS client's customer, so it is identity evidence a row from another account cannot
+// supply.
+func TestGetCampaignSettings_ResourceNameSuppliesTheIDWhenIDIsAbsent(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","name":"n","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+	if got.CampaignID != "555" {
+		t.Errorf("CampaignID = %q, want 555 recovered from the resource name", got.CampaignID)
+	}
+}
+
+// TestGetCampaignSettings_NoUsableIDRefused: a row that identifies no campaign cannot have
+// settings attributed to it. Reporting it would present some campaign's configuration under
+// an id nothing in the response supports.
+func TestGetCampaignSettings_NoUsableIDRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"name":"n","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for a row with no usable id, got: %+v", got)
+	}
+	if !strings.Contains(err.Error(), "no usable id") {
+		t.Errorf("error should name the missing id, got: %v", err)
+	}
+}
+
+// TestGetCampaignSettings_CrossAccountResourceNameRefused: the resource-name parser is
+// strict about the CUSTOMER segment, so a row naming another customer's campaign cannot
+// supply an identity — it yields no usable id rather than being accepted.
+func TestGetCampaignSettings_CrossAccountResourceNameRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/9999999999/campaigns/555","name":"n","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for another customer's resource name, got: %+v", got)
+	}
+}
+
+// TestGetCampaignSettings_MalformedTotalAmountIsAnErrorNotAnAbsence closes the asymmetry
+// with amount_micros, which already had this test. Without it the CUSTOM_PERIOD arm's
+// "present but unparseable is an error, not an absence" contract was unverified — and that
+// is the arm a lifetime-budget campaign takes.
+func TestGetCampaignSettings_MalformedTotalAmountIsAnErrorNotAnAbsence(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+		`"campaignBudget":{"totalAmountMicros":"nope","period":"CUSTOM_PERIOD"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for a malformed total budget, got: %+v", got)
+	}
+	if strings.Contains(err.Error(), "nope") {
+		t.Errorf("error echoes the raw upstream value, which must never reach a log: %v", err)
+	}
+	if !strings.Contains(err.Error(), "total_amount_micros") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+}

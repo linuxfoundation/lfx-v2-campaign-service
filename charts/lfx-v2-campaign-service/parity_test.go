@@ -282,6 +282,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// and the `/briefs/**` campaign_manager rule rather than a separate route/rule
 		// entry. This row pins that coverage the same way.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/metrics", true},
+		// The campaign settings readback (LFXV2-3067) is the same shape again — a deeper
+		// subroute under a campaign, inheriting the same match and rule rather than adding
+		// its own. Pinned here for the same reason: a narrowing that unroutes it would
+		// otherwise be caught by nothing, and an unroutable read is indistinguishable from
+		// a platform that cannot be reached.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/settings", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
