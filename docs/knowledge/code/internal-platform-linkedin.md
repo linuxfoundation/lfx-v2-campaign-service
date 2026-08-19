@@ -67,6 +67,28 @@ claim, and a retry could orphan a second billable campaign group that nothing wa
 told to reconcile. Fail-closed is unchanged: the rejected request is still never
 replayed inside the failing operation (see `invalidateAccessToken`).
 
+**A 401 is classified on EVERY arm that can observe one, not only the arm that read
+the body.** `doRequest` can leave a non-2xx response by three different exits — a
+readable body, a body-read failure (a mid-flight reset after the status line), and a
+body over `maxResponseBytes` — and the two unreadable-body exits return BEFORE the
+status arm. `expiredCredentialsError` is therefore the single construction site all
+three call: it returns `nil` when the status is not an expiry, so each arm uses it as
+a guard ahead of its generic `apiError` return. The body argument is OPTIONAL (`""`
+from the arms that never obtained one), because `isTokenExpiryResponse` uses
+`serviceErrorCode` only as a positive signal and already treats an unparseable body as
+an expiry — the 401 status alone is the operative signal. Concentrating it there is
+what keeps the two halves inseparable: an unreadable 401 previously fell through to a
+bare `apiError`, which (a) skipped `invalidateAccessToken`, leaving a token LinkedIn
+had already rejected in cache for the next caller to replay, and (b) hit
+`createOutcomeAmbiguous`'s `apiError` arm, whose status list covers only 3xx/429/5xx —
+so a mutating POST answered 401 read as DEFINITE and released the dispatch claim, the
+exact harm the method/status plumbing above exists to prevent. The `skipBody` (status
+update) path is NOT exempt: its early returns are gated on a 2xx, so a non-2xx falls
+into the same arms, and the cascade tunnels `PARTIAL_UPDATE` over POST. `metrics.go`'s
+parallel request path shares the construction site for the cache-invalidation half; its
+ambiguity classification is a no-op there because the method is a hard-coded GET, which
+the method gate correctly keeps definite.
+
 **Every error arm of `fetchToken` rebuilds its cause from CLASSIFICATION rather than
 forwarding text**, because the token exchange is the one request whose body carries
 `client_secret` and the refresh token and whose 2xx response carries the rotated refresh

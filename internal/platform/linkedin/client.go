@@ -1048,6 +1048,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
 			}
+			// A 401 is classified BEFORE the generic apiError, exactly as the readable-body
+			// arm below does. An unreadable body does not make the 401 any less a 401: the
+			// status alone carries both facts (reconnect this connection; on a mutating
+			// method the outcome is unknowable), and isTokenExpiryResponse treats an
+			// unparseable body as an expiry anyway. Routing it here keeps the cache
+			// invalidation and the ambiguity classification identical on both arms.
+			if ce := c.expiredCredentialsError(resp.StatusCode, "", method); ce != nil {
+				return nil, ce
+			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
 		}
 		if int64(buf.Len()) > maxResponseBytes {
@@ -1069,6 +1078,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 					return nil, nil // 2xx success; caller decodes no body
 				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+			}
+			// Same reasoning as the read-failure arm above: an oversized body does not
+			// un-401 a 401. Classify it here so the cached token is invalidated and a
+			// mutating request stays outcome-ambiguous.
+			if ce := c.expiredCredentialsError(resp.StatusCode, "", method); ce != nil {
+				return nil, ce
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 		}
@@ -1096,14 +1111,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// 401 (which created nothing) stays a plain expiry. Without them the create
 			// cascade returned nil,err and released the claim on a campaign group that may
 			// already be billing upstream.
-			if isTokenExpiryResponse(resp.StatusCode, text) {
-				c.invalidateAccessToken()
-				return nil, &credentialsExpiredError{
-					Connection: c.creds.ConnectionLabel(),
-					Reason:     "LinkedIn rejected the access token (HTTP 401: expired, revoked or invalid)",
-					Method:     method,
-					StatusCode: resp.StatusCode,
-				}
+			if ce := c.expiredCredentialsError(resp.StatusCode, text, method); ce != nil {
+				return nil, ce
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
 		}

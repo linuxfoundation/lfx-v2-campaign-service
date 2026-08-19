@@ -495,6 +495,16 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		// prefix is needed on either. Do not add a "read response body: " prefix here: it would
 		// double-state what redactBodyReadError already says, and it would also make the two
 		// paths' text diverge for no reason (metrics_test.go's wantBody asserts they match).
+		//
+		// A 401 is classified here for the same reason the readable-body arm below does it: an
+		// unreadable body does not make the 401 any less a 401. The AMBIGUITY half is a no-op on
+		// this path (the method is a hard-coded GET, which the method gate keeps definite — an
+		// analytics read creates nothing), but the CACHE-INVALIDATION half is not: without this,
+		// a 401 whose body could not be read left the rejected token in cache to be replayed,
+		// and the operator got an opaque upstream error instead of the reconnect signal.
+		if ce := c.expiredCredentialsError(resp.StatusCode, "", http.MethodGet); ce != nil {
+			return nil, false, 0, ce
+		}
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: redactBodyReadError(err).Error()}
 	}
 
@@ -508,6 +518,11 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+		}
+		// Same reasoning as the read-failure arm above: an oversized body does not un-401 a
+		// 401, and the rejected token must still be evicted from the cache.
+		if ce := c.expiredCredentialsError(resp.StatusCode, "", http.MethodGet); ce != nil {
+			return nil, false, 0, ce
 		}
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 	}
@@ -526,22 +541,15 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		// The body is passed to the classifier but still NOT retained on apiError: it is
 		// read for the serviceErrorCode signal and discarded, so no untrusted upstream
 		// text reaches an exported field.
-		if isTokenExpiryResponse(resp.StatusCode, buf.String()) {
-			// Clear the cached token so the next read re-exchanges rather than replaying
-			// one LinkedIn has already rejected. Only the CACHE is cleared — a revoked
-			// access token does not imply a revoked refresh token.
-			c.invalidateAccessToken()
-			// Method/StatusCode are recorded for the same reason doRequest's 401 arm
-			// records them. Here they classify NEGATIVELY and that is the point: this
-			// analytics call is a GET, so it created nothing, and the method gate in
-			// createOutcomeAmbiguous keeps a read 401 a plain expiry rather than letting
-			// it read as "a campaign may exist".
-			return nil, false, 0, &credentialsExpiredError{
-				Connection: c.creds.ConnectionLabel(),
-				Reason:     "LinkedIn rejected the access token (HTTP 401: expired, revoked or invalid)",
-				Method:     http.MethodGet,
-				StatusCode: resp.StatusCode,
-			}
+		// expiredCredentialsError clears the cached token (so the next read re-exchanges
+		// rather than replaying one LinkedIn has already rejected — only the CACHE, since a
+		// revoked access token does not imply a revoked refresh token) and records
+		// Method/StatusCode for the same reason doRequest's 401 arm does. Here they classify
+		// NEGATIVELY and that is the point: this analytics call is a GET, so it created
+		// nothing, and the method gate in createOutcomeAmbiguous keeps a read 401 a plain
+		// expiry rather than letting it read as "a campaign may exist".
+		if ce := c.expiredCredentialsError(resp.StatusCode, buf.String(), http.MethodGet); ce != nil {
+			return nil, false, 0, ce
 		}
 		// Body is deliberately NOT retained: this analytics path never classifies on
 		// the response body (unlike isInReviewPauseRejection's write-path use of

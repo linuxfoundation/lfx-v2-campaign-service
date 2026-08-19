@@ -367,6 +367,46 @@ func isTokenExpiryResponse(statusCode int, body string) bool {
 	return true
 }
 
+// expiredCredentialsError is the SINGLE construction site for a response-arm 401. It
+// returns nil when the status is not a token expiry, so a caller can use it as a guard
+// ahead of its generic apiError return.
+//
+// It exists because the 401 arms are reached from THREE different exit paths in
+// doRequest — a readable non-2xx body, a body-read failure, and an over-cap body — and
+// each must produce the SAME error. Before this helper only the readable-body path
+// classified 401s, so a 401 whose body could not be read (a mid-flight connection reset
+// after the status line, or a body over maxResponseBytes) fell through to a bare
+// *apiError. That cost two distinct things:
+//
+//   - the cached access token was NOT invalidated, so a token LinkedIn had already
+//     rejected survived in cache and was replayed by the next caller; and
+//   - createOutcomeAmbiguous saw an *apiError whose status list covers only 3xx/429/5xx,
+//     so a mutating POST answered 401 classified as a DEFINITE failure. The create
+//     cascade then returned a nil result, the dispatcher released the claim, and a retry
+//     could duplicate a campaign group LinkedIn may already have committed and be billing
+//     — the precise harm the 401 ambiguity fix was written to prevent.
+//
+// The body is OPTIONAL: pass "" from the arms that never obtained one. An absent body
+// costs nothing, because isTokenExpiryResponse uses the serviceErrorCode only as a
+// positive signal and already treats an unparseable body as an expiry — the 401 status
+// alone is the operative signal. Method is carried so createOutcomeAmbiguous's method
+// gate still holds: a GET 401 and every pre-send expiry (Method == "") stay DEFINITE.
+func (c *Client) expiredCredentialsError(statusCode int, body, method string) *credentialsExpiredError {
+	if !isTokenExpiryResponse(statusCode, body) {
+		return nil
+	}
+	// Invalidate the cached token so a later call re-exchanges rather than replaying the
+	// rejected one. Only the CACHE is cleared — a revoked access token does not imply a
+	// revoked refresh token.
+	c.invalidateAccessToken()
+	return &credentialsExpiredError{
+		Connection: c.creds.ConnectionLabel(),
+		Reason:     "LinkedIn rejected the access token (HTTP 401: expired, revoked or invalid)",
+		Method:     method,
+		StatusCode: statusCode,
+	}
+}
+
 // invalidateAccessToken clears the cached access token so the next caller
 // re-exchanges instead of replaying one LinkedIn has already rejected. Used when a
 // 401 proves the token is dead despite any expiry timestamp saying otherwise — a
