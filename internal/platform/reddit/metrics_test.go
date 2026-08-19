@@ -386,6 +386,28 @@ func TestGetCampaignMetrics_NonSuccessErrorsHideTheAccountID(t *testing.T) {
 		}
 	})
 
+	// The plain fmt.Errorf arms of request(). These carry the path by string interpolation
+	// rather than in an error TYPE, so a type-switch-based redactor missed all of them.
+	t.Run("rate-limit abort", func(t *testing.T) {
+		client := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			// A Retry-After beyond maxRetryWait aborts instead of sleeping.
+			w.Header().Set("Retry-After", "99999")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+		})
+		_, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if strings.Contains(err.Error(), testAccount.AccountID) {
+			t.Errorf("the rate-limit abort leaked the account id: %s", err.Error())
+		}
+		// The diagnostic must survive.
+		if !strings.Contains(err.Error(), "429") {
+			t.Errorf("the rate-limit diagnostic was lost: %s", err.Error())
+		}
+	})
+
 	t.Run("transport failure", func(t *testing.T) {
 		// A handler that hijacks and closes the connection produces a Do-time failure.
 		client := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {

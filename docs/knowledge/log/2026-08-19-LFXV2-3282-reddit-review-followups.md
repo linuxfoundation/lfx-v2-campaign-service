@@ -29,13 +29,30 @@ builds an `apiError`, and a transport failure a `transportError`, both carrying 
 path — and both stringify into the service's warning log. Those are the arms that fire
 during an actual outage, so the invariant did not hold where it mattered.
 
-`redactReportPath` now rewrites the path on both types at the call site.
+`redactReportPath` now removes the account id from the error at the call site.
 
-Writing the test found a second leak in the first version of that fix: for a transport
-failure, `transportError.Err` is net/http's `*url.Error`, whose `Error()` prints the
-FULL request URL independently of `Path`. Redacting `Path` alone still leaked. The fix
-also renders the cause through `redactedURLError` (op + wrapped error, no URL) while
-keeping `Unwrap` so timeout/cancellation classification off the cause is unaffected.
+**It took two attempts, and the first one is the more instructive.** The initial fix was a
+TYPE SWITCH: rewrite `Path` on `*apiError` and `*transportError`, and peel one `*url.Error`
+layer for the wrapped cause. A reviewer pointed out that this enumerates types rather than
+covering the surface, and they were right on both counts:
+
+- `request()` also returns FIVE plain `fmt.Errorf` values that interpolate the path directly
+  — body encode, request build, pre-send dial, rate-limit abort, retries exhausted. No type
+  to switch on, so all five still leaked. Confirmed with a probe:
+  `reddit API POST /ad_accounts/t2_test/reports -> 429: rate-limit reset ... aborting`
+- peeling one `*url.Error` layer misses a NESTED one, whose inner `Error()` prints the full
+  request URL regardless of any outer wrapper.
+
+The redactor is now a substitution over the RENDERED message: replace the account-bearing
+path segment (and any bare occurrence of the id) wherever it appears. That covers every arm
+including ones added later, which is the property that matters for a log sink — an
+enumeration of types silently stops covering new arms, and this one already had seven. The
+original chain is preserved behind `redactedError.Unwrap`, so `errors.Is`/`As` classification
+(timeouts, context cancellation, `createOutcomeAmbiguous`) is unchanged; verified that
+`errors.As` still reaches a `*url.Error` nested two wrappers deep.
+
+This is the same lesson as the sweep-the-surface rule: the finding was one leaking arm, but
+the fix had to be the class of arm, not the named one.
 
 ## "Four of the five guesses were wrong" — it was five of six
 
@@ -71,10 +88,11 @@ name.
 - resolving credentials before the window check → the new ordering test fails with
   `the connection error masked the window rejection`; the OLD test still passes, which
   is why it was not sufficient.
-- dropping `redactReportPath` → both sub-cases fail, printing
-  `reddit API POST /ad_accounts/t2_test/reports -> 403`.
-- redacting `Path` but not the wrapped cause → the transport sub-case alone fails,
-  printing the full URL. Two arms, two distinct mutations.
+- dropping `redactReportPath` → all three sub-cases fail.
+- reverting to the type-switch shape (redact only `*apiError`/`*transportError`) → the
+  rate-limit sub-case fails, printing the leaked path. This is the mutation that reproduces
+  the reviewer's finding, and the reason the test now drives a plain-`fmt.Errorf` arm rather
+  than only the two typed ones.
 - adding `MetricsWindowLast14Days` to `supportedMetricsWindows` only → the sync test now
   fails (`ValidateMetricsWindow err=<nil> but dateRangeForWindow err=unsupported`); it
   did not before.

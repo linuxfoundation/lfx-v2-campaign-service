@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -113,7 +112,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		// that path into the service's warning log. reportDecodeError already pins the literal
 		// "reports" for the same reason on the 2xx-decode arm; without this, the non-2xx and
 		// transport arms — the ones that actually fire on an outage — would still leak it.
-		return nil, fmt.Errorf("get campaign metrics: %w", redactReportPath(err))
+		return nil, fmt.Errorf("get campaign metrics: %w", redactReportPath(err, accountID))
 	}
 
 	rows, err := decodeReportRows(resp.Data)
@@ -190,53 +189,54 @@ func reportDecodeError(err error) error {
 	}
 }
 
-// redactReportPath rewrites the request path on a report error to the literal "reports",
-// dropping the interpolated ad account id.
+// redactReportPath removes the ad account id from any error returned by the report request.
 //
-// The account id is a tenant identifier that reaches the service's warning log through
-// apiError.Error() ("reddit API POST /ad_accounts/<id>/reports -> 404") and
-// transportError.Error(). Both keep every other diagnostic — method, status, wrapped cause —
-// so nothing needed for triage is lost; only the tenant id goes. Same invariant, and the same
-// literal, that reportDecodeError applies to the decode arm.
+// The account id is a tenant identifier interpolated into the request path, and every error
+// out of request() carries that path into the service's warning log. reportDecodeError pins
+// the literal "reports" for the same reason on the 2xx-decode arm.
 //
-// An error of any other type is returned unchanged: it carries no path to redact.
-func redactReportPath(err error) error {
-	var apiErr *apiError
-	if errors.As(err, &apiErr) {
-		return &apiError{Method: apiErr.Method, Path: "reports", StatusCode: apiErr.StatusCode, Body: apiErr.Body}
+// This is a SUBSTITUTION over the rendered message, not a type switch, and that is
+// deliberate. request() returns the account-bearing path through at least seven distinct
+// arms — *apiError, *transportError, and five plain fmt.Errorf values (body encode, request
+// build, pre-send dial, rate-limit abort, retries exhausted) — and net/http nests its own
+// *url.Error inside some of them, printing the FULL request URL from the inner Error()
+// regardless of any outer wrapper. Enumerating types missed the plain arms; peeling one
+// *url.Error layer missed the nested ones. Replacing the account segment wherever it appears
+// in the final text covers every arm, including ones added later, which is the property that
+// matters for a log sink.
+//
+// The wrapped error chain is preserved so errors.Is/As classification (timeouts, context
+// cancellation, createOutcomeAmbiguous) is unaffected — only the rendered message changes.
+func redactReportPath(err error, accountID string) error {
+	if err == nil {
+		return nil
 	}
-	var transErr *transportError
-	if errors.As(err, &transErr) {
-		// The wrapped cause needs redacting too, not just Path. net/http returns a
-		// *url.Error whose Error() prints the FULL request URL, so the account id reaches
-		// the log through the cause even after Path is rewritten. Keep the underlying
-		// error for errors.Is/As (timeouts and context cancellation are classified off
-		// it), but render it from a *url.Error's Op/Err only, dropping its URL field.
-		return &transportError{Method: transErr.Method, Path: "reports", Err: redactURLError(transErr.Err)}
-	}
-	return err
-}
-
-// redactURLError strips the request URL from a *url.Error while preserving the wrapped
-// cause, so errors.Is/As classification (timeout, context cancellation) still works on it.
-// A non-*url.Error is returned unchanged.
-func redactURLError(err error) error {
-	var urlErr *url.Error
-	if !errors.As(err, &urlErr) {
+	id := strings.TrimSpace(accountID)
+	if id == "" {
 		return err
 	}
-	return &redactedURLError{op: urlErr.Op, err: urlErr.Err}
+	msg := err.Error()
+	// Replace the account-bearing path segment wherever it appears: in a bare path
+	// ("/ad_accounts/<id>/reports") and inside a full URL that net/http echoed.
+	cleaned := strings.ReplaceAll(msg, "/ad_accounts/"+id+"/reports", "/ad_accounts/<redacted>/reports")
+	// Belt-and-braces: catch any remaining bare occurrence of the id (e.g. a path shape this
+	// client does not build today).
+	cleaned = strings.ReplaceAll(cleaned, id, "<redacted>")
+	if cleaned == msg {
+		return err
+	}
+	return &redactedError{msg: cleaned, err: err}
 }
 
-// redactedURLError renders a transport failure without the request URL. It keeps Unwrap so
-// timeout/cancellation classification off the cause is unaffected.
-type redactedURLError struct {
-	op  string
+// redactedError renders a sanitized message while keeping the original chain reachable for
+// errors.Is/As, so classification that depends on the cause is unchanged.
+type redactedError struct {
+	msg string
 	err error
 }
 
-func (e *redactedURLError) Error() string { return e.op + " reports: " + e.err.Error() }
-func (e *redactedURLError) Unwrap() error { return e.err }
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
 
 // reportEnvelope is the response's "data" object, per the spec's Report schema.
 //
