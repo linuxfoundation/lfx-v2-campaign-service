@@ -596,6 +596,19 @@ placements?: object             — Which feeds to run on; ALL keys optional boo
                                   NOTE: `MessengerInbox: true` is REJECTED — Meta removed the
                                   Messenger Inbox placement (Nov 2025), so the client fails the
                                   dispatch job pre-create if it is enabled. Leave it false/omitted.
+instagramUserId?: string        — Instagram account (IGSID) bound to the ad creative (sent as the
+                                  top-level `instagram_user_id` adcreative field). REQUIRED whenever
+                                  an Instagram placement is used — the default `placements` enable
+                                  Instagram Feed — otherwise Meta refuses to PUBLISH the ad ("Please
+                                  add Instagram account"), even though the ad is created. Omit for a
+                                  Facebook-only campaign. Sent only when non-empty; a blank/whitespace
+                                  value is treated as absent.
+dsaBeneficiary?: string         — EU Digital Services Act "advertiser" disclosure, set on the ad set
+                                  (`dsa_beneficiary`). REQUIRED for a launch-ready ad set that targets
+dsaPayor?: string                 a regulated location: Meta blocks PUBLISH ("Please add Advertiser" /
+                                  "Please add Payer") until BOTH `dsaBeneficiary` and `dsaPayor` are
+                                  present. Each is sent only when non-empty; blank/whitespace is
+                                  treated as absent. Omit for non-regulated targeting.
 variants: AdVariant[]           — One ad per variant; at least one is required.
 ```
 

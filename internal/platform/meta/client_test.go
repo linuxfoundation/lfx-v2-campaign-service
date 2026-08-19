@@ -588,6 +588,7 @@ func TestCreateCampaignOmitsInstagramAndDSAWhenUnset(t *testing.T) {
 	// as absent, not sent as blank strings.
 	in := metaFieldInput()
 	in.InstagramUserID = "   "
+	in.DSABeneficiary = "\t"
 	in.DSAPayor = "  "
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
