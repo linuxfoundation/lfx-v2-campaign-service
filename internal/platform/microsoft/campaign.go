@@ -779,6 +779,50 @@ const (
 	errCodeKeywordMatchTypeExistsNumeric = "1542"
 )
 
+// rawCodePresent reports whether a raw Code/ErrorCode field was PRESENT and non-null on the
+// wire, independent of whether its value can be rendered to a code string.
+//
+// The distinction matters because it is what separates a placeholder from an unclassifiable
+// error. An omitted or null field is a succeeded entry's padding; a field that is present but
+// carries an unexpected shape is an error this client cannot name, and naming-failure must not
+// be read as absence-of-error.
+func rawCodePresent(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && !bytes.Equal(t, []byte("null"))
+}
+
+// isNonDuplicateKeywordItem reports whether ONE error item carries an actual error code that
+// is not an already-exists keyword code — i.e. whether it is a genuine rejection.
+//
+// This is the single-item core of isDuplicateKeywordPartial, factored out so boundedErrorItems
+// can apply the same test to elements it is about to DISCARD for memory. Keeping one definition
+// is the point: if the set of already-exists spellings ever changes, the streaming tally and
+// the retained-slice predicate cannot drift apart and disagree about whether a batch was wholly
+// duplicate.
+//
+// A null/placeholder slot carries no code and is NOT a rejection: an index-aligned PartialErrors
+// array can null-pad the entries that succeeded, exactly as partialErrorsHaveAny treats them.
+//
+// "Carries no code" means the keys are ABSENT or JSON null — not merely that codeString could
+// not render them. codeString returns "" for any shape it cannot read as a string or a number
+// (an object, an array, a bool, whitespace), so testing it alone would fold an UNPARSEABLE code
+// into the same answer as a placeholder. That is a false absence, and past the retention cap it
+// is invisible to both terms of the caller's guard: a genuine editorial rejection whose code
+// arrived in an unexpected shape would be tallied as a non-error and the batch reported as a
+// clean converge-on-reuse success. Presence is therefore tested on the RAW bytes and an
+// unrecognized-but-present code counts as a rejection — "cannot classify" must fail closed to
+// the rejection path, never collapse into "not an error".
+func isNonDuplicateKeywordItem(it msErrorItem) bool {
+	if !rawCodePresent(it.ErrorCode) && !rawCodePresent(it.Code) {
+		return false // a null/placeholder slot, not an error
+	}
+	one := []msErrorItem{it}
+	return !partialErrorsHaveCode(one, errCodeDuplicateKeyword) &&
+		!partialErrorsHaveCode(one, errCodeDuplicateKeywordNumeric) &&
+		!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExists) &&
+		!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExistsNumeric)
+}
+
 // isDuplicateKeywordPartial reports whether EVERY actual error in a PartialErrors array is an
 // already-exists keyword rejection (under any of its four spellings).
 //
@@ -796,17 +840,24 @@ const (
 // Null placeholder entries are ignored the same way partialErrorsHaveAny ignores them: an
 // index-aligned PartialErrors array can carry zero-value items for the entries that succeeded,
 // and those are not errors to classify.
-func isDuplicateKeywordPartial(items []msErrorItem) bool {
-	found := false
+//
+// anyErrors carries whole-array presence from decode, because items may be only the RETAINED
+// prefix of the wire array. When the errors all landed past the retention cap the prefix is
+// all-null, and a presence term computed from items alone would answer "no error found" for a
+// body that plainly had them — refusing an ordinary full-duplicate batch. Presence is therefore
+// taken from the decoder; only the "is every error a duplicate?" question is answered from the
+// items, and the caller pairs this with a whole-array NonDuplicateKeywords == 0 check so a
+// non-duplicate discarded past the cap still blocks the duplicate-only conclusion.
+func isDuplicateKeywordPartial(items []msErrorItem, anyErrors bool) bool {
+	found := anyErrors
 	for _, it := range items {
-		if codeString(it.ErrorCode) == "" && codeString(it.Code) == "" {
+		// Re-checked here rather than delegated: a placeholder must SKIP without setting
+		// found, whereas isNonDuplicateKeywordItem merely reports false for one. Collapsing
+		// the two would let a null-only array satisfy found and read as a duplicate batch.
+		if !rawCodePresent(it.ErrorCode) && !rawCodePresent(it.Code) {
 			continue // a null/placeholder slot, not an error
 		}
-		one := []msErrorItem{it}
-		if !partialErrorsHaveCode(one, errCodeDuplicateKeyword) &&
-			!partialErrorsHaveCode(one, errCodeDuplicateKeywordNumeric) &&
-			!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExists) &&
-			!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExistsNumeric) {
+		if isNonDuplicateKeywordItem(it) {
 			return false
 		}
 		found = true
