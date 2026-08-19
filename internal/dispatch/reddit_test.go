@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -814,5 +815,289 @@ func TestReddit_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Errorf("Conversions = %v read from an UNDOCUMENTED Reddit reporting contract; a "+
 			"guessed field name reported as a measurement is exactly what the unverified-"+
 			"contract banner forbids", *metrics.Conversions)
+	}
+}
+
+// TestReddit_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
+// guard on the TOGGLE path. Reddit campaign ids are unique only WITHIN an ad account, so once
+// a project's connection is re-pointed the stored id addressed against the new account can
+// collide with an unrelated campaign and PAUSE OR ACTIVATE something this project does not
+// own. The refusal must be a non-retryable ErrCampaignAccountMismatch (409) raised before any
+// Reddit API call, and it must sit above BOTH branches.
+//
+// The ACTIVATE case pins the ORDERING against the child-id guard: a foreign-account campaign
+// with NO stored children must answer the MISMATCH, not "has no fully-created ad group + ad
+// to serve". The latter is a fact about a campaign in a different account.
+//
+// Unlike google-ads/microsoft/linkedin/meta there is NO url fallback to cover: RedditURL is
+// the bare ads-manager constant, so only the explicit accountId is checkable — which is
+// exactly what redditCreationAccountID documents.
+func TestReddit_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"full child ids", `{"accountId":"t2_other","adGroupId":"t5_ag","adId":"t6_ad"}`},
+		// The ordering probe: no child ids, so the not-provisioned guard would fire on
+		// ACTIVATE if it ran first.
+		{"no child ids", `{"accountId":"t2_other"}`},
+	} {
+		for _, status := range []string{model.CampaignRunPaused, model.CampaignRunActive} {
+			t.Run(tc.name+"/status="+status, func(t *testing.T) {
+				api := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					t.Errorf("Reddit must not be mutated for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+				}))
+				defer api.Close()
+				// reddit.NewClient only constructs the client — refreshToken is called lazily
+				// from request(), so with the guard in place NEITHER this token endpoint nor
+				// the Ads API is contacted. It is wired purely so the success-path tests below
+				// can share this shape; being reached here would itself be a defect.
+				tok := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+					t.Error("no token may be fetched for a campaign owned by another ad account: the guard runs before request() would refresh one")
+				}))
+				defer tok.Close()
+				// activeRedditConn resolves to account t2_acct; the rows record t2_other.
+				d := NewRedditDispatcher(
+					fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+					reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+					reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+				)
+				camp := &model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(tc.result)}
+				err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, status)
+				if err == nil {
+					t.Fatal("expected a mismatch error")
+				}
+				if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+					t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+				}
+				if errors.Is(err, domain.ErrCampaignNotProvisioned) {
+					t.Errorf("a foreign-account campaign must answer the mismatch, not a provisioning verdict: %v", err)
+				}
+				if !strings.Contains(err.Error(), "t2_other") || !strings.Contains(err.Error(), "t2_acct") {
+					t.Errorf("error must name the created account (t2_other) and the resolved one (t2_acct), got %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestReddit_ToggleStatus_MatchingOrUnknownAccountStillToggles is the guard's other half: a
+// row recording the SAME account, and a row recording none at all, must still toggle. Absence
+// means "unknown, proceed" — and on Reddit that covers EVERY row written before the accountId
+// field existed, because there is no URL fallback to recover the account from.
+func TestReddit_ToggleStatus_MatchingOrUnknownAccountStillToggles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching accountId", `{"accountId":"t2_acct","adGroupId":"t5_ag","adId":"t6_ad"}`},
+		{"no provenance recorded", `{"adGroupId":"t5_ag","adId":"t6_ad"}`},
+		{"unparseable result blob", `not json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var patches int
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPatch {
+					mu.Lock()
+					patches++
+					mu.Unlock()
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"data":{}}`)
+			}))
+			defer api.Close()
+			tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tok.Close()
+			d := NewRedditDispatcher(
+				fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+				reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+				reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(tc.result)}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunPaused); err != nil {
+				t.Fatalf("ToggleStatus must proceed for a matching/unknown account, got %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// The guard let the mutation THROUGH. Asserting only "no error" would also pass
+			// if the toggle silently did nothing.
+			if patches == 0 {
+				t.Error("a matching/unknown-account campaign must actually be toggled, but no PATCH reached Reddit")
+			}
+		})
+	}
+}
+
+// TestReddit_ReadMetrics_ForeignAccountIs409AndNeverQueries pins the same guard on the READ
+// path: the stored campaign id read under a re-pointed connection returns either nothing — a
+// false "no data" — or an unrelated campaign's numbers rendered as this campaign's
+// measurement.
+func TestReddit_ReadMetrics_ForeignAccountIs409AndNeverQueries(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	api := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("Reddit must not be queried for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	camp := &model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_other","adGroupId":"t5_ag","adId":"t6_ad"}`)}
+	got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds, camp, model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("expected a mismatch error")
+	}
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+	}
+	if got != nil {
+		t.Errorf("a refused read must return no metrics, got %+v", got)
+	}
+	if !strings.Contains(err.Error(), "t2_other") || !strings.Contains(err.Error(), "t2_acct") {
+		t.Errorf("error must name the created account (t2_other) and the resolved one (t2_acct), got %v", err)
+	}
+}
+
+// TestReddit_ReadMetrics_MatchingOrUnknownAccountStillReads is the read guard's other half: a
+// row that cannot PROVE a mismatch must still be read.
+func TestReddit_ReadMetrics_MatchingOrUnknownAccountStillReads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching accountId", `{"accountId":"t2_acct","adGroupId":"t5_ag","adId":"t6_ad"}`},
+		{"no provenance recorded", `{"adGroupId":"t5_ag","adId":"t6_ad"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+			var mu sync.Mutex
+			var queried bool
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				queried = true
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{"metrics":[{"campaign_id":"t3_c","impressions":1000,"clicks":10,"spend":5000000}]}}`))
+			}))
+			defer api.Close()
+			tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tok.Close()
+			d := NewRedditDispatcher(
+				fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+				reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+			)
+			camp := &model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(tc.result)}
+			got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds, camp, model.MetricsWindowToday)
+			if err != nil {
+				t.Fatalf("ReadMetrics must proceed for a matching/unknown account, got %v", err)
+			}
+			if got == nil || got.Impressions != 1000 {
+				t.Errorf("want the platform's metrics (1000 impressions), got %+v", got)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !queried {
+				t.Error("a matching/unknown-account campaign must actually be read, but Reddit was never queried")
+			}
+		})
+	}
+}
+
+// TestReddit_DispatchStampsCreatingAccount closes the loop the guard depends on: it drives a
+// REAL create through the client and asserts the persisted Result blob records the account,
+// readable by the very function the guard calls.
+//
+// Without this the guard is untestably inert on Reddit: redditCreationAccountID has no URL
+// fallback (RedditURL is a bare constant), so if the create path stopped stamping accountId
+// every row would answer "unknown, proceed" and the mismatch could never fire — while every
+// hand-written-blob guard test kept passing. Asserting through redditCreationAccountID rather
+// than a literal key also pins reader and writer to the SAME persisted shape.
+func TestReddit_DispatchStampsCreatingAccount(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "cmp_123"}})
+		case strings.Contains(r.URL.Path, "ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	// activeRedditConn resolves to account t2_acct, so that is what a created row must record.
+	if got := redditCreationAccountID(camp); got != "t2_acct" {
+		t.Errorf("a created row must record its creating account: redditCreationAccountID = %q, want %q (blob: %s)", got, "t2_acct", camp.Result)
+	}
+}
+
+// TestReddit_NoAccountSelectedIsRefusedBeforeTheProvenanceGuard pins the PRECONDITION the
+// provenance guard's `current == ""` arm rests on.
+//
+// verifyRedditAccountMatch treats an empty CURRENT account as "unknown, proceed", because an
+// absence cannot prove a mismatch. On reddit that arm is unreachable today: resolveRedditClient
+// refuses an account-less connection with ErrAccountNotSelected before any campaign row is
+// consulted. That is a precondition, not a coincidence — and an unpinned precondition is one
+// somebody relaxes later, silently turning the unreachable arm into live behaviour with nothing
+// failing. This test is what fails in that case.
+//
+// Both entry points, because the guard is shared by both and they resolve independently.
+func TestReddit_NoAccountSelectedIsRefusedBeforeTheProvenanceGuard(t *testing.T) {
+	noAccount := activeRedditConn(goodRedditCreds)
+	noAccount.AccountID = ""
+	for _, ep := range []struct {
+		name string
+		call func(d *RedditDispatcher) error
+	}{
+		{"ToggleStatus", func(d *RedditDispatcher) error {
+			return d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds,
+				&model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_other"}`)},
+				model.CampaignRunPaused)
+		}},
+		{"ReadMetrics", func(d *RedditDispatcher) error {
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds,
+				&model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_other"}`)},
+				model.MetricsWindowToday)
+			return err
+		}},
+	} {
+		t.Run(ep.name, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+			d := NewRedditDispatcher(fakeConnReader{conn: noAccount}, identityEncryptor{})
+			err := ep.call(d)
+			if err == nil {
+				t.Fatal("an account-less connection must be refused")
+			}
+			// The connection defect is the answer, NOT the account mismatch: the guard is never
+			// reached, so a row recording a foreign account is beside the point here.
+			if !errors.Is(err, domain.ErrAccountNotSelected) {
+				t.Errorf("want ErrAccountNotSelected (the precondition the guard's empty-current arm rests on), got %T: %v", err, err)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("want ErrConnectionNotUsable so the response maps to 409, got %v", err)
+			}
+		})
 	}
 }

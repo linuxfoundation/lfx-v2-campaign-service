@@ -808,3 +808,235 @@ func TestTwitter_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
 		t.Errorf("the rest of the read was disturbed: %+v", metrics)
 	}
 }
+
+// TestTwitter_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
+// guard on the TOGGLE path. The mutating endpoints this test covers are nested under
+// /accounts/{account_id}/ (the metrics read is account-scoped too, but as the trailing-segment
+// /stats/accounts/{account_id}), and campaign ids are unique only WITHIN an account, so once a
+// project's connection is re-pointed the stored id addressed against the new account can
+// collide with an unrelated campaign and PAUSE OR ACTIVATE something this project does not
+// own. The refusal must be a non-retryable ErrCampaignAccountMismatch (409) raised before X is
+// contacted, and it must sit above BOTH branches.
+//
+// The ACTIVATE case pins the ORDERING against the line-item guard: a foreign-account campaign
+// with NO stored line item must answer the MISMATCH, not "its line item is not known". The
+// latter is a fact about a campaign in a different account.
+//
+// Unlike google-ads/microsoft/linkedin/meta there is NO url fallback to cover: TwitterURL is
+// the bare ads-manager constant, so only the explicit AccountID is checkable — which is
+// exactly what twitterCreationAccountID documents.
+func TestTwitter_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"line item known", `{"CampaignID":"cmp1","LineItemID":"li1","AccountID":"acc_other"}`},
+		// The ordering probe: no line item, so the not-provisioned guard would fire on
+		// ACTIVATE if it ran first.
+		{"no line item", `{"CampaignID":"cmp1","LineItemID":"","AccountID":"acc_other"}`},
+	} {
+		for _, status := range []string{model.CampaignRunPaused, model.CampaignRunActive} {
+			t.Run(tc.name+"/status="+status, func(t *testing.T) {
+				api := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					t.Errorf("X must not be mutated for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+				}))
+				defer api.Close()
+				// activeTwitterConn resolves to account acc1; the rows record acc_other.
+				d := NewTwitterDispatcher(
+					fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+					twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+				)
+				camp := &model.Campaign{
+					Platform:           model.ProviderTwitterAds,
+					PlatformCampaignID: "cmp1",
+					Result:             json.RawMessage(tc.result),
+				}
+				err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, camp, status)
+				if err == nil {
+					t.Fatal("expected a mismatch error")
+				}
+				if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+					t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+				}
+				if errors.Is(err, domain.ErrCampaignNotProvisioned) {
+					t.Errorf("a foreign-account campaign must answer the mismatch, not a provisioning verdict: %v", err)
+				}
+				if !strings.Contains(err.Error(), "acc_other") || !strings.Contains(err.Error(), "acc1") {
+					t.Errorf("error must name the created account (acc_other) and the resolved one (acc1), got %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestTwitter_ToggleStatus_MatchingOrUnknownAccountStillToggles is the guard's other half: a
+// row recording the SAME account, and a row recording none at all, must still toggle. Absence
+// means "unknown, proceed" — and on X that covers EVERY row written before the AccountID field
+// existed, because there is no URL fallback to recover the account from.
+func TestTwitter_ToggleStatus_MatchingOrUnknownAccountStillToggles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching AccountID", `{"CampaignID":"cmp1","LineItemID":"li1","AccountID":"acc1"}`},
+		{"no provenance recorded", `{"CampaignID":"cmp1","LineItemID":"li1"}`},
+		{"unparseable result blob", `not json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var puts int
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					mu.Lock()
+					puts++
+					mu.Unlock()
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+			}))
+			defer api.Close()
+			d := NewTwitterDispatcher(
+				fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+				twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderTwitterAds,
+				PlatformCampaignID: "cmp1",
+				Result:             json.RawMessage(tc.result),
+			}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, camp, model.CampaignRunPaused); err != nil {
+				t.Fatalf("ToggleStatus must proceed for a matching/unknown account, got %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// The guard let the mutation THROUGH. Asserting only "no error" would also pass
+			// if the toggle silently did nothing.
+			if puts == 0 {
+				t.Error("a matching/unknown-account campaign must actually be toggled, but no PUT reached X")
+			}
+		})
+	}
+}
+
+// TestTwitter_ReadMetrics_ForeignAccountIs409AndNeverQueries pins the same guard on the READ
+// path: the stats endpoint is nested under /accounts/{account_id}/, so the stored campaign id
+// read under a re-pointed connection returns either nothing — a false "no data" — or an
+// unrelated campaign's numbers rendered as this campaign's measurement.
+func TestTwitter_ReadMetrics_ForeignAccountIs409AndNeverQueries(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("X must not be queried for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
+	}))
+	defer api.Close()
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderTwitterAds,
+		PlatformCampaignID: "cmp1",
+		Result:             json.RawMessage(`{"CampaignID":"cmp1","LineItemID":"li1","AccountID":"acc_other"}`),
+	}
+	got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderTwitterAds, camp, model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatal("expected a mismatch error")
+	}
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+	}
+	if got != nil {
+		t.Errorf("a refused read must return no metrics, got %+v", got)
+	}
+	if !strings.Contains(err.Error(), "acc_other") || !strings.Contains(err.Error(), "acc1") {
+		t.Errorf("error must name the created account (acc_other) and the resolved one (acc1), got %v", err)
+	}
+}
+
+// TestTwitter_ReadMetrics_MatchingOrUnknownAccountStillReads is the read guard's other half: a
+// row that cannot PROVE a mismatch must still be read.
+func TestTwitter_ReadMetrics_MatchingOrUnknownAccountStillReads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching AccountID", `{"CampaignID":"cmp1","LineItemID":"li1","AccountID":"acc1"}`},
+		{"no provenance recorded", `{"CampaignID":"cmp1","LineItemID":"li1"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var queried bool
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				queried = true
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":[{"id":"cmp1","id_data":[{"metrics":{"impressions":[1000],"clicks":[50],"billed_charge_local_micro":[100000000]}}]}]}`))
+			}))
+			defer api.Close()
+			d := NewTwitterDispatcher(
+				fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+				twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderTwitterAds,
+				PlatformCampaignID: "cmp1",
+				Result:             json.RawMessage(tc.result),
+			}
+			got, err := d.ReadMetrics(context.Background(), "proj", model.ProviderTwitterAds, camp, model.MetricsWindowLast7Days)
+			if err != nil {
+				t.Fatalf("ReadMetrics must proceed for a matching/unknown account, got %v", err)
+			}
+			if got == nil || got.Impressions != 1000 {
+				t.Errorf("want the platform's metrics (1000 impressions), got %+v", got)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !queried {
+				t.Error("a matching/unknown-account campaign must actually be read, but X was never queried")
+			}
+		})
+	}
+}
+
+// TestTwitter_DispatchStampsCreatingAccount closes the loop the guard depends on: it drives a
+// REAL create through the client and asserts the persisted Result blob records the account,
+// readable by the very function the guard calls.
+//
+// Without this the guard is untestably inert on X: twitterCreationAccountID has no URL
+// fallback (TwitterURL is a bare constant), so if the create path stopped stamping AccountID
+// every row would answer "unknown, proceed" and the mismatch could never fire — while every
+// hand-written-blob guard test kept passing. Asserting through twitterCreationAccountID rather
+// than a literal key also pins reader and writer to the SAME persisted shape, the way
+// TestTwitter_ToggleStatus_ChildIDsMatchPersistedShape does for the line item.
+func TestTwitter_DispatchStampsCreatingAccount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0),
+	)
+	cfg := json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"1234567890"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	// activeTwitterConn resolves to account acc1, so that is what a created row must record.
+	if got := twitterCreationAccountID(camp); got != "acc1" {
+		t.Errorf("a created row must record its creating account: twitterCreationAccountID = %q, want %q (blob: %s)", got, "acc1", camp.Result)
+	}
+}
