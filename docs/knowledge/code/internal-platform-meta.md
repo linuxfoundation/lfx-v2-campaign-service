@@ -84,6 +84,16 @@ identifying scheme+host+path and drops the query, fragment, and userinfo. This
 mirrors `displayMetaUTMURL`: the full value still goes to Meta, only the persisted
 copy is sanitized.
 
+`scrubURLFromErr` FAILS CLOSED. Substring replacement alone only catches an echo
+that survived upstream byte-for-byte, and these paths mangle it routinely: `do`
+truncates a non-Graph error body at 300 runes, which can clip the URL mid-query and
+leave a prefix of the signature that `ReplaceAll` no longer matches. After
+replacing, the result is verified free of any residue of the URL's query/fragment
+(`urlSecretResidueFree`, prefix-matched because truncation clips from the right);
+if any survives, the message is dropped for the redacted URL plus a fixed
+"message withheld" note rather than emitted. A redactor that emits text it cannot
+confirm is clean is not a redactor.
+
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are
 excluded; per-variant copy is rejected up front when it exceeds Meta's limits

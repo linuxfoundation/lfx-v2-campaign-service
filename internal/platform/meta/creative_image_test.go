@@ -565,3 +565,48 @@ func creativeLinkData(t *testing.T, body map[string]any) map[string]any {
 	}
 	return ld
 }
+
+// TestScrubURLFromErrFailsClosed covers the case exact-substring replacement cannot
+// reach: `do` truncates a non-Graph error body at 300 runes, which can clip the
+// echoed URL mid-query and leave a PREFIX of the signature. ReplaceAll no longer
+// matches, so the old scrubber emitted the surviving credential. The scrubber must
+// now withhold any message it cannot confirm is clean.
+func TestScrubURLFromErrFailsClosed(t *testing.T) {
+	const secretURL = "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG_ABCDEF&e=1"
+
+	t.Run("truncated echo is withheld, not emitted", func(t *testing.T) {
+		// A proxy page that echoed the request line, then got clipped mid-signature.
+		err := fmt.Errorf("proxy error: upstream refused https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG_ABC")
+		got := scrubURLFromErr(err, secretURL, 300)
+		if strings.Contains(got, "SECRET_SIG") {
+			t.Errorf("fail-open: a clipped signature survived scrubbing: %q", got)
+		}
+		// It must still identify WHICH image failed.
+		if !strings.Contains(got, "cdn.example.org/a.png") {
+			t.Errorf("withheld message lost the identifying image path: %q", got)
+		}
+	})
+
+	t.Run("line-wrapped echo is withheld", func(t *testing.T) {
+		err := fmt.Errorf("body: https://cdn.example.org/a.png?X-Amz-Sig\nnature=SECRET_SIG_ABCDEF")
+		if got := scrubURLFromErr(err, secretURL, 300); strings.Contains(got, "SECRET_SIG_ABCDEF") {
+			t.Errorf("fail-open: a wrapped echo kept the full signature: %q", got)
+		}
+	})
+
+	t.Run("a clean unrelated message is still emitted verbatim", func(t *testing.T) {
+		err := fmt.Errorf("meta API POST /adcreatives failed (400): Invalid parameter")
+		got := scrubURLFromErr(err, secretURL, 300)
+		if got != "meta API POST /adcreatives failed (400): Invalid parameter" {
+			t.Errorf("a message with no URL residue must pass through unchanged, got %q", got)
+		}
+	})
+
+	t.Run("a URL with no query is never withheld", func(t *testing.T) {
+		err := fmt.Errorf("could not fetch https://cdn.example.org/plain.png")
+		got := scrubURLFromErr(err, "https://cdn.example.org/plain.png", 300)
+		if !strings.Contains(got, "could not fetch") {
+			t.Errorf("a URL carrying no secret material must not trigger withholding, got %q", got)
+		}
+	})
+}

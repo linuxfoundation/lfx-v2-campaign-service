@@ -2188,20 +2188,79 @@ func redactCredentials(s string) string {
 // The URL is replaced by its redactURL form (scheme+host+path — no query, no
 // fragment, no userinfo) so the step still says WHICH image failed without
 // carrying the signature. An empty imageURL leaves the message untouched.
+//
+// It FAILS CLOSED. Exact substring replacement only removes an echo that survived
+// upstream byte-for-byte, and the paths that reach here routinely mangle it: `do`
+// truncates a non-Graph body at 300 runes, which can clip the URL mid-query and
+// leave a PREFIX of the signature that ReplaceAll can no longer match; a proxy may
+// re-encode or line-wrap it. So after replacing, the result is VERIFIED to carry no
+// residue of the secret material (the URL's query/fragment); if any survives, the
+// message is dropped for a fixed placeholder rather than emitted. A redactor that
+// emits text it cannot confirm is clean is not a redactor — and the caller's Steps
+// are persisted, so an unverifiable message must never reach them.
 func scrubURLFromErr(err error, imageURL string, max int) string {
 	if err == nil {
 		return ""
 	}
 	msg := err.Error()
-	if raw := strings.TrimSpace(imageURL); raw != "" {
-		// Replace the full URL first, then the query-bearing forms an upstream may
-		// have re-encoded. redactURL keeps the identifying prefix.
-		msg = strings.ReplaceAll(msg, raw, redactURL(raw))
-		if esc := url.QueryEscape(raw); esc != raw {
-			msg = strings.ReplaceAll(msg, esc, redactURL(raw))
-		}
+	raw := strings.TrimSpace(imageURL)
+	if raw == "" {
+		return truncate(msg, max)
+	}
+	// Replace the full URL first, then the query-bearing forms an upstream may
+	// have re-encoded. redactURL keeps the identifying prefix.
+	msg = strings.ReplaceAll(msg, raw, redactURL(raw))
+	if esc := url.QueryEscape(raw); esc != raw {
+		msg = strings.ReplaceAll(msg, esc, redactURL(raw))
+	}
+	if !urlSecretResidueFree(msg, raw) {
+		return fmt.Sprintf("%s (message withheld: it echoed the image URL's credentials)", redactURL(raw))
 	}
 	return truncate(msg, max)
+}
+
+// minResidueRun is the shortest run of a secret's characters that urlSecretResidueFree
+// treats as a leak. A very short fragment ("ab") occurs in ordinary prose by chance, so
+// matching on it would withhold every message and destroy the diagnostic; 6 is long
+// enough to be specific to the secret and short enough that a clipped signature — the
+// exact case that defeats ReplaceAll — is still caught.
+const minResidueRun = 6
+
+// urlSecretResidueFree reports whether msg is free of any recognizable fragment of
+// rawURL's SECRET material — its query and fragment, which is where a pre-signed
+// URL carries its signature. The scheme/host/path are deliberately NOT checked:
+// redactURL intentionally leaves them so the step still identifies which image
+// failed.
+//
+// It checks PREFIXES of each secret token rather than only the whole token, because
+// truncation clips from the right: a 300-rune clamp can leave "sig=SECRET_SIG_ABC"
+// where the full value was "sig=SECRET_SIG_ABCDEF". A prefix check catches that; an
+// equality check does not.
+func urlSecretResidueFree(msg, rawURL string) bool {
+	secret := ""
+	if i := strings.IndexAny(rawURL, "?#"); i >= 0 {
+		secret = rawURL[i+1:]
+	}
+	if strings.TrimSpace(secret) == "" {
+		return true // no query/fragment: nothing secret to leak
+	}
+	// Split into tokens on the delimiters that separate parameters, so one
+	// unaffected parameter name cannot mask another parameter's surviving value.
+	for _, tok := range strings.FieldsFunc(secret, func(r rune) bool {
+		return r == '&' || r == '=' || r == ';' || r == '#'
+	}) {
+		if len([]rune(tok)) < minResidueRun {
+			continue
+		}
+		// Longest first: any surviving prefix of length >= minResidueRun is a leak.
+		for n := len([]rune(tok)); n >= minResidueRun; n-- {
+			pre := string([]rune(tok)[:n])
+			if strings.Contains(msg, pre) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // truncateErr renders an error's message for inclusion in a user-visible step,

@@ -1386,3 +1386,55 @@ func TestMeta_DispatchMapsVariantImageURL(t *testing.T) {
 		t.Errorf("creative body missing the registration URL as the link: %s", creativeBody)
 	}
 }
+
+// The config_snapshot stored for a meta campaign must NOT carry a variant image
+// URL's query/fragment. A creative image URL is caller-supplied and may be
+// PRE-SIGNED — its signature is a bearer credential — and config_snapshot is
+// persisted UNENCRYPTED. This is the SUCCESS path: it fires on every create with
+// an image, which is why scrubbing only the error sinks never covered it. Mirrors
+// TestReddit_ConfigSnapshotRedactsPostURL.
+func TestMeta_ConfigSnapshotRedactsVariantImageURL(t *testing.T) {
+	camp := campaignFromMeta(context.Background(),
+		&meta.CampaignResult{CampaignID: "cmp_1", CampaignName: "n"},
+		metaConfig{
+			Budget: 10,
+			Variants: []meta.AdVariant{
+				{Headline: "h1", ImageURL: "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG&e=1"},
+				{Headline: "h2", ImageURL: "https://cdn.example.org/b.png#SECRET_FRAG"},
+			},
+		},
+	)
+	if camp.ConfigSnapshot == nil {
+		t.Fatal("expected a config snapshot")
+	}
+	// Assert the persisted VALUE, not that a sanitizer was called.
+	s := string(camp.ConfigSnapshot)
+	if strings.Contains(s, "SECRET_SIG") || strings.Contains(s, "X-Amz-Signature") {
+		t.Errorf("config snapshot carries the pre-signed query/signature, got: %s", s)
+	}
+	if strings.Contains(s, "SECRET_FRAG") {
+		t.Errorf("config snapshot carries the image URL fragment, got: %s", s)
+	}
+	// The sanitized URL must survive so the snapshot still identifies the image.
+	if !strings.Contains(s, "https://cdn.example.org/a.png") {
+		t.Errorf("config snapshot lost the sanitized image URL entirely, got: %s", s)
+	}
+	if !strings.Contains(s, "https://cdn.example.org/b.png") {
+		t.Errorf("config snapshot lost the second sanitized image URL, got: %s", s)
+	}
+}
+
+// Sanitizing the snapshot must not mutate the caller's config: the FULL url still
+// has to reach Meta. cfg is passed by value but Variants shares a backing array, so
+// an in-place scrub would silently strip the signature from the live request too.
+func TestMeta_ConfigSnapshotSanitizeDoesNotMutateCallerConfig(t *testing.T) {
+	const full = "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIG"
+	variants := []meta.AdVariant{{Headline: "h1", ImageURL: full}}
+	cfg := metaConfig{Budget: 10, Variants: variants}
+
+	campaignFromMeta(context.Background(), &meta.CampaignResult{CampaignID: "c", CampaignName: "n"}, cfg)
+
+	if got := variants[0].ImageURL; got != full {
+		t.Errorf("the caller's variant ImageURL was mutated to %q; Meta must still receive the full signed URL %q", got, full)
+	}
+}
