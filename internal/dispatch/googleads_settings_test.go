@@ -350,6 +350,46 @@ func TestGoogleAds_ReadSettings_UnknownPeriodIsNotMappedToABudgetType(t *testing
 	}
 }
 
+// TestGoogleAds_ReadSettings_PaddedPeriodIsNotMappedToABudgetType is the other half of the
+// blankToNil discipline, exercised through the real decode path rather than by calling the
+// helper with a literal.
+//
+// blankToNil deliberately stopped normalising these strings so a malformed field arrives at
+// its consumer malformed — its doc-comment names " DAILY " as the exact case. That is only
+// worth anything if the consumer then declines to name it: a trim here would reconstruct the
+// well-formed DAILY Google never sent and report `match` against a recorded daily budget,
+// which is agreement manufactured by normalisation rather than observed on the platform.
+//
+// The recorded side is deliberately `daily` — the value a trim would make this padded field
+// compare EQUAL to. A test whose recorded side differed would read `divergent` either way and
+// so would pass against the bug.
+func TestGoogleAds_ReadSettings_PaddedPeriodIsNotMappedToABudgetType(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":" DAILY "}}]}`)
+
+	recorded := 500.0
+	bt := model.BudgetDaily
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		BudgetAmount: &recorded, BudgetType: &bt,
+	}
+
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	got := settingsField(t, rb, settingsFieldBudgetType)
+	if got.Upstream != nil {
+		t.Errorf("budget_type Upstream = %q, want nil: %q is not a spelling this API version "+
+			"names, and trimming it into DAILY fabricates a value the platform never sent",
+			*got.Upstream, " DAILY ")
+	}
+	if got.Comparison != model.SettingsUnknown {
+		t.Errorf("budget_type comparison = %q, want unknown for a padded period; %q must not "+
+			"be normalised into a match against the recorded daily budget",
+			got.Comparison, " DAILY ")
+	}
+}
+
 // TestGoogleAds_ReadSettings_CustomPeriodMapsToLifetime pins the one enum mapping that is
 // easy to get wrong: Google's v23 BudgetPeriodEnum has NO `LIFETIME` value — CUSTOM_PERIOD
 // is what corresponds to this service's `lifetime`.

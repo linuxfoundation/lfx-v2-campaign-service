@@ -284,7 +284,15 @@ side made it permanently `unknown` — the finding could not be produced at all.
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
 a row with no snapshot, a snapshot that is not this adapter's JSON object, or a channel
 outside the closed set this service creates. Claiming `diverged` from a recorded value this
-code cannot interpret would be a fabricated finding rather than an observed one. Flight dates
+code cannot interpret would be a fabricated finding rather than an observed one. The
+`campaign-settings-field` description in `design/brief.go` enumerates that compared list, so
+moving a field between compared and upstream-only is a CONTRACT change: the description is
+copied verbatim into the generated clients and into both OpenAPI copies, and a stale one
+keeps telling every consumer the field can only ever read `unknown`. Re-run `make apigen` and
+commit `gen/` plus `cmd/campaign-service/kodata/gen/http/openapi*` with the design edit.
+The count of permanently-unknown fields is a RANGE, not a constant — six on a row whose
+snapshot records a channel, seven on a legacy row without one — precisely because this field's
+recorded side depends on the snapshot; any prose stating one number is wrong for the other row. Flight dates
 are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
 returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings
 would report a divergence for every campaign that actually agrees. The recorded side of both
@@ -331,6 +339,18 @@ shape with `" DAILY "`. Normalisation upstream of validation manufactures exactl
 agreement this readback exists to make impossible. Tests that call those helpers with a
 literal cannot catch it — they never exercise the decode step — so the guard is pinned at the
 client layer instead.
+
+**The consumers have to agree with that, and one of them did not.** Stopping the trim in
+`blankToNil` only buys anything if the code it feeds then declines to name the malformed
+value. `googleAdsBudgetTypeFromPeriod` was itself calling `strings.TrimSpace` on the period
+before matching, which reconstructed the well-formed `DAILY` the platform never sent and
+reported `match` against a recorded daily budget — reintroducing, one layer down, the exact
+fabrication the client-side change had just removed. It now matches the EXACT `DAILY` /
+`CUSTOM_PERIOD` spellings, so a padded value takes the same fail-closed path as `UNKNOWN`:
+absent upstream side, `unknown` verdict. `googleAdsDateOnly`'s strict parse is the same
+discipline for dates. The general rule: when a decode step stops normalising so that
+malformed input stays malformed, every consumer downstream of it must be checked for a trim
+of its own — a single one is enough to undo the guarantee for its field.
 
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see

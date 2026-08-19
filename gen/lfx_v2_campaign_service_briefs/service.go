@@ -353,13 +353,17 @@ type CampaignSettingsField struct {
 	// The setting's name in this service's own vocabulary, matching the campaign
 	// row's column names rather than the platform's field names. On Google Ads the
 	// COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`,
-	// `start_date` and `end_date`; `status`, `budget_delivery_method`,
-	// `budget_explicitly_shared`, `advertising_channel_type` and
+	// `advertising_channel_type`, `start_date` and `end_date`; `status`,
+	// `budget_delivery_method`, `budget_explicitly_shared` and
 	// `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded`
 	// counterpart and therefore always an `unknown` verdict, because no column on
-	// the campaign row expresses them. The vocabulary is per-platform and may
-	// grow, so a consumer must render an unrecognised field name rather than
-	// dropping it.
+	// the campaign row expresses them. `advertising_channel_type` is compared
+	// rather than upstream-only because the dispatch config's channel IS persisted
+	// in the campaign's config snapshot; it still reads `unknown` on a legacy row
+	// that carries no snapshot, but for the ordinary reason that nothing was
+	// recorded there — not because the field has no recorded side. The vocabulary
+	// is per-platform and may grow, so a consumer must render an unrecognised
+	// field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

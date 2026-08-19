@@ -1237,8 +1237,16 @@ const (
 // fail-closed choice: UNKNOWN literally means "a value this API version cannot name", and
 // mapping it to either budget type would manufacture a match or a divergence out of a
 // value Google explicitly declined to state.
+//
+// The match is on the EXACT enum spelling, with no trimming, and that is the half that is
+// easy to get wrong. blankToNil in the client deliberately stops normalising these strings
+// so a malformed field reaches its consumer malformed; trimming here would undo precisely
+// that, turning a " DAILY " Google never sent into a well-formed DAILY and reporting
+// `match` against a recorded daily budget. A padded value is not a value this function can
+// name, so it takes the same fail-closed path as UNKNOWN: an absent upstream side and an
+// `unknown` verdict. googleAdsDateOnly's strict parse is the same discipline for dates.
 func googleAdsBudgetTypeFromPeriod(period string) model.BudgetType {
-	switch strings.TrimSpace(period) {
+	switch period {
 	case "DAILY":
 		return model.BudgetDaily
 	case "CUSTOM_PERIOD":

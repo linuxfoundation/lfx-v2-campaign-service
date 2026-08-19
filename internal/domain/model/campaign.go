@@ -518,10 +518,14 @@ type CampaignSettingsReadback struct {
 	// reads very differently next to "and 5 were not compared" than it does alone.
 	//
 	// It is NOT a read-failure count, and must not be presented as one: on a completely
-	// healthy Google Ads readback where every field was returned, seven of the ten are
-	// permanently unknown by construction. A consumer watching this number for read failures
-	// would see a constant floor it cannot distinguish from a real one. Per-field
-	// `Comparison` is what identifies WHICH fields those are.
+	// healthy Google Ads readback where every field was returned, most of the ten are
+	// permanently unknown by construction — six on a row whose config snapshot records a
+	// channel, and seven on a legacy row that has none, since `advertising_channel_type`
+	// only has a recorded side to compare when the snapshot supplies one. The floor is that
+	// RANGE rather than a constant, which if anything sharpens the point: a consumer
+	// watching this number for read failures would see a non-zero baseline it cannot
+	// distinguish from a real one, and cannot even pin that baseline to a single value.
+	// Per-field `Comparison` is what identifies WHICH fields those are.
 	UnknownCount int
 }
 
