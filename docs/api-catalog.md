@@ -153,7 +153,7 @@ Each optimization action is scoped to a single campaign under its brief and is i
 | Reddit Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — no date-range mapping today. |
 | HubSpot (email) | All seven — but the window does NOT scope the counters. HubSpot's statistics span selects WHICH EMAILS are in scope by SEND date; the counters returned are that email's totals to date. `today` and `last_30_days` on an email sent this morning return the SAME numbers, and a window not containing the send date returns nothing at all (a **409**, not zeros). `window` in the response records what was ASKED, not a period the counters are scoped to. |
 
-Reddit Ads is wired but **default-OFF**: its reporting contract is unverified (LFXV2-2995 — see the Reddit Ads notes below), so the adapter returns the same 400 as an unsupported platform unless the deployment sets `REDDIT_METRICS_ENABLED=true`. That is deliberate — a guessed request/response shape and currency unit returning 200 would look authoritative to every consumer, and the caveats are not carried in the response.
+Reddit Ads is wired but **default-OFF**: the contract now follows Reddit's official public OpenAPI document (LFXV2-3282), but no request has been made against a live ad account, so the adapter returns the same 400 as an unsupported platform unless the deployment sets `REDDIT_METRICS_ENABLED=true`. That is deliberate — behaviour a schema cannot express (zero-activity rows, the account's attribution window) is still unconfirmed, and a 200 would look authoritative to every consumer while the caveats are not carried in the response.
 
 The **email channel adds an optional `email` object** to the response, present only for HubSpot campaigns and absent for every ad platform. It carries `sent`, `delivered`, `opens`, `clicks`, `bounces`, `unsubscribes`. The parent object's `impressions`/`clicks` mirror `opens`/`clicks`, and its `cost_micros` is always `0` — HubSpot bills no per-send cost, so that `0` is "not billed here", not "free". **It must never be blended into a cross-channel cost-per-acquisition**, which would divide real ad spend across email conversions and understate CPA.
 
@@ -384,15 +384,28 @@ cpcBid?: number                 — OPTIONAL ad-group max cost-per-click, in who
                                   floor, so omitting it is safe and the service invents no default. A
                                   supplied value must be within [0.01, 1000]. A REUSED ad group keeps
                                   its existing bid rather than being re-bid on a retry.
+geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes the campaign should serve
+                                  in, attached as CAMPAIGN-level location criteria. At most 30. OMITTED
+                                  means NO location criteria, i.e. Microsoft serves the campaign
+                                  everywhere. An unsupported or unresolvable code REFUSES the create
+                                  before anything is created rather than silently serving everywhere.
 ```
 
-There is deliberately **no `geoTargets`** here, unlike `redditConfig`/`metaConfig`/`linkedInConfig`.
-Microsoft's location targeting takes its own numeric `LocationId` values (from Microsoft's
-downloadable geographical-locations file) and accepts ISO 3166 country codes for targeting
-*nowhere* — the ISO table in Microsoft's Geographical Location Codes guide is scoped to account
-business addresses, not targeting. A `geoTargets: ["US"]` could therefore only be honoured via an
-invented ISO→LocationId mapping, so the field is not offered rather than being accepted and
-silently dropped. Tracked separately; it needs the locations file as a real input.
+`geoTargets` is accepted (LFXV2-3279), using the SAME ISO 3166-1 alpha-2 vocabulary as
+`redditConfig`/`metaConfig`/`linkedInConfig`. Microsoft's location criteria take numeric
+`LocationId` values rather than ISO codes, so the service resolves each code against Microsoft's
+own geographical-locations file at create time — no ISO→LocationId table is hardcoded.
+
+**Omitting it means the campaign serves EVERYWHERE**, which is the pre-existing behaviour and is
+why an unusable value is refused rather than dropped. A code that is not a Microsoft-supported
+country, or that cannot be resolved against the locations file, fails the create **before any
+campaign is created** — nothing is left behind to clean up. Resolution is all-or-nothing: one
+unresolvable code fails the whole set rather than targeting a subset nobody approved. Because
+`CreateCampaigns` is asynchronous, that surfaces as a failed job rather than a synchronous 4xx.
+
+A campaign REUSED by a retry has its existing location criteria read and reconciled, so only
+missing locations are attached; if that read fails, the create refuses rather than risk
+duplicating criteria or reporting an untargeted campaign as targeted.
 
 The connection supplies the ad account id (`account_id`, the digits-only `CustomerAccountId`) and
 an OPTIONAL manager/MCC id (`customer_id`, the `CustomerId` header) via the Microsoft connection
@@ -588,6 +601,21 @@ variants: AdVariant[]           — One ad per variant; at least one is required
 primaryText: string             — Required; non-empty; at most 125 runes
 headline: string                — Required; non-empty; at most 40 runes
 description?: string             — At most 30 runes
+imageUrl?: string               — OPTIONAL https URL to a single image for this variant.
+                                  When set, the ad renders as a SINGLE-IMAGE ad: the URL is
+                                  sent as `object_story_spec.link_data.picture`, the
+                                  documented by-URL field, and META fetches the image
+                                  server-side — this service never fetches it. Omitted/empty
+                                  yields the previous bare-link creative, so the field is
+                                  purely additive. No separate upload call is made.
+                                  Validated pre-create: must be absolute, https, and carry NO
+                                  embedded userinfo (Meta fetches it, so credentials in the
+                                  URL would be handed to Meta). A malformed value fails the
+                                  platform job before any paid resource is created.
+                                  The image must be reachable by Meta's fetchers; a creative
+                                  Meta rejects over the image fails only THAT variant's ad
+                                  (non-fatal), and is reported in the result Steps with the
+                                  URL's query/fragment stripped (it may be pre-signed).
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that
@@ -800,7 +828,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 - Token refresh with expiry buffer (tokens expire; must refresh before expiry)
 - Subreddit targeting uses subreddit **names** (the `r/` prefix stripped), not `t5_` IDs — the Ads API `communities` field rejects `t5_` values as "invalid communities" (matches the reference TS implementation, which sends the stripped names directly); if any supplied name is invalid the ad-group create falls back to keyword/geo-only targeting with a warning rather than orphaning the PAUSED campaign
 - Account must be whitelisted in runtime config
-- **Metrics reads are UNVERIFIED (LFXV2-2995) and therefore DEFAULT-OFF**: the `ReadMetrics` adapter is wired but gated on `REDDIT_METRICS_ENABLED=true` (any other value, including unset, fails closed). With the gate closed, `GET .../campaigns/{id}/metrics` answers 400 for a Reddit campaign. Reddit's v3 reporting endpoint has no public documentation (unlike Google/Meta/LinkedIn/X, which have public specs). The `POST /ad_accounts/{account_id}/reports` request/response shape is inferred from this client's own proven `{"data": ...}` conventions, not from Reddit's real (gated) contract — treat every field name as a placeholder pending official API access. See the [internal/platform/reddit knowledge doc](knowledge/code/internal-platform-reddit.md).
+- **Metrics reads are NOT YET EXERCISED LIVE (LFXV2-3282) and therefore DEFAULT-OFF**: the `ReadMetrics` adapter is wired but gated on `REDDIT_METRICS_ENABLED=true` (any other value, including unset, fails closed). With the gate closed, `GET .../campaigns/{id}/metrics` answers 400 for a Reddit campaign. The `POST /ad_accounts/{account_id}/reports` request and response shapes come from Reddit's **official public OpenAPI document** (`https://ads-api.reddit.com/api/v3/openapi.json`), superseding the earlier LFXV2-2995 finding that no public documentation existed. What remains unconfirmed is behaviour the schema cannot express — whether a campaign with no activity is omitted or returned as an explicit zero row, and whether the account's attribution window shifts the numbers — plus the fact that `spend` is microcurrency in the **ad account's own billing currency**, which this client does not read. See the [internal/platform/reddit knowledge doc](knowledge/code/internal-platform-reddit.md).
 
 ### X/Twitter Ads
 - OAuth 1.0a with HMAC-SHA1 signing (not OAuth 2.0)

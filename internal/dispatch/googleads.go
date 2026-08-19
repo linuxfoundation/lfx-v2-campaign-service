@@ -134,12 +134,18 @@ type googleAdsConfig struct {
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
 type GoogleAdsDispatcher struct {
 	creds *credsSource
-	opts  []googleads.Option
+	// clients caches the built *googleads.Client per connection. The credential cache alone does
+	// not remove the OAuth exchange: the access token is cached ON the client instance, so a
+	// rebuilt client re-mints it even when the credential was a cache hit (measured at five token
+	// hits across five resolves before this). Entries are validated against the same row id and
+	// version as the credential, so a rotated credential cannot be served through a stale client.
+	clients *clientCache
+	opts    []googleads.Option
 }
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
 func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googleads.Option) *GoogleAdsDispatcher {
-	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.
@@ -622,7 +628,35 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 	if err != nil {
 		return nil, err
 	}
-	return d.googleAdsClientFor(projectID, res)
+	return d.cachedGoogleAdsClient(projectID, platform, res)
+}
+
+// cachedGoogleAdsClient returns the client for this connection, building it only when there is no
+// live entry for the row identity the credential just resolved from.
+//
+// Reusing the CLIENT is what removes the OAuth exchange — the token is cached on the instance, so
+// a client rebuilt per call re-mints it however cheap the credential lookup became. The validation
+// is the credential's own (row id + version), so a rotation invalidates the client in the same
+// step that invalidates the credential; a stale client is a stale credential.
+//
+// Not applied to the DISCOVERY path, which deliberately builds an account-agnostic client with an
+// empty CustomerID, nor to adoption's owned-connection path, which is a rare one-shot rather than
+// the polling loop this exists for.
+func (d *GoogleAdsDispatcher) cachedGoogleAdsClient(projectID string, platform model.Provider, res *resolved) (*googleads.Client, error) {
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return d.googleAdsClientFor(projectID, res)
+	})
+	if err != nil {
+		return nil, err
+	}
+	client, isClient := built.(*googleads.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return d.googleAdsClientFor(projectID, res)
+	}
+	return client, nil
 }
 
 // resolveOwnedGoogleAdsClient is resolveGoogleAdsClient for the one path that must NOT accept

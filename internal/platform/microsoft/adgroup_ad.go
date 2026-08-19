@@ -265,6 +265,11 @@ type targeting struct {
 	cpcBidSet bool
 }
 
+// NOTE: geo targeting has no field here. The CAMPAIGN-level location criterion ids reach every
+// result this function builds through the campaignPartial() closure CreateCampaign passes in
+// (it sets GeoCriterionIDs, and adGroupPartial → adGroupWithIDPartial → adWithIDPartial all
+// derive from it). A field here would be written and never read.
+
 func (c *Client) createAdGroupAndAd(
 	ctx context.Context,
 	in CampaignInput,
