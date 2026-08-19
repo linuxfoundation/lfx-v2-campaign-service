@@ -14,10 +14,30 @@ image:
 replicaCount: 1
 
 # podAnnotations are additional annotations applied to the pod template.
-# Example:
-#   prometheus.io/scrape: "true"
-#   prometheus.io/port: "8080"
-podAnnotations: {}
+#
+# The Prometheus scrape annotations are set by DEFAULT (LFXV2-3221): the service
+# serves the Prometheus text format at /metrics on the same port as the API, so a
+# prometheus.io/scrape discovery-based collector picks the pod up with no further
+# configuration. The port is quoted because Kubernetes annotation values must be
+# strings; an unquoted 8080 renders as an integer and the annotation is rejected.
+#
+# /metrics is deliberately NOT added to the HTTPRoute or the Heimdall RuleSet — it
+# is scraped in-cluster (pod IP), exactly like the /livez and /readyz probes, and
+# must not be reachable through the public gateway.
+#
+# Add further annotations here as needed; anything set replaces this default, so a
+# deployment overriding podAnnotations must re-declare the scrape keys to keep
+# being scraped.
+#
+# prometheus.io/port is NOT set here, and is RESERVED. The template derives it from
+# service.port so the two cannot drift: a deployment that changes service.port would
+# otherwise keep a hardcoded 8080 here and be scraped on a port nothing listens on.
+# Setting it under podAnnotations has NO effect — the template omits that one key from
+# this map before merging it, so the derived value always wins. Every other annotation
+# set here passes through untouched.
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: "/metrics"
 
 # podLabels are additional labels applied to the pod template.
 # Example:

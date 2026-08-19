@@ -126,10 +126,20 @@ spec:
       app: {{ .Chart.Name }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        # Derived from service.port rather than hardcoded in values.yaml, so the
+        # scrape port cannot drift from the port the container actually listens on.
+        # Quoted because annotation values must be strings.
+        prometheus.io/port: {{ .Values.service.port | quote }}
+        {{- /* prometheus.io/port is RESERVED by the line above. It is omitted from
+               the user map rather than merged after it: Helm renders both keys, and
+               a duplicate YAML key resolves to the LAST one, so a user-set value
+               would silently win and point the scraper at a port the container is
+               not listening on -- the exact drift the derived key exists to stop.
+               Every other podAnnotation passes through untouched. */ -}}
+        {{- with omit .Values.podAnnotations "prometheus.io/port" }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         app: {{ .Chart.Name }}
         app.kubernetes.io/name: {{ .Chart.Name }}
