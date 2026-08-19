@@ -27,13 +27,40 @@ var ErrCredentialsExpired = errors.New("linkedin credentials expired")
 
 // credentialsExpiredError names the connection a human must reconnect. It
 // deliberately carries NO token material — only the operator-set connection
-// label and a short cause.
+// label, a short cause, and the request coordinates the outcome classifier needs.
+//
+// Method/StatusCode exist because a 401 answering an in-flight request states TWO
+// things, not one. "Reconnect this connection" is the actionable half; on a
+// MUTATING request it is not the whole story. LinkedIn "reserves the right to
+// revoke Refresh Tokens or Access Tokens at any time", including AFTER it accepted
+// and committed a create POST but before the response was written — so a 401 on a
+// POST leaves the create outcome genuinely UNKNOWABLE, exactly like the mutating
+// 5xx/429/3xx cases createOutcomeAmbiguous already recognises. Discarding the
+// method and status at the 401 wrap site erased that second fact, so the create
+// cascade reported a clean "credentials expired, reconnect" for a campaign group
+// that may already exist upstream and be billing — an orphan nothing was told to
+// look for.
+//
+// Both fields are ZERO on the PRE-SEND arms (accessTokenValue's fail-closed checks
+// and the token-exchange rejection): nothing was sent, so nothing can have landed,
+// and a zero Method is not a mutating method — createOutcomeAmbiguous therefore
+// reports false for them without a special case. Only the arms that observed a
+// real response to a real request populate them.
 type credentialsExpiredError struct {
 	Connection string
 	Reason     string
+	// Method is the HTTP method of the request LinkedIn answered with the 401, or
+	// "" when the failure happened before any request was sent.
+	Method string
+	// StatusCode is the status LinkedIn answered with (401 on the response arms), or
+	// 0 when the failure happened before any request was sent.
+	StatusCode int
 }
 
 func (e *credentialsExpiredError) Error() string {
+	// Method/StatusCode are deliberately NOT rendered: they exist for classification,
+	// and the operator-facing message stays the single actionable sentence. The
+	// Reason already names the 401 on the arms that carry one.
 	return fmt.Sprintf("linkedin: %s must be reconnected: %s (re-authorize the LinkedIn connection to continue)",
 		e.Connection, e.Reason)
 }

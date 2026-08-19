@@ -531,9 +531,16 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 			// one LinkedIn has already rejected. Only the CACHE is cleared — a revoked
 			// access token does not imply a revoked refresh token.
 			c.invalidateAccessToken()
+			// Method/StatusCode are recorded for the same reason doRequest's 401 arm
+			// records them. Here they classify NEGATIVELY and that is the point: this
+			// analytics call is a GET, so it created nothing, and the method gate in
+			// createOutcomeAmbiguous keeps a read 401 a plain expiry rather than letting
+			// it read as "a campaign may exist".
 			return nil, false, 0, &credentialsExpiredError{
 				Connection: c.creds.ConnectionLabel(),
 				Reason:     "LinkedIn rejected the access token (HTTP 401: expired, revoked or invalid)",
+				Method:     http.MethodGet,
+				StatusCode: resp.StatusCode,
 			}
 		}
 		// Body is deliberately NOT retained: this analytics path never classifies on

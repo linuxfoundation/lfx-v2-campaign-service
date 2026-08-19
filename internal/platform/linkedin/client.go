@@ -441,6 +441,17 @@ func isMutatingMethod(m string) bool {
 //     that "may have succeeded" reason, the outcome is ambiguous — not a clean
 //     failure the orchestrator should report as definite (which would invite a
 //     retry that duplicates a paid resource).
+//   - *credentialsExpiredError carrying a mutating method: a 401 is normally read as
+//     "reconnect this connection", and it IS that — but LinkedIn "reserves the right
+//     to revoke Refresh Tokens or Access Tokens at any time", so a revocation can
+//     take effect between LinkedIn committing a create POST and writing its
+//     response. A 401 answering a POST therefore says nothing about whether the
+//     write landed, which is the same position a mutating 5xx leaves the caller in.
+//     Treating it as a definite failure would release the create claim on a campaign
+//     group that may already exist and be billing. The PRE-SEND expiry arms (a
+//     known-past access-token expiry, an expired refresh token, a rejected token
+//     exchange) leave Method zero, so they stay definite failures here — nothing was
+//     sent, so nothing can have landed.
 //
 // The METHOD gate is essential: a GET search that times out, returns a 5xx/3xx/429,
 // or yields an undecodable/oversized 2xx body ran NO POST — nothing was created — so
@@ -466,6 +477,14 @@ func createOutcomeAmbiguous(err error) bool {
 		return (ae.StatusCode >= 300 && ae.StatusCode < 400) ||
 			ae.StatusCode == http.StatusTooManyRequests ||
 			ae.StatusCode >= 500
+	}
+	// A mid-flight token revocation answering a MUTATING request: the create may
+	// already have committed upstream (see the godoc). Gated on the method exactly
+	// like the apiError arm, so a GET 401 and every pre-send expiry (Method == "")
+	// stay definite failures.
+	var ce *credentialsExpiredError
+	if errors.As(err, &ce) {
+		return isMutatingMethod(ce.Method)
 	}
 	return false
 }
@@ -1068,11 +1087,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// Invalidate the cached token so a later call re-exchanges rather than
 			// replaying the rejected one, and surface the actionable expiry error naming
 			// the connection instead of a bare "LinkedIn API ... -> 401".
+			//
+			// Method and StatusCode are carried so the 401 keeps the SECOND fact it
+			// states. A mid-flight revocation can land AFTER LinkedIn committed a create
+			// POST, so a 401 answering a mutating request is outcome-ambiguous in exactly
+			// the way a mutating 5xx is: createOutcomeAmbiguous reads these fields and
+			// classifies a POST 401 as "may exist — verify before recreating", while a GET
+			// 401 (which created nothing) stays a plain expiry. Without them the create
+			// cascade returned nil,err and released the claim on a campaign group that may
+			// already be billing upstream.
 			if isTokenExpiryResponse(resp.StatusCode, text) {
 				c.invalidateAccessToken()
 				return nil, &credentialsExpiredError{
 					Connection: c.creds.ConnectionLabel(),
 					Reason:     "LinkedIn rejected the access token (HTTP 401: expired, revoked or invalid)",
+					Method:     method,
+					StatusCode: resp.StatusCode,
 				}
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}

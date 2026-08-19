@@ -260,7 +260,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cerr != nil {
 		if result == nil {
 			if errors.Is(cerr, linkedin.ErrCredentialsExpired) {
-				// Nothing was created: the client failed closed BEFORE sending a request.
+				// Nothing was created, which is what result==nil already established — either
+				// the client failed closed BEFORE sending a request, or a non-mutating
+				// (find-existing GET) request was answered 401, which POSTed nothing. An
+				// expiry on a mutating request is outcome-AMBIGUOUS and returns a non-nil
+				// partial, so it never reaches this arm; it takes the retain-the-claim branch
+				// below like any other ambiguous create.
 				return nil, notCreated(res.systemScoped(linkedinExpiry(cerr)))
 			}
 			return nil, notCreated(fmt.Errorf("linkedin campaign creation failed before any upstream create: %w", cerr))
@@ -319,16 +324,41 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		// An activate refused up front because the campaign has no servable creatives is a
 		// local/state error (the platform mutation never ran), so classify it as
 		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.
-		// An unrefreshable credential never reached the platform: surface it as an
-		// actionable connection defect rather than an opaque upstream failure.
-		if errors.Is(uerr, linkedin.ErrCredentialsExpired) {
-			return res.systemScoped(linkedinExpiry(uerr))
-		}
 		if linkedin.IsNotServable(uerr) {
 			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
 		}
+		// UNCONFIRMED IS CHECKED BEFORE EXPIRY, and the order is load-bearing.
+		//
+		// The cascade is multi-step, so a credential can die BETWEEN steps: on PAUSE the
+		// campaign is flipped first and the creatives second, so a 401 on a creative
+		// arrives as a partialCascadeError whose Unwrap exposes the inner expiry. An
+		// expiry-first check therefore matched a state in which delivery had ALREADY been
+		// stopped and reported only "reconnect the connection" — the caller re-authorizes,
+		// retries, and never learns the tree is half-applied. (Since createOutcomeAmbiguous
+		// now classifies a 401 on a mutating request as ambiguous, the same masking would
+		// also hit a lone campaign-step 401.)
+		//
+		// Both signals are true, so the question is which one a caller can act on, and
+		// only one of them is perishable. "Verify the platform state before retrying"
+		// describes a partial effect that persists whether or not the credential is ever
+		// repaired; "reconnect" is a precondition the caller rediscovers on its very next
+		// call, and it is not lost — unconfirmedToggleError wraps uerr, so
+		// errors.Is(err, ErrCredentialsExpired) still answers true and the service layer
+		// can report both. Ordering it the other way is what dropped a signal outright.
+		//
+		// A PRE-SEND expiry (an expired refresh token, a rejected token exchange) is NOT
+		// unconfirmed — nothing was sent, nothing was applied — so it falls through to the
+		// expiry arm below and keeps answering "reconnect", unchanged.
 		if linkedin.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
+		}
+		// An expiry that applied NOTHING upstream: surface it as an actionable connection
+		// defect rather than an opaque upstream failure. Everything reaching here is either
+		// pre-send (the credential failed closed before a request) or a non-mutating 401 —
+		// the ambiguous arm above already claimed every expiry that may have changed
+		// platform state, so this arm is now exactly the "nothing was applied" case.
+		if errors.Is(uerr, linkedin.ErrCredentialsExpired) {
+			return res.systemScoped(linkedinExpiry(uerr))
 		}
 		return uerr
 	}

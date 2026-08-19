@@ -47,6 +47,26 @@ layer re-tags that as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, which
 keeps it out of the retryable bucket and out of an opaque 500. No token, secret
 or upstream body is ever logged or echoed into an error.
 
+**A 401 answering a MUTATING request states two facts, not one.** "Reconnect this
+connection" is the actionable half, but LinkedIn "reserves the right to revoke
+Refresh Tokens or Access Tokens at any time", so a revocation can take effect
+between LinkedIn committing a create POST and writing its response — which leaves
+the create outcome genuinely UNKNOWABLE, the same position a mutating 5xx leaves
+the caller in. `credentialsExpiredError` therefore carries `Method` and
+`StatusCode` (never rendered by `Error()`; they exist only for classification),
+and `createOutcomeAmbiguous` reads them under the SAME method gate the
+`transportError`/`apiError` arms use. So a POST/PUT/PATCH/DELETE 401 is ambiguous
+("a campaign group may exist — verify by name"), while a GET 401 created nothing
+and stays a definite expiry. The PRE-SEND expiry arms (a known-past access-token
+expiry, an expired refresh token, a rejected token exchange) leave both fields
+ZERO, and a zero method is not a mutating method, so they stay definite failures
+without a special case. Before this, the 401 arm discarded the in-scope method and
+status, so a create cascade interrupted by a mid-flight revocation returned a clean
+`(nil, err)` — the dispatcher took its `result == nil` arm, RELEASED the dispatch
+claim, and a retry could orphan a second billable campaign group that nothing was
+told to reconcile. Fail-closed is unchanged: the rejected request is still never
+replayed inside the failing operation (see `invalidateAccessToken`).
+
 **Every error arm of `fetchToken` rebuilds its cause from CLASSIFICATION rather than
 forwarding text**, because the token exchange is the one request whose body carries
 `client_secret` and the refresh token and whose 2xx response carries the rotated refresh
