@@ -248,18 +248,52 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	// for a DIFFERENT campaign means the WHERE clause was not honoured, which invalidates
 	// the whole response — so this errors rather than reporting an absence, because an
 	// absence is something a caller is entitled to trust.
+	// BOTH identity fields are evidence, so both are validated WHENEVER PRESENT — not the
+	// resource name only as a fallback for a missing id. This mirrors campaignRowIdentity,
+	// which documents the reasoning: validating the resource name only in the fallback makes
+	// the check reachable exactly when the row is least suspicious, so a row carrying a
+	// plausible id "555" beside a malformed or cross-customer resource name would sail
+	// through and have another account's settings attributed to campaign 555.
+	//
+	// NOT trimmed, for the same reason canonicalCampaignID is not: an id is identity
+	// evidence, so a padded value is a MALFORMED ROW rather than a value to normalise into a
+	// match. Trimming here would also fold a whitespace-only resource name into "field
+	// absent" and let the row fall through to the id alone, which is precisely the
+	// present-but-garbage case this must reject.
 	id := ""
 	if row.Campaign.ID != nil {
-		id = strings.TrimSpace(*row.Campaign.ID)
+		id = *row.Campaign.ID
 	}
-	if id == "" && row.Campaign.ResourceName != nil {
-		// Fall back to the resource name, which carries the id in a shape this client
-		// validates strictly against its OWN customer — so a row from another account
-		// cannot supply an identity here.
-		id = c.campaignIDFromResourceName(*row.Campaign.ResourceName)
+	resourceName := ""
+	if row.Campaign.ResourceName != nil {
+		resourceName = *row.Campaign.ResourceName
+	}
+	fromName := c.campaignIDFromResourceName(resourceName)
+	if resourceName != "" && fromName == "" {
+		return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned in a row whose resource name %q is malformed or scoped to another customer; refusing to attribute these settings", campaignID, resourceName)
+	}
+	switch {
+	case id == "":
+		// campaign.id is an int64 field and can arrive absent; the resource name was
+		// validated in FULL above, so it is safe identity evidence here.
+		id = fromName
+	case fromName != "" && fromName != id:
+		return nil, fmt.Errorf("google-ads campaign settings: a row reports id %q but resource name %q; its two identity fields disagree, refusing to trust this response", id, resourceName)
 	}
 	if id == "" {
 		return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned in a row with no usable id; refusing to report settings that cannot be attributed to a campaign", campaignID)
+	}
+	// A non-canonical id ("007", "0", out of range) is not the answer to "which campaign is
+	// this", even though every character is a digit.
+	//
+	// NOT independently revert-binding, and deliberately kept anyway: the equality check
+	// below compares against campaignID, which ValidateCampaignID has already proven
+	// canonical, so any id reaching here that is non-canonical also fails that check and no
+	// revert of this line alone changes a test. It stays because it states the invariant
+	// locally — the id is interpolated into resource paths by later calls — and because
+	// deleting it would make a future divergence between the two checks silent.
+	if canonicalCampaignID(id) == "" {
+		return nil, fmt.Errorf("google-ads campaign settings: a row returned id %q, which is not the canonical spelling of a positive int64 campaign id", id)
 	}
 	if id != campaignID {
 		return nil, fmt.Errorf("google-ads campaign settings: query for campaign id %s returned campaign %s; the id filter was not honoured, refusing to trust this response", campaignID, id)
@@ -276,6 +310,17 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 		BudgetPeriod:           trimmedOrNil(row.CampaignBudget.Period),
 		BudgetDeliveryMethod:   trimmedOrNil(row.CampaignBudget.DeliveryMethod),
 		BudgetExplicitlyShared: row.CampaignBudget.ExplicitlyShared,
+	}
+
+	// The two budget amounts are MUTUALLY EXCLUSIVE upstream — amount_micros for a DAILY
+	// budget, total_amount_micros for a CUSTOM_PERIOD one — so a row carrying both has
+	// contradicted the API's own invariant and cannot be read as an answer about this
+	// campaign's budget. Refused rather than resolved by preference: googleAdsUpstreamBudgetAmount
+	// would silently take amount_micros, and comparing a daily amount against a lifetime
+	// recorded budget reports a divergence that is really a field-selection bug. Fail closed,
+	// exactly as the >1-row and unparseable-budget cases do.
+	if row.CampaignBudget.AmountMicros != nil && row.CampaignBudget.TotalAmountMicros != nil {
+		return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned with both campaign_budget.amount_micros and campaign_budget.total_amount_micros, which are mutually exclusive; the row contradicts itself and no reading of its budget can be trusted", campaignID)
 	}
 
 	// A budget amount that is PRESENT but unparseable is an error, not an absence. Absence

@@ -489,3 +489,78 @@ func TestGetCampaignSettings_MalformedTotalAmountIsAnErrorNotAnAbsence(t *testin
 		t.Errorf("error should name the offending field, got: %v", err)
 	}
 }
+
+// TestGetCampaignSettings_DisagreeingIdentityFieldsRefused: a row carrying a plausible id
+// beside a resource name naming a DIFFERENT campaign identifies no single campaign, so its
+// settings cannot be attributed to either. Validating the resource name only as a fallback
+// for a missing id would make this check reachable exactly when the row is least suspicious.
+func TestGetCampaignSettings_DisagreeingIdentityFieldsRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"555","name":"n","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error when the two identity fields disagree, got: %+v", got)
+	}
+	if !strings.Contains(err.Error(), "identity fields disagree") {
+		t.Errorf("error should name the disagreement, got: %v", err)
+	}
+}
+
+// TestGetCampaignSettings_MalformedResourceNameBesideAGoodIDRefused is the case a
+// fallback-only validation misses entirely: the id looks fine, so the resource name is
+// never examined, and a cross-customer row is accepted as this campaign.
+func TestGetCampaignSettings_MalformedResourceNameBesideAGoodIDRefused(t *testing.T) {
+	for _, tc := range []struct{ name, resourceName string }{
+		{"cross-customer", "customers/9999999999/campaigns/555"},
+		{"malformed", "garbage/555"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := json.RawMessage(`{"campaign":{"resourceName":"` + tc.resourceName + `","id":"555","name":"n","status":"ENABLED"}}`)
+			srv, _, _ := settingsServer(t, []json.RawMessage{row})
+			client := newAccountsTestClient(t, srv)
+
+			got, err := client.GetCampaignSettings(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("expected an error for a %s resource name beside a plausible id, got: %+v", tc.name, got)
+			}
+			if !strings.Contains(err.Error(), "malformed or scoped to another customer") {
+				t.Errorf("error should name the bad resource name, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestGetCampaignSettings_PaddedIDRefused: an id is identity evidence, so a padded value is
+// a MALFORMED row rather than a value to normalise into a match. Trimming it would let a row
+// whose identity field is malformed be reported as a clean answer.
+func TestGetCampaignSettings_PaddedIDRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":" 555 ","name":"n","status":"ENABLED"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error for a whitespace-padded id, got: %+v", got)
+	}
+}
+
+// TestGetCampaignSettings_BothBudgetFieldsRefused: amount_micros and total_amount_micros are
+// mutually exclusive upstream, so a row carrying both contradicts the API's own invariant.
+// Resolving it by preference would compare a DAILY amount against a lifetime recorded budget
+// and report a divergence that is really a field-selection bug.
+func TestGetCampaignSettings_BothBudgetFieldsRefused(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+		`"campaignBudget":{"amountMicros":"500000000","totalAmountMicros":"9000000000","period":"DAILY"}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("expected an error when both budget fields are present, got: %+v", got)
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error should name the contradiction, got: %v", err)
+	}
+}

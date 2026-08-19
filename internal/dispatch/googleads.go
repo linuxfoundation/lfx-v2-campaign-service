@@ -1264,6 +1264,19 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 	if err != nil {
 		return nil, err
 	}
+	// An ABSENT provenance is waved through, deliberately and consistently with the other two
+	// Google Ads paths that make this same check (ReadMetrics and ToggleStatus, both above).
+	// The empty case means "unknown, proceed" service-wide; a row written before provenance
+	// tracking existed has no recorded customer, and refusing every such row here would make
+	// this endpoint answer 409 for campaigns the toggle and metrics reads serve happily.
+	//
+	// It is a real residual risk rather than a proven-safe case — under an unverified account
+	// an id collision could return a different campaign's configuration — but narrowing it is
+	// a change to a SHARED convention across all three paths and every provider, not
+	// something this read should do unilaterally: diverging here would leave Google Ads
+	// inconsistent with itself for no reader-recoverable reason. Note that the risk is
+	// bounded by what this endpoint does with the answer — it reports, and never writes back,
+	// so a bad read is a misleading report the next read corrects, not corrupted state.
 	if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
 		return nil, fmt.Errorf("read google ads campaign settings: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
 			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
