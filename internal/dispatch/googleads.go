@@ -99,6 +99,20 @@ type googleAdsConfig struct {
 	// not created by this dispatcher. See googleads.validateAudienceSegments for the
 	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
+	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
+	// (LFXV2-3283), spelled exactly as the meta and reddit configs spell them so a
+	// caller does not have to learn a third vocabulary for the same idea. The client
+	// resolves each to a Google numeric geo target constant and attaches location
+	// criteria at the level the channel requires — campaign for Search, ad group for
+	// Demand Gen.
+	//
+	// Left empty, NO location criteria are created and the campaign serves wherever the
+	// ad ACCOUNT's defaults allow, which for an event campaign is usually worldwide.
+	// That is the pre-LFXV2-3283 behaviour and it is preserved deliberately: every
+	// caller predating this field omits it, and failing their creates outright would
+	// break dispatches that work today. An untargeted create is instead made VISIBLE —
+	// see the warning log in Dispatch — rather than silently accepted or refused.
+	GeoTargets []string `json:"geoTargets"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -118,12 +132,18 @@ type googleAdsConfig struct {
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
 type GoogleAdsDispatcher struct {
 	creds *credsSource
-	opts  []googleads.Option
+	// clients caches the built *googleads.Client per connection. The credential cache alone does
+	// not remove the OAuth exchange: the access token is cached ON the client instance, so a
+	// rebuilt client re-mints it even when the credential was a cache hit (measured at five token
+	// hits across five resolves before this). Entries are validated against the same row id and
+	// version as the credential, so a rotated credential cannot be served through a stale client.
+	clients *clientCache
+	opts    []googleads.Option
 }
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
 func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googleads.Option) *GoogleAdsDispatcher {
-	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.
@@ -181,6 +201,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Descriptions:     cfg.Descriptions,
 		Keywords:         googleAdsKeywords(cfg.Keywords),
 		AudienceSegments: cfg.AudienceSegments,
+		GeoTargets:       cfg.GeoTargets,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -299,6 +320,23 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// channel's budget on another.
 		return nil, notCreated(fmt.Errorf("google ads: channel %q resolved but has no create path", channel))
 	}
+	// An untargeted create is ACCEPTED (see googleAdsConfig.GeoTargets for why refusing would
+	// break every caller predating the field) but never SILENT: a campaign with no geo targets
+	// spends its whole budget worldwide the moment a human enables it, and that should be
+	// findable in the logs rather than inferred from a Google Ads bill.
+	//
+	// Emitted HERE, after the create returns, rather than before it. Logged earlier it fired for
+	// requests that never reached Google at all — a rejected input, or an ADOPTION of an
+	// existing campaign that may already carry targeting — so it claimed a worldwide spend for
+	// campaigns that were never created. The `result != nil` condition includes the partial
+	// post-campaign failures, where a campaign does exist upstream and the warning is warranted.
+	if len(cfg.GeoTargets) == 0 && result != nil && result.CampaignID != "" {
+		slog.WarnContext(ctx, "google ads campaign created with NO geo targeting (it will serve wherever the ad account allows once enabled)",
+			"brief_id", brief.ID,
+			"channel", channel,
+		)
+	}
+
 	if cerr != nil {
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("google ads campaign creation failed before any upstream create: %w", cerr))
@@ -581,7 +619,35 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 	if err != nil {
 		return nil, err
 	}
-	return d.googleAdsClientFor(projectID, res)
+	return d.cachedGoogleAdsClient(projectID, platform, res)
+}
+
+// cachedGoogleAdsClient returns the client for this connection, building it only when there is no
+// live entry for the row identity the credential just resolved from.
+//
+// Reusing the CLIENT is what removes the OAuth exchange — the token is cached on the instance, so
+// a client rebuilt per call re-mints it however cheap the credential lookup became. The validation
+// is the credential's own (row id + version), so a rotation invalidates the client in the same
+// step that invalidates the credential; a stale client is a stale credential.
+//
+// Not applied to the DISCOVERY path, which deliberately builds an account-agnostic client with an
+// empty CustomerID, nor to adoption's owned-connection path, which is a rare one-shot rather than
+// the polling loop this exists for.
+func (d *GoogleAdsDispatcher) cachedGoogleAdsClient(projectID string, platform model.Provider, res *resolved) (*googleads.Client, error) {
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return d.googleAdsClientFor(projectID, res)
+	})
+	if err != nil {
+		return nil, err
+	}
+	client, isClient := built.(*googleads.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return d.googleAdsClientFor(projectID, res)
+	}
+	return client, nil
 }
 
 // resolveOwnedGoogleAdsClient is resolveGoogleAdsClient for the one path that must NOT accept

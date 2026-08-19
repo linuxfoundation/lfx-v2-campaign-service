@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // microsoftCreds is the credential shape stored (encrypted) for a Microsoft Advertising
@@ -28,14 +31,29 @@ type microsoftCreds struct {
 	RefreshToken   string
 }
 
+// microsoftKeywordConfig is one entry in microsoftConfig.Keywords — the JSON shape a caller
+// supplies for a positive Search keyword. Maps 1:1 to microsoft.Keyword; kept as a separate
+// JSON-tagged type rather than importing the client's struct directly, mirroring how
+// googleAdsKeywordConfig keeps the wire shape and the platform client's Go type
+// independently named.
+//
+// NOTE the matchType vocabulary differs from Google Ads: Microsoft's enum is PascalCase
+// ("Exact"/"Phrase"/"Broad"), not SCREAMING_CASE. The client accepts either casing so a
+// caller reusing a Google Ads payload is not refused over spelling alone.
+type microsoftKeywordConfig struct {
+	Text      string `json:"text"`
+	MatchType string `json:"matchType"`
+}
+
 // microsoftConfig is the per-platform campaign config the caller passes for Microsoft in
 // CreateCampaigns' Input.Config (delivered here as the Dispatch `config`).
 //
-// Today the Microsoft client creates a PAUSED Search campaign shell with an ad group + a
-// responsive search ad (auto-composed copy); targeting/keywords land in a later phase, so only
-// the budget (and optionally a Campaign.TimeZone enum) is caller-supplied here. Budget is in
-// whole units of the ad ACCOUNT's currency (NOT USD — the client does NO FX conversion), applied
-// as the campaign's DAILY budget, mirroring the meta client.
+// The Microsoft client creates a PAUSED Search campaign with an ad group + a responsive
+// search ad (auto-composed copy), then attaches the keywords supplied here — without them the
+// ad group has nothing to match a query against and the campaign can never serve, even once a
+// human enables it. Budget is in whole units of the ad ACCOUNT's currency (NOT USD — the
+// client does NO FX conversion), applied as the campaign's DAILY budget, mirroring the meta
+// client.
 type microsoftConfig struct {
 	// Budget is whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…), the DAILY
 	// budget. Must be finite and > 0; a NaN/Inf or non-positive value is rejected by the client
@@ -44,6 +62,24 @@ type microsoftConfig struct {
 	// TimeZone is an OPTIONAL Microsoft Campaign.TimeZone enum value. Microsoft marks the field
 	// deprecated but still requires it on Add; when empty the client uses its default.
 	TimeZone string `json:"timeZone"`
+	// Keywords are the positive Search keywords attached to the created ad group. Left empty,
+	// the campaign is created but can NEVER SERVE, and ToggleStatus refuses to activate it —
+	// so a caller that wants a servable campaign must supply at least one.
+	Keywords []microsoftKeywordConfig `json:"keywords"`
+	// CpcBid is an OPTIONAL ad-group max cost-per-click in whole units of the account currency
+	// (no micros, no FX). Omitted/zero means unset, and Microsoft then applies the
+	// account-currency minimum — a documented, serve-capable floor, so omitting it is safe.
+	CpcBid float64 `json:"cpcBid"`
+	// GeoTargets are ISO 3166-1 alpha-2 country codes, the SAME vocabulary
+	// redditConfig/metaConfig/googleAdsConfig take (LFXV2-3279). Microsoft's location
+	// criteria take numeric LocationIds rather than ISO codes, so the client resolves each
+	// code against Microsoft's own geographical-locations file at create time — see
+	// internal/platform/microsoft/geo.go.
+	//
+	// Left EMPTY, the campaign is created with no location criteria and Microsoft serves it
+	// EVERYWHERE once enabled. A code that cannot be resolved fails the create BEFORE
+	// anything is created, rather than silently producing that untargeted campaign.
+	GeoTargets []string `json:"geoTargets"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -94,6 +130,9 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Budget:          cfg.Budget,
 		TimeZone:        cfg.TimeZone,
 		RegistrationURL: bf.RegistrationURL,
+		Keywords:        microsoftKeywords(cfg.Keywords),
+		CpcBid:          cfg.CpcBid,
+		GeoTargets:      cfg.GeoTargets,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -147,6 +186,24 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED (a partial campaign may exist — verify before retrying): %w", cerr)
 	}
 	return campaignFromMicrosoft(ctx, result, cfg), nil
+}
+
+// microsoftKeywords maps the wire-shaped keyword config to the platform client's Keyword
+// type. Returns nil for an empty input so an omitted "keywords" field stays nil rather than
+// becoming an empty non-nil slice (which would read as "targeting was requested and produced
+// nothing"). Mirrors googleAdsKeywords.
+//
+// No validation here: the client owns it (microsoft.validateKeywords), so a create and any
+// future caller cannot drift apart on what a valid keyword is.
+func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]microsoft.Keyword, len(in))
+	for i, kw := range in {
+		out[i] = microsoft.Keyword{Text: kw.Text, MatchType: kw.MatchType}
+	}
+	return out
 }
 
 // campaignFromMicrosoft maps the client result to the persistence model.
@@ -413,6 +470,75 @@ func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	return blob.AdGroupID, blob.AdID
 }
 
+// microsoftCreationAccountID reports the ad account the campaign was CREATED under, or ""
+// when the persisted result blob does not record it.
+//
+// Prefers the explicit accountId the create path now stamps (microsoft.CampaignResult), and
+// falls back to the aid= query parameter of the microsoftAdsUrl the blob has always carried —
+// so rows written BEFORE the explicit field existed are still checkable rather than silently
+// unguarded. Mirrors googleAdsCreationCustomerID, including its customerId/ocid fallback.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func microsoftCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID       string `json:"accountId"`
+		MicrosoftAdsURL string `json:"microsoftAdsUrl"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(blob.AccountID); id != "" {
+		return id
+	}
+	u, err := url.Parse(blob.MicrosoftAdsURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(u.Query().Get("aid"))
+}
+
+// verifyMicrosoftAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT ad account than the project's current connection resolves to.
+//
+// Microsoft campaign ids are unique only WITHIN an account, and UpdateMicrosoftAds can
+// re-point a project's connection between create and a later read/toggle. Without this check
+// the stored PlatformCampaignID is addressed against the NEW account, where it either matches
+// nothing or — worse — collides with an unrelated campaign, whose numbers would be rendered
+// as this campaign's measurement (on the read path) or whose delivery would be changed (on
+// the toggle path).
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads adapter does.
+func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *microsoft.Client) error {
+	created := microsoftCreationAccountID(campaign)
+	if created == "" || created == client.AccountID() {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under microsoft ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
+}
+
+// microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
+// lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
+// means keyword targeting was never provisioned — either none was supplied or the step failed
+// before any id could be parsed.
+func microsoftKeywordIDs(campaign *model.Campaign) []string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return nil
+	}
+	var blob struct {
+		KeywordIDs []string `json:"keywordIds"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return nil
+	}
+	return blob.KeywordIDs
+}
+
 // ToggleStatus implements service.StatusToggler for Microsoft Advertising.
 //
 // FULL CASCADE, like reddit: the create path builds the whole Campaign -> AdGroup -> Ad tree
@@ -432,8 +558,16 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	}
 	adGroupID, adID := microsoftChildIDs(campaign)
 	adGroupID, adID = strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
-	if msStatus == microsoft.StatusActive && (adGroupID == "" || adID == "") {
-		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	if msStatus == microsoft.StatusActive {
+		if adGroupID == "" || adID == "" {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// Refuse ACTIVATE when no keyword was ever provisioned. A Search campaign with no
+		// keywords has nothing to match a query against, so enabling it would report success
+		// for a campaign that cannot deliver — the exact false claim ErrCampaignNotProvisioned
+		// exists to prevent. Raised locally, without calling Microsoft: it is a fact about the
+		// persisted row, so the service maps it to a 409 STATE error rather than a platform
+		// failure. Mirrors the google-ads sibling's keyword-criteria gate.
 	}
 	// An ad with no known parent cannot be changed (the client refuses the pair), and sending
 	// the campaign anyway would report success while the ad's status remained unchanged.
@@ -444,11 +578,128 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
+	// Provenance BEFORE the mutation: a campaign id is unique only within an ad account, so a
+	// connection re-pointed since create would address an unrelated campaign — and this path
+	// CHANGES delivery, so a collision pauses or activates someone else's campaign.
+	if err := verifyMicrosoftAccountMatch("toggle microsoft campaign status", campaign, client); err != nil {
+		return err
+	}
+	// AFTER provenance, deliberately. "This row's keywords were never provisioned" is only a
+	// meaningful answer once the row is known to belong to the resolved account: on a
+	// re-pointed connection the keyword ids describe a campaign in a DIFFERENT account, so
+	// answering 409-not-provisioned there would explain the wrong campaign. Ordering the two
+	// the other way made TestMicrosoft_ToggleStatus_ForeignAccountIs409AndNeverMutates report
+	// a missing-keyword error for a foreign-account campaign.
+	if msStatus == microsoft.StatusActive && len(microsoftKeywordIDs(campaign)) == 0 {
+		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
+	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
+	// skipped them would enable a campaign with nothing eligible to match a query.
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, microsoftKeywordIDs(campaign), msStatus); uerr != nil {
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
 		return uerr
 	}
 	return nil
+}
+
+// ReadMetrics implements the OPTIONAL service.MetricsReader capability for Microsoft
+// Advertising, reading campaign performance through the v13 Reporting service.
+//
+// Microsoft's reporting pipeline is asynchronous — submit a report request, poll until it
+// builds, then download a zipped CSV — unlike every other platform here, which answers with
+// one synchronous JSON call. The client bounds the submit+poll phase well under the platform
+// ingress timeout and returns microsoft.ErrReportNotReady rather than hanging the caller;
+// that propagates as an ordinary error below rather than either metrics sentinel, because a
+// report still building is a timing condition, NOT a campaign with no data. Reporting it as
+// zeroes would turn that timing condition into a measurement. Note the retry it invites
+// restarts the report rather than resuming it — the error message says so explicitly, and
+// microsoft.ErrReportNotReady explains why.
+//
+// Because of that, this capability is OFF unless MICROSOFT_METRICS_ENABLED is set to "true".
+// Merely declaring this method is the capability switch — Orchestrator.ReadCampaignMetrics
+// discovers MetricsReader by type assertion, and the published endpoint then calls it — so
+// without the flag an UNVERIFIED request/response shape would ship as production metrics that
+// return 200 and look authoritative. The v13 Reporting contract this client implements was
+// written from Microsoft's published documentation and has not been exercised against a live
+// Microsoft Advertising account; nothing in the response carries that caveat. The gate is
+// checked here rather than at construction so a deployment can flip it without a rebuild.
+//
+// Disabled reads answer domain.ErrMetricsUnsupported, which the service maps to the same 400
+// a platform with no metrics support at all returns — the accurate answer while the contract
+// is unverified. Delete the gate once the shape is confirmed against a live ad account.
+func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if os.Getenv(constants.EnvMicrosoftMetricsEnabled) != "true" {
+		return nil, fmt.Errorf("microsoft metrics reads are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
+			constants.EnvMicrosoftMetricsEnabled, domain.ErrMetricsUnsupported)
+	}
+	if campaign == nil || campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Prove the persisted campaign belongs to the account the report will be scoped to.
+	// resolveMicrosoftClient returns the project's CURRENT connection, which UpdateMicrosoftAds
+	// can have re-pointed since create; querying the stored id against a different account
+	// yields either a false "no metrics" or ANOTHER campaign's numbers presented as this
+	// campaign's measurement — the failure-as-measurement class this path refuses throughout.
+	if err := verifyMicrosoftAccountMatch("read microsoft campaign metrics", campaign, client); err != nil {
+		return nil, err
+	}
+	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
+	if err != nil {
+		// Classify the two conditions the caller must NOT read as "no data":
+		// an unsupported window, and a report that had not finished building.
+		if errors.Is(err, microsoft.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+		}
+		// A report still building is deliberately NOT mapped to either metrics sentinel:
+		// both mean 400 ("this cannot work"), and a retryable timing condition is neither
+		// unsupported nor permanent. It propagates as an ordinary error, which the service
+		// layer's metrics switch answers from its default arm — a 503, not a 500 (see the
+		// ConnServiceUnavailableError default in internal/service/brief.go). That is the
+		// right code for this condition: a 503 promises that waiting might help, and for a
+		// report whose build time varies around the poll budget it genuinely might. It
+		// stays on the default arm until a distinct retryable sentinel exists (there is
+		// none today; see internal/domain/errors.go, which defines only
+		// ErrMetricsUnsupported, ErrMetricsWindowUnsupported and ErrNoMetricsInWindow).
+		// Returning zeroes here instead would be the worse failure: a timing condition
+		// rendered as a measurement.
+		// Success-with-no-rows: the platform answered, but the adapter cannot tell "no
+		// activity" from "no such campaign in scope". Same mapping hubspot.go uses.
+		if errors.Is(err, microsoft.ErrNoRowsInReport) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft: %w", errors.Join(domain.ErrNoMetricsInWindow, err))
+		}
+		if errors.Is(err, microsoft.ErrReportDataIncomplete) {
+			// Microsoft flagged the report's own data as still aggregating. Like
+			// ErrReportNotReady this is a TIMING condition, not a campaign with no data, so
+			// it must not become either metrics sentinel — both mean 400, and a 400 tells
+			// the caller to stop asking. It rides the default 503 arm instead, which is the
+			// honest code here: waiting genuinely does help, because the same window
+			// re-read after Microsoft finishes processing returns complete numbers.
+			//
+			// What it must NOT do is return the partial totals. They would be a 200 that
+			// under-counts, indistinguishable from a complete measurement of a smaller
+			// number — the failure-as-measurement class this pipeline refuses throughout.
+			return nil, fmt.Errorf("get campaign metrics from microsoft (microsoft flagged the report data as "+
+				"incomplete, so the totals would under-count; re-read once the window has finished processing): %w", err)
+		}
+		if errors.Is(err, microsoft.ErrReportNotReady) {
+			// State the retry's real semantics rather than an encouraging "retry shortly":
+			// the pending ReportRequestId does not survive the call (see
+			// microsoft.ErrReportNotReady), so a retry SUBMITS A NEW REPORT and never
+			// collects the one that has since finished. A campaign whose report reliably
+			// outlasts the client's poll budget is therefore unreadable through this path
+			// no matter how often it is retried.
+			return nil, fmt.Errorf("get campaign metrics from microsoft (the report was still building when the poll budget expired; "+
+				"retrying SUBMITS A NEW REPORT and will not pick up the pending one, so a report that reliably takes longer than the "+
+				"budget stays unreadable here): %w", err)
+		}
+		return nil, fmt.Errorf("get campaign metrics from microsoft: %w", err)
+	}
+	return metrics, nil
 }

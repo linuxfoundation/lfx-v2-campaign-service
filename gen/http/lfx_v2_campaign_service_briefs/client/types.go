@@ -348,6 +348,10 @@ type GetBriefMetricsResponseBody struct {
 	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
 	// the brief's performance.
 	OKCount *int `form:"ok_count,omitempty" json:"ok_count,omitempty" xml:"ok_count,omitempty"`
+	// What an operator should look at, derived from the readable rows. Empty means
+	// nothing was flagged among those rows — compare ok_count against the row
+	// count before reading that as an all-clear.
+	ActionItems []*CampaignActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 }
 
 // GenerateEmailCopyResponseBody is the type of the
@@ -474,6 +478,16 @@ type CreateBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // FindBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -527,6 +541,16 @@ type FindBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// FindBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "Unauthorized" error.
+type FindBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -574,6 +598,16 @@ type GetBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "NotFound" error.
 type GetBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
+// body for the "Unauthorized" error.
+type GetBriefUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -653,6 +687,16 @@ type UpdateBriefPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ApproveBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -726,6 +770,16 @@ type ApproveBriefPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApproveBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ApproveBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -773,6 +827,16 @@ type DeleteBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type DeleteBriefUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -832,6 +896,16 @@ type FetchEventURLNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// FetchEventURLUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "Unauthorized" error.
+type FetchEventURLUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // CreateCampaignsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -879,6 +953,16 @@ type CreateCampaignsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateCampaignsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateCampaignsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -938,6 +1022,16 @@ type AdoptCampaignNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// AdoptCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type AdoptCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -985,6 +1079,16 @@ type GetCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type GetCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1044,6 +1148,16 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetCampaignMetricsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetCampaignMetricsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetBriefMetricsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1097,6 +1211,16 @@ type GetBriefMetricsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetBriefMetricsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetBriefMetricsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GenerateEmailCopyBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1144,6 +1268,16 @@ type GenerateEmailCopyInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "NotFound" error.
 type GenerateEmailCopyNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GenerateEmailCopyUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1223,6 +1357,16 @@ type UpdateCampaignPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ToggleCampaignStatusBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1290,6 +1434,16 @@ type ToggleCampaignStatusPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type ToggleCampaignStatusPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ToggleCampaignStatusUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1369,6 +1523,16 @@ type DeleteCampaignPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type DeleteCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetJobBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -1416,6 +1580,16 @@ type GetJobInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "NotFound" error.
 type GetJobNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetJobUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
+// body for the "Unauthorized" error.
+type GetJobUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1482,6 +1656,11 @@ type BriefMetricsRowResponseBody struct {
 	// Why this row carries no measurement, in consumer-safe wording. Absent when
 	// status is `ok`.
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Spend against the flight-prorated plan. Absent when status is not `ok`. On
+	// an `ok` row it is always present: `pct` is absent and `label` is `unknown`
+	// when this campaign has no budget or usable flight to pace against, or when
+	// the window does not overlap the flight.
+	Pacing *CampaignPacingResponseBody `form:"pacing,omitempty" json:"pacing,omitempty" xml:"pacing,omitempty"`
 }
 
 // CampaignMetricsResponseBody is used to define fields on response body types.
@@ -1513,6 +1692,34 @@ type CampaignMetricsResponseBody struct {
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
+}
+
+// CampaignPacingResponseBody is used to define fields on response body types.
+type CampaignPacingResponseBody struct {
+	// Spend as a percentage of what this campaign should have spent BY NOW. Absent
+	// when pacing is not computable — never zero-filled, because 0% is a claim
+	// about spend.
+	Pct *float64 `form:"pct,omitempty" json:"pct,omitempty" xml:"pct,omitempty"`
+	// The band pct falls into. `unknown` means no pacing could be derived, which
+	// is NOT the same as being on plan.
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// CampaignActionItemResponseBody is used to define fields on response body
+// types.
+type CampaignActionItemResponseBody struct {
+	// Which rule fired, as a stable token.
+	Rule *string `form:"rule,omitempty" json:"rule,omitempty" xml:"rule,omitempty"`
+	// How urgently this wants attention.
+	Priority *string `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
+	// The campaign this concerns
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The channel that campaign runs on
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// What is wrong, in operator-facing wording.
+	Issue *string `form:"issue,omitempty" json:"issue,omitempty" xml:"issue,omitempty"`
+	// What to do about it.
+	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
 }
 
 // CampaignUpdateInputRequestBody is used to define fields on request body
@@ -1696,6 +1903,18 @@ func NewCreateBriefNotFound(body *CreateBriefNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewCreateBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
+// create-brief endpoint Unauthorized error.
+func NewCreateBriefUnauthorized(body *CreateBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewFindBriefBriefOK builds a "lfx-v2-campaign-service-briefs" service
 // "find-brief" endpoint result from a HTTP "OK" response.
 func NewFindBriefBriefOK(body *FindBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
@@ -1779,6 +1998,18 @@ func NewFindBriefNotFound(body *FindBriefNotFoundResponseBody) *lfxv2campaignser
 	return v
 }
 
+// NewFindBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
+// find-brief endpoint Unauthorized error.
+func NewFindBriefUnauthorized(body *FindBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetBriefBriefOK builds a "lfx-v2-campaign-service-briefs" service
 // "get-brief" endpoint result from a HTTP "OK" response.
 func NewGetBriefBriefOK(body *GetBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
@@ -1858,6 +2089,18 @@ func NewGetBriefNotFound(body *GetBriefNotFoundResponseBody) *lfxv2campaignservi
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
+// get-brief endpoint Unauthorized error.
+func NewGetBriefUnauthorized(body *GetBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -1967,6 +2210,18 @@ func NewUpdateBriefPreconditionRequired(body *UpdateBriefPreconditionRequiredRes
 	return v
 }
 
+// NewUpdateBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
+// update-brief endpoint Unauthorized error.
+func NewUpdateBriefUnauthorized(body *UpdateBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewApproveBriefBriefOK builds a "lfx-v2-campaign-service-briefs" service
 // "approve-brief" endpoint result from a HTTP "OK" response.
 func NewApproveBriefBriefOK(body *ApproveBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
@@ -2072,6 +2327,18 @@ func NewApproveBriefPreconditionRequired(body *ApproveBriefPreconditionRequiredR
 	return v
 }
 
+// NewApproveBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
+// approve-brief endpoint Unauthorized error.
+func NewApproveBriefUnauthorized(body *ApproveBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteBriefBadRequest builds a lfx-v2-campaign-service-briefs service
 // delete-brief endpoint BadRequest error.
 func NewDeleteBriefBadRequest(body *DeleteBriefBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
@@ -2124,6 +2391,18 @@ func NewDeleteBriefNotFound(body *DeleteBriefNotFoundResponseBody) *lfxv2campaig
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
+// delete-brief endpoint Unauthorized error.
+func NewDeleteBriefUnauthorized(body *DeleteBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -2201,6 +2480,18 @@ func NewFetchEventURLNotFound(body *FetchEventURLNotFoundResponseBody) *lfxv2cam
 	return v
 }
 
+// NewFetchEventURLUnauthorized builds a lfx-v2-campaign-service-briefs service
+// fetch-event-url endpoint Unauthorized error.
+func NewFetchEventURLUnauthorized(body *FetchEventURLUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewCreateCampaignsJobCreateResponseAccepted builds a
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint result
 // from a HTTP "Accepted" response.
@@ -2270,6 +2561,18 @@ func NewCreateCampaignsNotFound(body *CreateCampaignsNotFoundResponseBody) *lfxv
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewCreateCampaignsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service create-campaigns endpoint Unauthorized error.
+func NewCreateCampaignsUnauthorized(body *CreateCampaignsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -2348,6 +2651,18 @@ func NewAdoptCampaignNotFound(body *AdoptCampaignNotFoundResponseBody) *lfxv2cam
 	return v
 }
 
+// NewAdoptCampaignUnauthorized builds a lfx-v2-campaign-service-briefs service
+// adopt-campaign endpoint Unauthorized error.
+func NewAdoptCampaignUnauthorized(body *AdoptCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetCampaignCampaignOK builds a "lfx-v2-campaign-service-briefs" service
 // "get-campaign" endpoint result from a HTTP "OK" response.
 func NewGetCampaignCampaignOK(body *GetCampaignResponseBody, etag *string) *lfxv2campaignservicebriefs.Campaign {
@@ -2418,6 +2733,18 @@ func NewGetCampaignNotFound(body *GetCampaignNotFoundResponseBody) *lfxv2campaig
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetCampaignUnauthorized builds a lfx-v2-campaign-service-briefs service
+// get-campaign endpoint Unauthorized error.
+func NewGetCampaignUnauthorized(body *GetCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -2500,6 +2827,18 @@ func NewGetCampaignMetricsNotFound(body *GetCampaignMetricsNotFoundResponseBody)
 	return v
 }
 
+// NewGetCampaignMetricsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service get-campaign-metrics endpoint Unauthorized error.
+func NewGetCampaignMetricsUnauthorized(body *GetCampaignMetricsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetBriefMetricsBriefMetricsOK builds a "lfx-v2-campaign-service-briefs"
 // service "get-brief-metrics" endpoint result from a HTTP "OK" response.
 func NewGetBriefMetricsBriefMetricsOK(body *GetBriefMetricsResponseBody) *lfxv2campaignservicebriefs.BriefMetrics {
@@ -2515,6 +2854,14 @@ func NewGetBriefMetricsBriefMetricsOK(body *GetBriefMetricsResponseBody) *lfxv2c
 			continue
 		}
 		v.Rows[i] = unmarshalBriefMetricsRowResponseBodyToLfxv2campaignservicebriefsBriefMetricsRow(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignservicebriefs.CampaignActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaignActionItem(val)
 	}
 
 	return v
@@ -2573,6 +2920,18 @@ func NewGetBriefMetricsNotFound(body *GetBriefMetricsNotFoundResponseBody) *lfxv
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetBriefMetricsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service get-brief-metrics endpoint Unauthorized error.
+func NewGetBriefMetricsUnauthorized(body *GetBriefMetricsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -2644,6 +3003,18 @@ func NewGenerateEmailCopyNotFound(body *GenerateEmailCopyNotFoundResponseBody) *
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGenerateEmailCopyUnauthorized builds a lfx-v2-campaign-service-briefs
+// service generate-email-copy endpoint Unauthorized error.
+func NewGenerateEmailCopyUnauthorized(body *GenerateEmailCopyUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -2741,6 +3112,18 @@ func NewUpdateCampaignPreconditionRequired(body *UpdateCampaignPreconditionRequi
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewUpdateCampaignUnauthorized builds a lfx-v2-campaign-service-briefs
+// service update-campaign endpoint Unauthorized error.
+func NewUpdateCampaignUnauthorized(body *UpdateCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -2845,6 +3228,18 @@ func NewToggleCampaignStatusPreconditionRequired(body *ToggleCampaignStatusPreco
 	return v
 }
 
+// NewToggleCampaignStatusUnauthorized builds a lfx-v2-campaign-service-briefs
+// service toggle-campaign-status endpoint Unauthorized error.
+func NewToggleCampaignStatusUnauthorized(body *ToggleCampaignStatusUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
 // delete-campaign endpoint BadRequest error.
 func NewDeleteCampaignBadRequest(body *DeleteCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
@@ -2924,6 +3319,18 @@ func NewDeleteCampaignPreconditionRequired(body *DeleteCampaignPreconditionRequi
 	return v
 }
 
+// NewDeleteCampaignUnauthorized builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint Unauthorized error.
+func NewDeleteCampaignUnauthorized(body *DeleteCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetJobJobPollResponseOK builds a "lfx-v2-campaign-service-briefs" service
 // "get-job" endpoint result from a HTTP "OK" response.
 func NewGetJobJobPollResponseOK(body *GetJobResponseBody) *lfxv2campaignservicebriefs.JobPollResponse {
@@ -2998,6 +3405,18 @@ func NewGetJobNotFound(body *GetJobNotFoundResponseBody) *lfxv2campaignservicebr
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetJobUnauthorized builds a lfx-v2-campaign-service-briefs service
+// get-job endpoint Unauthorized error.
+func NewGetJobUnauthorized(body *GetJobUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -3312,6 +3731,9 @@ func ValidateGetBriefMetricsResponseBody(body *GetBriefMetricsResponseBody) (err
 	if body.OKCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok_count", "body"))
 	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
 	if body.Window != nil {
 		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
@@ -3320,6 +3742,13 @@ func ValidateGetBriefMetricsResponseBody(body *GetBriefMetricsResponseBody) (err
 	for _, e := range body.Rows {
 		if e != nil {
 			if err2 := ValidateBriefMetricsRowResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateCampaignActionItemResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -3508,6 +3937,18 @@ func ValidateCreateBriefNotFoundResponseBody(body *CreateBriefNotFoundResponseBo
 	return
 }
 
+// ValidateCreateBriefUnauthorizedResponseBody runs the validations defined on
+// create-brief_Unauthorized_response_body
+func ValidateCreateBriefUnauthorizedResponseBody(body *CreateBriefUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateFindBriefBadRequestResponseBody runs the validations defined on
 // find-brief_BadRequest_response_body
 func ValidateFindBriefBadRequestResponseBody(body *FindBriefBadRequestResponseBody) (err error) {
@@ -3573,6 +4014,18 @@ func ValidateFindBriefNotFoundResponseBody(body *FindBriefNotFoundResponseBody) 
 	return
 }
 
+// ValidateFindBriefUnauthorizedResponseBody runs the validations defined on
+// find-brief_Unauthorized_response_body
+func ValidateFindBriefUnauthorizedResponseBody(body *FindBriefUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetBriefBadRequestResponseBody runs the validations defined on
 // get-brief_BadRequest_response_body
 func ValidateGetBriefBadRequestResponseBody(body *GetBriefBadRequestResponseBody) (err error) {
@@ -3629,6 +4082,18 @@ func ValidateGetBriefInternalServerErrorResponseBody(body *GetBriefInternalServe
 // ValidateGetBriefNotFoundResponseBody runs the validations defined on
 // get-brief_NotFound_response_body
 func ValidateGetBriefNotFoundResponseBody(body *GetBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetBriefUnauthorizedResponseBody runs the validations defined on
+// get-brief_Unauthorized_response_body
+func ValidateGetBriefUnauthorizedResponseBody(body *GetBriefUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -3727,6 +4192,18 @@ func ValidateUpdateBriefPreconditionRequiredResponseBody(body *UpdateBriefPrecon
 	return
 }
 
+// ValidateUpdateBriefUnauthorizedResponseBody runs the validations defined on
+// update-brief_Unauthorized_response_body
+func ValidateUpdateBriefUnauthorizedResponseBody(body *UpdateBriefUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateApproveBriefBadRequestResponseBody runs the validations defined on
 // approve-brief_BadRequest_response_body
 func ValidateApproveBriefBadRequestResponseBody(body *ApproveBriefBadRequestResponseBody) (err error) {
@@ -3816,6 +4293,18 @@ func ValidateApproveBriefPreconditionRequiredResponseBody(body *ApproveBriefPrec
 	return
 }
 
+// ValidateApproveBriefUnauthorizedResponseBody runs the validations defined on
+// approve-brief_Unauthorized_response_body
+func ValidateApproveBriefUnauthorizedResponseBody(body *ApproveBriefUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteBriefBadRequestResponseBody runs the validations defined on
 // delete-brief_BadRequest_response_body
 func ValidateDeleteBriefBadRequestResponseBody(body *DeleteBriefBadRequestResponseBody) (err error) {
@@ -3872,6 +4361,18 @@ func ValidateDeleteBriefInternalServerErrorResponseBody(body *DeleteBriefInterna
 // ValidateDeleteBriefNotFoundResponseBody runs the validations defined on
 // delete-brief_NotFound_response_body
 func ValidateDeleteBriefNotFoundResponseBody(body *DeleteBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteBriefUnauthorizedResponseBody runs the validations defined on
+// delete-brief_Unauthorized_response_body
+func ValidateDeleteBriefUnauthorizedResponseBody(body *DeleteBriefUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -3946,6 +4447,18 @@ func ValidateFetchEventURLNotFoundResponseBody(body *FetchEventURLNotFoundRespon
 	return
 }
 
+// ValidateFetchEventURLUnauthorizedResponseBody runs the validations defined
+// on fetch-event-url_Unauthorized_response_body
+func ValidateFetchEventURLUnauthorizedResponseBody(body *FetchEventURLUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateCreateCampaignsBadRequestResponseBody runs the validations defined
 // on create-campaigns_BadRequest_response_body
 func ValidateCreateCampaignsBadRequestResponseBody(body *CreateCampaignsBadRequestResponseBody) (err error) {
@@ -4002,6 +4515,18 @@ func ValidateCreateCampaignsInternalServerErrorResponseBody(body *CreateCampaign
 // ValidateCreateCampaignsNotFoundResponseBody runs the validations defined on
 // create-campaigns_NotFound_response_body
 func ValidateCreateCampaignsNotFoundResponseBody(body *CreateCampaignsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateCampaignsUnauthorizedResponseBody runs the validations defined
+// on create-campaigns_Unauthorized_response_body
+func ValidateCreateCampaignsUnauthorizedResponseBody(body *CreateCampaignsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4076,6 +4601,18 @@ func ValidateAdoptCampaignNotFoundResponseBody(body *AdoptCampaignNotFoundRespon
 	return
 }
 
+// ValidateAdoptCampaignUnauthorizedResponseBody runs the validations defined
+// on adopt-campaign_Unauthorized_response_body
+func ValidateAdoptCampaignUnauthorizedResponseBody(body *AdoptCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetCampaignBadRequestResponseBody runs the validations defined on
 // get-campaign_BadRequest_response_body
 func ValidateGetCampaignBadRequestResponseBody(body *GetCampaignBadRequestResponseBody) (err error) {
@@ -4132,6 +4669,18 @@ func ValidateGetCampaignInternalServerErrorResponseBody(body *GetCampaignInterna
 // ValidateGetCampaignNotFoundResponseBody runs the validations defined on
 // get-campaign_NotFound_response_body
 func ValidateGetCampaignNotFoundResponseBody(body *GetCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignUnauthorizedResponseBody runs the validations defined on
+// get-campaign_Unauthorized_response_body
+func ValidateGetCampaignUnauthorizedResponseBody(body *GetCampaignUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4206,6 +4755,18 @@ func ValidateGetCampaignMetricsNotFoundResponseBody(body *GetCampaignMetricsNotF
 	return
 }
 
+// ValidateGetCampaignMetricsUnauthorizedResponseBody runs the validations
+// defined on get-campaign-metrics_Unauthorized_response_body
+func ValidateGetCampaignMetricsUnauthorizedResponseBody(body *GetCampaignMetricsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetBriefMetricsBadRequestResponseBody runs the validations defined
 // on get-brief-metrics_BadRequest_response_body
 func ValidateGetBriefMetricsBadRequestResponseBody(body *GetBriefMetricsBadRequestResponseBody) (err error) {
@@ -4271,6 +4832,18 @@ func ValidateGetBriefMetricsNotFoundResponseBody(body *GetBriefMetricsNotFoundRe
 	return
 }
 
+// ValidateGetBriefMetricsUnauthorizedResponseBody runs the validations defined
+// on get-brief-metrics_Unauthorized_response_body
+func ValidateGetBriefMetricsUnauthorizedResponseBody(body *GetBriefMetricsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGenerateEmailCopyBadRequestResponseBody runs the validations defined
 // on generate-email-copy_BadRequest_response_body
 func ValidateGenerateEmailCopyBadRequestResponseBody(body *GenerateEmailCopyBadRequestResponseBody) (err error) {
@@ -4327,6 +4900,18 @@ func ValidateGenerateEmailCopyInternalServerErrorResponseBody(body *GenerateEmai
 // ValidateGenerateEmailCopyNotFoundResponseBody runs the validations defined
 // on generate-email-copy_NotFound_response_body
 func ValidateGenerateEmailCopyNotFoundResponseBody(body *GenerateEmailCopyNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyUnauthorizedResponseBody runs the validations
+// defined on generate-email-copy_Unauthorized_response_body
+func ValidateGenerateEmailCopyUnauthorizedResponseBody(body *GenerateEmailCopyUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4416,6 +5001,18 @@ func ValidateUpdateCampaignPreconditionFailedResponseBody(body *UpdateCampaignPr
 // ValidateUpdateCampaignPreconditionRequiredResponseBody runs the validations
 // defined on update-campaign_PreconditionRequired_response_body
 func ValidateUpdateCampaignPreconditionRequiredResponseBody(body *UpdateCampaignPreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignUnauthorizedResponseBody runs the validations defined
+// on update-campaign_Unauthorized_response_body
+func ValidateUpdateCampaignUnauthorizedResponseBody(body *UpdateCampaignUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4518,6 +5115,18 @@ func ValidateToggleCampaignStatusPreconditionRequiredResponseBody(body *ToggleCa
 	return
 }
 
+// ValidateToggleCampaignStatusUnauthorizedResponseBody runs the validations
+// defined on toggle-campaign-status_Unauthorized_response_body
+func ValidateToggleCampaignStatusUnauthorizedResponseBody(body *ToggleCampaignStatusUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteCampaignBadRequestResponseBody runs the validations defined on
 // delete-campaign_BadRequest_response_body
 func ValidateDeleteCampaignBadRequestResponseBody(body *DeleteCampaignBadRequestResponseBody) (err error) {
@@ -4607,6 +5216,18 @@ func ValidateDeleteCampaignPreconditionRequiredResponseBody(body *DeleteCampaign
 	return
 }
 
+// ValidateDeleteCampaignUnauthorizedResponseBody runs the validations defined
+// on delete-campaign_Unauthorized_response_body
+func ValidateDeleteCampaignUnauthorizedResponseBody(body *DeleteCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetJobBadRequestResponseBody runs the validations defined on
 // get-job_BadRequest_response_body
 func ValidateGetJobBadRequestResponseBody(body *GetJobBadRequestResponseBody) (err error) {
@@ -4663,6 +5284,18 @@ func ValidateGetJobInternalServerErrorResponseBody(body *GetJobInternalServerErr
 // ValidateGetJobNotFoundResponseBody runs the validations defined on
 // get-job_NotFound_response_body
 func ValidateGetJobNotFoundResponseBody(body *GetJobNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetJobUnauthorizedResponseBody runs the validations defined on
+// get-job_Unauthorized_response_body
+func ValidateGetJobUnauthorizedResponseBody(body *GetJobUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4747,6 +5380,11 @@ func ValidateBriefMetricsRowResponseBody(body *BriefMetricsRowResponseBody) (err
 			err = goa.MergeErrors(err, err2)
 		}
 	}
+	if body.Pacing != nil {
+		if err2 := ValidateCampaignPacingResponseBody(body.Pacing); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	return
 }
 
@@ -4782,6 +5420,54 @@ func ValidateCampaignMetricsResponseBody(body *CampaignMetricsResponseBody) (err
 	if body.Email != nil {
 		if err2 := ValidateEmailMetricsResponseBody(body.Email); err2 != nil {
 			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCampaignPacingResponseBody runs the validations defined on
+// campaign-pacingResponseBody
+func ValidateCampaignPacingResponseBody(body *CampaignPacingResponseBody) (err error) {
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", "body"))
+	}
+	if body.Label != nil {
+		if !(*body.Label == "underspending" || *body.Label == "normal" || *body.Label == "constrained" || *body.Label == "overspending" || *body.Label == "unknown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.label", *body.Label, []any{"underspending", "normal", "constrained", "overspending", "unknown"}))
+		}
+	}
+	return
+}
+
+// ValidateCampaignActionItemResponseBody runs the validations defined on
+// campaign-action-itemResponseBody
+func ValidateCampaignActionItemResponseBody(body *CampaignActionItemResponseBody) (err error) {
+	if body.Rule == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("rule", "body"))
+	}
+	if body.Priority == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("priority", "body"))
+	}
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.Issue == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("issue", "body"))
+	}
+	if body.Action == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action", "body"))
+	}
+	if body.Rule != nil {
+		if !(*body.Rule == "zero_delivery" || *body.Rule == "underspending" || *body.Rule == "budget_constrained" || *body.Rule == "low_ctr") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.rule", *body.Rule, []any{"zero_delivery", "underspending", "budget_constrained", "low_ctr"}))
+		}
+	}
+	if body.Priority != nil {
+		if !(*body.Priority == "HIGH" || *body.Priority == "MED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.priority", *body.Priority, []any{"HIGH", "MED"}))
 		}
 	}
 	return

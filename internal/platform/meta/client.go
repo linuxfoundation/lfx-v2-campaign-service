@@ -1726,6 +1726,44 @@ func validateRegistrationURL(raw string) error {
 	return nil
 }
 
+// validateVariantImageURL validates an OPTIONAL per-variant creative image URL.
+// An empty value is valid and means "no image" — the creative is then built as a
+// bare link ad, exactly as before this field existed.
+//
+// This runs BEFORE any mutating call (alongside the copy-limit checks) on purpose.
+// The image is attached per-variant as link_data.picture inside the creative loop,
+// where a rejection is non-fatal — by then the paid campaign and ad set already
+// exist. A malformed URL is a deterministic caller error that we can detect with no
+// network at all, so detecting it up front turns "orphaned paid campaign with no
+// ads" into a clean pre-spend rejection. Mirrors validateRegistrationURL's checks
+// and its rationale.
+func validateVariantImageURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	// Require an absolute URL with a real hostname, for the same reason as
+	// validateRegistrationURL: parsed.Host can be a port-only authority (e.g.
+	// "https://:443" parses to Host==":443" with an empty Hostname()).
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+		return fmt.Errorf("image URL is not a valid URL")
+	}
+	// Reject embedded userinfo (user[:password]@host). Meta FETCHES this URL
+	// server-side, so credentials embedded in it would be handed to Meta in the
+	// creative body as link_data.picture — a basic-auth secret must not travel that
+	// path. (The URL is deliberately kept out of error strings and Steps; this check
+	// closes the remaining route by which it reaches a third party at all.) Mirrors
+	// validateRegistrationURL.
+	if parsed.User != nil {
+		return fmt.Errorf("image URL must not contain embedded credentials (userinfo)")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("image URL must use HTTPS")
+	}
+	return nil
+}
+
 // validateGeoTargets uppercases, trims, and filters to ISO-2 codes; defaults to
 // ["US"] when nothing valid remains (mirrors validateGeoTargets).
 func validateGeoTargets(geoTargets []string) []string {
@@ -2135,6 +2173,86 @@ func redactCredentials(s string) string {
 	})
 }
 
+// scrubURLFromErr renders a variant-failure error for a PERSISTED step, removing
+// the caller's image URL before the message reaches the sink.
+//
+// Steps are persisted and logged, and the image URL is caller-supplied data that
+// may be a pre-signed URL — a bearer credential whose signature grants time-boxed
+// read access. It is now sent to Meta as link_data.picture, and Meta echoes a
+// rejected parameter's value in error.message, which `do` copies verbatim into
+// APIError.Message. Every hand-built error string in this file already omits the
+// URL; this closes the one path that does not, by scrubbing at the sink rather
+// than at each error site, so a message reflected from upstream cannot smuggle it
+// through. Mirrors displayMetaUTMURL's reason for existing: the full URL still
+// goes to Meta, only the persisted copy is sanitized.
+//
+// The rule is STRUCTURAL, not a search for the secret in the text: when the image
+// URL carries a query or fragment — the part that holds a pre-signed signature —
+// upstream-derived text is NEVER emitted. The step becomes the URL's redactURL
+// form (scheme+host+path, so it still says WHICH image failed) plus a fixed note.
+//
+// An earlier revision replaced the URL by exact substring match and then verified
+// the result carried no recognizable fragment of the secret. That is not sound.
+// The text arriving here has been through transformations that the replacement
+// cannot invert and the verifier cannot enumerate: `do` truncates a non-Graph body
+// at 300 runes (clipping the signature mid-value), and a proxy/WAF may re-encode,
+// line-wrap, or otherwise re-render it. A substring verifier only rejects the
+// residues it thought to look for — an echo of "?sig=SECRET_SIG" wrapped to
+// "?sig=SEC\nRET_SIG" defeats both the replacement AND a prefix scan, because no
+// contiguous run of the value at or above any sensible minimum length survives.
+// Proving arbitrary transformed text clean is not something substring checks can
+// do, so this no longer tries: it withholds by construction on the only input
+// class where a secret can exist.
+//
+// When the URL has NO query or fragment there is no secret to protect, so the
+// message is emitted with the URL replaced by its redactURL form — the diagnostic
+// is kept wherever keeping it is safe. An empty imageURL leaves it untouched.
+//
+// Every return path is clamped to max, including the withheld one: redactURL keeps
+// the caller-controlled path, so an over-long path must not produce an unbounded
+// persisted Step.
+func scrubURLFromErr(err error, imageURL string, max int) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	raw := strings.TrimSpace(imageURL)
+	if raw == "" {
+		return truncate(msg, max)
+	}
+	if urlHasSecretMaterial(raw) {
+		// Fail closed: withhold upstream text entirely rather than emit text that
+		// no substring check can prove free of the signature.
+		return truncate(fmt.Sprintf("%s (message withheld: the image URL carries credentials that upstream text may echo)", redactURL(raw)), max)
+	}
+	// No query/fragment: nothing secret to leak. Replace the URL (and the form an
+	// upstream may have percent-encoded) with its redactURL form and keep the message.
+	msg = strings.ReplaceAll(msg, raw, redactURL(raw))
+	if esc := url.QueryEscape(raw); esc != raw {
+		msg = strings.ReplaceAll(msg, esc, redactURL(raw))
+	}
+	return truncate(msg, max)
+}
+
+// urlHasSecretMaterial reports whether raw carries a query or fragment — the
+// components in which a pre-signed URL carries its signature. Scheme, host and
+// path are not secret material: redactURL deliberately preserves them so a step
+// still identifies which image failed.
+//
+// A value that does not parse is treated as SECRET-BEARING. An unparseable string
+// is exactly the case where the delimiter scan is least trustworthy, and the safe
+// answer under a fail-closed policy is to withhold.
+func urlHasSecretMaterial(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	if u, err := url.Parse(trimmed); err == nil {
+		return u.RawQuery != "" || u.Fragment != "" || u.ForceQuery
+	}
+	return true
+}
+
 // truncateErr renders an error's message for inclusion in a user-visible step,
 // clamping it to a reasonable length without splitting a multi-byte rune.
 func truncateErr(err error, max int) string {
@@ -2190,6 +2308,20 @@ type AdVariant struct {
 	PrimaryText string
 	Headline    string
 	Description string
+	// ImageURL is an OPTIONAL https URL to a single image for this variant. When
+	// set, CreateCampaign attaches it to the creative as
+	// object_story_spec.link_data.picture — the documented by-URL field, which Meta
+	// fetches server-side and saves into the ad account's image library — so the ad
+	// renders as a single-image ad. When empty the creative is built exactly as
+	// before — a bare link ad — so this field is additive and no existing caller
+	// changes behavior.
+	//
+	// The URL is fetched by META, not by this service: the client never dereferences
+	// it, which is why no SSRF egress control is needed here. It is still validated
+	// up front (absolute https, no userinfo) because an unusable URL must fail
+	// BEFORE the campaign is created, not at the per-variant creative step where
+	// the paid campaign already exists.
+	ImageURL string
 }
 
 // CampaignInput mirrors MetaCampaignCreateRequest.
@@ -2255,11 +2387,21 @@ type CampaignResult struct {
 	Platform     string
 	CampaignName string
 	CampaignID   string
-	AdSetName    string
-	AdSetID      string
-	AdCount      int
-	MetaURL      string
-	Steps        []string
+	// AccountID is the ad account the campaign was CREATED under, stored verbatim as the
+	// connection carries it — this field applies no normalisation of its own. It is Meta's
+	// documented "act_<digits>" form because design/connection.go constrains the stored
+	// connection id to ^act_[0-9]+$, not because anything here enforces it; the dispatcher's
+	// normalizeMetaAccountID re-derives that shape on both sides of the comparison rather than
+	// trusting this field to have it. metaCreationAccountID reads the value back so a later
+	// read/toggle resolving to a DIFFERENT account is refused rather than addressing the
+	// stored campaign id under the wrong account. This struct is marshalled UNTAGGED, so
+	// the persisted key is the Go field name "AccountID" — the reader matches that.
+	AccountID string
+	AdSetName string
+	AdSetID   string
+	AdCount   int
+	MetaURL   string
+	Steps     []string
 }
 
 // ---------------------------------------------------------------------------
@@ -2324,6 +2466,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		creativeName := fmt.Sprintf("%s - Variant %d", strings.TrimSpace(in.EventName), i+1)
 		if n := utf8.RuneCountInString(creativeName); n > maxCreativeNameChars {
 			return nil, fmt.Errorf("variant %d ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", i+1, n, maxCreativeNameChars)
+		}
+		// The OPTIONAL creative image URL is validated here, with the rest of the
+		// deterministic per-variant checks, so a malformed URL fails before any paid
+		// resource exists rather than at the non-fatal per-variant creative create.
+		if err := validateVariantImageURL(v.ImageURL); err != nil {
+			return nil, fmt.Errorf("variant %d: %w", i+1, err)
 		}
 	}
 
@@ -2698,6 +2846,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 					Platform:     "meta-ads",
 					CampaignName: campaignName,
+					AccountID:    accountID,
 					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 					Steps:        steps,
 				}, fmt.Errorf("meta campaign creation aborted during name lookup UNCONFIRMED (caller context done; cannot confirm %q is absent, verify in Meta Ads Manager before retrying): %w",
@@ -2724,6 +2873,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
+				AccountID:    accountID,
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w",
@@ -2758,6 +2908,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return &CampaignResult{
 					Platform:     "meta-ads",
 					CampaignName: campaignName,
+					AccountID:    accountID,
 					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 					Steps:        steps,
 				}, fmt.Errorf("meta campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
@@ -2775,6 +2926,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
+				AccountID:    accountID,
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
@@ -2799,6 +2951,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
+				AccountID:    accountID,
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign creation succeeded but returned a non-numeric campaign ID %q (a PAUSED campaign %q may exist; verify in Meta Ads Manager before retrying)", campaignID, campaignName)
@@ -2828,6 +2981,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AdSetName:    adSetName,
 			AdSetID:      adSetID,
 			AdCount:      adCount,
+			AccountID:    accountID,
 			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 			Steps:        steps,
 		}
@@ -3001,9 +3155,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// record in Steps and continue.
 			if createOutcomeAmbiguous(verr) {
 				if creativeID != "" {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, truncateErr(verr, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(verr, variant.ImageURL, 300)))
 				} else {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, truncateErr(verr, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
 				}
 				continue
 			}
@@ -3011,9 +3165,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// orphaned creative is visible (can be cleaned up / reused) rather than
 			// silently discarded.
 			if creativeID != "" {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, truncateErr(verr, 300), creativeID))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, scrubURLFromErr(verr, variant.ImageURL, 300), creativeID))
 			} else {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
 			}
 			continue
 		}
@@ -3037,6 +3191,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 // createVariantAd creates the adcreative and ad for one variant, returning the
 // ad id and creative id.
+//
+// When the variant carries an ImageURL it is attached as link_data.picture, the
+// DOCUMENTED by-URL field on AdCreativeLinkData: "URL of a picture to use in the
+// post. Specify this field or image_hash but not both. ... The image specified at
+// the URL will be saved into the ad accounts image library." Meta fetches the image
+// server-side, so this service never dereferences the caller's URL itself — no
+// outbound fetch, and none of the SSRF surface one would bring — and the whole
+// creative stays a single JSON create inside the existing hardened `do` pipeline.
+//
+// An earlier revision uploaded to POST /act_<id>/adimages with a "url" field to get
+// a hash for link_data.image_hash. That was WRONG: the adimages edge documents only
+// `bytes` (base64) and `copy_from` as create parameters — `url` is a field on the
+// RETURNED image object, not an accepted input — so the call would have been
+// rejected live, after the campaign and ad set already existed. `picture` reaches
+// the same by-URL outcome with one fewer round-trip and no undocumented parameter.
+// Because `picture` and `image_hash` are mutually exclusive per the same reference,
+// only `picture` is ever set.
 func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID string, err error) {
 	linkData := map[string]any{
 		"link":    utmURL,
@@ -3049,6 +3220,13 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	}
 	if variant.Description != "" {
 		linkData["description"] = variant.Description
+	}
+	// Attach the image when one was supplied. The URL was already validated up front
+	// (validateVariantImageURL), so a rejection here is an upstream/API failure, not a
+	// caller error. No separate upload call is made: `picture` carries the URL on the
+	// creative create itself, so there is no pre-creative step that can fail.
+	if img := strings.TrimSpace(variant.ImageURL); img != "" {
+		linkData["picture"] = img
 	}
 
 	var creativeResp createResponse

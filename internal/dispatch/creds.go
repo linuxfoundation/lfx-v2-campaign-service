@@ -140,16 +140,28 @@ type connReader interface {
 type credsSource struct {
 	repo connReader
 	enc  domain.Encryptor
+	// cache holds DECRYPTED credentials keyed by (project, provider) and validated against
+	// the connection row's version on every read, so a rotated or revoked credential can
+	// never be served. See credCache for why the row itself is deliberately NOT cached, and
+	// what that buys across replicas.
+	cache *credCache
 }
 
 func newCredsSource(repo connReader, enc domain.Encryptor) *credsSource {
-	return &credsSource{repo: repo, enc: enc}
+	return &credsSource{repo: repo, enc: enc, cache: sharedCredCache(repo, enc)}
 }
 
 // resolved carries a connection's decrypted credential bytes plus the non-secret
 // fields an adapter reads (account id, provider-specific config columns). The
 // plaintext is raw JSON the caller unmarshals into its own credential struct.
 type resolved struct {
+	// connID and version identify the connection ROW these credentials were decrypted from.
+	// They ride along so a caller that builds an expensive object from this credential (a
+	// platform client, which owns its own OAuth token cache) can cache it under the same
+	// identity the credential cache uses, and have it invalidated by the same rotation.
+	connID  string
+	version int64
+
 	plaintext      []byte
 	accountID      string
 	label          string // the connection's friendly name (Connection.Label column)
@@ -333,6 +345,23 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 // project scope and the system-account fallback, so a system row is held to exactly the
 // same standard rather than trusted because it is ours. Status rides out on `resolved`.
 func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *model.Connection, provider model.Provider) (*resolved, error) {
+	// Serve a previously decrypted credential ONLY when it was decrypted from the version
+	// this very call just read. conn came from the repository moments ago, so the version
+	// below is current: a rotation, a re-point, a credential replacement or a delete has
+	// already bumped it (every mutating statement in ConnectionRepo does), and the entry
+	// misses. That is the invalidation mechanism — it needs no eviction hook, and because
+	// the version lives in Postgres it holds on every replica rather than only the one that
+	// handled the write.
+	//
+	// The cache is consulted AFTER the callers above have established which SCOPE this
+	// connection came from, and the key carries that scope's projectID: a project resolving
+	// through the LF system fallback caches under model.SystemProjectID, so it can neither
+	// poison nor read a project-owned entry.
+	key := cacheKeyFor(projectID, provider)
+	if cached, ok := s.cache.get(key, conn.ID, conn.Version); ok {
+		return cached.clone(), nil
+	}
+
 	// The branches below are tagged with domain.ErrConnectionNotUsable; the two above
 	// deliberately are not. The distinction is whether the connection ROW itself is the
 	// thing that needs editing. A row with no credential blob is permanently unusable as
@@ -349,6 +378,37 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials: %w: %w",
 			provider, projectID, domain.ErrConnectionNotUsable, domain.ErrCredentialsAbsent))
 	}
+	// Coalesce concurrent misses for the same (project, provider, row id, version): N callers
+	// arriving together perform ONE decrypt instead of N. Keyed with the row id AND the version
+	// so a burst either side of a rotation — or either side of a disconnect/reconnect, which
+	// restarts version at 1 on a NEW row — cannot be served the other's plaintext.
+	//
+	// ONE DECRYPT is the whole of this guarantee. It deliberately does not claim one token
+	// exchange: every caller receives its own clone() below, each builds its own platform
+	// client, and the OAuth token is cached on the client INSTANCE — so coalescing the decrypt
+	// changes nothing downstream by itself. Collapsing the token exchange takes a separate
+	// cache of the built CLIENT, which today exists only for Google Ads (clientCache, whose
+	// buildOnce coalesces construction); Reddit and Microsoft still rebuild per resolve and
+	// still re-mint. An earlier version of this comment claimed the token saving here, which
+	// was the same conflation the PR's original decrypt-count measurement rested on.
+	shared, err := s.cache.decryptOnce(key, conn.ID, conn.Version, func() (*resolved, error) {
+		return s.decryptConn(ctx, key, projectID, conn, provider)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Every caller — the singleflight leader and its followers alike — gets its OWN copy.
+	// resolve stamps fromSystem on the value it hands back, and that is a property of how
+	// THIS call resolved, not of the credential: handing several callers one pointer would
+	// let a fallback resolution's attribution appear on a project-owned one, and would be a
+	// write race between goroutines besides.
+	return shared.clone(), nil
+}
+
+// decryptConn performs the actual decrypt and builds the resolved value, storing it in the
+// cache on success. Split out of resolveConn so the singleflight leader runs exactly this
+// body and every follower shares its result.
+func (s *credsSource) decryptConn(ctx context.Context, key credCacheKey, projectID string, conn *model.Connection, provider model.Provider) (*resolved, error) {
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
 		// derr is NOT echoed to callers by the service layer — a decrypt failure can
@@ -394,13 +454,35 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 		}
 		return nil, notCreated(fmt.Errorf("decrypt %s credentials: %w: %w", provider, domain.ErrCredentialDecryptionFailed, derr))
 	}
-	return &resolved{
+	res := &resolved{
+		connID:         conn.ID,
+		version:        conn.Version,
 		plaintext:      plaintext,
 		accountID:      conn.AccountID,
 		label:          conn.Label, // the friendly name lives on the shared column, not ProviderConfig
 		providerConfig: conn.ProviderConfig,
 		status:         conn.Status,
-	}, nil
+	}
+	// Stored WITHOUT fromSystem: that flag is set by the caller that took the fallback, and
+	// it is a property of how this call resolved rather than of the credential. Baking it
+	// into the shared entry would let one path's attribution leak into another's.
+	s.cache.put(key, conn.ID, conn.Version, res)
+	return res, nil
+}
+
+// clone returns a shallow copy safe for one caller to stamp its own attribution on.
+//
+// Shallow is correct and deliberate: the fields it shares — the plaintext bytes, the
+// providerConfig map — are treated as READ-ONLY by every consumer (adapters unmarshal the
+// plaintext and read config values; none writes back), so copying them per call would burn
+// an allocation per resolve to defend against a mutation nobody performs. What must not be
+// shared is the struct itself, because fromSystem IS written per call.
+func (r *resolved) clone() *resolved {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	return &c
 }
 
 // preCreateError marks a dispatch failure that happened BEFORE any upstream (paid)
@@ -503,4 +585,26 @@ func envelopeHSToken(envelope []byte) (string, error) {
 		return "", fmt.Errorf("config hsToken must be a string: %w", err)
 	}
 	return strings.TrimSpace(s), nil
+}
+
+// cacheIdentity returns the (key, row id, version) triple that identifies the connection these
+// credentials came from. A caller caching an object BUILT from the credential — a platform client
+// holding its own OAuth token — uses this so its entry is invalidated by exactly the same rotation
+// that invalidates the credential.
+//
+// The key names the SCOPE the credential came from, not the project that asked for it. Under the
+// LF system fallback every project with no connection of its own resolves the SAME system row, and
+// credsSource.resolveConn already caches that plaintext under model.SystemProjectID for exactly
+// that reason. Keying a client by the CALLING project instead would give each fallback project its
+// own client for one shared row — and because the OAuth token is cached on the client instance,
+// each would mint its own access token: measured at one token exchange per project, which is the
+// per-call exchange this cache exists to remove. Scoping the key here makes the client cache reuse
+// as wide as the credential cache's, and no wider — a project-owned row still keys on its own
+// project, so no project can be served another's client.
+func (r *resolved) cacheIdentity(projectID string, provider model.Provider) (credCacheKey, string, int64) {
+	scope := projectID
+	if r.fromSystem {
+		scope = model.SystemProjectID
+	}
+	return cacheKeyFor(scope, provider), r.connID, r.version
 }

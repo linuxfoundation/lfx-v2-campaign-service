@@ -82,6 +82,18 @@ const (
 	// the advertising audience.
 	msAdsScope = "https://ads.microsoft.com/msads.manage offline_access"
 
+	// geoFetchTimeout bounds one WHOLE locations refresh — the GeoLocationsFileUrl/Query call
+	// plus the file download plus the parse. The refresh runs on a context DETACHED from any
+	// one caller (its result is shared by every concurrent waiter), so it needs a bound of its
+	// own or a hung download would pin the single-flight slot indefinitely.
+	geoFetchTimeout = 4 * time.Minute
+
+	// geoDownloadTimeout bounds the geographical-locations FILE download. It is much
+	// larger than msAdsRequestTimeout because that value sizes a JSON API round trip,
+	// while this is a multi-MiB CSV transfer; reusing the API timeout would make the
+	// download fail on a slow link and take geo targeting down with it.
+	geoDownloadTimeout = 3 * time.Minute
+
 	// msAdsRequestTimeout bounds a single API call.
 	msAdsRequestTimeout = 30 * time.Second
 
@@ -172,8 +184,10 @@ type Client struct {
 	// Microsoft splits its API across hosts by service; apiVersion is shared, since both
 	// services are versioned in lockstep at v13.
 	customerBaseURL string
-	apiVersion      string
-	tokenURL        string
+	// reportingBaseURL is the Reporting origin — the third host in the same split.
+	reportingBaseURL string
+	apiVersion       string
+	tokenURL         string
 
 	httpClient *http.Client
 	now        func() time.Time
@@ -191,6 +205,13 @@ type Client struct {
 	tokenMu     sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
+
+	// geo caches the parsed geographical-locations map used to resolve ISO-2 country
+	// codes to Microsoft LocationIds. It is a separate lock from tokenMu because the two
+	// have very different hold profiles — a token refresh is a small JSON round trip,
+	// a locations refresh is a multi-MiB download — and sharing one mutex would let a
+	// slow file fetch stall every token read. See geo.go.
+	geo geoCache
 
 	// inflight coalesces concurrent token refreshes. The caller that finds the
 	// cache empty/expired becomes the leader: it publishes a *tokenRefresh here and
@@ -254,6 +275,16 @@ func WithCustomerBaseURL(u string) Option {
 	}
 }
 
+// WithReportingBaseURL overrides the Reporting service origin. Primarily for tests
+// (httptest.Server).
+func WithReportingBaseURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.reportingBaseURL = strings.TrimRight(u, "/")
+		}
+	}
+}
+
 // WithTokenURL overrides the OAuth2 token endpoint. Primarily for tests.
 func WithTokenURL(u string) Option {
 	return func(c *Client) {
@@ -303,15 +334,16 @@ func withRetryBaseDelay(d time.Duration) Option {
 // caller's client is not mutated). Mirrors the google-ads/reddit clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:           creds,
-		account:         account,
-		baseURL:         msAdsBaseURL,
-		customerBaseURL: msCustomerBaseURL,
-		apiVersion:      msAdsAPIVersion,
-		tokenURL:        msOAuthTokenURL,
-		httpClient:      &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
-		now:             time.Now,
-		retryBaseDelay:  retryBaseDelay,
+		creds:            creds,
+		account:          account,
+		baseURL:          msAdsBaseURL,
+		customerBaseURL:  msCustomerBaseURL,
+		reportingBaseURL: msReportingBaseURL,
+		apiVersion:       msAdsAPIVersion,
+		tokenURL:         msOAuthTokenURL,
+		httpClient:       &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
+		now:              time.Now,
+		retryBaseDelay:   retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -611,6 +643,14 @@ func clipID(s string) string {
 	return s // fewer than max runes
 }
 
+// AccountID reports the ad account id this client is bound to. Exposed so a caller holding a
+// campaign created under a KNOWN account can verify the connection it just resolved still
+// points at that same account before issuing an account-scoped request — Microsoft campaign
+// ids are unique only WITHIN an account, so running such a request under a different account
+// reads as "no activity" at best and another account's campaign at worst. Mirrors
+// googleads.Client.CustomerID.
+func (c *Client) AccountID() string { return c.account.AccountID }
+
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
@@ -674,6 +714,35 @@ func (c *Client) doCustomerRequest(ctx context.Context, method, path string, bod
 		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
 	}
 	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
+}
+
+// doReportingRequest performs one call against the REPORTING service —
+// {reportingBaseURL}/Reporting/{version}/{path} — reusing do's token refresh, 429 policy
+// and outcome classification.
+//
+// It is account-scoped (unlike doCustomerRequest): a report is always about ONE account's
+// data, so CustomerAccountId must be attached and validateAccountIDs must run. The account
+// id also reaches the request body, but via Scope.Campaigns[].AccountId — NOT via
+// Scope.AccountIds, which submitReport deliberately omits because that element is UNIONed
+// with Campaigns and would widen a campaign-scoped read to the whole account.
+func (c *Client) doReportingRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, err
+	}
+	return c.do(ctx, method, c.reportingBaseURL+"/Reporting/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+}
+
+// sleepCtx waits for d, or returns early if ctx is done. A bare time.Sleep in a poll loop
+// would keep waiting after the caller has already given up.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // do is the shared request loop behind doRequest and doCustomerRequest. fullURL is
@@ -1013,7 +1082,78 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // array (so it never truncates/corrupts a large valid body) but only RETAINS the first
 // maxDecodedErrorItems elements — later elements are decoded into a scratch and dropped, so
 // a pathological fault with thousands of tiny items can't balloon memory before the cap.
-type boundedErrorItems []msErrorItem
+//
+// Completeness matters here because at least one consumer's correctness depends on it rather
+// than on a sample. isDuplicateKeywordPartial is ALL-not-ANY: it concludes "every rejection here
+// is an already-exists duplicate" and lets the caller report the batch as a no-op success.
+// Reading that conclusion off a truncated array is unsound — AddKeywords sends up to maxKeywords
+// (60) and only 16 errors are retained, so a genuine editorial rejection at index 40 would be
+// discarded BEFORE classification and the batch reported as duplicate-only success, which is
+// exactly what ALL exists to prevent.
+//
+// Widening the bound to maxKeywords was the other candidate and was rejected: it fixes the
+// 60-keyword case but leaves the invariant resting on a size coincidence, so it breaks again
+// the moment maxKeywords rises or a body null-pads past the bound. Recording truncation makes
+// the invariant structural instead — absence of a rejection in a set KNOWN to be incomplete is
+// never evidence there was none, at any size — and keeps the O(1) memory bound the cap exists
+// for.
+//
+// Refusing outright on Truncated, however, was too strong: a reuse retry re-posts the whole
+// batch, so an ordinary brief returns one duplicate per keyword and exceeds the cap every time,
+// which rejected the very converge-on-reuse case the duplicate path exists for. A COUNT of the
+// discarded entries cannot replace it either — the ALL test needs to know what each error IS,
+// and a duplicate and a genuine rejection are each exactly one error. (PartialErrors is also
+// SPARSE, carrying an entry only for a FAILED item, so the count is not even well-defined
+// against the request.) Both alternatives, and why they were rejected, are recorded in
+// docs/knowledge/log/2026-08-18-LFXV2-3279-truncation-refused-the-ordinary-reuse.md.
+//
+// So the classification is done DURING decode, where every element is seen. The two whole-array
+// terms that carry the safety are NonDuplicateKeywords (entries whose actual error code is not an
+// already-exists keyword code, including ones dropped for memory) and AnyErrors (whether any
+// element carried an actual code at all). A consumer can then ask both the ALL question and the
+// presence question of the whole array while still holding only maxDecodedErrorItems of it.
+//
+// Truncated is DESCRIPTIVE METADATA, not a safety term: no production path reads it. It records
+// truthfully that Items is a prefix, and is the natural signal for a future consumer that needs
+// to know so, but the terms doing the work at the call site are the two tallies above.
+type boundedErrorItems struct {
+	Items []msErrorItem
+	// Truncated reports that the body carried MORE error items than were retained, so Items
+	// is a prefix of the real error set rather than the whole of it.
+	Truncated bool
+	// NonDuplicateKeywords counts elements carrying an actual error code that is NOT an
+	// already-exists KEYWORD code (1517/1542 and their symbolic spellings), over the WHOLE wire
+	// array rather than the retained prefix. Zero means every error in the entire array — seen
+	// or discarded — was a duplicate, which is the only thing that licenses duplicate-only
+	// classification of a truncated array.
+	//
+	// A slot counts as an error when its Code/ErrorCode is PRESENT and non-null on the wire,
+	// not merely when that value can be rendered to a code string: an unparseable code is an
+	// error this client cannot name, and naming-failure must not read as absence-of-error. Only
+	// genuinely absent/null fields — an index-aligned array's padding for a succeeded entry —
+	// are skipped. See isNonDuplicateKeywordItem.
+	//
+	// Only the keyword path consults this; the campaign/ad-group/ad arrays that share this type
+	// compute it and ignore it. That is deliberate — the tally must be taken during decode, which
+	// is the one place every element is visible, and counting is side-effect free, so an unread
+	// value on those paths costs a comparison per item and changes no behaviour.
+	NonDuplicateKeywords int
+	// AnyErrors reports that at least one element of the WHOLE wire array carried an actual
+	// error code, whether or not that element was retained.
+	//
+	// The outer partial-error gate previously asked partialErrorsHaveAny(Items), which reads
+	// only the retained prefix. Microsoft does not document PartialErrors ordering, so a body
+	// that index-aligns its null placeholders into the leading slots and puts its real errors
+	// after them presents an all-null prefix: the gate saw no error, skipped the branch, and the
+	// null id slots of the failed entries then surfaced as errNoID/UNCONFIRMED rather than the
+	// ordinary duplicate convergence. Tracking presence during decode — the one place every
+	// element is visible — makes the gate independent of where in the array the errors landed.
+	//
+	// Presence is tested on the RAW bytes for the same reason NonDuplicateKeywords is: a code
+	// this client cannot render is still an error, and naming-failure must not read as
+	// absence-of-error.
+	AnyErrors bool
+}
 
 func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -1032,10 +1172,23 @@ func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 		if err := dec.Decode(&it); err != nil {
 			return err
 		}
-		if len(*b) < maxDecodedErrorItems {
-			*b = append(*b, it)
+		// Classified before the retention test, so the tally describes the WIRE array rather
+		// than the retained prefix. The loop already had to visit this element to advance the
+		// stream, so this is free and stays O(1) in memory.
+		if isNonDuplicateKeywordItem(it) {
+			b.NonDuplicateKeywords++
 		}
-		// else: parsed to advance the stream, then discarded (bounds memory).
+		if rawCodePresent(it.ErrorCode) || rawCodePresent(it.Code) {
+			b.AnyErrors = true
+		}
+		if len(b.Items) < maxDecodedErrorItems {
+			b.Items = append(b.Items, it)
+			continue
+		}
+		// Parsed to advance the stream, then discarded (bounds memory) — but the fact that
+		// something WAS discarded is retained, so a consumer that needs completeness can tell
+		// it is looking at a prefix.
+		b.Truncated = true
 	}
 	return nil
 }
@@ -1079,7 +1232,7 @@ func parseErrorCodes(body []byte) []string {
 	if !add(env.ErrorCode) || !add(env.Code) {
 		return codes
 	}
-	for _, group := range []boundedErrorItems{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
+	for _, group := range [][]msErrorItem{env.Errors.Items, env.OperationErrors.Items, env.BatchErrors.Items, env.PartialErrors.Items} {
 		for _, it := range group {
 			if !add(it.ErrorCode) || !add(it.Code) {
 				return codes

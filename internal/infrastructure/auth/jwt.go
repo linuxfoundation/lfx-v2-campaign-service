@@ -61,7 +61,7 @@ var ErrUnauthenticated = errors.New("the bearer token is not valid for this serv
 // and tests name it where they name ErrUnauthenticated. It reports that Heimdall's signing
 // keys could not be retrieved — a fetch that failed, timed out, or was cancelled — which is
 // NOT a statement about the token: nothing was learned about it, because it was never
-// checked. The service layer maps it to 503 while every token-side refusal gets 400.
+// checked. The service layer maps it to 503 while every token-side refusal gets 401.
 var ErrKeyUnavailable = domain.ErrKeyUnavailable
 
 // Config carries the deployment's JWT settings. An empty JWKS URL, audience or issuer

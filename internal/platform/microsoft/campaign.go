@@ -141,6 +141,35 @@ type CampaignInput struct {
 	// the minimum, not rejected. Leave both slices empty to auto-compose entirely.
 	Headlines    []string
 	Descriptions []string
+	// Keywords are the positive Search keywords attached to the created ad group (MS-4).
+	// WITHOUT AT LEAST ONE, THE CAMPAIGN CAN NEVER SERVE: a Search ad group with no keywords
+	// has nothing to match a query against, so the tree is structurally complete and
+	// commercially inert. They are still OPTIONAL here — a caller may legitimately create the
+	// shell and add keywords in the Bing UI — but the dispatcher refuses to ACTIVATE a
+	// campaign whose keywords were never provisioned, so an unkeyworded campaign cannot be
+	// turned on while claiming it will serve. See validateKeywords for the per-entry rules;
+	// text is capped at 100 characters and the match type must be Exact, Phrase, or Broad.
+	Keywords []Keyword
+	// CpcBid is the ad group's max cost-per-click, in whole units of the ACCOUNT's currency
+	// (NO micros, NO FX conversion — the same unit rule as Budget). ZERO means UNSET, and
+	// unset is a supported state rather than a broken one: Microsoft documents that an ad
+	// group with no bid takes "the minimum depending on your account's currency", which is a
+	// serve-capable floor in the account's own denomination. This client therefore omits the
+	// field rather than inventing a default that could not be currency-correct across every
+	// account. A non-zero value must be within [minCpcBid, maxCpcBid].
+	CpcBid float64
+	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
+	// (LFXV2-3279), attached as CAMPAIGN-level location criteria. Optional at this layer: an
+	// empty list creates the campaign with NO location criteria, which is what this client
+	// did before geo targeting existed and means Microsoft serves it EVERYWHERE.
+	//
+	// That default is why an unresolvable code is a HARD FAILURE rather than a silent drop.
+	// Microsoft takes numeric LocationIds, not ISO codes, so each code is resolved against
+	// Microsoft's own geographical-locations file at create time; if any code cannot be
+	// resolved, CreateCampaign REFUSES before its first mutating call. Dropping it instead
+	// would produce a campaign that spends globally while reporting success — the exact
+	// defect this ticket fixes. See geo.go.
+	GeoTargets []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -149,6 +178,13 @@ type CampaignInput struct {
 type CampaignResult struct {
 	Platform     string `json:"platform"`
 	AccountLabel string `json:"accountLabel,omitempty"`
+	// AccountID is the ad account the campaign was CREATED under. The dispatcher's
+	// microsoftCreationAccountID reads it to detect a later read/toggle resolving to a
+	// DIFFERENT account (UpdateMicrosoftAds can re-point a project's connection), and treats
+	// an absent one as "unknown, proceed" so rows written before this field existed keep
+	// working. Omitting it on any result path would silently disable that check — every path
+	// here derives from namePartial, which sets it.
+	AccountID    string `json:"accountId,omitempty"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
 	// AdGroupName / AdGroupID identify the ad group created (or found) under the
@@ -158,6 +194,40 @@ type CampaignResult struct {
 	AdGroupID   string `json:"adGroupId,omitempty"`
 	// AdID identifies the Responsive Search Ad created under the ad group.
 	AdID string `json:"adId,omitempty"`
+	// KeywordIDs are the ids of the keywords THIS RUN attached to the ad group by the MS-4
+	// targeting step. Empty does NOT mean the ad group has no keywords upstream; it means
+	// this run parsed no ids, which happens when no keyword input was supplied, when the
+	// step failed before any id could be parsed, or when EVERY supplied keyword was already
+	// attached and Microsoft refused it as a duplicate (a duplicate entry returns a null id
+	// slot, and this client calls no keyword read with which to resolve it — v13 does expose
+	// one, see createKeywords). The first two are
+	// distinguished from each other by whether an error accompanied the result; the third is
+	// identifiable by its Steps entry and carries no error.
+	//
+	// CONSEQUENCE for the dispatcher's toggle guard, which refuses ACTIVATE when this is
+	// empty: on the all-duplicate path it refuses a campaign whose keywords do exist
+	// upstream. That is deliberate — the ids needed to enable those Paused keywords are
+	// precisely what this run could not learn, so activating would report success while
+	// leaving every keyword Paused. Refusing is the honest answer, and reconciliation
+	// (LFXV2-2665) is what resolves it.
+	//
+	// The tree does NOT deadlock on the case that matters, though: an ad group that exists
+	// with NO keywords is re-keyworded on the next run (they are posted, not skipped), so the
+	// ids land and ACTIVATE succeeds.
+	KeywordIDs []string `json:"keywordIds,omitempty"`
+	// GeoCriterionIDs are the ids of the CAMPAIGN-level location criteria THIS RUN attached
+	// (LFXV2-3279). It reports what this RUN did, NOT the campaign's total targeting.
+	//
+	// EMPTY DOES NOT MEAN UNTARGETED, and reading it that way is the mistake this comment
+	// exists to prevent. On a REUSED campaign the client reads the existing location criteria
+	// (existingLocationIDs) and attaches only the ones genuinely missing, so an empty field
+	// there means every requested target was ALREADY present — the campaign is targeted and
+	// this run correctly attached nothing. The reuse path's Steps entry says which case it was.
+	//
+	// It is only on a run that CREATED the campaign that an empty value would mean no
+	// targeting — and that case cannot reach a successful result, because a geo attach failure
+	// on a created campaign is returned as an error with a partial, never as a clean success.
+	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -236,6 +306,43 @@ func (b *boundedNumberIDs) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		if len(*b) < maxDecodedErrorItems {
+			*b = append(*b, n)
+		}
+	}
+	return nil
+}
+
+// boundedKeywordIDs is boundedNumberIDs with a bound sized for KEYWORDS rather than campaigns.
+//
+// The distinction is load-bearing. boundedNumberIDs retains maxDecodedErrorItems (16), which is
+// an ERROR-ARRAY bound: a create sends one campaign, so one id is all that can matter, and 16 is
+// generous. AddKeywords sends up to maxKeywords (60), and every id is meaningful — it is what
+// the status cascade enables on ACTIVATE. Decoding a 60-keyword response through the 16-item
+// bound silently retained the first 16, so activation enabled 16 keywords and left the other 44
+// Paused on a campaign the operator believes is fully live.
+//
+// The streaming shape is kept for the same reason the original has it: a malformed null-padded
+// body must not materialise in full. Only the retention limit differs.
+type boundedKeywordIDs []*json.Number
+
+func (b *boundedKeywordIDs) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil { // JSON null
+		return nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return fmt.Errorf("expected a JSON array for keyword ids")
+	}
+	for dec.More() {
+		var n *json.Number
+		if err := dec.Decode(&n); err != nil {
+			return err
+		}
+		if len(*b) < maxKeywords {
 			*b = append(*b, n)
 		}
 	}
@@ -382,6 +489,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := validateAdCopy(in); err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err)
 	}
+	// Validate the TARGETING inputs up front too, for the same reason as the URL and the copy:
+	// keywords are attached only at the LAST step, so a bad keyword or bid discovered there
+	// would fail after the campaign, ad group and ad already exist — orphaning a PAUSED tree
+	// over input that was invalid before anything was sent. Both are pure validation with no
+	// side effects, so a bad value is a clean (nil, err).
+	keywords, err := validateKeywords(in.Keywords)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign keywords invalid: %w", err)
+	}
+	cpcBid, cpcBidSet, err := validateCpcBid(in.CpcBid)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign bid invalid: %w", err)
+	}
+	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
+	// below, before the first mutating call. Splitting the two is deliberate: this half needs
+	// no network, so an unsupported code fails with nothing sent at all.
+	geoCodes, err := validateGeoTargets(in.GeoTargets)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err)
+	}
 
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
@@ -390,6 +517,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return &CampaignResult{
 			Platform:        "microsoft-ads",
 			AccountLabel:    c.account.Label,
+			AccountID:       c.account.AccountID,
 			CampaignName:    campaignName,
 			MicrosoftAdsURL: microsoftAdsURL,
 			Steps:           steps,
@@ -401,6 +529,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// classify as an ambiguous transportError.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign creation aborted before any request (context already done): %w", ctxErr)
+	}
+
+	// Resolve the geo codes to numeric Microsoft LocationIds BEFORE anything is created.
+	//
+	// This is a NETWORK call (it may download Microsoft's geographical-locations file), so it
+	// cannot live in the pure-validation prologue above — but it must still happen before the
+	// first MUTATING call, and that ordering is the entire safety property of this ticket.
+	// Location criteria can only be attached AFTER the campaign exists; if resolution ran at
+	// that point instead, a failure would leave a campaign with NO location criteria, which
+	// Microsoft serves EVERYWHERE. The campaign is created paused, but a paused untargeted
+	// campaign is one human click away from spending globally, and the operator enabling it
+	// has no signal that its targeting silently went missing.
+	//
+	// Refusing here costs nothing: the lookup and the create below never run, so there is no
+	// orphaned campaign to reconcile and a clean (nil, err) is honest about it.
+	geoLocationIDs, err := c.resolveGeoTargets(ctx, geoCodes)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo targeting could not be resolved (nothing was created): %w", err)
 	}
 
 	// Step 1: idempotency lookup by the deterministic (case-insensitively unique) name,
@@ -506,15 +652,130 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// UNCONFIRMED ad-group/ad step, where this run may have created (or attempted) a lower
 	// level even though the campaign was reused — so "created nothing" is not true. Only the
 	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
+	// geoCriterionIDs accumulates the ids of the location criteria attached below, so a later
+	// ad-group/ad failure still reports the targeting this run put on the campaign.
+	var geoCriterionIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
+		r.GeoCriterionIDs = geoCriterionIDs
 		return r
+	}
+
+	// Step 2.5: attach the CAMPAIGN-level location criteria, before the ad-group cascade.
+	//
+	// Location criteria belong to the campaign, so this is the earliest point they CAN be
+	// attached — and attaching them first is deliberate: it narrows the window in which a
+	// campaign exists with no targeting. The ids were resolved before the campaign was
+	// created, so this step can no longer fail for an unresolvable code; only the POST itself
+	// can fail, and that failure is reported rather than swallowed.
+	//
+	// A geo failure is NOT downgraded to a warning. An untargeted campaign is the harm this
+	// ticket exists to prevent, so the caller gets an error and a partial carrying the
+	// campaign id, which is what a reconciliation needs to either finish or delete the tree.
+	//
+	// ON A REUSED CAMPAIGN THE EXISTING CRITERIA ARE READ FIRST, because neither guess is safe.
+	// Re-posting blindly DUPLICATES every location: AddCampaignCriterions publishes no
+	// duplicate refusal, unlike AddKeywords (1517/1542), and the dispatcher retries by design
+	// (NameSuffix = brief.ID composes the same name so the lookup reuses the campaign), so each
+	// retry would widen the criterion list on a live paid campaign. Skipping blindly is worse:
+	// a run whose attach was REJECTED leaves a campaign with NO criteria, and the retry would
+	// then finish the cascade and report SUCCESS for a campaign that serves everywhere — the
+	// exact harm this ticket exists to prevent, reintroduced through the back door.
+	//
+	// POST /CampaignCriterions/QueryByIds distinguishes the two, and only the locations that
+	// are genuinely missing are attached. A read FAILURE is propagated rather than treated as
+	// "no criteria": "we could not check" must not collapse into the re-attach path.
+	//
+	// SCOPE — this is CAMPAIGN-level targeting only, and that is a real bound worth stating.
+	// Microsoft lets an AD GROUP carry its own location criteria, and when it does they
+	// OVERRIDE the campaign's for that group. This client never creates ad-group location
+	// criteria (only campaign-level ones, here), so a tree it builds end to end has exactly one
+	// place geo is decided. The gap is a REUSED ad group that a human added ad-group-level geo
+	// to outside this service: findOrCreateAdGroup matches by name and does not read its
+	// criteria, so that group's locations would govern delivery while this step reports the
+	// campaign targeting it attached. Closing it needs an ad-group criterion read
+	// (/AdGroupCriterions) in the reuse path, which is a separate change from campaign-level
+	// targeting; it is NOT claimed to be handled here. The same reuse discipline would apply:
+	// read, reconcile what is genuinely missing, refuse on a conflict.
+	if len(geoLocationIDs) > 0 {
+		wanted := geoLocationIDs
+		if alreadyExisted {
+			existing, excluded, rerr := c.existingLocationIDs(ctx, campaignID)
+			if rerr != nil {
+				return campaignPartial(), fmt.Errorf("microsoft-ads could not read the existing location criteria of reused campaign %s, so its geo targeting cannot be confirmed or safely completed (do not enable it until verified): %w", campaignID, rerr)
+			}
+			// A requested target that the campaign already EXCLUDES is refused, not attached.
+			// Microsoft applies exclusions AFTER inclusions, so adding a positive criterion on
+			// top of a NegativeCampaignCriterion does NOT override it — the country stays
+			// excluded while this run reports the targeting as attached, which is the same
+			// silent wrong-geo outcome the polarity check exists to prevent. Removing the
+			// exclusion is not this broker's call either: it is a deliberate decision made on a
+			// live campaign, so the conflict is surfaced for a human instead.
+			if conflicts := intersectExcluded(geoLocationIDs, excluded); len(conflicts) > 0 {
+				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting CONFLICTS with existing exclusions on reused campaign %s: location(s) %s are requested as targets but are already EXCLUDED by a negative campaign criterion, and Microsoft applies exclusions after inclusions, so attaching them would not take effect (remove the exclusions in Microsoft Advertising, or target different countries, before retrying)",
+					campaignID, strings.Join(conflicts, ", "))
+			}
+			// The reconcile compares the EXACT positive set, not just "is what I asked for a
+			// subset of what is there". composeName does not include GeoTargets — the name is
+			// LFX | Search Campaign | project | event | brief.ID — so the same brief re-run with
+			// a NARROWER geo list reuses the same campaign, and a subset check would find every
+			// requested id present, attach nothing, and report success for a campaign still
+			// carrying the WIDER previous targeting. That is a campaign spending in countries
+			// nobody approved, reported as correctly targeted: the same class of harm as an
+			// untargeted campaign, just smaller in blast radius.
+			//
+			// Extra criteria are REFUSED rather than removed, for the same reason a conflicting
+			// exclusion is: deleting location criteria from a live paid campaign is a targeting
+			// decision that belongs to an operator, not to a retry path. The error names the
+			// unexpected locations so the fix is mechanical.
+			if extra := unrequestedTargets(existing, geoLocationIDs); len(extra) > 0 {
+				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting MISMATCH on reused campaign %s: it carries location criteria that were NOT requested (%s), so it would serve more widely than this brief asks (requested: %s). The campaign name does not encode geo targeting, so a re-run with a narrower list reuses the same campaign; remove the unexpected location criteria in Microsoft Advertising, or create a distinct campaign, before retrying",
+					campaignID, strings.Join(extra, ", "), strings.Join(geoCodes, ", "))
+			}
+			missing := make([]string, 0, len(geoLocationIDs))
+			for _, id := range geoLocationIDs {
+				if _, have := existing[id]; !have {
+					missing = append(missing, id)
+				}
+			}
+			wanted = missing
+			if len(wanted) == 0 {
+				steps = append(steps, fmt.Sprintf("Geo targeting already present on reused campaign %s (%s) — not re-attached", campaignID, strings.Join(geoCodes, ", ")))
+			}
+		}
+		if len(wanted) > 0 {
+			geoIDs, gerr := c.createCampaignCriterions(ctx, campaignID, wanted)
+			if gerr != nil {
+				partial := campaignPartial()
+				partial.GeoCriterionIDs = geoIDs
+				switch {
+				case createOutcomeAmbiguous(gerr) || errors.Is(gerr, errNoID):
+					return partial, fmt.Errorf("microsoft-ads geo targeting UNCONFIRMED (campaign %s exists; its location criteria may or may not have been attached — verify its targeting in Microsoft Advertising before enabling or retrying): %w", campaignID, gerr)
+				case errors.Is(gerr, context.Canceled) || errors.Is(gerr, context.DeadlineExceeded):
+					return partial, fmt.Errorf("microsoft-ads geo targeting aborted (campaign %s exists with incomplete location criteria and would serve too widely if enabled; context done): %w", campaignID, gerr)
+				case errors.Is(gerr, errPartialFailure) && len(geoIDs) > 0:
+					// Some criteria DID attach. Saying "NOT geo-targeted" here would be false and
+					// would send an operator to delete targeting that exists; the campaign is
+					// targeted to a SUBSET, which still must not be enabled as-is.
+					return partial, fmt.Errorf("microsoft-ads geo targeting PARTIALLY attached (campaign %s carries %d of %d requested location criteria and would serve too widely if enabled; reconcile the missing ones before enabling): %w", campaignID, len(geoIDs), len(wanted), gerr)
+				default:
+					return partial, fmt.Errorf("microsoft-ads geo targeting rejected (campaign %s exists but is NOT geo-targeted and would serve everywhere if enabled; do not enable it until its targeting is fixed): %w", campaignID, gerr)
+				}
+			}
+			geoCriterionIDs = geoIDs
+			steps = append(steps, fmt.Sprintf("Geo targeting attached: %d location criteria (%s)", len(geoIDs), strings.Join(geoCodes, ", ")))
+		}
 	}
 
 	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
 	// result is a usable paused campaign rather than an empty shell.
-	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial)
+	// The VALIDATED targeting values are threaded through rather than re-derived downstream:
+	// re-running validateKeywords/validateCpcBid inside the ad-group step would let the
+	// up-front check and the sent value drift apart, and the up-front check is the one that
+	// guarantees nothing is orphaned.
+	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
@@ -646,6 +907,127 @@ func isDuplicateCampaignPartial(items []msErrorItem) bool {
 // isDuplicateCampaignNameErr reports whether err is the duplicate-name rejection.
 func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDuplicateName) }
 
+// errDuplicateKeywords marks an AddKeywords batch in which at least one entry was refused
+// because that keyword ALREADY EXISTS on the ad group. It wraps errPartialFailure so any
+// existing errors.Is(err, errPartialFailure) classification still matches, but it is
+// distinguishable so the ad-group cascade can treat "already attached" as the success it is
+// rather than as a rejection.
+//
+// This is what makes re-posting to a REUSED ad group safe. This client calls no keyword read,
+// so a re-run cannot enumerate what is already attached and posts the whole batch; Microsoft
+// refuses each already-present keyword instead of creating a second copy, so no criterion is
+// duplicated and no bid is doubled. (v13 DOES offer the read — Keywords/QueryByAdGroupId — so
+// this is a gap in this client, not an API limit; see createKeywords for the citation.)
+var errDuplicateKeywords = fmt.Errorf("%w (keyword already exists on the ad group)", errPartialFailure)
+
+// Microsoft's PartialError codes for a keyword that already exists on the ad group. As with
+// the duplicate-campaign codes, v13 surfaces these either as the symbolic ErrorCode enum or
+// as the equivalent numeric Code in a BatchError, so both spellings must be recognized.
+//
+//   - 1517 CampaignServiceDuplicateKeyword: "An attempt was made to create a duplicate of a
+//     keyword that already exists."
+//   - 1542 CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists: "A keyword with the
+//     specified match type already exists."
+//
+// Both are matched because the same re-post can trip either one: 1517 on the normalized
+// keyword text, 1542 when the text is new to the group only in combination with its match
+// type.
+const (
+	errCodeDuplicateKeyword              = "CampaignServiceDuplicateKeyword"
+	errCodeDuplicateKeywordNumeric       = "1517"
+	errCodeKeywordMatchTypeExists        = "CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists"
+	errCodeKeywordMatchTypeExistsNumeric = "1542"
+)
+
+// rawCodePresent reports whether a raw Code/ErrorCode field was PRESENT and non-null on the
+// wire, independent of whether its value can be rendered to a code string.
+//
+// The distinction matters because it is what separates a placeholder from an unclassifiable
+// error. An omitted or null field is a succeeded entry's padding; a field that is present but
+// carries an unexpected shape is an error this client cannot name, and naming-failure must not
+// be read as absence-of-error.
+func rawCodePresent(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && !bytes.Equal(t, []byte("null"))
+}
+
+// isNonDuplicateKeywordItem reports whether ONE error item carries an actual error code that
+// is not an already-exists keyword code — i.e. whether it is a genuine rejection.
+//
+// This is the single-item core of isDuplicateKeywordPartial, factored out so boundedErrorItems
+// can apply the same test to elements it is about to DISCARD for memory. Keeping one definition
+// is the point: if the set of already-exists spellings ever changes, the streaming tally and
+// the retained-slice predicate cannot drift apart and disagree about whether a batch was wholly
+// duplicate.
+//
+// A null/placeholder slot carries no code and is NOT a rejection: an index-aligned PartialErrors
+// array can null-pad the entries that succeeded, exactly as partialErrorsHaveAny treats them.
+//
+// "Carries no code" means the keys are ABSENT or JSON null — not merely that codeString could
+// not render them. codeString returns "" for any shape it cannot read as a string or a number
+// (an object, an array, a bool, whitespace), so testing it alone would fold an UNPARSEABLE code
+// into the same answer as a placeholder. That is a false absence, and past the retention cap it
+// is invisible to both terms of the caller's guard: a genuine editorial rejection whose code
+// arrived in an unexpected shape would be tallied as a non-error and the batch reported as a
+// clean converge-on-reuse success. Presence is therefore tested on the RAW bytes and an
+// unrecognized-but-present code counts as a rejection — "cannot classify" must fail closed to
+// the rejection path, never collapse into "not an error".
+func isNonDuplicateKeywordItem(it msErrorItem) bool {
+	if !rawCodePresent(it.ErrorCode) && !rawCodePresent(it.Code) {
+		return false // a null/placeholder slot, not an error
+	}
+	one := []msErrorItem{it}
+	return !partialErrorsHaveCode(one, errCodeDuplicateKeyword) &&
+		!partialErrorsHaveCode(one, errCodeDuplicateKeywordNumeric) &&
+		!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExists) &&
+		!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExistsNumeric)
+}
+
+// isDuplicateKeywordPartial reports whether EVERY actual error in a PartialErrors array is an
+// already-exists keyword rejection (under any of its four spellings).
+//
+// ALL, not ANY, and the difference is a real defect rather than a stylistic one. A batch can
+// mix a duplicate with a GENUINE rejection — an editorial disapproval, a bad bid, an
+// over-length term. An ANY test would classify that whole batch as "already attached", return
+// nil error, and tell the operator the editorially-rejected keyword "already existed on the ad
+// group" — a keyword that in fact does not exist and never will. The run would report success
+// for targeting it did not achieve.
+//
+// So a mixed batch stays on the errPartialFailure path, where the created ids are still
+// carried out and the rejection is still surfaced. Only a wholly-duplicate batch is the no-op
+// that can be reported as success.
+//
+// Null placeholder entries are ignored the same way partialErrorsHaveAny ignores them: an
+// index-aligned PartialErrors array can carry zero-value items for the entries that succeeded,
+// and those are not errors to classify.
+//
+// anyErrors carries whole-array presence from decode, because items may be only the RETAINED
+// prefix of the wire array. When the errors all landed past the retention cap the prefix is
+// all-null, and a presence term computed from items alone would answer "no error found" for a
+// body that plainly had them — refusing an ordinary full-duplicate batch. Presence is therefore
+// taken from the decoder; only the "is every error a duplicate?" question is answered from the
+// items, and the caller pairs this with a whole-array NonDuplicateKeywords == 0 check so a
+// non-duplicate discarded past the cap still blocks the duplicate-only conclusion.
+func isDuplicateKeywordPartial(items []msErrorItem, anyErrors bool) bool {
+	found := anyErrors
+	for _, it := range items {
+		// Re-checked here rather than delegated: a placeholder must SKIP without setting
+		// found, whereas isNonDuplicateKeywordItem merely reports false for one. Collapsing
+		// the two would let a null-only array satisfy found and read as a duplicate batch.
+		if !rawCodePresent(it.ErrorCode) && !rawCodePresent(it.Code) {
+			continue // a null/placeholder slot, not an error
+		}
+		if isNonDuplicateKeywordItem(it) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+// isDuplicateKeywordErr reports whether err is the already-exists keyword rejection.
+func isDuplicateKeywordErr(err error) bool { return errors.Is(err, errDuplicateKeywords) }
+
 // firstCampaignID decodes a create-Campaigns 200 body and returns the created
 // campaign id. It errors when:
 //   - the body is malformed,
@@ -680,8 +1062,8 @@ func firstCampaignID(body []byte) (string, error) {
 		if uerr := json.Unmarshal(b, &resp); uerr != nil {
 			return nil, nil, uerr
 		}
-		partials = resp.PartialErrors
-		return resp.CampaignIds, resp.PartialErrors, nil
+		partials = resp.PartialErrors.Items
+		return resp.CampaignIds, resp.PartialErrors.Items, nil
 	})
 	if err != nil && errors.Is(err, errPartialFailure) && isDuplicateCampaignPartial(partials) {
 		return "", fmt.Errorf("%w: %s", errDuplicateName, partialErrorCodes(partials))
@@ -766,7 +1148,9 @@ func partialErrorCodes(items []msErrorItem) string {
 // msDate is Microsoft's date object ({Month,Day,Year}), used by ad-group flight dates
 // (a later slice). Microsoft does NOT accept an ISO-8601 string for these fields — it
 // requires the object form — so a helper is provided now to keep the serialization in
-// one reviewed place. Reserved for MS-3.
+// one reviewed place. Not yet used by any slice — the flight-date work will be its first
+// caller, and naming a specific slice here only dates the comment (MS-4 turned out to be the
+// keyword/bid work, which does not touch it).
 type msDate struct {
 	Month int `json:"Month"`
 	Day   int `json:"Day"`
@@ -867,6 +1251,20 @@ type updateAdsRequest struct {
 }
 
 type msAdStatus struct {
+	Id     json.Number `json:"Id"`
+	Status string      `json:"Status"`
+}
+
+// updateKeywordsRequest is the PUT /Keywords body for a status-only update. Like the ad
+// update it is scoped by AdGroupId (a keyword is addressed through its ad group); every
+// field other than Id/Status is omitted so the PUT is a partial update and cannot clobber
+// a keyword's bid or destination.
+type updateKeywordsRequest struct {
+	AdGroupId json.Number       `json:"AdGroupId"`
+	Keywords  []msKeywordStatus `json:"Keywords"`
+}
+
+type msKeywordStatus struct {
 	Id     json.Number `json:"Id"`
 	Status string      `json:"Status"`
 }
@@ -976,37 +1374,46 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 	// error but contains no valid error codes — partialErrorsHaveAny returns false, which would
 	// report success for a status Microsoft never confirmed. Reject any non-empty list that
 	// yields no valid codes (mirroring the create path's handling of null-only error responses).
-	if len(resp.PartialErrors) > 0 && !partialErrorsHaveAny(resp.PartialErrors) {
+	if len(resp.PartialErrors.Items) > 0 && !partialErrorsHaveAny(resp.PartialErrors.Items) {
 		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: PartialErrors present but contains no valid error codes", entity)}
 	}
-	if partialErrorsHaveAny(resp.PartialErrors) {
-		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors))
+	if partialErrorsHaveAny(resp.PartialErrors.Items) {
+		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors.Items))
 	}
 	return nil
 }
 
-// UpdateCampaignAndChildrenStatus toggles a Microsoft campaign and its ad group + ad between
-// Active and Paused.
+// UpdateCampaignAndChildrenStatus toggles a Microsoft campaign and its ad group, ad and
+// keywords between Active and Paused.
 //
 // FULL CASCADE, like reddit: CreateCampaign builds the whole Campaign -> AdGroup -> Ad tree
-// PAUSED, so toggling only the campaign would leave the children paused and nothing serving.
+// PAUSED — and MS-4 creates the KEYWORDS Paused too — so toggling only the campaign would
+// leave the descendants paused and nothing serving.
 //
 // ORDER follows the same INVARIANT as reddit — the campaign is the gate, so it flips LAST on
 // ACTIVATE (nothing serves until the tree is ready) and FIRST on PAUSE (delivery stops
-// immediately even if a child call then fails). The two CHILDREN are order-independent
+// immediately even if a later call fails). The non-gate entities are order-independent
 // between themselves: while the gate is still Paused nothing serves whichever goes first, so
-// this activates ad group then ad (reddit happens to go deepest-first; that difference is not
-// load-bearing).
+// this activates ad group, then ad, then keywords (reddit happens to go deepest-first; that
+// difference is not load-bearing).
+//
+// KEYWORDS are part of the cascade because MS-4 creates them Paused deliberately (so an
+// operator reviews the list before it spends). That choice is only coherent if the
+// service-driven enable turns them on: otherwise activation would enable the campaign, ad
+// group and ad while every keyword stayed Paused, and the campaign would serve nothing while
+// reporting Active — the precise lie this cascade exists to prevent. An EMPTY keywordIDs
+// slice skips the keyword call entirely rather than sending an empty PUT.
 //
 // Activating with an unknown ad-group OR ad id is refused: the missing child would stay
 // Paused and nothing would serve, so reporting "active" would be a lie. Pausing needs no
 // child ids — pausing the parent already stops delivery — EXCEPT that an ad id with no
 // ad-group id is refused outright, because the Ads PUT is scoped by AdGroupId and so cannot
-// address the ad at all.
+// address the ad at all. Keyword ids are likewise addressed through the ad group, so they are
+// skipped when it is unknown.
 //
 // Once an entity has been changed, a later failure returns a partialCascadeError
 // (Unconfirmed) so a definite rejection on a child is not misreported as "not modified".
-func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID string, keywordIDs []string, status string) error {
 	if status != StatusActive && status != StatusPaused {
 		return fmt.Errorf("microsoft-ads: unsupported status %q (want %s or %s)", status, StatusActive, StatusPaused)
 	}
@@ -1031,6 +1438,25 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 			return fmt.Errorf("microsoft-ads: %s id %q is not a numeric id", id.label, id.val)
 		}
 	}
+	// Validate EVERY keyword id before any mutation, not lazily while building the request: a
+	// bad id discovered mid-cascade would fail after the campaign/ad group/ad were already
+	// flipped, turning a rejectable input error into an unconfirmed partial cascade. A
+	// keyword is addressed through its ad group, so ids are unusable without one — the same
+	// rule the ad follows.
+	kwIDs := make([]string, 0, len(keywordIDs))
+	for _, k := range keywordIDs {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if !idRE.MatchString(k) {
+			return fmt.Errorf("microsoft-ads: keyword id %q is not a numeric id", k)
+		}
+		kwIDs = append(kwIDs, k)
+	}
+	if len(kwIDs) > 0 && agID == "" {
+		return fmt.Errorf("microsoft-ads: campaign %s has %d keyword id(s) but no ad group id: keywords are addressed by their ad group, so their status cannot be changed", campaignID, len(kwIDs))
+	}
 
 	campaignReq := updateCampaignsRequest{
 		AccountId: json.Number(c.account.AccountID),
@@ -1044,9 +1470,17 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		AdGroupId: json.Number(agID),
 		Ads:       []msAdStatus{{Id: json.Number(aID), Status: status}},
 	}
+	keywordStatuses := make([]msKeywordStatus, 0, len(kwIDs))
+	for _, k := range kwIDs {
+		keywordStatuses = append(keywordStatuses, msKeywordStatus{Id: json.Number(k), Status: status})
+	}
+	keywordReq := updateKeywordsRequest{
+		AdGroupId: json.Number(agID),
+		Keywords:  keywordStatuses,
+	}
 
 	if status == StatusActive {
-		// CHILDREN FIRST, campaign gate LAST. Both child ids are guaranteed present above.
+		// DESCENDANTS FIRST, campaign gate LAST. Both child ids are guaranteed present above.
 		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
 			return err // nothing mutated yet — a definite rejection stays definite
 		}
@@ -1056,11 +1490,25 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		if err := c.putStatus(ctx, "Ads", adReq, "ad"); err != nil {
 			return &partialCascadeError{applied: "ad group", stage: "ad", err: err}
 		}
+		applied := "ad group and ad"
+		// Keywords BEFORE the campaign gate, for the same reason as the other descendants:
+		// nothing serves while the gate is Paused, so enabling them first is free, whereas
+		// enabling them after the gate would open a window in which the campaign is Active with
+		// every keyword still Paused.
+		if len(keywordStatuses) > 0 {
+			if err := ctx.Err(); err != nil {
+				return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+			}
+			if err := c.putStatus(ctx, "Keywords", keywordReq, "keywords"); err != nil {
+				return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+			}
+			applied = "ad group, ad and keywords"
+		}
 		if err := ctx.Err(); err != nil {
-			return &partialCascadeError{applied: "ad group and ad", stage: "campaign", err: err}
+			return &partialCascadeError{applied: applied, stage: "campaign", err: err}
 		}
 		if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
-			return &partialCascadeError{applied: "ad group and ad", stage: "campaign", err: err}
+			return &partialCascadeError{applied: applied, stage: "campaign", err: err}
 		}
 		return nil
 	}
@@ -1087,6 +1535,18 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		}
 		if err := c.putStatus(ctx, "Ads", adReq, "ad"); err != nil {
 			return &partialCascadeError{applied: applied, stage: "ad", err: err}
+		}
+		applied += " and ad"
+	}
+	// Keywords LAST on pause. The campaign gate above already stopped delivery, so this is
+	// housekeeping that leaves the tree in the same all-Paused shape CreateCampaign produces
+	// — which is what makes a later re-activate symmetric with a fresh create.
+	if len(keywordStatuses) > 0 {
+		if err := ctx.Err(); err != nil {
+			return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+		}
+		if err := c.putStatus(ctx, "Keywords", keywordReq, "keywords"); err != nil {
+			return &partialCascadeError{applied: applied, stage: "keywords", err: err}
 		}
 	}
 	return nil

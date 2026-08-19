@@ -271,6 +271,18 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err != nil {
 		return err
 	}
+	// Provenance BEFORE the provisioning guard below, deliberately. A campaign id is unique
+	// only within an ad account, so a connection re-pointed since create would address an
+	// unrelated campaign — and this path CHANGES delivery, so a collision pauses or activates
+	// something this project does not own. "This row has no fully-created ad group + ad" is
+	// only a meaningful answer once the row is known to belong to the resolved account: on a
+	// re-pointed connection the persisted child ids describe a campaign in a DIFFERENT
+	// account, so answering 409-not-provisioned there would explain the wrong campaign.
+	// Ordering the two the other way makes a foreign-account ACTIVATE report missing children
+	// instead of the mismatch — the trap microsoft.go records at the same seam.
+	if err := verifyRedditAccountMatch("toggle reddit campaign status", campaign, client); err != nil {
+		return err
+	}
 	adGroupID, adID := redditChildIDs(campaign)
 	// ACTIVATE requires the FULL servable tree. A reddit create can legitimately land a
 	// campaign + ad group but NO ad (the no-PostURL path returns AdCount 0 / empty AdID) and
@@ -300,31 +312,54 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 // ReadMetrics returns live campaign metrics from Reddit's Ads v3 reporting endpoint for
 // the given campaign during the specified time window.
 //
-// See the UNVERIFIED-CONTRACT warning on reddit.Client.GetCampaignMetrics: Reddit's
-// reporting endpoint has no public documentation (LFXV2-2995 investigation), so the
-// request/response shape this calls is a best-effort guess, not a confirmed integration.
+// The request/response shape this calls is now taken from Reddit's official public
+// OpenAPI spec rather than guessed — see the contract note on
+// reddit.Client.GetCampaignMetrics (LFXV2-3282). That supersedes the LFXV2-2995 finding
+// that no public documentation existed, which was the original reason for this gate.
 //
-// Because of that, this capability is OFF unless REDDIT_METRICS_ENABLED is set to "true".
-// Merely declaring this method is the capability switch — Orchestrator.ReadCampaignMetrics
-// discovers MetricsReader by type assertion, and the published endpoint then calls it — so
-// without the flag a guessed request shape, response shape, and currency unit would ship as
-// production metrics that return 200 and look authoritative. Nothing in the response carries
-// the caveats. The gate is checked here rather than at construction so a deployment can flip
-// it without a rebuild, and so the disabled path costs nothing but an env read.
+// The gate nevertheless STAYS ON, because the remaining unknown is a different one: no
+// request has ever been made against a live Reddit ad account. Matching a published
+// schema does not establish what the endpoint actually returns for a campaign with no
+// activity, whether ends_at is inclusive of its final hour, or whether the account's
+// attribution window shifts the figures. Merely declaring this method is the capability
+// switch — Orchestrator.ReadCampaignMetrics discovers MetricsReader by type assertion,
+// and the published endpoint then calls it — so without the flag an unexercised read
+// would ship as production metrics that return 200 and look authoritative. Nothing in the
+// response carries the caveats. The gate is checked here rather than at construction so a
+// deployment can flip it without a rebuild, and so the disabled path costs nothing but an
+// env read.
 //
 // Disabled reads answer domain.ErrMetricsUnsupported, which the service maps to the same 400
-// a platform with no metrics support at all returns — the accurate answer while the contract
-// is unverified. Delete the gate once the shape is confirmed against a live ad account.
+// a platform with no metrics support at all returns — the accurate answer while no read has
+// been exercised. Delete the gate once the shape is confirmed against a live ad account:
+// that is now the ONLY thing standing between this and general availability.
 func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if os.Getenv(constants.EnvRedditMetricsEnabled) != "true" {
-		return nil, fmt.Errorf("reddit metrics reads are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
+		return nil, fmt.Errorf("reddit metrics reads are disabled (%s is not \"true\") until the reporting contract is exercised against a live ad account: %w",
 			constants.EnvRedditMetricsEnabled, domain.ErrMetricsUnsupported)
 	}
 	if campaign.PlatformCampaignID == "" {
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
 	}
+	// Validated BEFORE credential resolution, and this order is load-bearing — the same
+	// order linkedin.go and twitter.go use, and the order reddit.ValidateMetricsWindow was
+	// made package-level and clock-free to allow. An unsupported window is a permanent 400
+	// whatever the connection looks like, and it names the one thing the caller can actually
+	// change. Resolving first answers a connection error instead, sending the caller to
+	// repair a connection when the request would still be rejected on the window.
+	if werr := reddit.ValidateMetricsWindow(window); werr != nil {
+		return nil, fmt.Errorf("get campaign metrics from reddit: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+	}
 	client, err := d.resolveRedditClient(ctx, projectID, platform)
 	if err != nil {
+		return nil, err
+	}
+	// Prove the persisted campaign belongs to the account this read is scoped to.
+	// resolveRedditClient returns the project's CURRENT connection, which can have been
+	// re-pointed since create; reading the stored campaign id under a different account
+	// yields either a false "no data" or ANOTHER campaign's numbers presented as this
+	// campaign's measurement.
+	if err := verifyRedditAccountMatch("read reddit campaign metrics", campaign, client); err != nil {
 		return nil, err
 	}
 	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
@@ -335,6 +370,58 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 		return nil, fmt.Errorf("get campaign metrics from reddit: %w", err)
 	}
 	return metrics, nil
+}
+
+// redditCreationAccountID reports the ad account the campaign was CREATED under, or "" when
+// the persisted result blob does not record it.
+//
+// Unlike the google-ads, microsoft, linkedin and meta siblings there is NO recoverable
+// fallback: reddit.CampaignResult's RedditURL is the bare ads-manager constant
+// ("https://ads.reddit.com") and has never carried an account id, so a row written before the
+// explicit accountId field existed records no provenance anywhere and cannot be checked. Such
+// a row is waved through as "unknown"; only a re-dispatch can give it a provenance.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func redditCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(blob.AccountID)
+}
+
+// verifyRedditAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT ad account than the project's current connection resolves to.
+//
+// Reddit campaign ids are unique only WITHIN an ad account, and a project's connection can be
+// re-pointed between create and a later read/toggle. Without this check the stored
+// PlatformCampaignID is addressed against the NEW account, where it either matches nothing —
+// rendered on the read path as a campaign with genuinely zero activity — or collides with an
+// unrelated campaign, whose numbers become this campaign's measurement or whose delivery is
+// changed by the toggle.
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+func verifyRedditAccountMatch(op string, campaign *model.Campaign, client *reddit.Client) error {
+	created := redditCreationAccountID(campaign)
+	current := strings.TrimSpace(client.AccountID())
+	// Neither unknown is a mismatch. An absent CREATED id is the pre-existing-row case. An
+	// empty CURRENT id cannot prove anything either — "not selected" is an absence, not a
+	// different account, and reporting one would render as "resolves to account " with an
+	// empty name. resolveRedditClient already refuses an account-less connection with
+	// ErrAccountNotSelected, so this arm is unreachable today; it is stated rather than relied
+	// upon so the guard stays correct if that precondition is ever relaxed, as it is on meta.
+	if created == "" || current == "" || created == current {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under reddit ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
 }
 
 // redditChildIDs pulls the ad group + ad ids the create path stored in the persisted

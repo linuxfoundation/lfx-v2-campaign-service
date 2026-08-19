@@ -55,7 +55,34 @@ an explicit `UpdateBrief`, so edits to the AI-generated copy are never silently 
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate
 platform sets (a duplicate would create two paid upstream campaigns), then hands
 off to the `Orchestrator`, which persists a job and dispatches per platform
-asynchronously (bounded concurrency). Dispatch is idempotent: a brief already
+asynchronously (bounded concurrency). The orchestrator records dispatch outcomes,
+job state transitions and upstream platform latency through the `DispatchMetrics`
+interface — declared in THIS package rather than importing
+[internal/infrastructure/metrics](internal-infrastructure-metrics.md), so orchestrator
+tests do not drag in a Prometheus registry, and injected via `SetMetrics` from the one
+`newOrchestrator` helper both construction paths route through. It defaults to a no-op,
+never nil, so every record site is unconditional. A recovered dispatcher panic gets its
+OWN outcome rather than folding into `failure`: a panic is a bug in this service, not an
+upstream refusal, and the two want different responses from whoever is on call. A panic
+raised AFTER a dispatch has completed is a different case: a `dispatched` flag makes the
+recover arm leave the stored result alone, because the campaign really was created
+upstream and reporting it failed would invite a retry that could double-create a PAID
+campaign — losing one metric is strictly cheaper. Upstream
+calls are timed only AFTER the pre-platform guards pass, so local refusals (which return
+in nanoseconds) do not drag the latency quantiles toward zero.
+
+The RUNNING and TERMINAL job transitions are recorded with deliberately OPPOSITE rules.
+RUNNING is recorded on **attempt** (dispatch proceeds whether or not the status write
+lands, so gating it would under-count during a database blip). The terminal one is
+recorded only after a **successful** write, via the single `terminalize` helper both
+finalize paths route through: `campaign_job_transitions_total` exists so a stuck job
+shows up as the gap between `running` and the terminal statuses, and a job whose terminal
+write failed is still `running` in the database — counting its terminal would close the
+gap for exactly the rows the alert hunts. The recovery sweeper (`runRecoverySweep`)
+then records one terminal transition per row it recovers — that is where the gap
+CLOSES. Both halves are needed: guarding only the finalize side would leave the gap
+permanently open, so a stuck-job alert would keep firing after the rows were already
+terminal in the database. Dispatch is idempotent: a brief already
 carrying a COMPLETED campaign for a platform is reused rather than re-created. The
 idempotency fast-path lookup (`GetCampaignByPlatform`) distinguishes its outcomes: an
 existing campaign with an upstream id AND a terminal status (`created` /
@@ -81,6 +108,25 @@ orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
+
+### Background sweepers
+
+The orchestrator runs TWO periodic sweepers, both tracked by `wg` and both owned by
+`sweeperCtx` — which `Shutdown` cancels FIRST, before the dispatch drain, so a sweep
+already blocked in the database is interrupted promptly and its shutdown never eats
+into the drain budget. Both run on every replica with no leader election.
+
+- `StartRecoverySweeper` (every 5m) fails forward jobs stuck past `staleJobCutoff`,
+  complementing the one-time startup scan.
+- `StartJobRetentionSweeper` (hourly, LFXV2-3222) prunes TERMINAL `campaign_jobs`
+  rows past the retention window via `JobRepo.PruneTerminalJobs`, bounding a table
+  that is otherwise append-only. The window comes from `CAMPAIGN_JOB_RETENTION` via
+  `SetJobRetention`, which IGNORES a non-positive value: zero is what an unset or
+  unparseable variable produces, and it must mean "use the long repository default",
+  never "retain nothing". A prune error is logged and dropped — retention failing
+  costs disk, never correctness — and the goroutine keeps running rather than exiting
+  on the first transient error. See the postgres concept for why only terminal
+  statuses are eligible and why they are an allow-list.
 
 ## Campaign status toggle
 
@@ -668,20 +714,45 @@ source instead: it parses the `container` package and fails if any non-test call
 verifier-injecting helper. Reachability is a source property, so a new construction site is
 caught whether or not a unit test can boot the path it is on.
 
-Rejections are 400, not 401: the design declares no Unauthorized type and
-`commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
+Rejections are **401** as of LFXV2-3057, carrying a `WWW-Authenticate: Bearer` challenge
+(RFC 9110 §15.5.2). `UnauthorizedError` is declared in `design/connection.go` and reaches
+every method through `authErrors()` (connections) and `commonBriefErrors()` (briefs and
+audiences). 400 conflated a refused credential with a malformed payload: a client could not
+tell "token expired, refresh and retry" from "payload invalid, do not retry" — opposite
+handling, and a refresh is exactly the retry a 401 should trigger — and status-based
+alerting counted a REFUSED CREDENTIAL as a client payload error, so an expired or
+malformed token read as a spike in malformed requests rather than an auth incident. (A
+JWKS outage was never part of that: `domain.ErrKeyUnavailable` has always taken the
+`unavailable` branch and answered 503, and this change does not touch it — see the 503
+split below.)
+BadRequest stays declared everywhere alongside it: it is still the status for payload and
+path-parameter validation, which the bodyless reads reach through the generated decoder.
+
+The challenge is a FIELD of the error, not a framework constant — Goa's Response-level
+`Header()` maps an attribute onto a response header and has no fixed-string form, so
+`www_authenticate` is a Required attribute on the type, mapped in
+`connectionAuthErrorResponses`/`briefErrorResponses`, and filled from the one shared
+`bearerChallenge` constant in `auth.go`. Drop that Header mapping and the field silently
+serializes into the JSON body: the status is still 401, every encoder still has its
+Unauthorized case, and the response violates the RFC —
+`TestEveryConnectionUnauthorizedEncoderSetsTheChallenge` is what catches it. The challenge
+is the bare scheme, with no `realm` and no `error="invalid_token"`: an `error` code names
+WHICH check failed, which is exactly the reason-specific signal the opaque message keeps
+off the wire.
 
 But not every rejection is about the token. `authenticate` returns a third value, an
 `unavailable bool`, saying whose fault the failure is: true when THIS service could not
 perform the check — no verifier wired, or Heimdall's JWKS unreachable
 (`domain.ErrKeyUnavailable`) — false when the token itself was refused. The three `JWTAuth`
 impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
-`BadRequestError` (400). Both were 400 before, which answered a JWKS outage by telling every
-caller holding a valid credential that theirs was bad, and telling them not to retry.
+`UnauthorizedError` (401). The SECOND was 400 before, which classified an absent or refused
+credential as a MALFORMED REQUEST, and told the caller not to retry a token a refresh would
+fix. The 503 case was never a 400 — only that branch can involve a credential that is
+genuinely valid, because nothing about it was ever checked.
 The verdict is returned separately rather than sniffed from the message: "invalid bearer
 token" is deliberately the *same* string for every token-side refusal, so it cannot carry
 the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on
-the 400 side on purpose: it is indistinguishable from a refusal seen from outside, and
+the 401 side on purpose: it is indistinguishable from a refusal seen from outside, and
 `TestAuthenticate_RejectionMessagesAreOpaque` pins that a caller cannot learn which of the
 two happened.
 `attributedActor` still warns on a nil actor although no served route can reach it with

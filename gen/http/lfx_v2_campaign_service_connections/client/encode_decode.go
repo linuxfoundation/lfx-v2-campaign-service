@@ -79,6 +79,7 @@ func EncodeCreateGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -177,6 +178,31 @@ func DecodeCreateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
 			}
 			return nil, NewCreateGoogleAdsInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateGoogleAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-google-ads", err)
+			}
+			err = ValidateCreateGoogleAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
+			}
+			return nil, NewCreateGoogleAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-google-ads", resp.StatusCode, string(body))
@@ -238,6 +264,7 @@ func EncodeGetGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) func
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -336,6 +363,31 @@ func DecodeGetGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
 			}
 			return nil, NewGetGoogleAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetGoogleAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			err = ValidateGetGoogleAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			return nil, NewGetGoogleAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-google-ads", resp.StatusCode, string(body))
@@ -408,6 +460,7 @@ func EncodeUpdateGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -534,6 +587,31 @@ func DecodeUpdateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
 			}
 			return nil, NewUpdateGoogleAdsPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateGoogleAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-google-ads", err)
+			}
+			err = ValidateUpdateGoogleAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
+			}
+			return nil, NewUpdateGoogleAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-google-ads", resp.StatusCode, string(body))
@@ -596,6 +674,7 @@ func EncodeDeleteGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -670,6 +749,31 @@ func DecodeDeleteGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
 			}
 			return nil, NewDeleteGoogleAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteGoogleAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			err = ValidateDeleteGoogleAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			return nil, NewDeleteGoogleAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-google-ads", resp.StatusCode, string(body))
@@ -731,6 +835,7 @@ func EncodeTestGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -818,6 +923,31 @@ func DecodeTestGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-google-ads", err)
 			}
 			return nil, NewTestGoogleAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestGoogleAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			err = ValidateTestGoogleAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			return nil, NewTestGoogleAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-google-ads", resp.StatusCode, string(body))
@@ -884,6 +1014,7 @@ func EncodeSetCredentialGoogleAdsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -958,6 +1089,31 @@ func DecodeSetCredentialGoogleAdsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
 			}
 			return nil, NewSetCredentialGoogleAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialGoogleAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
+			}
+			err = ValidateSetCredentialGoogleAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
+			}
+			return nil, NewSetCredentialGoogleAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-google-ads", resp.StatusCode, string(body))
@@ -1024,6 +1180,7 @@ func EncodeCreateLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -1122,6 +1279,31 @@ func DecodeCreateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
 			}
 			return nil, NewCreateLinkedinAdsInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateLinkedinAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
+			}
+			err = ValidateCreateLinkedinAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
+			}
+			return nil, NewCreateLinkedinAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-linkedin-ads", resp.StatusCode, string(body))
@@ -1183,6 +1365,7 @@ func EncodeGetLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -1281,6 +1464,31 @@ func DecodeGetLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
 			}
 			return nil, NewGetLinkedinAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetLinkedinAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			err = ValidateGetLinkedinAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			return nil, NewGetLinkedinAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-linkedin-ads", resp.StatusCode, string(body))
@@ -1353,6 +1561,7 @@ func EncodeUpdateLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -1479,6 +1688,31 @@ func DecodeUpdateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
 			}
 			return nil, NewUpdateLinkedinAdsPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateLinkedinAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
+			}
+			err = ValidateUpdateLinkedinAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
+			}
+			return nil, NewUpdateLinkedinAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-linkedin-ads", resp.StatusCode, string(body))
@@ -1541,6 +1775,7 @@ func EncodeDeleteLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -1615,6 +1850,31 @@ func DecodeDeleteLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
 			}
 			return nil, NewDeleteLinkedinAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteLinkedinAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			err = ValidateDeleteLinkedinAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			return nil, NewDeleteLinkedinAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-linkedin-ads", resp.StatusCode, string(body))
@@ -1677,6 +1937,7 @@ func EncodeTestLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -1764,6 +2025,31 @@ func DecodeTestLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
 			}
 			return nil, NewTestLinkedinAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestLinkedinAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			err = ValidateTestLinkedinAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			return nil, NewTestLinkedinAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-linkedin-ads", resp.StatusCode, string(body))
@@ -1831,6 +2117,7 @@ func EncodeSetCredentialLinkedinAdsRequest(encoder func(*http.Request) goahttp.E
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -1905,6 +2192,31 @@ func DecodeSetCredentialLinkedinAdsResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
 			}
 			return nil, NewSetCredentialLinkedinAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialLinkedinAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
+			}
+			err = ValidateSetCredentialLinkedinAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
+			}
+			return nil, NewSetCredentialLinkedinAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", resp.StatusCode, string(body))
@@ -1970,6 +2282,7 @@ func EncodeCreateMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -2068,6 +2381,31 @@ func DecodeCreateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
 			}
 			return nil, NewCreateMetaAdsInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
+			}
+			err = ValidateCreateMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
+			}
+			return nil, NewCreateMetaAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-meta-ads", resp.StatusCode, string(body))
@@ -2129,6 +2467,7 @@ func EncodeGetMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -2227,6 +2566,31 @@ func DecodeGetMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
 			}
 			return nil, NewGetMetaAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			err = ValidateGetMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			return nil, NewGetMetaAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-meta-ads", resp.StatusCode, string(body))
@@ -2298,6 +2662,7 @@ func EncodeUpdateMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -2424,6 +2789,31 @@ func DecodeUpdateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
 			}
 			return nil, NewUpdateMetaAdsPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
+			}
+			err = ValidateUpdateMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
+			}
+			return nil, NewUpdateMetaAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-meta-ads", resp.StatusCode, string(body))
@@ -2485,6 +2875,7 @@ func EncodeDeleteMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -2559,6 +2950,31 @@ func DecodeDeleteMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
 			}
 			return nil, NewDeleteMetaAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			err = ValidateDeleteMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			return nil, NewDeleteMetaAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-meta-ads", resp.StatusCode, string(body))
@@ -2620,6 +3036,7 @@ func EncodeTestMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -2707,6 +3124,31 @@ func DecodeTestMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
 			}
 			return nil, NewTestMetaAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			err = ValidateTestMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			return nil, NewTestMetaAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-meta-ads", resp.StatusCode, string(body))
@@ -2773,6 +3215,7 @@ func EncodeSetCredentialMetaAdsRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -2847,6 +3290,31 @@ func DecodeSetCredentialMetaAdsResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
 			}
 			return nil, NewSetCredentialMetaAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
+			}
+			err = ValidateSetCredentialMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
+			}
+			return nil, NewSetCredentialMetaAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-meta-ads", resp.StatusCode, string(body))
@@ -2913,6 +3381,7 @@ func EncodeCreateRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3011,6 +3480,31 @@ func DecodeCreateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
 			}
 			return nil, NewCreateRedditAdsInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateRedditAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
+			}
+			err = ValidateCreateRedditAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
+			}
+			return nil, NewCreateRedditAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-reddit-ads", resp.StatusCode, string(body))
@@ -3072,6 +3566,7 @@ func EncodeGetRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) func
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3170,6 +3665,31 @@ func DecodeGetRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
 			}
 			return nil, NewGetRedditAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetRedditAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			err = ValidateGetRedditAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			return nil, NewGetRedditAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-reddit-ads", resp.StatusCode, string(body))
@@ -3242,6 +3762,7 @@ func EncodeUpdateRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3368,6 +3889,31 @@ func DecodeUpdateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
 			}
 			return nil, NewUpdateRedditAdsPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateRedditAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
+			}
+			err = ValidateUpdateRedditAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
+			}
+			return nil, NewUpdateRedditAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-reddit-ads", resp.StatusCode, string(body))
@@ -3430,6 +3976,7 @@ func EncodeDeleteRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3504,6 +4051,31 @@ func DecodeDeleteRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
 			}
 			return nil, NewDeleteRedditAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteRedditAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			err = ValidateDeleteRedditAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			return nil, NewDeleteRedditAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-reddit-ads", resp.StatusCode, string(body))
@@ -3565,6 +4137,7 @@ func EncodeTestRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3652,6 +4225,31 @@ func DecodeTestRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
 			}
 			return nil, NewTestRedditAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestRedditAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			err = ValidateTestRedditAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			return nil, NewTestRedditAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-reddit-ads", resp.StatusCode, string(body))
@@ -3718,6 +4316,7 @@ func EncodeSetCredentialRedditAdsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3792,6 +4391,31 @@ func DecodeSetCredentialRedditAdsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
 			}
 			return nil, NewSetCredentialRedditAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialRedditAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
+			}
+			err = ValidateSetCredentialRedditAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
+			}
+			return nil, NewSetCredentialRedditAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", resp.StatusCode, string(body))
@@ -3858,6 +4482,7 @@ func EncodeCreateTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -3956,6 +4581,31 @@ func DecodeCreateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
 			}
 			return nil, NewCreateTwitterAdsInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateTwitterAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
+			}
+			err = ValidateCreateTwitterAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
+			}
+			return nil, NewCreateTwitterAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-twitter-ads", resp.StatusCode, string(body))
@@ -4017,6 +4667,7 @@ func EncodeGetTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -4115,6 +4766,31 @@ func DecodeGetTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
 			}
 			return nil, NewGetTwitterAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetTwitterAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			err = ValidateGetTwitterAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			return nil, NewGetTwitterAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-twitter-ads", resp.StatusCode, string(body))
@@ -4187,6 +4863,7 @@ func EncodeUpdateTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -4313,6 +4990,31 @@ func DecodeUpdateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
 			}
 			return nil, NewUpdateTwitterAdsPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateTwitterAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
+			}
+			err = ValidateUpdateTwitterAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
+			}
+			return nil, NewUpdateTwitterAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-twitter-ads", resp.StatusCode, string(body))
@@ -4375,6 +5077,7 @@ func EncodeDeleteTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -4449,6 +5152,31 @@ func DecodeDeleteTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
 			}
 			return nil, NewDeleteTwitterAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteTwitterAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			err = ValidateDeleteTwitterAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			return nil, NewDeleteTwitterAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-twitter-ads", resp.StatusCode, string(body))
@@ -4510,6 +5238,7 @@ func EncodeTestTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -4597,6 +5326,31 @@ func DecodeTestTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
 			}
 			return nil, NewTestTwitterAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestTwitterAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			err = ValidateTestTwitterAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			return nil, NewTestTwitterAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-twitter-ads", resp.StatusCode, string(body))
@@ -4663,6 +5417,7 @@ func EncodeSetCredentialTwitterAdsRequest(encoder func(*http.Request) goahttp.En
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -4737,6 +5492,31 @@ func DecodeSetCredentialTwitterAdsResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
 			}
 			return nil, NewSetCredentialTwitterAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialTwitterAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
+			}
+			err = ValidateSetCredentialTwitterAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
+			}
+			return nil, NewSetCredentialTwitterAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", resp.StatusCode, string(body))
@@ -4803,6 +5583,7 @@ func EncodeCreateMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -4901,6 +5682,31 @@ func DecodeCreateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
 			}
 			return nil, NewCreateMicrosoftAdsInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateMicrosoftAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
+			}
+			err = ValidateCreateMicrosoftAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
+			}
+			return nil, NewCreateMicrosoftAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-microsoft-ads", resp.StatusCode, string(body))
@@ -4963,6 +5769,7 @@ func EncodeGetMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -5061,6 +5868,31 @@ func DecodeGetMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
 			}
 			return nil, NewGetMicrosoftAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetMicrosoftAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			err = ValidateGetMicrosoftAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			return nil, NewGetMicrosoftAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-microsoft-ads", resp.StatusCode, string(body))
@@ -5133,6 +5965,7 @@ func EncodeUpdateMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -5259,6 +6092,31 @@ func DecodeUpdateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
 			}
 			return nil, NewUpdateMicrosoftAdsPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateMicrosoftAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
+			}
+			err = ValidateUpdateMicrosoftAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
+			}
+			return nil, NewUpdateMicrosoftAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-microsoft-ads", resp.StatusCode, string(body))
@@ -5321,6 +6179,7 @@ func EncodeDeleteMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -5395,6 +6254,31 @@ func DecodeDeleteMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
 			}
 			return nil, NewDeleteMicrosoftAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteMicrosoftAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			err = ValidateDeleteMicrosoftAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			return nil, NewDeleteMicrosoftAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-microsoft-ads", resp.StatusCode, string(body))
@@ -5457,6 +6341,7 @@ func EncodeTestMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -5544,6 +6429,31 @@ func DecodeTestMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
 			}
 			return nil, NewTestMicrosoftAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestMicrosoftAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			err = ValidateTestMicrosoftAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			return nil, NewTestMicrosoftAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-microsoft-ads", resp.StatusCode, string(body))
@@ -5611,6 +6521,7 @@ func EncodeSetCredentialMicrosoftAdsRequest(encoder func(*http.Request) goahttp.
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -5685,6 +6596,31 @@ func DecodeSetCredentialMicrosoftAdsResponse(decoder func(*http.Response) goahtt
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
 			}
 			return nil, NewSetCredentialMicrosoftAdsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialMicrosoftAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
+			}
+			err = ValidateSetCredentialMicrosoftAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
+			}
+			return nil, NewSetCredentialMicrosoftAdsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", resp.StatusCode, string(body))
@@ -5750,6 +6686,7 @@ func EncodeCreateHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -5848,6 +6785,31 @@ func DecodeCreateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
 			}
 			return nil, NewCreateHubspotInternalServerError(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateHubspotUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot", err)
+			}
+			err = ValidateCreateHubspotUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
+			}
+			return nil, NewCreateHubspotUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-hubspot", resp.StatusCode, string(body))
@@ -5909,6 +6871,7 @@ func EncodeGetHubspotRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6007,6 +6970,31 @@ func DecodeGetHubspotResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
 			}
 			return nil, NewGetHubspotNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetHubspotUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			err = ValidateGetHubspotUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			return nil, NewGetHubspotUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-hubspot", resp.StatusCode, string(body))
@@ -6078,6 +7066,7 @@ func EncodeUpdateHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6204,6 +7193,31 @@ func DecodeUpdateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
 			}
 			return nil, NewUpdateHubspotPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateHubspotUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-hubspot", err)
+			}
+			err = ValidateUpdateHubspotUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
+			}
+			return nil, NewUpdateHubspotUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "update-hubspot", resp.StatusCode, string(body))
@@ -6265,6 +7279,7 @@ func EncodeDeleteHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6339,6 +7354,31 @@ func DecodeDeleteHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
 			}
 			return nil, NewDeleteHubspotNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body DeleteHubspotUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			err = ValidateDeleteHubspotUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			return nil, NewDeleteHubspotUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "delete-hubspot", resp.StatusCode, string(body))
@@ -6400,6 +7440,7 @@ func EncodeTestHubspotRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6487,6 +7528,31 @@ func DecodeTestHubspotResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-hubspot", err)
 			}
 			return nil, NewTestHubspotNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body TestHubspotUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			err = ValidateTestHubspotUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			return nil, NewTestHubspotUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "test-hubspot", resp.StatusCode, string(body))
@@ -6553,6 +7619,7 @@ func EncodeSetCredentialHubspotRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6627,6 +7694,31 @@ func DecodeSetCredentialHubspotResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
 			}
 			return nil, NewSetCredentialHubspotNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetCredentialHubspotUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
+			}
+			err = ValidateSetCredentialHubspotUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
+			}
+			return nil, NewSetCredentialHubspotUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "set-credential-hubspot", resp.StatusCode, string(body))
@@ -6689,6 +7781,7 @@ func EncodeListGoogleAdsAccountsRequest(encoder func(*http.Request) goahttp.Enco
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6776,6 +7869,31 @@ func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.De
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
 			}
 			return nil, NewListGoogleAdsAccountsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListGoogleAdsAccountsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			return nil, NewListGoogleAdsAccountsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-google-ads-accounts", resp.StatusCode, string(body))
@@ -6838,6 +7956,7 @@ func EncodeListMetaAdsAccountsRequest(encoder func(*http.Request) goahttp.Encode
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -6925,6 +8044,31 @@ func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Deco
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
 			}
 			return nil, NewListMetaAdsAccountsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListMetaAdsAccountsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			return nil, NewListMetaAdsAccountsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", resp.StatusCode, string(body))
@@ -6987,6 +8131,7 @@ func EncodeListLinkedinAdsAccountsRequest(encoder func(*http.Request) goahttp.En
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListLinkedinAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -7074,6 +8219,31 @@ func DecodeListLinkedinAdsAccountsResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
 			}
 			return nil, NewListLinkedinAdsAccountsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListLinkedinAdsAccountsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			return nil, NewListLinkedinAdsAccountsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", resp.StatusCode, string(body))
@@ -7137,6 +8307,7 @@ func EncodeListMicrosoftAdsAccountsRequest(encoder func(*http.Request) goahttp.E
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListMicrosoftAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -7224,6 +8395,31 @@ func DecodeListMicrosoftAdsAccountsResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
 			}
 			return nil, NewListMicrosoftAdsAccountsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListMicrosoftAdsAccountsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			return nil, NewListMicrosoftAdsAccountsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", resp.StatusCode, string(body))
@@ -7286,6 +8482,7 @@ func EncodeListTwitterAdsAccountsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListTwitterAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -7373,6 +8570,31 @@ func DecodeListTwitterAdsAccountsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
 			}
 			return nil, NewListTwitterAdsAccountsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListTwitterAdsAccountsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			return nil, NewListTwitterAdsAccountsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", resp.StatusCode, string(body))
@@ -7440,6 +8662,7 @@ func EncodeListHubspotEmailsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListHubspotEmailsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -7527,6 +8750,31 @@ func DecodeListHubspotEmailsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
 			}
 			return nil, NewListHubspotEmailsNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListHubspotEmailsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			return nil, NewListHubspotEmailsUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-hubspot-emails", resp.StatusCode, string(body))

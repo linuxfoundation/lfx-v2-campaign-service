@@ -25,6 +25,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -160,6 +161,9 @@ func (r *stubJobRepo) UpdateJobStatus(context.Context, string, model.JobStatus, 
 	return nil
 }
 func (r *stubJobRepo) FailStuckJobs(context.Context, string) (int64, error) { return 0, nil }
+func (r *stubJobRepo) PruneTerminalJobs(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
 
 // stubCampaignRepo is a minimal in-memory CampaignRepository for the Close test.
 type stubCampaignRepo struct{}
@@ -1424,4 +1428,45 @@ func TestNewBriefService_InjectsLLMClient(t *testing.T) {
 	require.True(t, llmClientInjected(t, brief),
 		"newBriefService must inject the configured client; without SetLLMClient every "+
 			"email-copy request 503s in a deployment that IS configured")
+}
+
+// TestClose_ShutsDownTheMetricsProvider pins that Container.Close owns the metrics
+// Registry the way it owns every other resource it constructs.
+//
+// Registry.Shutdown flushes and stops the MeterProvider. Left uncalled, the provider
+// outlives the container: an unowned resource whose Shutdown is implemented and
+// documented but never invoked is indistinguishable from one that was forgotten.
+// The assertion is behavioural rather than a spy — after Shutdown the provider stops
+// accepting recordings, so a metric recorded afterwards must not reach the scrape.
+func TestClose_ShutsDownTheMetricsProvider(t *testing.T) {
+	reg, err := metrics.New()
+	require.NoError(t, err)
+
+	// Record before Close so the series exists and the scrape below is a real
+	// comparison rather than an empty page.
+	reg.RecordDispatch(context.Background(), model.ProviderGoogleAds, metrics.OutcomeSuccess)
+	require.Contains(t, scrapeRegistry(t, reg), "campaign_dispatch_total",
+		"precondition: the counter must be exported before Close")
+
+	c := &Container{Metrics: reg} // nil pool/orch: this exercises only the metrics arm
+	require.NoError(t, c.Close(context.Background()))
+
+	// A stopped provider drops further recordings. If Close never shut it down, this
+	// second Add lands and the counter reads 2 instead.
+	reg.RecordDispatch(context.Background(), model.ProviderGoogleAds, metrics.OutcomeSuccess)
+
+	// A shut-down provider has no reader left to collect from, so the instrument's
+	// series stops being served entirely. If Close never called Shutdown the counter
+	// is still exported (and the post-Close Add above lands on it).
+	assert.NotContains(t, scrapeRegistry(t, reg), "campaign_dispatch_total",
+		"the instrument is still being served after Close: the MeterProvider was never shut down")
+}
+
+// scrapeRegistry renders a Registry's current exposition text.
+func scrapeRegistry(t *testing.T, r *metrics.Registry) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	return rec.Body.String()
 }

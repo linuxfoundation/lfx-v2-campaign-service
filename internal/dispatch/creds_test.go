@@ -184,6 +184,14 @@ func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Prov
 
 func usableConn(creds, accountID string) *model.Connection {
 	return &model.Connection{
+		// ID and Version model a real row rather than a zero value. The credential cache keys
+		// entries on both, and every row Get can return has an id and a version of at least 1
+		// (`version BIGINT NOT NULL DEFAULT 1`, migration 000001). A fixture left at the zero
+		// value would let two DIFFERENT rows look identical to the cache within one credsSource
+		// — a trap for whoever next reuses a source across a row swap, and one that no
+		// production path can reach.
+		ID:                   "conn-" + accountID,
+		Version:              1,
 		Provider:             model.ProviderGoogleAds,
 		AccountID:            accountID,
 		EncryptedCredentials: []byte(creds),

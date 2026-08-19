@@ -34,9 +34,13 @@ revoked or deleted.
 ## What each adapter does
 
 1. **Resolve credentials** (shared) — `credsSource.resolve(projectID, provider)` does
-   the ONE mechanical step common to every platform: `ConnectionReader.Get` then
-   `Encryptor.Decrypt`, returning the raw plaintext blob plus the connection's
-   non-secret fields (`AccountID`, `ProviderConfig`, `Status`). It does NOT interpret
+   the ONE mechanical step common to every platform: `ConnectionReader.Get` then, on a
+   cache miss, `Encryptor.Decrypt`, returning the raw plaintext blob plus the connection's
+   non-secret fields (`AccountID`, `ProviderConfig`, `Status`). The `Get` runs on EVERY
+   call — it is what the cached entry is validated against — while the decrypt is skipped
+   when a live entry matches the row id and version that `Get` just returned; see
+   "Credential and client caching" below for the cache, its validation and its lifetime.
+   It does NOT interpret
    the plaintext — credential shapes differ per platform (OAuth2 refresh tokens,
    OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob into
    its own credential struct. When the project has NO connection, resolution falls
@@ -108,6 +112,17 @@ it (a blind retry could double-create). Adapters drive that decision:
   The retained row is recorded as a recoverable orphan; its upstream id may be empty
   until reconciled.
 
+The two bullets are INDEPENDENT preconditions on the release, and the orchestrator enforces
+both — `dispatchErrIsPreCreate(derr) && campaign == nil`. `NoUpstreamCreate` is only the
+ADAPTER's assertion about its own error, while a non-nil campaign is evidence from the same
+return that a resource was built; when they disagree the evidence wins and the claim is
+RETAINED. Every adapter today returns `preCreateError` with a nil campaign, so the second
+term guards a future adapter rather than a live path — but a release here frees the
+`(brief, platform)` slot and authorizes a duplicate PAID create, so the conservative term is
+kept regardless. The guard tests `campaign == nil` alone, never `PlatformCampaignID != ""`,
+for the reason the bullet above gives: the id-less name-only partial is precisely the shape
+that must retain.
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from
@@ -166,7 +181,7 @@ Which adapters honour it today:
 | Google Ads | yes | `validateGoogleAdsCredentials` — dispatch, toggle, metrics, discovery |
 | Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
-| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
+| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle, metrics (async Reporting API; default-OFF) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
 | LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
 | HubSpot (email) | **n/a** | out of scope — see below |
@@ -248,16 +263,99 @@ platform's actual query syntax (e.g. Google Ads' GAQL `DURING` literals, Meta's 
 guard against GAQL injection) belongs in that platform's client package, not in the adapter or
 the orchestrator.
 
-**Microsoft Ads is NOT a `MetricsReader` and is not expected to become one under this
-contract.** Its Campaign Management API v13 (REST/JSON, synchronous — what the existing
-create dispatcher and status toggle use) has no metrics surface. Metrics live in a wholly
-separate service, the Reporting API v13: SOAP, and asynchronous
-(`SubmitGenerateReport` → poll `PollGenerateReport` until the status leaves `Pending` →
-download a zipped CSV via a `ReportDownloadUrl`). There is no synchronous "impressions for
-this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contract within
-`metricsCallTimeout` (20s). Closing this gap needs a design decision (e.g. a bounded
-submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
-live read) — deferred, not attempted here.
+**Microsoft Ads implements `MetricsReader` as of LFXV2-3260**, but the read is gated OFF
+by default. Its Campaign Management API v13 (REST/JSON, synchronous — what the create
+dispatcher and status toggle use) has no metrics surface; metrics live in a separate
+service, the Reporting API v13. That API is **REST/JSON, not SOAP** — an earlier revision of
+this document said SOAP — and it is asynchronous (`SubmitGenerateReport` → poll
+`PollGenerateReport` until the status leaves `Pending` → download a zipped CSV via a
+`ReportDownloadUrl`).
+
+The adapter absorbs the asynchrony behind one bounded call: `reportPollBudget` (15s) caps
+the whole submit+poll phase and must stay strictly under `metricsCallTimeout` (20s), or the
+caller's context cancels first and `ErrReportNotReady` becomes unreachable —
+`TestReportPollBudgetStaysUnderTheMetricsCallTimeout` pins that relationship. The download
+sits outside the budget deliberately: once `Success` is reported the file exists, and
+cutting off the transfer would discard a report already paid for.
+
+"The whole submit+poll phase" is a claim about WHERE the deadline is taken, and it only
+became true in LFXV2-3260. `GetCampaignMetrics` computes `deadline` BEFORE calling
+`submitReport` and passes it into `pollReport`, so submit time is charged against the same
+budget the polling spends. An earlier revision created the deadline INSIDE `pollReport`,
+after submit had already returned: submit was effectively free, and a slow submit surfaced
+the caller's `context deadline exceeded` instead of `ErrReportNotReady`, with no download
+headroom left. `pollReport` also checks the budget BEFORE its first poll, so a submit that
+already consumed it answers `ErrReportNotReady` without issuing a poll there is no time to
+act on. `TestPollBudgetCoversTheSubmitPhase` pins this with a clock that advances only
+during the submit — an every-reading clock expires the budget either way and cannot tell the
+two placements apart.
+
+Because the request/response shapes follow Microsoft's published documentation but have
+never been exercised against a live Bing account, `ReadMetrics` answers
+`domain.ErrMetricsUnsupported` unless `MICROSOFT_METRICS_ENABLED` is exactly `"true"` —
+the same fail-closed gate Reddit uses. Delete the gate once the shape is confirmed live.
+
+**Microsoft enforces the same account-identity invariant Google Ads does, on BOTH its read
+and its toggle** (LFXV2-3260). A Microsoft campaign id is unique only WITHIN an ad account,
+while `resolveMicrosoftClient` returns the project's CURRENT connection, which
+`UpdateMicrosoftAds` can re-point between create and a later call. Unguarded, the stored
+`PlatformCampaignID` is addressed against the NEW account, where it matches nothing (a false
+"no metrics") or collides with an unrelated campaign — whose numbers would be rendered as
+this campaign's measurement on the read path, and whose delivery would be changed on the
+toggle path. `verifyMicrosoftAccountMatch` is shared by both callers so they cannot drift,
+and returns `domain.ErrCampaignAccountMismatch` (409) before any request is issued.
+
+The creating account is stamped into the result blob as `microsoft.CampaignResult.AccountID`.
+`microsoftCreationAccountID` prefers that field and falls back to the `aid=` parameter of the
+`microsoftAdsUrl` the blob has always carried, so rows written before the field existed stay
+checkable rather than silently unguarded. It mirrors `googleAdsCreationCustomerID`'s
+`customerId`/`ocid` pair exactly, INCLUDING the contract that an ABSENT id means "unknown,
+proceed": only a present-and-different id is a mismatch. Absence must not become a new
+failure signal, or every pre-LFXV2-3260 row would be stranded — unlike HubSpot, which fails
+closed on absent provenance because a bare HubSpot email id carries no recoverable fallback
+at all. The comparison is against `Client.AccountID()` (the ad account), NOT the MCC parent
+`customer_id`.
+
+**LinkedIn, Meta, Reddit and X carry the same invariant** (LFXV2-3050), closing the four
+adapters that had none: a campaign created under account A was silently read, toggled and
+measured against account B, which the system-account fallback (LFXV2-3040) makes reachable.
+Each stamps its creating account into the result blob (`AccountID` on every
+`CampaignResult`), reads it back through a `<platform>CreationAccountID` helper, and shares one
+`verify<Platform>AccountMatch` between `ToggleStatus` and `ReadMetrics` so the two cannot
+drift. The absent-means-"unknown, proceed" contract is identical to the Google Ads and
+Microsoft pair.
+
+The RECOVERABLE FALLBACK differs per platform, and the difference is load-bearing. LinkedIn
+parses the account out of the `linkedInUrl` path (`/campaignmanager/accounts/<id>/campaigns`),
+taking the segment that FOLLOWS the literal `accounts` marker so an unexpected path shape
+fails closed rather than reading the wrong segment; Meta parses the `act=` parameter of
+`metaUrl`. Reddit and X have NO fallback — `RedditURL` and `TwitterURL` are the bare
+ads-manager constants (`https://ads.reddit.com`, `https://ads.x.com`) and never carried an
+account — so a row written before the stamp existed records no provenance anywhere and is
+waved through; only a re-dispatch can give it one.
+
+Meta needs a NORMALISATION the others do not: the connection stores `act_777` while `metaUrl`
+carries the bare digits `777`, so a raw comparison would report every legacy row as a mismatch.
+`normalizeMetaAccountID` puts both sides in one vocabulary, and anything that is not
+`act_<digits>` — including a bare `act_` — normalises to `""` so malformed provenance lands in
+the "unknown, proceed" arm instead of acting as a real account and manufacturing a false 409.
+
+Meta also needs the absence question asked of the CURRENT side, which no other platform does.
+Because `ToggleStatus` and `ReadMetrics` deliberately do not require an account selection (see
+`requireMetaAccountID` above), a connection whose account was cleared via `PUT` still resolves
+to an empty id — an ABSENCE, not a different account. Treating it as one would 409 exactly the
+paths that section documents as servable, for any row recording provenance, which via the
+`act=` fallback is nearly every historical row. All four guards therefore proceed when EITHER
+side is unknown; on LinkedIn, Reddit and X that arm is unreachable (each resolver refuses an
+account-less connection with `domain.ErrAccountNotSelected` first) and says so rather than
+depending on an unpinned precondition.
+
+ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
+narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item
+check, and LinkedIn's creative-servability check (which lives INSIDE the client call, so
+running it first would also contact LinkedIn). On a re-pointed connection those guards describe
+a campaign in a DIFFERENT account, so answering "not provisioned" would explain the wrong
+campaign. This is the same trap `verifyMicrosoftAccountMatch` records at the keyword gate.
 
 **Meta** also implements it: `MetaDispatcher.ReadMetrics` resolves the connection the same way
 `ToggleStatus`/`Dispatch` do, then calls `meta.Client.GetCampaignMetrics`, which issues a single
@@ -303,29 +401,33 @@ non-zero click count. Per-metric presence tracking is deliberately not used — 
 omitted-because-zero key is indistinguishable from an omitted-because-malformed one, so
 requiring every key would reject responses that are genuinely fine.
 
-**Reddit implements it, but the capability is GATED OFF BY DEFAULT because the entire
-request/response contract is an UNVERIFIED, BEST-EFFORT GUESS**
+**Reddit implements it, but the capability is GATED OFF BY DEFAULT because the contract
+has NOT YET BEEN EXERCISED AGAINST A LIVE AD ACCOUNT**
 (`internal/platform/reddit/metrics.go`). `RedditDispatcher.ReadMetrics` returns
 `domain.ErrMetricsUnsupported` — the same 400 a platform with no metrics support at all
 produces — unless `REDDIT_METRICS_ENABLED` is exactly `"true"`; any other value, including
 unset, fails closed. The gate exists because DECLARING the method is itself the capability
 switch: the orchestrator discovers `MetricsReader` by type assertion and the published
-endpoint invokes it immediately, so an ungated wiring would return 200 from a guessed shape
-and currency unit, with none of the caveats visible in the response. The gate is read per
+endpoint invokes it immediately, so an ungated wiring would return 200 from a contract no
+live call has confirmed, with none of the caveats visible in the response. The gate is read per
 call rather than at construction, so a deployment flips it without a rebuild.
 `REDDIT_METRICS_ENABLED` is declared in `pkg/constants` and wired in the chart's
-`values.yaml`. Once the shape is verified against a live ad account, the gate is deleted. Unlike this client's create/toggle endpoints
-(ported from a working upstream client) and unlike Meta/LinkedIn/X's metrics clients (built
-against each platform's public API docs), Reddit's v3 reporting/metrics endpoint has no public
-documentation — it is gated behind Reddit's developer portal and a private Postman collection.
-The implementation is inferred only from this package's own proven v3 conventions (resource
-nesting, OAuth2 bearer + retry/backoff, the `{"data": ...}` envelope): a `POST
-/ad_accounts/{account_id}/reports` with a guessed `{"data": {starts_at, ends_at, campaign_ids,
-breakdowns, fields}}` body, decimal-string spend (converted to micros ×1e6, rounded), and an
-empty result rows array treated as zero-activity. This was investigated and recorded as BLOCKED
-on LFXV2-2995 before the file was written — treat every field name and the request/response
-shape as a placeholder to be corrected once official Reddit Ads API access confirms the real
-contract, not a confirmed integration.
+`values.yaml`. Once the shape is exercised against a live ad account, the gate is deleted.
+
+The request and response shapes come from Reddit's **official public OpenAPI document**
+(`https://ads-api.reddit.com/api/v3/openapi.json`, "Download Specs" on
+`https://ads-api.reddit.com/docs/v3/`), operation `POST /ad_accounts/{ad_account_id}/reports`.
+This SUPERSEDES the LFXV2-2995 BLOCKED finding recorded here previously, which stated that
+Reddit published no public documentation and that the shape was a guess inferred from this
+package's own v3 conventions. That finding was a claim about what a fetcher could reach, not
+about what exists: the docs site renders client-side. Reading the spec falsified five of the
+six things previously guessed — only the path and method survived; see
+`docs/knowledge/code/internal-platform-reddit.md` for the table.
+
+What remains unverified is narrower and is why the gate stays: no request has been made
+against a live Reddit ad account, so behaviour a schema cannot express — whether a
+zero-activity campaign is omitted or returned as an explicit zero row, and whether the
+account's configured attribution window shifts the numbers — is still unconfirmed.
 
 **X/Twitter** implements it: `twitterMetricsWindow` maps the shared `model.MetricsWindow`
 vocabulary to X Ads' own `MetricsWindow` literals, then `GetCampaignMetrics(ctx, campaignID,
@@ -749,6 +851,95 @@ are pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsN
 Account discovery (`internal/service/connection.go`) still logs the full cause on its 500 arm and
 is not covered by those tests, so this is a per-handler property rather than a service-wide
 guarantee — see `internal-service.md`.
+
+### Shared: the credential resolver cache
+
+`credsSource` caches DECRYPTED credentials (`credcache.go`), keyed by `(projectID, provider)`.
+One cache is shared by every adapter built over the same connection repository and encryptor —
+the eight constructors (`NewGoogleAdsDispatcher` … `NewAudienceBuilder`) each call
+`newCredsSource`, so a cache allocated per `credsSource` would be eight private caches: reuse
+would never cross adapters (HubSpot is resolved by both `HubSpotDispatcher` and `AudienceBuilder`),
+the resident-plaintext bound would silently become eight times `credCacheMaxEntries`, and the
+provider component of the key would be dead. Sharing is keyed on the `(repo, encryptor)` pair
+rather than being process-global, because the same key means a different credential under a
+different database or key.
+Before it, every dispatch, toggle and metrics read re-decrypted the connection and rebuilt the
+platform client — and each client owns its OWN OAuth token cache, so a dashboard polling metrics
+performed a decrypt plus a token exchange per read, with no reuse even for the same project
+seconds apart.
+
+**The cache holds credentials, not connection rows, and that is what makes eviction unnecessary.**
+Every resolve still issues `repo.Get`; the entry records the row `id` and `version` it was
+decrypted from, and the cached value is served only when BOTH match the read that just returned.
+Every mutating statement in `ConnectionRepo` bumps the version (`version = version + 1` in
+`update`, `SetCredential` and `Delete`), so a rotated, re-pointed or revoked credential cannot
+match and the entry is dropped.
+
+The id is checked alongside the version because the version alone does not survive a reconnect:
+`Delete` soft-deletes and `Create` INSERTs a fresh row whose version starts at the column
+`DEFAULT 1`. A project that connected, dispatched once while still at version 1, disconnected and
+reconnected a different ad account would otherwise present the same key at the same version and be
+served the credential of the account it had just disconnected.
+
+This is deliberately not an eviction-hook design. A hook is in-process, so it cannot evict on the
+OTHER replicas — the pod serving the next request need not be the pod that handled the write, and
+a revoked credential would keep being served elsewhere until a TTL expired. Validating against a
+freshly read version removes that failure mode instead of bounding it: the write lands in
+Postgres, which every replica reads, so the first resolve after a rotation misses on every replica
+at once. There is no staleness window to defend and no shared cache store to operate. The cost is
+one indexed single-row SELECT per resolve, which the service already paid.
+
+The key is exact rather than conventional: migration 000001 creates
+`uq_<provider>_connections_project ON <table> (project_id) WHERE status <> 'deleted'` on all seven
+provider tables, so a project cannot hold two live connections for one provider. `Delete`
+soft-deletes, leaving tombstones outside that index, so a reconnect is a new row — a new version
+under the same key, which reads as a miss. The key carries the RESOLVED scope, so a project
+running on the LF system fallback caches under `model.SystemProjectID` and can neither read nor
+poison a project-owned entry.
+
+**The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
+platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
+the token however cheap the credential lookup became — measured at five token-endpoint hits across
+five resolves. `GoogleAdsDispatcher` therefore also caches the built `*googleads.Client`
+(`clientCache`), keyed and validated by the same (row id, version) identity as the credential, so a
+rotation invalidates the client in the same step. A client is exactly as stale as the credential it
+was built from; validating it any more loosely would let a revoked credential keep authenticating
+inside a cached token. The discovery path is deliberately excluded (it builds an account-agnostic
+client with an empty CustomerID), as is adoption's owned-connection path, which is a one-shot
+rather than the polling loop this exists for. `Dispatch` also builds its client directly: it makes
+roughly twenty calls on the one instance, so its token is already amortised across them, and the
+locals it validates inline would become redundant.
+
+Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
+case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
+mints its own token from its own instance cache — measured at 16 exchanges across 16 concurrent
+callers, i.e. a cold key behaved as though there were no cache at all. That is the shape a
+dashboard produces when several panels load at once or a pod restarts.
+
+**The TTL bounds memory residency, not staleness.** Correctness comes from the id+version check;
+the 5-minute TTL and 512-entry LRU cap exist because entries hold plaintext, and an unbounded cache
+would converge on every project's decrypted credentials resident for the life of the pod. It is a
+SLIDING idle window refreshed on each hit, so a credential polled more often than the TTL stays
+resident for as long as it is used — for the pod's lifetime in the dashboard case. That is
+deliberate: continuous reuse is what the cache is for, and an absolute cap would force a
+re-decrypt mid-poll without reducing exposure, since the credential is in memory throughout
+either way. What the window bounds is a credential that has stopped being used.
+
+Concurrent misses are coalesced through `singleflight` keyed by `(project, provider, row id,
+version)` — the same four components the cache entry is validated on, so a burst either side of a
+rotation OR a reconnect cannot be served the other's plaintext — so
+N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
+receives its own clone and builds its own client, and the access token is cached on the client
+INSTANCE, so collapsing the token exchange is the separate job of the client cache below (wired
+today only into Google Ads; Reddit and Microsoft still rebuild per resolve and still re-mint).
+The version in that
+key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
+pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of
+the cached `resolved`, because `resolve` stamps `fromSystem` on the value it returns — a property
+of how that call resolved, not of the credential. Sharing one pointer would both leak that
+attribution across callers and be a write race. The copy is shallow deliberately: the plaintext
+bytes and `providerConfig` map are read-only to every consumer (each adapter only unmarshals the
+blob), so a deep copy would cost an allocation per resolve to defend a mutation nobody makes.
 
 ### HubSpot: email search, not account discovery
 

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), and ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; and geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -688,6 +688,57 @@ in SELECT returns one row aggregated over the whole window, not one row per day.
 Not yet verified against a live Google Ads account with >1 day of data in the
 window.
 
+## Geo targeting (LFXV2-3283)
+
+`geo.go` owns location targeting for BOTH channels. Before it, neither create
+path attached location criteria: `CampaignInput` carried no geo field at all, so
+a campaign created through the service served wherever the ACCOUNT's defaults
+allowed — for an event campaign, most of the budget spent outside the region it
+was bought for.
+
+**Country codes in, Google constants out.** Callers pass ISO 3166-1 alpha-2
+codes (`CampaignInput.GeoTargets`), the vocabulary `metaConfig`/`redditConfig`
+already use. Google Ads does not address locations that way: a location
+criterion carries `geoTargetConstants/{id}`, a NUMERIC constant from Google's
+published table. `geoTargetConstants` maps between them, ported verbatim from the
+legacy Express implementation's `GEO_TARGET_MAP` (`lfx-self-serve`
+`campaign-proxy.service.ts`) so both paths target the same places during the
+cutover. The ids bear NO arithmetic relation to the code (`US`→2840,
+`GB`→2826), so a mis-transcribed entry targets the WRONG COUNTRY while looking
+entirely valid — which is why the map is a curated country subset that is
+reviewed, rather than a fetched data file.
+
+**The attach LEVEL differs per channel, and that is the trap.** Search takes
+CAMPAIGN-level criteria (`campaignCriteria:mutate`); Demand Gen REJECTS those and
+takes the same criterion on the AD GROUP (`adGroupCriteria:mutate`). A single
+implementation attaching at the campaign level works on Search and is refused on
+Demand Gen — after the budget and campaign have already been created and cost
+money. Hence two payload types and two functions named for their level
+(`createCampaignGeoTargeting` / `createAdGroupGeoTargeting`) rather than one with
+a level parameter that a caller could get wrong.
+
+**An unmapped code is REFUSED, not dropped.** `validateGeoTargets` runs in the
+PREFLIGHT, before the first (budget) mutate, so a typo like `"USA"` fails while
+nothing paid exists. Dropping it instead would create a campaign with no criteria
+that spends worldwide and reports success — the exact defect this slice fixes.
+This is the opposite of meta's default-to-`US`, which is safe there only because
+Meta's criteria attach during creation rather than after it. It also runs in
+`ValidateCampaignInput`, so the ADOPTION path (which returns before
+`CreateCampaign`) cannot accept an input the create path would refuse.
+
+**Empty stays a no-op.** No geo targets means no criteria request at all and the
+pre-LFXV2-3283 behaviour, because every caller predating the field omits it and
+failing them outright would break dispatches that work today. The dispatcher logs
+a WARN instead, so an untargeted create is findable in the logs rather than
+inferred from a Google Ads bill. `CampaignResult.GeoCriterionIDs` records what
+was created — campaignCriterion ids on Search, adGroupCriterion ids on Demand
+Gen, so reconcile against the level the channel uses.
+
+Failures follow the same contract as every other post-campaign step: the criteria
+call happens AFTER the campaign exists, so an error is returned ALONGSIDE the
+non-nil result, never as `(nil, err)` that would discard the claim on a campaign
+that spends.
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
@@ -696,7 +747,8 @@ creation (`:mutate`); GA-3a is ad-copy generation and final-URL building
 creation cascade that consumes it; GA-3c is the dispatcher-level
 status-toggle cascade over that ad group/ad; GA-4 is keyword/audience-segment
 targeting on that same ad group; GA-5 is metrics reads (`metrics.go`, see
-above). The orchestrator dispatcher (registering
+above); geo/location targeting (`geo.go`, LFXV2-3283) spans both channels and
+attaches at a different level in each (see "Geo targeting" above). The orchestrator dispatcher (registering
 `google-ads` so briefs dispatch upstream) is wired in
 `internal/dispatch/googleads.go` (LFXV2-2636). Keyword actions
 (pause/adjust an individual keyword post-creation) follow in later GA

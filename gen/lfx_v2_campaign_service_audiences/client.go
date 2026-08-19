@@ -38,6 +38,7 @@ func NewClient(createAudience, getAudience, listAudiences, updateAudience, build
 // "lfx-v2-campaign-service-audiences" service.
 // CreateAudience may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -56,6 +57,7 @@ func (c *Client) CreateAudience(ctx context.Context, p *CreateAudiencePayload) (
 // "lfx-v2-campaign-service-audiences" service.
 // GetAudience may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -74,6 +76,7 @@ func (c *Client) GetAudience(ctx context.Context, p *GetAudiencePayload) (res *A
 // "lfx-v2-campaign-service-audiences" service.
 // ListAudiences may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -92,6 +95,7 @@ func (c *Client) ListAudiences(ctx context.Context, p *ListAudiencesPayload) (re
 // "lfx-v2-campaign-service-audiences" service.
 // UpdateAudience may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -112,6 +116,7 @@ func (c *Client) UpdateAudience(ctx context.Context, p *UpdateAudiencePayload) (
 // "lfx-v2-campaign-service-audiences" service.
 // BuildAudience may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error

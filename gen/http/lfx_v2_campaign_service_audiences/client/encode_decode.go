@@ -17,6 +17,7 @@ import (
 
 	lfxv2campaignserviceaudiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	goahttp "goa.design/goa/v3/http"
+	goa "goa.design/goa/v3/pkg"
 )
 
 // BuildCreateAudienceRequest instantiates a HTTP request object with method
@@ -80,6 +81,7 @@ func EncodeCreateAudienceRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -188,6 +190,31 @@ func DecodeCreateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "create-audience", err)
 			}
 			return nil, NewCreateAudienceNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "create-audience", err)
+			}
+			err = ValidateCreateAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "create-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "create-audience", err)
+			}
+			return nil, NewCreateAudienceUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-audiences", "create-audience", resp.StatusCode, string(body))
@@ -254,6 +281,7 @@ func EncodeGetAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -362,6 +390,31 @@ func DecodeGetAudienceResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "get-audience", err)
 			}
 			return nil, NewGetAudienceNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "get-audience", err)
+			}
+			err = ValidateGetAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "get-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "get-audience", err)
+			}
+			return nil, NewGetAudienceUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-audiences", "get-audience", resp.StatusCode, string(body))
@@ -426,6 +479,7 @@ func EncodeListAudiencesRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListAudiencesResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -527,6 +581,31 @@ func DecodeListAudiencesResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "list-audiences", err)
 			}
 			return nil, NewListAudiencesNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListAudiencesUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "list-audiences", err)
+			}
+			err = ValidateListAudiencesUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "list-audiences", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "list-audiences", err)
+			}
+			return nil, NewListAudiencesUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-audiences", "list-audiences", resp.StatusCode, string(body))
@@ -603,6 +682,7 @@ func EncodeUpdateAudienceRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
 //   - "PreconditionFailed" (type *lfxv2campaignserviceaudiences.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceaudiences.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeUpdateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -739,6 +819,31 @@ func DecodeUpdateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "update-audience", err)
 			}
 			return nil, NewUpdateAudiencePreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "update-audience", err)
+			}
+			err = ValidateUpdateAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "update-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "update-audience", err)
+			}
+			return nil, NewUpdateAudienceUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-audiences", "update-audience", resp.StatusCode, string(body))
@@ -803,6 +908,7 @@ func EncodeBuildAudienceRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeBuildAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -911,6 +1017,31 @@ func DecodeBuildAudienceResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
 			}
 			return nil, NewBuildAudienceNotFound(&body)
+		case http.StatusUnauthorized:
+			var (
+				body BuildAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudienceUnauthorized(&body, wwwAuthenticate)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-audiences", "build-audience", resp.StatusCode, string(body))

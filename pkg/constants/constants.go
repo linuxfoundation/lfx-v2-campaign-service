@@ -38,6 +38,16 @@ const (
 	// to encrypt connection credentials. Sourced from a Kubernetes secret.
 	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
 
+	// EnvCampaignJobRetention is how long a TERMINAL campaign job (succeeded, partial or
+	// failed) is kept before the retention sweeper deletes it — a Go duration string such
+	// as "4320h". Optional: unset uses postgres.DefaultJobRetention (180 days).
+	//
+	// These rows are the audit trail of real ad spend, so both failure modes fall back to
+	// the default rather than to a shorter window: an unparseable value and a non-positive
+	// one both leave the default in place. Shortening retention must be an explicit,
+	// well-formed operator choice, never the accidental result of a typo.
+	EnvCampaignJobRetention = "CAMPAIGN_JOB_RETENTION"
+
 	// EnvEventURLNAT64Prefixes is a comma-separated list of the deployment's
 	// NETWORK-SPECIFIC RFC 6052 NAT64 translation prefixes (e.g. "2001:db8:64::/96").
 	//
@@ -60,6 +70,20 @@ const (
 	// Default-off keeps that from reaching anyone until the contract is verified against a
 	// live Reddit ad account, at which point the default flips and this constant goes away.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
+
+	// EnvMicrosoftMetricsEnabled opts a deployment IN to Microsoft Advertising metrics
+	// reads. Unset or any value other than "true" leaves them off, and the metrics
+	// endpoint answers 400 "not supported for this campaign's platform" for Microsoft
+	// campaigns — the same shape Reddit uses above, for the same reason.
+	//
+	// Microsoft's v13 Reporting contract was implemented from published documentation and
+	// has NOT been exercised against a live Microsoft Advertising account: no credentials
+	// were available. The pipeline is also unlike every other platform's — an asynchronous
+	// submit/poll/download returning a zipped CSV — so there is more surface to be wrong
+	// about than a single JSON GET. Default-off keeps an unverified read from looking
+	// authoritative until someone runs it against a real account, at which point the
+	// default flips and this constant goes away.
+	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
 	// LLM settings, used ONLY to generate email copy (LFXV2-2775). Optional as a GROUP:
 	// with url or key unset, the GenerateEmailCopy endpoint returns 503 (service unavailable).

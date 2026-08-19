@@ -1284,9 +1284,19 @@ type CampaignInput struct {
 // CampaignResult is the outcome of a campaign creation attempt, including a
 // step-by-step log. Mirrors the TS TwitterCampaignCreateResult.
 type CampaignResult struct {
-	Platform        string
-	CampaignName    string
-	CampaignID      string
+	Platform     string
+	CampaignName string
+	CampaignID   string
+	// AccountID is the ad account the campaign was CREATED under. The dispatcher's
+	// twitterCreationAccountID reads it back so a later read/toggle resolving to a
+	// DIFFERENT account is refused rather than addressing the stored campaign id under
+	// the wrong account. Marshalled UNTAGGED like the rest of this struct, so the
+	// persisted key is the Go field name "AccountID" — the reader matches that.
+	//
+	// There is NO recoverable fallback: TwitterURL is the bare ads-manager constant and
+	// carries no account id, so a row written before this field existed records no
+	// provenance and is waved through as "unknown". Only re-dispatch can give it one.
+	AccountID       string
 	LineItemName    string
 	LineItemID      string
 	PromotedTweetID string
@@ -1558,6 +1568,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return &CampaignResult{
 				Platform:     "twitter-ads",
 				CampaignName: campaignName,
+				AccountID:    c.account.AccountID,
 				TwitterURL:   AdsManagerURL,
 				Steps:        steps,
 			}
@@ -1610,6 +1621,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// config-drift signal (the closure reads the current campaignReused/
 			// lineItemReused by reference, so a line-item reuse set below is reflected).
 			Reused:     campaignReused || lineItemReused,
+			AccountID:  c.account.AccountID,
 			TwitterURL: AdsManagerURL,
 			Steps:      steps,
 		}
@@ -1777,10 +1789,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
+		AccountID:            c.account.AccountID,
 		TwitterURL:           AdsManagerURL,
 		Steps:                steps,
 	}, nil
 }
+
+// AccountID reports the ad account id this client is bound to. Exposed so a caller holding
+// only the client can compare it against the account a persisted campaign records — see the
+// dispatcher's twitterCreationAccountID and the account-provenance guard that uses it.
+// Mirrors microsoft.Client.AccountID.
+func (c *Client) AccountID() string { return c.account.AccountID }
 
 // verifyAccount performs a best-effort account lookup, appending a step. It goes
 // through doRequest (an empty path targets the account root) so it gets the SAME
