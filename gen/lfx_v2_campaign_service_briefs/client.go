@@ -64,6 +64,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 // "lfx-v2-campaign-service-briefs" service.
 // CreateBrief may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -82,6 +83,7 @@ func (c *Client) CreateBrief(ctx context.Context, p *CreateBriefPayload) (res *B
 // "lfx-v2-campaign-service-briefs" service.
 // FindBrief may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -100,6 +102,7 @@ func (c *Client) FindBrief(ctx context.Context, p *FindBriefPayload) (res *Brief
 // "lfx-v2-campaign-service-briefs" service.
 // GetBrief may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -118,6 +121,7 @@ func (c *Client) GetBrief(ctx context.Context, p *GetBriefPayload) (res *Brief, 
 // "lfx-v2-campaign-service-briefs" service.
 // UpdateBrief may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -138,6 +142,7 @@ func (c *Client) UpdateBrief(ctx context.Context, p *UpdateBriefPayload) (res *B
 // "lfx-v2-campaign-service-briefs" service.
 // ApproveBrief may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -158,6 +163,7 @@ func (c *Client) ApproveBrief(ctx context.Context, p *ApproveBriefPayload) (res 
 // "lfx-v2-campaign-service-briefs" service.
 // DeleteBrief may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -172,6 +178,7 @@ func (c *Client) DeleteBrief(ctx context.Context, p *DeleteBriefPayload) (err er
 // "lfx-v2-campaign-service-briefs" service.
 // FetchEventURL may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -190,6 +197,7 @@ func (c *Client) FetchEventURL(ctx context.Context, p *FetchEventURLPayload) (re
 // "lfx-v2-campaign-service-briefs" service.
 // CreateCampaigns may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -208,6 +216,7 @@ func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload)
 // "lfx-v2-campaign-service-briefs" service.
 // AdoptCampaign may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -226,6 +235,7 @@ func (c *Client) AdoptCampaign(ctx context.Context, p *AdoptCampaignPayload) (re
 // "lfx-v2-campaign-service-briefs" service.
 // GetCampaign may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -244,6 +254,7 @@ func (c *Client) GetCampaign(ctx context.Context, p *GetCampaignPayload) (res *C
 // "lfx-v2-campaign-service-briefs" service.
 // GetCampaignMetrics may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -262,6 +273,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, p *GetCampaignMetricsPa
 // "lfx-v2-campaign-service-briefs" service.
 // GetCampaignSettings may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -280,6 +292,7 @@ func (c *Client) GetCampaignSettings(ctx context.Context, p *GetCampaignSettings
 // "lfx-v2-campaign-service-briefs" service.
 // GetBriefMetrics may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -298,6 +311,7 @@ func (c *Client) GetBriefMetrics(ctx context.Context, p *GetBriefMetricsPayload)
 // "lfx-v2-campaign-service-briefs" service.
 // GenerateEmailCopy may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -316,6 +330,7 @@ func (c *Client) GenerateEmailCopy(ctx context.Context, p *GenerateEmailCopyPayl
 // "lfx-v2-campaign-service-briefs" service.
 // UpdateCampaign may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -336,6 +351,7 @@ func (c *Client) UpdateCampaign(ctx context.Context, p *UpdateCampaignPayload) (
 // "lfx-v2-campaign-service-briefs" service.
 // ToggleCampaignStatus may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -356,6 +372,7 @@ func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStat
 // "lfx-v2-campaign-service-briefs" service.
 // DeleteCampaign may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -372,6 +389,7 @@ func (c *Client) DeleteCampaign(ctx context.Context, p *DeleteCampaignPayload) (
 // service.
 // GetJob may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
