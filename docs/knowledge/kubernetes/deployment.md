@@ -45,9 +45,11 @@ diagnosed — whether a proxy and key are configured at all.
 
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting
-contract this service implements is UNVERIFIED (LFXV2-2995) — the request and
-response shapes are inferred, not confirmed by Reddit — so the metrics read is
-shipped disabled and a cluster must opt in explicitly. The gate fails closed:
+contract this service implements follows Reddit's official public OpenAPI document
+but has NOT been exercised against a live ad account (LFXV2-3282) — behaviour the
+schema cannot express, such as zero-activity rows and the account's attribution
+window, is still unconfirmed — so the metrics read is shipped disabled and a
+cluster must opt in explicitly. The gate fails closed:
 any value other than exactly `"true"` (including an empty string, `"1"`, or
 `"TRUE"`) leaves the capability off, so a typo in a values override cannot
 accidentally enable an unverified integration. The env var is read per call
