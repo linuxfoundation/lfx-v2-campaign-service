@@ -97,6 +97,45 @@ var BadRequestError = Type("bad-request-error", func() {
 	errorAttrs("400", "The request was invalid.")
 })
 
+// UnauthorizedError is the 401 body for a token JWTAuth refused: absent, expired,
+// wrongly signed, or accepted by the verifier without naming a principal.
+//
+// It is a SEPARATE type from BadRequestError rather than the same type mapped to a
+// second status, because Goa keys a method's error encoder on the error NAME: one type
+// under two names would still need two `Error(...)` declarations, and one name cannot
+// carry two statuses. The two are also genuinely different answers — 400 says the
+// request was malformed and must not be retried unchanged; 401 says the request was
+// well-formed and the credential is what needs replacing, which is a retry after a
+// refresh. A client cannot derive that split from a status it shares with payload
+// validation, which is the whole reason for this type (RFC 9110 §15.5.2).
+//
+// `www_authenticate` is an ATTRIBUTE, not a constant emitted by the framework: Goa's
+// Response-level Header() maps an attribute of the error type onto a response header,
+// and has no form that writes a fixed string. Making it a field of the error is what
+// gets `WWW-Authenticate: Bearer` onto the wire at all. `Required` states that the
+// challenge is part of the contract — RFC 9110 §15.5.2 makes it mandatory on a 401 —
+// but it is a DESIGN-TIME declaration, not a runtime guarantee on the response path:
+// the generated field is a plain `string`, and the server encoder writes whatever it
+// holds, so service code constructing this error with an empty value still emits a bare
+// 401. What `Required` buys is the generated CLIENT decoder, which rejects a 401 whose
+// `Www-Authenticate` header is empty (`goa.MissingFieldError`), plus the openapi
+// contract. Populating the field is the handlers' job — every one of them fills it from
+// the shared `bearerChallenge` constant, and
+// TestEveryConnectionUnauthorizedEncoderSetsTheChallenge is what keeps that true.
+//
+// The message stays as opaque as the 400 it replaces. The status distinguishes "your
+// credential is the problem" from "your payload is the problem"; it deliberately does
+// NOT distinguish expired from wrongly-signed from unattributed, because that only
+// tells an attacker which part to fix next. See internal/service/auth.go's
+// `authenticate` and TestAuthenticate_RejectionMessagesAreOpaque.
+var UnauthorizedError = Type("unauthorized-error", func() {
+	errorAttrs("401", "Unauthorized.")
+	Attribute("www_authenticate", String, "Authentication challenge (RFC 9110 §15.5.2)", func() {
+		Example("Bearer")
+	})
+	Required("www_authenticate")
+})
+
 var NotFoundError = Type("not-found-error", func() {
 	errorAttrs("404", "The connection was not found.")
 })
@@ -188,6 +227,37 @@ func commonConnectionRequired() {
 	Required("id", "project_id", "account_id", "has_credentials", "status", "version", "etag")
 }
 
+// authErrors declares the two errors a SECURED method must carry regardless of whether
+// it accepts a body, and connectionAuthErrorResponses maps them.
+//
+// They exist as a pair for the same reason commonBriefErrors/briefErrorResponses do: a
+// declared error with no Response mapping encodes exactly like an undeclared one — a 500
+// — so the two are only correct if neither can be called without the other. The
+// connections service declares its errors inline per method rather than through one
+// `commonConnectionErrors`, because the eleven methods genuinely differ past this point
+// (create has Conflict, update has the two precondition errors, the reads have NotFound).
+// What they do NOT differ in is the security scheme, so the auth pair is factored out
+// and the rest stays inline.
+//
+// Unauthorized is what JWTAuth returns now; BadRequest remains for payload and
+// path-parameter validation, which the bodyless reads still reach through the generated
+// decoder (create-* constrains project_id to a slug Pattern). See the type comments on
+// UnauthorizedError and the note in commonBriefErrors.
+func authErrors() {
+	Error("BadRequest", BadRequestError, "Bad request")
+	Error("Unauthorized", UnauthorizedError, "Unauthorized")
+}
+
+// connectionAuthErrorResponses maps the pair authErrors declares. The Header call maps
+// the error type's www_authenticate attribute onto the WWW-Authenticate response header;
+// without it the challenge would serialize into the JSON body instead (RFC 9110 §15.5.2).
+func connectionAuthErrorResponses() {
+	Response("BadRequest", StatusBadRequest)
+	Response("Unauthorized", StatusUnauthorized, func() {
+		Header("www_authenticate:WWW-Authenticate")
+	})
+}
+
 // ─── Per-provider method helper ───
 
 // connectionMethods emits the six singleton endpoints for one provider under
@@ -217,14 +287,15 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 		})
 		Result(result)
 		// BadRequest on THIS method also covers payload validation, but that is not why
-		// every method below declares it too. JWTAuth returns *conn.BadRequestError when
-		// a token is refused, and Goa generates the error encoder from THIS list: a
-		// method that omits BadRequest has no case for it, so the typed 400 falls through
-		// to the generic encoder and reaches the caller as a 500 — undocumented in
-		// OpenAPI, and telling a client with a bad credential to treat it as a server
-		// fault. The declaration is what makes JWTAuth's mapping real, so it is required
-		// on every method carrying bearerToken(), payload or no payload.
-		Error("BadRequest", BadRequestError, "Bad request")
+		// every method below declares the auth pair too. JWTAuth returns
+		// *conn.UnauthorizedError when a token is refused, and Goa generates the error
+		// encoder from THIS list: a method that omits Unauthorized has no case for it, so
+		// the typed 401 falls through to the generic encoder and reaches the caller as a
+		// 500 — undocumented in OpenAPI, and telling a client with an expired credential
+		// to treat it as a server fault. The declaration is what makes JWTAuth's mapping
+		// real, so authErrors() is required on every method carrying bearerToken(),
+		// payload or no payload.
+		authErrors()
 		Error("Conflict", ConflictError, "A connection already exists for this provider on the project")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -234,7 +305,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Response(StatusCreated, func() {
 				Header("etag:ETag")
 			})
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -249,10 +320,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(result)
-		// BadRequest is declared on EVERY secured method, including the reads and the
-		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// The auth pair is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can refuse a token — and a refusal it cannot encode
 		// becomes a 500. See the comment on the create method's copy.
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -262,7 +333,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Response(StatusOK, func() {
 				Header("etag:ETag")
 			})
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -284,7 +355,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id", "config")
 		})
 		Result(result)
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
@@ -297,7 +368,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Response(StatusOK, func() {
 				Header("etag:ETag")
 			})
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("NotFound", StatusNotFound)
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
@@ -313,10 +384,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			projectIDAttr()
 			Required("project_id")
 		})
-		// BadRequest is declared on EVERY secured method, including the reads and the
-		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// The auth pair is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can refuse a token — and a refusal it cannot encode
 		// becomes a 500. See the comment on the create method's copy.
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -324,7 +395,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			DELETE("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -339,10 +410,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(TestResult)
-		// BadRequest is declared on EVERY secured method, including the reads and the
-		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// The auth pair is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can refuse a token — and a refusal it cannot encode
 		// becomes a 500. See the comment on the create method's copy.
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -350,7 +421,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			POST("/projects/{project_id}/connection-" + key + "/test")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -365,7 +436,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Attribute("credentials", creds)
 			Required("project_id", "credentials")
 		})
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -373,7 +444,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			POST("/projects/{project_id}/connection-" + key + "/set-credential")
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -839,7 +910,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
@@ -847,7 +918,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -877,7 +948,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
@@ -885,7 +956,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -912,7 +983,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
@@ -920,7 +991,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -946,7 +1017,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
@@ -954,7 +1025,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -997,7 +1068,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("emails")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("BadRequest", BadRequestError, "Bad request")
+		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
@@ -1006,7 +1077,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
-			Response("BadRequest", StatusBadRequest)
+			connectionAuthErrorResponses()
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

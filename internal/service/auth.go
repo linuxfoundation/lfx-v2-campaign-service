@@ -23,6 +23,19 @@ type TokenVerifier interface {
 // actorCtxKey is the context key under which the authenticated actor is stored.
 type actorCtxKey struct{}
 
+// bearerChallenge is the WWW-Authenticate value sent with every 401. RFC 9110 §15.5.2
+// requires a 401 to carry at least one challenge, and Goa emits this one by mapping the
+// generated error's WwwAuthenticate field onto the header (see design/connection.go's
+// UnauthorizedError) — so an empty string here would produce a spec-violating bare 401
+// rather than no header at all.
+//
+// It is the bare scheme, with no `realm` and no `error="invalid_token"` parameter. Both
+// are optional, and both would reintroduce exactly what the opaque message avoids: an
+// `error` code names WHICH check failed, which is the reason-specific signal
+// TestAuthenticate_RejectionMessagesAreOpaque exists to keep off the wire. The three
+// services share the one constant so a challenge cannot drift between them.
+const bearerChallenge = "Bearer"
+
 // authGuard holds the token verifier shared by the three authenticated services, embedded
 // rather than duplicated so all three admit one answer to "is this token good?".
 type authGuard struct {
@@ -56,14 +69,13 @@ func (g *authGuard) HasTokenVerifier() bool {
 //
 // The bool says whose fault the failure is: true when THIS service could not perform the
 // check (no verifier wired, Heimdall's JWKS unreachable), false when the token itself was
-// refused. Callers map the first to 503 and the second to 400. Both were 400 before, and
-// the harm was on the UNAVAILABLE side specifically: during a JWKS outage no token is
-// checked at all, so a caller holding a perfectly valid credential was told it was bad and
-// told not to retry a condition that clears when the dependency recovers. The 400 branch
-// itself is not that case — it answers a credential that was absent or genuinely refused,
-// for which "your credential is bad, do not retry" is the correct answer. The verdict is
-// not derivable from the message — "invalid bearer token" is deliberately the same string
-// for every token-side refusal — so it is returned separately rather than sniffed.
+// refused. Callers map the first to 503 and the second to 401. The SECOND was 400 before,
+// which classified an absent or refused credential as a MALFORMED REQUEST, and told the
+// caller not to retry a token a refresh would fix. The first has always answered 503 and is
+// untouched here: during a JWKS outage no token is checked at all, so that is the only
+// branch that can involve a credential which is genuinely valid. The verdict is not
+// derivable from the message — "invalid bearer token" is deliberately the same string for
+// every token-side refusal — so it is returned separately rather than sniffed.
 //
 // A nil verifier REJECTS rather than bypasses: before
 // this, a request reaching the pod without passing Heimdall had its claims believed, so

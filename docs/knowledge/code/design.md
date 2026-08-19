@@ -27,9 +27,12 @@ mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, n
 immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
 is required) — so a status-only or suppression-only patch is valid without resending
 the immutable platform. Every method is gated on `campaign_manager` at the gateway via
-`JWTAuth`, which can reject any request with a `BadRequest` (400) — so every brief,
-audience **and connection** method declares `BadRequest` regardless of whether it accepts
-a body. The binding `platforms` selection is constrained to the known provider enum.
+`JWTAuth`, which can reject any request with an `Unauthorized` (401, carrying a
+`WWW-Authenticate: Bearer` challenge) — so every brief, audience **and connection** method
+declares `Unauthorized`, and still declares `BadRequest` for payload/path validation,
+regardless of whether it accepts a body. The 401 arrived with LFXV2-3057; before it a
+refused token and an invalid payload shared one status, which a client cannot act on
+differently even though the remedies are opposite. The binding `platforms` selection is constrained to the known provider enum.
 
 **A declared error is not documentation; it is the encoder.** Goa builds each method's
 error encoder from that method's `Error(...)` list, so a typed error the method does not
@@ -38,11 +41,21 @@ and the real status appears nowhere in OpenAPI. Nothing on the Go side shows it:
 compiles, the handler returns the correct typed error, and only the wire status is wrong.
 `JWTAuth`'s refusal is exactly such an error, which is why the declaration follows the
 security scheme rather than the payload: a bodyless `GET` needs it as much as a create.
-`TestEveryConnectionMethodEncodesBadRequest`
-(`internal/service/connection_badrequest_encoder_test.go`) pins this by parsing the
-**generated** encoders and requiring a `case "BadRequest"` in every `Encode*Error` — it
-reads generated source rather than driving a list of encoders because the case that must
-fail is a *newly added* provider method, which no hand-maintained list would contain.
+`TestEverySecuredMethodEncodesAuthErrors`
+(`internal/service/connection_auth_encoder_test.go`) pins this by parsing the
+**generated** encoders and requiring a `case` for BOTH `"BadRequest"` and `"Unauthorized"`
+in every `Encode*Error` — it reads generated source rather than driving a list of encoders
+because the case that must fail is a *newly added* provider method, which no
+hand-maintained list would contain. It parses all three generated encoder files, because
+briefs and audiences declare these errors through `commonBriefErrors()` (`design/brief.go`),
+a separately maintained helper from connections' `authErrors()`. `Unauthorized` is the arm that matters for `JWTAuth`:
+its refusal is returned on every method, including bodyless `GET`s that declare no
+`BadRequest` payload at all.
+
+The same file's `TestEveryConnectionUnauthorizedEncoderSetsTheChallenge` covers the second
+half of the contract — that each generated `Unauthorized` arm emits the
+`WWW-Authenticate: Bearer` challenge header, not merely the 401 status, since RFC 9110
+requires the challenge on a 401 and only the generated encoder can put it on the wire.
 `commonBriefErrors()`/`briefErrorResponses()` take no arguments for the same reason: an
 earlier `withBadRequest bool` that had stopped gating anything was removed rather than kept
 for call-site readability, since a parameter that could be passed `false` is a way back to

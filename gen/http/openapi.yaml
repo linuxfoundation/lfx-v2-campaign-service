@@ -60,6 +60,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -141,6 +152,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -220,6 +242,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -310,6 +343,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -389,6 +433,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -473,6 +528,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -557,6 +623,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -642,6 +719,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -727,6 +815,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -823,6 +922,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -916,6 +1026,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -997,6 +1118,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1083,6 +1215,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1180,6 +1323,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1270,6 +1424,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1379,6 +1544,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1477,6 +1653,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1581,6 +1768,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1654,6 +1852,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1741,6 +1950,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1814,6 +2034,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1891,6 +2122,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -1980,6 +2222,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -2032,6 +2285,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2089,6 +2353,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2149,6 +2424,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2206,6 +2492,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2272,6 +2569,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2349,6 +2657,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2438,6 +2757,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -2490,6 +2820,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2552,6 +2893,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2612,6 +2964,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2669,6 +3032,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2735,6 +3109,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2812,6 +3197,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -2901,6 +3297,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -2953,6 +3360,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3010,6 +3428,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3070,6 +3499,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3127,6 +3567,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3193,6 +3644,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3270,6 +3732,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3359,6 +3832,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -3411,6 +3895,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3468,6 +3963,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3528,6 +4034,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3585,6 +4102,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3651,6 +4179,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3728,6 +4267,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3817,6 +4367,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -3869,6 +4430,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3926,6 +4498,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -3986,6 +4569,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4043,6 +4637,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4109,6 +4714,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4186,6 +4802,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4275,6 +4902,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -4327,6 +4965,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4387,6 +5036,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4444,6 +5104,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4510,6 +5181,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4587,6 +5269,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4676,6 +5369,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "409":
                     description: Conflict response.
                     schema:
@@ -4728,6 +5432,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4788,6 +5503,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4845,6 +5571,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4911,6 +5648,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -4982,6 +5730,17 @@ paths:
                         required:
                             - code
                             - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
                 "404":
                     description: Not Found response.
                     schema:
@@ -7853,6 +8612,25 @@ definitions:
             - consumer_secret
             - access_token
             - access_token_secret
+    UnauthorizedError:
+        title: UnauthorizedError
+        type: object
+        properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "401"
+            message:
+                type: string
+                description: Error message
+                example: Unauthorized.
+        description: Unauthorized
+        example:
+            code: "401"
+            message: Unauthorized.
+        required:
+            - code
+            - message
 securityDefinitions:
     jwt_header_Authorization:
         type: apiKey

@@ -805,6 +805,16 @@ type CreateGoogleAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateGoogleAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -839,6 +849,16 @@ type GetGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetGoogleAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -905,6 +925,16 @@ type UpdateGoogleAdsPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateGoogleAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -939,6 +969,16 @@ type DeleteGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteGoogleAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -985,6 +1025,16 @@ type TestGoogleAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestGoogleAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1019,6 +1069,16 @@ type SetCredentialGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialGoogleAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1068,6 +1128,16 @@ type CreateLinkedinAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateLinkedinAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetLinkedinAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1102,6 +1172,16 @@ type GetLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetLinkedinAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1168,6 +1248,16 @@ type UpdateLinkedinAdsPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateLinkedinAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteLinkedinAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1202,6 +1292,16 @@ type DeleteLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteLinkedinAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1248,6 +1348,16 @@ type TestLinkedinAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestLinkedinAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialLinkedinAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1282,6 +1392,16 @@ type SetCredentialLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialLinkedinAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1331,6 +1451,16 @@ type CreateMetaAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMetaAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1365,6 +1495,16 @@ type GetMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetMetaAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1431,6 +1571,16 @@ type UpdateMetaAdsPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteMetaAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1465,6 +1615,16 @@ type DeleteMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteMetaAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1511,6 +1671,16 @@ type TestMetaAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type TestMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialMetaAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1545,6 +1715,16 @@ type SetCredentialMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialMetaAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1594,6 +1774,16 @@ type CreateRedditAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateRedditAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetRedditAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1628,6 +1818,16 @@ type GetRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetRedditAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1694,6 +1894,16 @@ type UpdateRedditAdsPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateRedditAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteRedditAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1728,6 +1938,16 @@ type DeleteRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteRedditAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1774,6 +1994,16 @@ type TestRedditAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestRedditAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialRedditAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1808,6 +2038,16 @@ type SetCredentialRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialRedditAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1857,6 +2097,16 @@ type CreateTwitterAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateTwitterAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetTwitterAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1891,6 +2141,16 @@ type GetTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetTwitterAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1957,6 +2217,16 @@ type UpdateTwitterAdsPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateTwitterAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteTwitterAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1991,6 +2261,16 @@ type DeleteTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteTwitterAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2037,6 +2317,16 @@ type TestTwitterAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestTwitterAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialTwitterAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2071,6 +2361,16 @@ type SetCredentialTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialTwitterAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2120,6 +2420,16 @@ type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type CreateMicrosoftAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMicrosoftAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2154,6 +2464,16 @@ type GetMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2220,6 +2540,16 @@ type UpdateMicrosoftAdsPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type UpdateMicrosoftAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteMicrosoftAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2254,6 +2584,16 @@ type DeleteMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type DeleteMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type DeleteMicrosoftAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2300,6 +2640,16 @@ type TestMicrosoftAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestMicrosoftAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialMicrosoftAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2334,6 +2684,16 @@ type SetCredentialMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialMicrosoftAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2383,6 +2743,16 @@ type CreateHubspotInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateHubspotUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetHubspotBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -2417,6 +2787,16 @@ type GetHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type GetHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetHubspotUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2483,6 +2863,16 @@ type UpdateHubspotPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateHubspotUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteHubspotBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -2517,6 +2907,16 @@ type DeleteHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type DeleteHubspotUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2563,6 +2963,16 @@ type TestHubspotNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type TestHubspotUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialHubspotBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2597,6 +3007,16 @@ type SetCredentialHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialHubspotUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2643,6 +3063,16 @@ type ListGoogleAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListGoogleAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListGoogleAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2677,6 +3107,16 @@ type ListMetaAdsAccountsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "NotFound" error.
 type ListMetaAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaAdsAccountsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2723,6 +3163,16 @@ type ListLinkedinAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListLinkedinAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListLinkedinAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMicrosoftAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2763,6 +3213,16 @@ type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMicrosoftAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMicrosoftAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListHubspotEmailsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2797,6 +3257,16 @@ type ListHubspotEmailsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "NotFound" error.
 type ListHubspotEmailsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListHubspotEmailsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ListHubspotEmailsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -3593,6 +4063,17 @@ func NewCreateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewCreateGoogleAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "create-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateGoogleAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateGoogleAdsUnauthorizedResponseBody {
+	body := &CreateGoogleAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetGoogleAdsBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -3631,6 +4112,17 @@ func NewGetGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewGetGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetGoogleAdsNotFoundResponseBody {
 	body := &GetGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetGoogleAdsUnauthorizedResponseBody {
+	body := &GetGoogleAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3703,6 +4195,17 @@ func NewUpdateGoogleAdsPreconditionRequiredResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewUpdateGoogleAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "update-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateGoogleAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateGoogleAdsUnauthorizedResponseBody {
+	body := &UpdateGoogleAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteGoogleAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "delete-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -3741,6 +4244,17 @@ func NewDeleteGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteGoogleAdsNotFoundResponseBody {
 	body := &DeleteGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteGoogleAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteGoogleAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteGoogleAdsUnauthorizedResponseBody {
+	body := &DeleteGoogleAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3791,6 +4305,17 @@ func NewTestGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewTestGoogleAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "test-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestGoogleAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestGoogleAdsUnauthorizedResponseBody {
+	body := &TestGoogleAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialGoogleAdsBadRequestResponseBody builds the HTTP response
 // body from the result of the "set-credential-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -3829,6 +4354,17 @@ func NewSetCredentialGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaign
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialGoogleAdsNotFoundResponseBody {
 	body := &SetCredentialGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialGoogleAdsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "set-credential-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialGoogleAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialGoogleAdsUnauthorizedResponseBody {
+	body := &SetCredentialGoogleAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3880,6 +4416,17 @@ func NewCreateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 	return body
 }
 
+// NewCreateLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateLinkedinAdsUnauthorizedResponseBody {
+	body := &CreateLinkedinAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetLinkedinAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "get-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -3918,6 +4465,17 @@ func NewGetLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewGetLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetLinkedinAdsNotFoundResponseBody {
 	body := &GetLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetLinkedinAdsUnauthorizedResponseBody {
+	body := &GetLinkedinAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3990,6 +4548,17 @@ func NewUpdateLinkedinAdsPreconditionRequiredResponseBody(res *lfxv2campaignserv
 	return body
 }
 
+// NewUpdateLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateLinkedinAdsUnauthorizedResponseBody {
+	body := &UpdateLinkedinAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteLinkedinAdsBadRequestResponseBody builds the HTTP response body
 // from the result of the "delete-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4028,6 +4597,17 @@ func NewDeleteLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteLinkedinAdsNotFoundResponseBody {
 	body := &DeleteLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteLinkedinAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteLinkedinAdsUnauthorizedResponseBody {
+	body := &DeleteLinkedinAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4078,6 +4658,17 @@ func NewTestLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 	return body
 }
 
+// NewTestLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestLinkedinAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestLinkedinAdsUnauthorizedResponseBody {
+	body := &TestLinkedinAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialLinkedinAdsBadRequestResponseBody builds the HTTP response
 // body from the result of the "set-credential-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4116,6 +4707,17 @@ func NewSetCredentialLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campai
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialLinkedinAdsNotFoundResponseBody {
 	body := &SetCredentialLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialLinkedinAdsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "set-credential-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialLinkedinAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialLinkedinAdsUnauthorizedResponseBody {
+	body := &SetCredentialLinkedinAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4167,6 +4769,17 @@ func NewCreateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewCreateMetaAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateMetaAdsUnauthorizedResponseBody {
+	body := &CreateMetaAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMetaAdsBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4205,6 +4818,17 @@ func NewGetMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconne
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMetaAdsNotFoundResponseBody {
 	body := &GetMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsUnauthorizedResponseBody builds the HTTP response body from the
+// result of the "get-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMetaAdsUnauthorizedResponseBody {
+	body := &GetMetaAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4277,6 +4901,17 @@ func NewUpdateMetaAdsPreconditionRequiredResponseBody(res *lfxv2campaignservicec
 	return body
 }
 
+// NewUpdateMetaAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateMetaAdsUnauthorizedResponseBody {
+	body := &UpdateMetaAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteMetaAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "delete-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4315,6 +4950,17 @@ func NewDeleteMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteMetaAdsNotFoundResponseBody {
 	body := &DeleteMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMetaAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "delete-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMetaAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteMetaAdsUnauthorizedResponseBody {
+	body := &DeleteMetaAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4365,6 +5011,17 @@ func NewTestMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.Not
 	return body
 }
 
+// NewTestMetaAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "test-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMetaAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestMetaAdsUnauthorizedResponseBody {
+	body := &TestMetaAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialMetaAdsBadRequestResponseBody builds the HTTP response body
 // from the result of the "set-credential-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4403,6 +5060,17 @@ func NewSetCredentialMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMetaAdsNotFoundResponseBody {
 	body := &SetCredentialMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMetaAdsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "set-credential-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMetaAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialMetaAdsUnauthorizedResponseBody {
+	body := &SetCredentialMetaAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4454,6 +5122,17 @@ func NewCreateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewCreateRedditAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateRedditAdsUnauthorizedResponseBody {
+	body := &CreateRedditAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetRedditAdsBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4492,6 +5171,17 @@ func NewGetRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewGetRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetRedditAdsNotFoundResponseBody {
 	body := &GetRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetRedditAdsUnauthorizedResponseBody {
+	body := &GetRedditAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4564,6 +5254,17 @@ func NewUpdateRedditAdsPreconditionRequiredResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewUpdateRedditAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateRedditAdsUnauthorizedResponseBody {
+	body := &UpdateRedditAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteRedditAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "delete-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4602,6 +5303,17 @@ func NewDeleteRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteRedditAdsNotFoundResponseBody {
 	body := &DeleteRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteRedditAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteRedditAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteRedditAdsUnauthorizedResponseBody {
+	body := &DeleteRedditAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4652,6 +5364,17 @@ func NewTestRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewTestRedditAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestRedditAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestRedditAdsUnauthorizedResponseBody {
+	body := &TestRedditAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialRedditAdsBadRequestResponseBody builds the HTTP response
 // body from the result of the "set-credential-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4690,6 +5413,17 @@ func NewSetCredentialRedditAdsInternalServerErrorResponseBody(res *lfxv2campaign
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialRedditAdsNotFoundResponseBody {
 	body := &SetCredentialRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialRedditAdsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "set-credential-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialRedditAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialRedditAdsUnauthorizedResponseBody {
+	body := &SetCredentialRedditAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4741,6 +5475,17 @@ func NewCreateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewCreateTwitterAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateTwitterAdsUnauthorizedResponseBody {
+	body := &CreateTwitterAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetTwitterAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "get-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4779,6 +5524,17 @@ func NewGetTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewGetTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetTwitterAdsNotFoundResponseBody {
 	body := &GetTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetTwitterAdsUnauthorizedResponseBody {
+	body := &GetTwitterAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4851,6 +5607,17 @@ func NewUpdateTwitterAdsPreconditionRequiredResponseBody(res *lfxv2campaignservi
 	return body
 }
 
+// NewUpdateTwitterAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateTwitterAdsUnauthorizedResponseBody {
+	body := &UpdateTwitterAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteTwitterAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "delete-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4889,6 +5656,17 @@ func NewDeleteTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteTwitterAdsNotFoundResponseBody {
 	body := &DeleteTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteTwitterAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteTwitterAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteTwitterAdsUnauthorizedResponseBody {
+	body := &DeleteTwitterAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4939,6 +5717,17 @@ func NewTestTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.
 	return body
 }
 
+// NewTestTwitterAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestTwitterAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestTwitterAdsUnauthorizedResponseBody {
+	body := &TestTwitterAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialTwitterAdsBadRequestResponseBody builds the HTTP response
 // body from the result of the "set-credential-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4977,6 +5766,17 @@ func NewSetCredentialTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaig
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialTwitterAdsNotFoundResponseBody {
 	body := &SetCredentialTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialTwitterAdsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "set-credential-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialTwitterAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialTwitterAdsUnauthorizedResponseBody {
+	body := &SetCredentialTwitterAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5028,6 +5828,17 @@ func NewCreateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 	return body
 }
 
+// NewCreateMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateMicrosoftAdsUnauthorizedResponseBody {
+	body := &CreateMicrosoftAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsBadRequestResponseBody builds the HTTP response body from
 // the result of the "get-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5066,6 +5877,17 @@ func NewGetMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMicrosoftAdsNotFoundResponseBody {
 	body := &GetMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMicrosoftAdsUnauthorizedResponseBody {
+	body := &GetMicrosoftAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5138,6 +5960,17 @@ func NewUpdateMicrosoftAdsPreconditionRequiredResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewUpdateMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateMicrosoftAdsUnauthorizedResponseBody {
+	body := &UpdateMicrosoftAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteMicrosoftAdsBadRequestResponseBody builds the HTTP response body
 // from the result of the "delete-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5176,6 +6009,17 @@ func NewDeleteMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteMicrosoftAdsNotFoundResponseBody {
 	body := &DeleteMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMicrosoftAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteMicrosoftAdsUnauthorizedResponseBody {
+	body := &DeleteMicrosoftAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5226,6 +6070,17 @@ func NewTestMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnection
 	return body
 }
 
+// NewTestMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMicrosoftAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestMicrosoftAdsUnauthorizedResponseBody {
+	body := &TestMicrosoftAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialMicrosoftAdsBadRequestResponseBody builds the HTTP response
 // body from the result of the "set-credential-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5264,6 +6119,17 @@ func NewSetCredentialMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campa
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMicrosoftAdsNotFoundResponseBody {
 	body := &SetCredentialMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMicrosoftAdsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "set-credential-microsoft-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMicrosoftAdsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialMicrosoftAdsUnauthorizedResponseBody {
+	body := &SetCredentialMicrosoftAdsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5315,6 +6181,17 @@ func NewCreateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewCreateHubspotUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateHubspotUnauthorizedResponseBody {
+	body := &CreateHubspotUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetHubspotBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5353,6 +6230,17 @@ func NewGetHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconne
 // "lfx-v2-campaign-service-connections" service.
 func NewGetHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetHubspotNotFoundResponseBody {
 	body := &GetHubspotNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetHubspotUnauthorizedResponseBody builds the HTTP response body from the
+// result of the "get-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetHubspotUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetHubspotUnauthorizedResponseBody {
+	body := &GetHubspotUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5425,6 +6313,17 @@ func NewUpdateHubspotPreconditionRequiredResponseBody(res *lfxv2campaignservicec
 	return body
 }
 
+// NewUpdateHubspotUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *UpdateHubspotUnauthorizedResponseBody {
+	body := &UpdateHubspotUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteHubspotBadRequestResponseBody builds the HTTP response body from
 // the result of the "delete-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5463,6 +6362,17 @@ func NewDeleteHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteHubspotNotFoundResponseBody {
 	body := &DeleteHubspotNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteHubspotUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "delete-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteHubspotUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *DeleteHubspotUnauthorizedResponseBody {
+	body := &DeleteHubspotUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5513,6 +6423,17 @@ func NewTestHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.Not
 	return body
 }
 
+// NewTestHubspotUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "test-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestHubspotUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *TestHubspotUnauthorizedResponseBody {
+	body := &TestHubspotUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialHubspotBadRequestResponseBody builds the HTTP response body
 // from the result of the "set-credential-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5551,6 +6472,17 @@ func NewSetCredentialHubspotInternalServerErrorResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialHubspotNotFoundResponseBody {
 	body := &SetCredentialHubspotNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialHubspotUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "set-credential-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialHubspotUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SetCredentialHubspotUnauthorizedResponseBody {
+	body := &SetCredentialHubspotUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5601,6 +6533,17 @@ func NewListGoogleAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconne
 	return body
 }
 
+// NewListGoogleAdsAccountsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-google-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListGoogleAdsAccountsUnauthorizedResponseBody {
+	body := &ListGoogleAdsAccountsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMetaAdsAccountsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-meta-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5639,6 +6582,17 @@ func NewListMetaAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignser
 // "lfx-v2-campaign-service-connections" service.
 func NewListMetaAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMetaAdsAccountsNotFoundResponseBody {
 	body := &ListMetaAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsAccountsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMetaAdsAccountsUnauthorizedResponseBody {
+	body := &ListMetaAdsAccountsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5689,6 +6643,17 @@ func NewListLinkedinAdsAccountsNotFoundResponseBody(res *lfxv2campaignservicecon
 	return body
 }
 
+// NewListLinkedinAdsAccountsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListLinkedinAdsAccountsUnauthorizedResponseBody {
+	body := &ListLinkedinAdsAccountsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMicrosoftAdsAccountsBadRequestResponseBody builds the HTTP response
 // body from the result of the "list-microsoft-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5733,6 +6698,17 @@ func NewListMicrosoftAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewListMicrosoftAdsAccountsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-microsoft-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMicrosoftAdsAccountsUnauthorizedResponseBody {
+	body := &ListMicrosoftAdsAccountsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListHubspotEmailsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-hubspot-emails" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5771,6 +6747,17 @@ func NewListHubspotEmailsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewListHubspotEmailsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListHubspotEmailsNotFoundResponseBody {
 	body := &ListHubspotEmailsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListHubspotEmailsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListHubspotEmailsUnauthorizedResponseBody {
+	body := &ListHubspotEmailsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
