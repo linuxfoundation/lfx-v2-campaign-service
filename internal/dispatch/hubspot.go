@@ -365,7 +365,10 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// the clone id) so the orchestrator retains the claim and the email is reconcilable, and
 	// surface the error so the caller verifies rather than reporting a clean success.
 	if _, serr := client.SetSendList(ctx, email.ID, masterListID, suppressionIDs); serr != nil {
-		camp := campaignFromHubSpot(ctx, email, cfg, portalID)
+		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
+		// and a local here would leave the named return nil for any later edit that turns this
+		// into a bare `return` or inserts a statement before it.
+		camp = campaignFromHubSpot(ctx, email, cfg, portalID)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 

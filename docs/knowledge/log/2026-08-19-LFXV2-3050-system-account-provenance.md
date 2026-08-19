@@ -70,6 +70,44 @@ would commit us to a wire contract for a column whose consumers are reporting qu
 The live tests RAN (not skipped) against PostgreSQL 16.10 via `TEST_DATABASE_URL`; the
 in-memory suite alone would not have caught the `DEFAULT FALSE` or `COALESCE` mutations.
 
+**What the local review trio added, and it was the important part.** Two reviewers
+independently found the same hole by mutation: the seven `defer res.stampProvenance(camp)`
+calls — the ONLY thing moving provenance from the credential onto the campaign — had no test.
+Deleting one left `res` used elsewhere in that `Dispatch`, so the package still COMPILED and
+the entire suite stayed green. The three original test files each covered a piece in
+isolation (`stampProvenance` called directly; the orchestrator handed a campaign that already
+carried the flag) and nothing ran a real `Dispatch` and looked at the field. The change's own
+argument — that a defer beats seventeen per-return edits because a future exit cannot be
+missed — was the one claim nothing held in place, and deleting a defer was every bit as
+silent as forgetting a return site would have been.
+
+`TestAllDispatchers_StampProvenanceOnEveryCampaignReturn` closes it with one case per
+dispatcher over both credential scopes, and
+`TestReddit_DispatchStampsProvenanceEndToEnd` adds the error-carrying exits (the UNCONFIRMED
+create, which returns a campaign ALONGSIDE an error). All seven mutations now COMPILE and
+FAIL, each naming its own dispatcher.
+
+The first version of that table was itself the bug it was written to prevent: pointing all
+seven at one 5xx server made nine of fourteen cases hit `t.Skip` (most adapters return
+`(nil, err)` rather than a partial when a create fails outright), so it reported PASS while
+asserting almost nothing. The skip is now a FAILURE naming the dispatcher, and every case
+drives a real successful create against that adapter's own fake API. Getting there surfaced
+four real contract details a skipping test would have hidden: LinkedIn's config key is
+`linkedInConfig` (capital I) so the wrong key silently decoded to an empty config, its
+by-name search requires a `metadata` block, Meta needs `currencyOffset` to skip FX
+derivation, and **HubSpot never reaches the system fallback at all** — `systemConn` refuses
+it for non-paid-ads providers, because HubSpot is a CRM portal and falling back would write
+one project's contacts into the LF's own portal. The table encodes that rule rather than
+asserting a behaviour the service deliberately does not have.
+
+Three smaller review findings landed with it: `hubspot.go`'s partial-return site assigned a
+LOCAL `camp :=` rather than the named return (correct today, fragile to any later edit);
+`stampProvenance`'s overwrite-vs-preserve asymmetry is now documented as intended ("I know"
+always wins, "I do not know" never overwrites); and the `adoptCampaignQuery` comment was
+narrowed, because the two adoption paths genuinely differ — `AdoptCampaign` records NULL
+while google-ads' in-dispatch adoption stamps, since one resolved a credential and the other
+was handed an id by a caller.
+
 Three existing fixtures in `campaign_repo_test.go` asserted the old 20-column shape and were
 updated — `TestScanCampaign_MapsEachColumnToItsField` (now also proves the new column maps to
 its field), `TestScanCampaign_NullActorsDecodeToNil` (now pins that NULL does not decode to

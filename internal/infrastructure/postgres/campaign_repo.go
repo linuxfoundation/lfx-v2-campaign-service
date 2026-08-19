@@ -495,12 +495,19 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // leaving 'demand-gen' free for a later dispatch to fill with a SECOND paid campaign — the
 // exact duplicate the caller-side fix was written to prevent. The conflict target reads the
 // same column, so a hardcoded literal also made the DO NOTHING arm arbitrate the wrong slot.
-// ran_on_system_account is absent from the column list, so an adopted row reads back NULL
-// ("unknown"). That is the honest answer rather than a gap: adoption BINDS a campaign that
-// already exists upstream, created outside this service's dispatch path — possibly by hand in
-// the platform's own UI — so which credential paid for it is genuinely not known here.
-// Stamping the adopting caller's connection would assert a fact about spend that already
-// happened on an account we never observed.
+// ran_on_system_account is absent from the column list, so a row bound by THIS entry point
+// reads back NULL ("unknown"). That is the honest answer rather than a gap: AdoptCampaign
+// binds a campaign that already exists upstream, created outside this service's dispatch path
+// — possibly by hand in the platform's own UI — so which credential paid for it is genuinely
+// not known here. Stamping the adopting caller's current connection would assert a fact about
+// spend that already happened on an account this service never observed.
+//
+// The service's OTHER adoption path deliberately differs, and the divergence is the point
+// rather than an inconsistency. `GoogleAdsDispatcher.Dispatch` can adopt an existing upstream
+// campaign mid-dispatch (campaignFromGoogleAdsAdoption); that return happens with the
+// resolved credential in scope, so the deferred stampProvenance DOES record which account
+// served it. The two paths answer differently because they genuinely know different things:
+// one resolved a credential and used it, the other was handed an id by a caller.
 const adoptCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
 	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)

@@ -634,8 +634,24 @@ func (r *resolved) cacheIdentity(projectID string, provider model.Provider) (cre
 // credential that was never resolved (r == nil) knows nothing to stamp with — in both
 // cases the campaign keeps whatever it had, which for a nil resolved is "unknown" (NULL),
 // never a fabricated false.
+//
+// The write is UNCONDITIONAL when the credential is known, and that is deliberate rather
+// than incidental. `r` is the credential the campaign was actually created with, so it is
+// the authority on which account paid; a value already sitting on the struct can only have
+// come from the dispatcher's own campaignFromX, which does not know. Writing only when the
+// field is nil would make the outcome depend on construction order, and would silently keep
+// a wrong answer if a builder ever started guessing one.
+//
+// A copy of the bool is taken before its address: `&r.fromSystem` would alias every campaign
+// stamped from one cached credential onto a single bool, so a later write through any of
+// them would rewrite provenance on campaigns already persisted. Pinned by
+// TestStampProvenance_CopiesRatherThanAliasing.
 func (r *resolved) stampProvenance(c *model.Campaign) {
 	if c == nil || r == nil {
+		// A nil credential knows nothing, so it must not claim anything. It leaves the field
+		// as it found it, which for a freshly-built campaign is nil — "unknown" — and never a
+		// fabricated false. This asymmetry with the write above is intended: "I know" always
+		// wins, "I do not know" never overwrites.
 		return
 	}
 	fromSystem := r.fromSystem
