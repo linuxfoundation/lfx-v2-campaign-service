@@ -1,4 +1,4 @@
-# 2026-08-19: LFXV2-3324 parity test tightening
+# 2026-08-19 — LFXV2-3324 parity test tightening
 
 **Update** — Tightened `assertProjectAPIAuthz` in `charts/lfx-v2-campaign-service/parity_test.go` to assert that the `project-api` rule includes the `project_slug_resolver_contextualizer` AND that the `openfga_check` object field specifically reads `.Outputs.project_slug_resolver_contextualizer.uid`.
 

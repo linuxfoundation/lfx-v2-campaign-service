@@ -172,19 +172,25 @@ spec:
         # Heimdall and not something to depend on. Hence two mutually
         # exclusive openfga_check entries below (one per branch) instead of
         # one entry with a fallback expression.
+        #
+        # The UUID regex below is defined once ($uuidRe) and referenced in all
+        # three if: guards so the slug/UUID branches provably stay exact
+        # negations of each other instead of three hand-maintained copies that
+        # could drift apart.
+        {{- $uuidRe := "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" }}
         - contextualizer: project_slug_resolver_contextualizer
-          if: '!Request.URL.Captures.projectId.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")'
+          if: '!Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
           config:
             values:
               slug: "{{ "{{- .Request.URL.Captures.projectId -}}" }}"
         - authorizer: openfga_check
-          if: '!Request.URL.Captures.projectId.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")'
+          if: '!Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
           config:
             values:
               relation: campaign_manager
               object: "project:{{ "{{- .Outputs.project_slug_resolver_contextualizer.uid -}}" }}"
         - authorizer: openfga_check
-          if: 'Request.URL.Captures.projectId.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")'
+          if: 'Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
           config:
             values:
               relation: campaign_manager

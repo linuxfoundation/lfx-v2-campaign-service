@@ -152,24 +152,46 @@ func extractRulePatterns(t *testing.T, ruleset string) []string {
 // specifically uses the resolved UID, not merely that the raw capture appears
 // somewhere in the block (which would still pass even if someone accidentally reverted
 // the object field back to the slug).
+//
+// It also pins the second, UUID-branch openfga_check (raw Captures.projectId object,
+// no contextualizer/resolver involved) and the exact-negation relationship between the
+// two branches' if: guards. Without this, a future edit could drop or mis-guard the
+// UUID-branch check entirely — every UUID-form :projectId (the historical
+// migration-000003 rows) would then fall through both slug-branch guards and reach no
+// openfga_check at all, an authz bypass that the slug-only assertions above would not
+// catch.
 func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	t.Helper()
 	block := ruleBlock(t, ruleset, projectAPIRuleID)
-	if !strings.Contains(block, "authorizer: openfga_check") {
-		t.Errorf("%s rule must use the openfga_check authorizer (not allow_all/deny_all):\n%s", projectAPIRuleID, block)
+	if got := strings.Count(block, "authorizer: openfga_check"); got != 2 {
+		t.Errorf("%s rule must have exactly 2 openfga_check authorizers (one per UUID/slug branch), got %d:\n%s", projectAPIRuleID, got, block)
 	}
-	if !strings.Contains(block, "relation: campaign_manager") {
-		t.Errorf("%s rule must gate on relation campaign_manager:\n%s", projectAPIRuleID, block)
+	if got := strings.Count(block, "relation: campaign_manager"); got != 2 {
+		t.Errorf("%s rule must gate both branches on relation campaign_manager, got %d occurrences:\n%s", projectAPIRuleID, got, block)
 	}
 	// The contextualizer must be present to resolve the project slug to a UID.
 	if !strings.Contains(block, "contextualizer: project_slug_resolver_contextualizer") {
 		t.Errorf("%s rule must include project_slug_resolver_contextualizer to resolve project slug to UID:\n%s", projectAPIRuleID, block)
 	}
-	// The object must reference the resolved UID from the contextualizer, not the raw slug.
-	// This assertion pins the exact field to prevent accidental reverts that would leave
-	// Captures.projectId lingering in the slug input but missing from the security-relevant object field.
+	// The slug branch's object must reference the resolved UID from the contextualizer,
+	// not the raw slug. This assertion pins the exact field to prevent accidental
+	// reverts that would leave Captures.projectId lingering in the slug input but
+	// missing from the security-relevant object field.
 	if !strings.Contains(block, "object: \"project:") || !strings.Contains(block, ".Outputs.project_slug_resolver_contextualizer.uid") {
 		t.Errorf("%s rule must scope the object to project:{resolved-uid} via .Outputs.project_slug_resolver_contextualizer.uid:\n%s", projectAPIRuleID, block)
+	}
+	// The UUID branch's object must read the raw capture directly, never the resolver's
+	// Outputs (which are undocumented/unsafe when the contextualizer is skipped).
+	if !strings.Contains(block, "object: \"project:{{- .Request.URL.Captures.projectId -}}\"") {
+		t.Errorf("%s rule must have a second openfga_check whose object reads the raw project:{{- .Request.URL.Captures.projectId -}} capture (the UUID branch):\n%s", projectAPIRuleID, block)
+	}
+	// Both if: guards must be present and be exact negations of each other so exactly
+	// one branch fires for any given :projectId value.
+	if !strings.Contains(block, `if: '!Request.URL.Captures.projectId.matches(`) {
+		t.Errorf("%s rule must have a negative if: guard (slug branch) on Captures.projectId:\n%s", projectAPIRuleID, block)
+	}
+	if !strings.Contains(block, `if: 'Request.URL.Captures.projectId.matches(`) {
+		t.Errorf("%s rule must have a positive if: guard (UUID branch) on Captures.projectId:\n%s", projectAPIRuleID, block)
 	}
 }
 
