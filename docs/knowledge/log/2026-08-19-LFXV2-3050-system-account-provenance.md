@@ -90,10 +90,11 @@ create, which returns a campaign ALONGSIDE an error). All seven mutations now CO
 FAIL, each naming its own dispatcher.
 
 **The mutation had to be chosen carefully, and the first choice was wrong.** Deleting the
-defer line outright does NOT compile for reddit or hubspot — `res` is used by nothing else in
-those two `Dispatch` bodies, so the compiler rejects it. A build break is not evidence that a
-test covers anything, so recording those two as "killed by mutation" would have overstated
-the proof. The honest analogue of a real regression keeps `res` used and the defer present
+defer line outright leaves `res` unused in any `Dispatch` that reads it nowhere else, and the
+compiler rejects that — at the time of writing, reddit and hubspot, though that list moves
+with any edit to a `Dispatch` body, which is the point. A build break is not evidence that a
+test covers anything, so recording those as "killed by mutation" would have overstated the
+proof. The honest analogue of a real regression keeps `res` used and the defer present
 while dropping only the effect:
 
     defer func() { _ = res }()   // compiles everywhere; provenance never stamped

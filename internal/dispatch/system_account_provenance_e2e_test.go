@@ -158,10 +158,13 @@ type campaignDispatcher interface {
 // seventeen per-return edits were rejected in favour of seven defers precisely so a future
 // exit could not be missed, and nothing held the seven in place.
 //
-// Choose the mutation carefully when re-checking this. DELETING the defer line does not
-// compile for reddit or hubspot, whose Dispatch bodies use `res` for nothing else, and a
-// build break is not evidence that any test covers anything. The honest analogue of a
-// regression keeps `res` used and the defer present, dropping only the effect:
+// Choose the mutation carefully when re-checking this. DELETING the defer line leaves `res`
+// unused in any Dispatch that reads it nowhere else, and the compiler rejects that — a build
+// break is not evidence that any test covers anything, so a sweep done that way silently
+// proves nothing for those dispatchers. (At the time of writing that is reddit and hubspot,
+// but do not rely on the list: it changes with any edit to a Dispatch body, which is exactly
+// why the mutation should not depend on it.) The honest analogue of a regression keeps `res`
+// used and the defer present, dropping only the effect:
 //
 //	defer func() { _ = res }()
 //
