@@ -403,9 +403,31 @@ likewise an error carrying the campaign id (for reconciliation), never a warning
 the ad-group cascade. An empty `GeoTargets` is still legal and still means "serve everywhere" —
 that is the pre-existing behaviour, and the decision belongs to the caller.
 
-`CampaignResult.GeoCriterionIDs` reports what THIS RUN attached. On a retry that reuses an
-existing campaign it is empty even though the targeting exists upstream, because this client
-calls no criterion read.
+**A REUSED campaign is NOT re-attached**, and the asymmetry with keywords is deliberate.
+`AddKeywords` may be re-posted to a reused ad group because Microsoft actively REFUSES a
+duplicate keyword (`CampaignServiceDuplicateKeyword` 1517 /
+`CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists` 1542), which turns a re-post into a
+reconcile. `AddCampaignCriterions` publishes **no equivalent refusal** for a location criterion,
+so a re-post would APPEND a second copy of every location — and the dispatcher retries by design
+(`NameSuffix = brief.ID` composes the same name so the lookup reuses the campaign), meaning
+every retry would widen the criterion list on a live paid campaign. Without a documented
+duplicate rejection to rely on, skipping is the only safe direction: the targeting a previous
+run attached is still there.
+
+`CampaignResult.GeoCriterionIDs` therefore reports what THIS RUN attached. On a retry that
+reuses an existing campaign it is empty even though the targeting exists upstream, because this
+client calls no criterion read — the steps line says so explicitly rather than leaving the
+absence to be inferred.
+
+**The refresh runs DETACHED.** Its result is shared by every concurrent waiter, so running it on
+the leader's own context published one caller's cancellation to all of them — and since a geo
+failure aborts the create before any mutating call, one client's timeout made unrelated campaign
+creates refuse. The fetch now runs on a `context.WithoutCancel` goroutine under its own
+`geoFetchTimeout`, publishing under a `defer` so a panic in the JSON/gzip/CSV path cannot leave
+the single-flight slot occupied and wedge every later caller. The download also uses a shallow
+COPY of the HTTP client with `Timeout: geoDownloadTimeout`: `http.Client.Timeout` covers the
+body read and is not extended by a longer context, so the shared 30s client would otherwise have
+capped a multi-MiB transfer regardless of the context deadline.
 
 ## Ad-account discovery
 

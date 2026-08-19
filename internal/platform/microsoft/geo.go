@@ -147,13 +147,17 @@ type geoLocations struct {
 	fetchedAt time.Time
 }
 
-// geoLocationsFileURLResponse is the POST /GeoLocationsFileUrl/Query 200 body. Only FileUrl
-// is required here; LastModifiedTimeUtc is decoded because Microsoft's documented sync
-// pattern keys off it, and carrying it makes a future conditional-refresh cheap.
+// geoLocationsFileURLResponse is the (subset of the) POST /GeoLocationsFileUrl/Query 200 body.
+//
+// Only FileUrl is decoded. The response also carries FileUrlExpiryTimeUtc and
+// LastModifiedTimeUtc, and both are deliberately OMITTED rather than decoded-and-ignored: this
+// client re-requests the URL on every refresh (so the expiry is never consulted) and refreshes
+// on a TTL rather than conditionally (so the last-modified is never compared). A field that is
+// parsed but never read is a claim that something checks it. Microsoft's documented sync
+// pattern — store LastModifiedTimeUtc and skip the download when it has not advanced — is a
+// worthwhile future optimisation, and that is when the field should be added.
 type geoLocationsFileURLResponse struct {
-	FileURL             string `json:"FileUrl"`
-	FileURLExpiryTimeUv string `json:"FileUrlExpiryTimeUtc"`
-	LastModifiedTimeUtc string `json:"LastModifiedTimeUtc"`
+	FileURL string `json:"FileUrl"`
 }
 
 // geoLocationsFileURLRequest is the POST body. CompressionType requests GZip, the only
@@ -293,18 +297,51 @@ func (c *Client) geoLocationsSnapshot(ctx context.Context) (*geoLocations, error
 	c.geo.inflight = fetch
 	c.geo.mu.Unlock()
 
-	snap, err := c.fetchGeoLocations(ctx)
+	// Run the fetch DETACHED, exactly as accessTokenValue does, and for the same reason: the
+	// result is SHARED. Running it on the leader's own ctx meant one caller's cancellation or
+	// timeout published that error to every follower — including followers whose own context
+	// was still live — so an unrelated create could be failed by a peer's cancel. Since a geo
+	// failure aborts CreateCampaign before any mutating call, that turned one client's timeout
+	// into other campaigns refusing to create.
+	//
+	// The goroutine publishes under a DEFER so a panic anywhere in the fetch (JSON, gzip, CSV,
+	// or a caller-supplied RoundTripper) still clears inflight and closes done. Without it a
+	// panic left inflight set and done never closed, and every later caller waited on that
+	// channel forever — a permanent wedge of geo resolution for the process.
+	go func() {
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), geoFetchTimeout)
+		defer cancel()
 
-	c.geo.mu.Lock()
-	fetch.snap, fetch.err = snap, err
-	if err == nil {
-		c.geo.snapshot = snap
+		var (
+			snap *geoLocations
+			err  error
+		)
+		defer func() {
+			if r := recover(); r != nil {
+				// Convert the panic into an error for the waiters rather than letting it escape
+				// this goroutine and take the process down.
+				err = fmt.Errorf("microsoft-ads geo locations fetch panicked: %v", r)
+				snap = nil
+			}
+			c.geo.mu.Lock()
+			fetch.snap, fetch.err = snap, err
+			if err == nil {
+				c.geo.snapshot = snap
+			}
+			c.geo.inflight = nil
+			c.geo.mu.Unlock()
+			close(fetch.done)
+		}()
+		snap, err = c.fetchGeoLocations(fetchCtx)
+	}()
+
+	// The leader then waits on the same channel a follower does, so it is cancellable too.
+	select {
+	case <-fetch.done:
+		return fetch.snap, fetch.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("microsoft-ads geo location lookup aborted while awaiting the locations file: %w", ctx.Err())
 	}
-	c.geo.inflight = nil
-	c.geo.mu.Unlock()
-	close(fetch.done)
-
-	return snap, err
 }
 
 // fetchGeoLocations performs the two-step download: resolve a temporary file URL via
@@ -364,27 +401,48 @@ func (c *Client) fetchGeoLocations(ctx context.Context) (*geoLocations, error) {
 // truncated table resolves fewer countries, which fails closed, but reporting it as a clean
 // parse would hide a real problem.
 func (c *Client) downloadGeoFile(ctx context.Context, fileURL string) ([]byte, error) {
-	// The download is a large transfer, so it gets its own timeout rather than the
-	// per-call msAdsRequestTimeout sized for a JSON API round trip.
+	// The download is a large transfer, so it gets its own budget rather than the per-call
+	// msAdsRequestTimeout sized for a JSON API round trip.
+	//
+	// The CONTEXT deadline alone is not enough, and that was a real defect here: the shared
+	// c.httpClient carries Timeout: msAdsRequestTimeout (30s), and http.Client.Timeout covers
+	// connect + headers + THE BODY READ, and is NOT extended by a longer context. A multi-MiB
+	// CSV on a slow link therefore died at 30s while this code claimed a 3-minute budget —
+	// and because resolution is fail-closed, that failed the whole campaign create. So the
+	// download runs on a SHALLOW COPY of the client whose Timeout is the download budget,
+	// preserving the no-follow redirect policy (a redirect could carry the signed URL
+	// elsewhere).
 	reqCtx, cancel := context.WithTimeout(ctx, geoDownloadTimeout)
 	defer cancel()
 
+	dl := *c.httpClient
+	dl.Timeout = geoDownloadTimeout
+	dl.CheckRedirect = noFollow
+
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fileURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("microsoft-ads geo locations file request could not be built: %w", err)
+		// The cause is NOT wrapped: net/url builds a *url.Error carrying the full URL, and this
+		// URL is a pre-signed storage link whose query string IS the credential. Mirrors
+		// downloadReport in metrics.go, which documents the same reasoning.
+		return nil, errors.New("microsoft-ads geo locations file request could not be built")
 	}
 	// Ask for gzip explicitly AND handle it manually below, because CompressionType:GZip
 	// makes the stored object gzip-encoded content rather than a transfer encoding the
 	// transport would transparently undo.
 	req.Header.Set("Accept-Encoding", "gzip")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := dl.Do(req)
 	if err != nil {
 		// The URL can embed a signature; never echo the *url.Error (which carries the full
 		// URL) into an error that may be persisted on a campaign step.
 		return nil, fmt.Errorf("microsoft-ads geo locations file download failed: %s", safeCause(err))
 	}
-	defer func() { _ = resp.Body.Close() }()
+	// Drain before close so the connection returns to the idle pool: a body closed unread
+	// forces the next request to reopen TCP and TLS. Mirrors downloadReport in metrics.go.
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxGeoFileBytes))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// Status only — the body of a storage error can echo the signed URL.
@@ -507,7 +565,12 @@ func parseGeoLocations(raw []byte) (map[string]string, error) {
 			continue
 		}
 		if len(out) >= maxGeoFileRows {
-			break
+			// REFUSE rather than break. A silent truncation returns a partial map that parses
+			// cleanly, gets cached for geoCacheTTL, and then fails every create whose country
+			// happened to sit past the cap — with an error blaming the operator's geo code.
+			// The byte cap is deliberately sized +1 so an overflow is DETECTED; this must be
+			// detectable for the same reason.
+			return nil, fmt.Errorf("microsoft-ads geo locations file contains more than %d active country rows, which exceeds this client's limit", maxGeoFileRows)
 		}
 		out[name] = id
 	}

@@ -82,6 +82,12 @@ const (
 	// the advertising audience.
 	msAdsScope = "https://ads.microsoft.com/msads.manage offline_access"
 
+	// geoFetchTimeout bounds one WHOLE locations refresh — the GeoLocationsFileUrl/Query call
+	// plus the file download plus the parse. The refresh runs on a context DETACHED from any
+	// one caller (its result is shared by every concurrent waiter), so it needs a bound of its
+	// own or a hung download would pin the single-flight slot indefinitely.
+	geoFetchTimeout = 4 * time.Minute
+
 	// geoDownloadTimeout bounds the geographical-locations FILE download. It is much
 	// larger than msAdsRequestTimeout because that value sizes a JSON API round trip,
 	// while this is a multi-MiB CSV transfer; reusing the API timeout would make the

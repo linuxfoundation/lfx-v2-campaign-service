@@ -57,7 +57,7 @@ concurrent creates trigger ONE multi-MiB download. The download carries no devel
 bearer — the URL is pre-signed storage on another host — and the size cap applies to the
 DECOMPRESSED stream.
 
-**Testing.** 22 tests, each mutation-tested with a compiling revert: reordering resolve after
+**Testing.** Client-level and dispatch-level tests, each mutation-tested with a compiling revert: reordering resolve after
 the campaign create, `Targets`→`Location`, ignoring nested `BatchErrors`, degrading a geo
 rejection to a warning, ignoring `Status`, positional column parsing, silently dropping an
 unresolvable code, leaking credentials onto the download, disabling the cache, admitting

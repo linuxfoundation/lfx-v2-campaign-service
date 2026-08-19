@@ -13,10 +13,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // geoFileHeader is the version 2.0 header row, transcribed from Microsoft's published
@@ -69,6 +71,8 @@ type geoAPI struct {
 	criterionBody   string
 	criterionStatus int
 	criterionSeen   *createCampaignCriterionsRequest
+	// campaignQueryBody scripts the campaign name lookup (default: absent).
+	campaignQueryBody string
 	// fileServerURL is filled in by newGeoClient.
 	fileServerURL string
 	// downloads counts locations-file downloads, for the cache/coalescing tests.
@@ -138,7 +142,7 @@ func (g *geoAPI) handler(t *testing.T) http.HandlerFunc {
 			decodeTo(t, r, g.criterionSeen)
 			writeStatusOr(w, g.criterionStatus, g.criterionBody, `{"CampaignCriterionIds":[9001],"NestedPartialErrors":[]}`)
 		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
-			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+			writeOr(w, g.campaignQueryBody, `{"Campaigns":[]}`)
 		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
 			_, _ = io.WriteString(w, `{"AdGroups":[]}`)
 		case strings.HasSuffix(p, "/Ads/QueryByAdGroupId"):
@@ -673,4 +677,192 @@ func TestDownloadGeoFile_SendsNoCredentials(t *testing.T) {
 	if gotDev != "" {
 		t.Errorf("the storage download must not carry a DeveloperToken header, got %q", gotDev)
 	}
+}
+
+// ---- error classification arms + reuse behaviour ---------------------------
+//
+// These pin the branches a coverage run showed were never executed. The `default` (rejected)
+// arm was covered; the UNCONFIRMED and aborted arms were not, and they carry the operationally
+// load-bearing instruction — "a blind retry would duplicate them". A reordering of the switch,
+// or dropping the errNoID disjunct, would otherwise stay green while a duplicate-criteria
+// hazard got reported as a plain rejection.
+
+// A malformed 2xx on the criterion POST is UNCONFIRMED, not a clean rejection: the criteria may
+// exist, so the caller must verify rather than blindly retry.
+func TestCreateCampaign_GeoAttachMalformedResponseIsUnconfirmed(t *testing.T) {
+	g := &geoAPI{
+		fileBody: geoFileFixture(geoRowUS),
+		// A 200 whose id array is short: the response does not describe what was sent.
+		criterionBody: `{"CampaignCriterionIds":[],"NestedPartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a malformed criterion response must not be reported as success")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error %q must classify as UNCONFIRMED so the caller verifies before retrying", err)
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Fatal("the partial must carry the campaign id for reconciliation")
+	}
+	if g.sawPath("/AdGroups") {
+		t.Error("the cascade must stop when geo targeting is unconfirmed")
+	}
+}
+
+// createCampaignCriterions must carry OUT the ids it did create alongside the error. Those ids
+// are what a reconciler needs to avoid re-attaching criteria that already exist; returning nil
+// with the error would make a reconciliation duplicate them.
+func TestCreateCampaignCriterions_PartialSuccessCarriesCreatedIDs(t *testing.T) {
+	g := &geoAPI{
+		fileBody: geoFileFixture(geoRowUS, geoRowJP),
+		criterionBody: `{"CampaignCriterionIds":[9001,null],"NestedPartialErrors":[` +
+			`{"BatchErrors":[{"ErrorCode":"CampaignServiceInvalidLocationCriterion","Index":1}],"Index":1}]}`,
+	}
+	c := newGeoClient(t, g)
+
+	ids, err := c.createCampaignCriterions(context.Background(), "321", []string{"190", "182"})
+	if err == nil {
+		t.Fatal("a partial rejection must still be an error")
+	}
+	if !errors.Is(err, errPartialFailure) {
+		t.Fatalf("error = %v, want errPartialFailure", err)
+	}
+	if len(ids) != 1 || ids[0] != "9001" {
+		t.Fatalf("created ids = %v, want [9001] — the ids that DID land must be carried out", ids)
+	}
+}
+
+// A REUSED campaign must NOT be re-attached. AddCampaignCriterions publishes no duplicate
+// refusal (unlike AddKeywords' 1517/1542), and the dispatcher retries by design with a stable
+// name, so re-posting would append a second copy of every location on a live paid campaign.
+func TestCreateCampaign_ReusedCampaignDoesNotReattachGeo(t *testing.T) {
+	g := &geoAPI{fileBody: geoFileFixture(geoRowUS)}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+
+	// Make the name lookup find an existing campaign, driving the reuse path.
+	name := composeName(in)
+	g.campaignQueryBody = `{"Campaigns":[{"Id":321,"Name":` + strconv.Quote(name) + `}]}`
+
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if g.sawPath("/CampaignCriterions") {
+		t.Fatal("a reused campaign must NOT be re-attached — re-posting would duplicate every location criterion")
+	}
+}
+
+// A file with more active country rows than this client retains must be REFUSED, not silently
+// truncated. A truncated map parses cleanly, is cached for geoCacheTTL, and then fails every
+// create whose country happened to sit past the cap — with an error that blames the operator's
+// geo code rather than the truncation. The byte cap is sized +1 so an overflow is DETECTED;
+// the row cap must be detectable for the same reason.
+func TestParseGeoLocations_RefusesAFileExceedingTheRowCap(t *testing.T) {
+	rows := make([]string, 0, maxGeoFileRows+1)
+	for i := 0; i < maxGeoFileRows+1; i++ {
+		rows = append(rows, fmt.Sprintf("%d,Country Number %d,Country,,Active,%d", 1000+i, i, 5000+i))
+	}
+	if _, err := parseGeoLocations([]byte(geoFileFixture(rows...))); err == nil {
+		t.Fatal("a file exceeding the row cap must be refused, not silently truncated into a partial map")
+	}
+}
+
+// A leader whose OWN context is cancelled must not fail followers whose contexts are live. The
+// refresh result is SHARED, so running it on the leader's context published one caller's
+// cancellation to every waiter — and because a geo failure aborts CreateCampaign before any
+// mutating call, one client's timeout made unrelated campaign creates refuse.
+func TestGeoLocations_LeaderCancellationDoesNotFailLiveFollowers(t *testing.T) {
+	release := make(chan struct{})
+	var served atomic.Int32
+
+	fileSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served.Add(1)
+		<-release // hold the download open until both callers are waiting
+		_, _ = io.WriteString(w, geoFileFixture(geoRowUS))
+	}))
+	t.Cleanup(fileSrv.Close)
+
+	g := &geoAPI{}
+	g.fileServerURL = fileSrv.URL + "/geolocations.csv"
+	c := newAPIClient(t, g.handler(t))
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() {
+		_, err := c.resolveGeoTargets(leaderCtx, []string{"US"})
+		leaderErr <- err
+	}()
+
+	// Wait until the leader is actually inside the download, then start a follower.
+	for served.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	followerErr := make(chan error, 1)
+	followerIDs := make(chan []string, 1)
+	go func() {
+		ids, err := c.resolveGeoTargets(context.Background(), []string{"US"})
+		followerIDs <- ids
+		followerErr <- err
+	}()
+	// Give the follower a moment to attach to the in-flight fetch, then cancel the LEADER.
+	time.Sleep(20 * time.Millisecond)
+	cancelLeader()
+	close(release)
+
+	if err := <-leaderErr; err == nil {
+		t.Error("the cancelled leader should see its own cancellation")
+	}
+	if err := <-followerErr; err != nil {
+		t.Fatalf("a follower with a LIVE context must not be failed by the leader's cancellation: %v", err)
+	}
+	if ids := <-followerIDs; len(ids) != 1 || ids[0] != "190" {
+		t.Fatalf("follower ids = %v, want [190]", ids)
+	}
+}
+
+// A panic inside the leader's fetch must not wedge geo resolution for the process. Before the
+// deferred publish, a panic left `inflight` set and `done` never closed, so every later caller
+// waited on that channel forever.
+func TestGeoLocations_PanicInFetchDoesNotWedgeLaterCallers(t *testing.T) {
+	g := &geoAPI{fileBody: geoFileFixture(geoRowUS)}
+	c := newGeoClient(t, g)
+
+	// Panic ONLY on the locations-file download. A blanket panicking transport would fire
+	// inside accessTokenValue's own refresh goroutine instead, which is pre-existing code and
+	// not what this test is about.
+	c.httpClient = &http.Client{Transport: panicOnGeoFile{base: http.DefaultTransport}}
+
+	if _, err := c.resolveGeoTargets(context.Background(), []string{"US"}); err == nil {
+		t.Fatal("a panicking fetch must surface as an error, not a success")
+	}
+
+	// The real assertion: a LATER caller on a background context must not hang. Before the fix
+	// this blocked forever on a `done` channel nobody closed.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.resolveGeoTargets(context.Background(), []string{"US"})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a caller after a panicking fetch hung forever — inflight was never cleared")
+	}
+}
+
+// panicOnGeoFile panics when the locations FILE is fetched, and passes everything else
+// (notably the OAuth token exchange) through untouched.
+type panicOnGeoFile struct{ base http.RoundTripper }
+
+func (p panicOnGeoFile) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.Contains(r.URL.Path, "geolocations") {
+		panic("simulated panic during the locations-file download")
+	}
+	return p.base.RoundTrip(r)
 }

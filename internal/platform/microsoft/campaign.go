@@ -669,7 +669,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// A geo failure is NOT downgraded to a warning. An untargeted campaign is the harm this
 	// ticket exists to prevent, so the caller gets an error and a partial carrying the
 	// campaign id, which is what a reconciliation needs to either finish or delete the tree.
-	if len(geoLocationIDs) > 0 {
+	//
+	// SKIPPED ON A REUSED CAMPAIGN, and that asymmetry with keywords is deliberate. The
+	// keyword step re-posts to a reused ad group because Microsoft actively REFUSES a
+	// duplicate keyword (CampaignServiceDuplicateKeyword 1517 /
+	// CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists 1542), which makes a re-post
+	// a reconcile. AddCampaignCriterions publishes NO equivalent refusal for a location
+	// criterion, so a re-post would APPEND a second copy of every location — and the
+	// dispatcher retries by design (NameSuffix = brief.ID composes the same name so the
+	// lookup reuses the campaign), which means every retry would widen the criterion list on
+	// a live paid campaign. Without a documented duplicate rejection to rely on, not posting
+	// is the only safe direction: the targeting a previous run attached is still there.
+	//
+	// The cost is that GeoCriterionIDs is empty on a reused campaign even though the campaign
+	// IS targeted upstream — this client calls no criterion read, so the ids are simply not
+	// knowable to this run. That is reported rather than papered over (see
+	// CampaignResult.GeoCriterionIDs).
+	if len(geoLocationIDs) > 0 && !alreadyExisted {
 		geoIDs, gerr := c.createCampaignCriterions(ctx, campaignID, geoLocationIDs)
 		if gerr != nil {
 			partial := campaignPartial()
@@ -685,6 +701,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		geoCriterionIDs = geoIDs
 		steps = append(steps, fmt.Sprintf("Geo targeting attached: %d location criteria (%s)", len(geoIDs), strings.Join(geoCodes, ", ")))
+	} else if len(geoLocationIDs) > 0 {
+		// Reused campaign: say so explicitly rather than leaving the absence to be inferred.
+		steps = append(steps, fmt.Sprintf("Geo targeting NOT re-attached: campaign %s already existed and keeps the location criteria a previous run attached (%s); re-posting would duplicate them, and this client calls no criterion read to enumerate them", campaignID, strings.Join(geoCodes, ", ")))
 	}
 
 	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
@@ -694,7 +713,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, geoCriterionIDs: geoCriterionIDs})
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
