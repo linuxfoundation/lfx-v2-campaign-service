@@ -224,8 +224,14 @@ func TestGoogleAdsKeywordActions_UnknownCreationAccountFailsClosed(t *testing.T)
 }
 
 func TestGoogleAdsKeywordActions_HappyPathReturnsOutcomes(t *testing.T) {
-	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// The client resolves each criterion's TYPE before mutating; 333~777 is a positive
+		// keyword, so the mutate proceeds.
+		if strings.Contains(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777","negative":false},"adGroup":{"id":"333"}}]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/333~777"}]}`)
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
@@ -255,16 +261,19 @@ func TestGoogleAdsKeywordActions_HappyPathReturnsOutcomes(t *testing.T) {
 // On a customer shared across every foundation that means reporting a different project's
 // keyword text and spend as this project's own.
 //
-// The assertion is that the foreign id never reaches the GAQL, not merely that the result is
-// empty: a query that goes out with the wrong id has already read what it must not.
-func TestGoogleAdsInsightReads_ForeignAccountCampaignsAreNotQueried(t *testing.T) {
-	var mu sync.Mutex
-	var bodies []string
-	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		bodies = append(bodies, string(b))
-		mu.Unlock()
+// A MIXED-provenance scope fails the WHOLE read rather than returning the matching subset.
+//
+// Dropping only the mismatched entries returns a silent partial result: both endpoints report
+// success, and neither response carries an omitted-campaign signal of any kind, so a caller
+// cannot tell a project whose other campaigns were filtered out from one that genuinely has
+// none. For the audience read a distribution computed over half a project's campaigns looks
+// exactly like a complete one, and is what a re-targeting decision is then made on.
+//
+// The assertion is on BOTH halves — the sentinel AND that no query was issued at all. A test
+// checking only that "999" is absent from the query would pass against the partial-result bug,
+// because under that bug the query goes out carrying just "555".
+func TestGoogleAdsInsightReads_MixedProvenanceScopeFailsClosed(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
@@ -275,21 +284,33 @@ func TestGoogleAdsInsightReads_ForeignAccountCampaignsAreNotQueried(t *testing.T
 		scopeUnderCustomer("555", "1234567890"),
 		scopeUnderCustomer("999", "5555555555"),
 	}
-	if _, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scope); err != nil {
-		t.Fatalf("ReadKeywordPerformance: %v", err)
-	}
-	mu.Lock()
-	got := append([]string{}, bodies...)
-	mu.Unlock()
-	if len(got) != 1 {
-		t.Fatalf("recorded %d queries, want 1", len(got))
-	}
-	if !strings.Contains(got[0], "555") {
-		t.Errorf("query dropped the campaign this project CAN read: %s", got[0])
-	}
-	if strings.Contains(got[0], "999") {
-		t.Errorf("query carried a campaign created under a DIFFERENT customer; on an id "+
-			"collision this reads another account's keywords: %s", got[0])
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"keywords", func() error {
+			_, err := d.ReadKeywordPerformance(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scope)
+			return err
+		}},
+		{"audience", func() error {
+			_, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast7Days, scope)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			*reached = false
+			err := tc.call()
+			if err == nil {
+				t.Fatal("a mixed-provenance scope returned success; a partial result was reported as complete")
+			}
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Errorf("error is not ErrCampaignAccountMismatch (the sentinel the 409 arm maps): %v", err)
+			}
+			if *reached {
+				t.Error("a GAQL query was issued for a partially-mismatched scope; the read must refuse before querying")
+			}
+		})
 	}
 }
 
@@ -472,5 +493,81 @@ func TestGoogleAdsKeywordInsights_UnusableConnectionIsTagged(t *testing.T) {
 	}
 	if _, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days, scopeOf("555")); !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Errorf("audience read: error is not ErrConnectionNotUsable: %v", err)
+	}
+}
+
+// A criterion that is not a POSITIVE KEYWORD must reach the service as a PERMANENT input
+// fault (ErrKeywordActionInvalid → 400), not as a retryable upstream failure.
+//
+// This covers the real client→dispatcher path rather than a fake: the guard lives in the
+// client, and the folding onto the domain sentinel lives here, so only running both together
+// proves a caller is told "these actions are not valid" instead of being invited to retry an
+// action that can never succeed.
+func TestGoogleAdsKeywordActions_NonKeywordCriterionIsAPermanentFault(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		search string
+	}{
+		// A NEGATIVE keyword: acting on it would remove an exclusion and WIDEN spend.
+		{"negative keyword", `{"adGroupCriterion":{"criterionId":"777","negative":true},"adGroup":{"id":"333"}}`},
+		// A userList/audience criterion: keyword_view returns no row for it at all.
+		{"userList criterion", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := false
+			opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.Contains(r.URL.Path, "googleAds:search") {
+					_, _ = io.WriteString(w, `{"results":[`+tc.search+`]}`)
+					return
+				}
+				mutated = true
+				_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/333~777"}]}`)
+			})
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+			_, err := d.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds,
+				provisionedGoogleAdsCampaign("1234567890"), pauseAction("333", "777"))
+			if err == nil {
+				t.Fatal("a non-keyword criterion was accepted; this endpoint can then widen delivery")
+			}
+			if !errors.Is(err, domain.ErrKeywordActionInvalid) {
+				t.Errorf("error is not ErrKeywordActionInvalid, so the service answers 503-retry rather than 400: %v", err)
+			}
+			if mutated {
+				t.Error("the mutate was issued for a criterion that is not a positive keyword")
+			}
+		})
+	}
+}
+
+// An UNCONFIRMED client outcome must survive the dispatcher as an Unconfirmed()-marked error.
+//
+// The dispatcher previously returned the client error raw, unlike the toggle path. Since the
+// service detects ambiguity ONLY through that interface, anything the client marks structurally
+// must still be detectable here — otherwise an atomic batch Google may already have applied
+// (including an irreversible REMOVE) is reported as a clean failure and a retry is invited.
+func TestGoogleAdsKeywordActions_UnconfirmedOutcomeSurvivesTheDispatcher(t *testing.T) {
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777","negative":false},"adGroup":{"id":"333"}}]}`)
+			return
+		}
+		// A 2xx naming a criterion the batch never addressed: the mutate MAY have applied.
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/333~888"}]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	_, err := d.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds,
+		provisionedGoogleAdsCampaign("1234567890"), pauseAction("333", "777"))
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED outcome to surface as an error, got nil")
+	}
+	// Detected exactly as classifyKeywordActionError detects it — by behaviour, not by text.
+	var unconfirmed interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconfirmed) || !unconfirmed.Unconfirmed() {
+		t.Errorf("the dispatcher dropped the unconfirmed marker; the service will report this "+
+			"possibly-applied batch as a definite failure and invite a retry: %v", err)
 	}
 }

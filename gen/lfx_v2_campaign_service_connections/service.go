@@ -133,21 +133,26 @@ type Service interface {
 	// Enumerate the Google Ads ad accounts accessible via the stored connection
 	// credential.
 	ListGoogleAdsAccounts(context.Context, *ListGoogleAdsAccountsPayload) (res *ListGoogleAdsAccountsResult, err error)
-	// Read Google Ads keyword performance for this project's account, live from
-	// the platform. A pure read-through — nothing is persisted, and this service
+	// Read Google Ads keyword performance for this project's own campaigns, live
+	// from the platform. Scoped to the campaigns this service holds for the
+	// project, NOT to the connected ad account: the Google Ads customer is shared
+	// across foundations, so an account-wide read would return other projects'
+	// keywords. A pure read-through — nothing is persisted, and this service
 	// stores no keyword of its own. Rows are the TOP keywords by impressions over
-	// the window, capped; `truncated` reports whether the account holds more. The
-	// returned criterion_id/ad_group_id pairs are the handles the keyword-actions
-	// endpoint takes.
+	// the window, capped; `truncated` reports whether the project's campaigns hold
+	// more. The returned criterion_id/ad_group_id pairs are the handles the
+	// keyword-actions endpoint takes.
 	GetGoogleAdsKeywords(context.Context, *GetGoogleAdsKeywordsPayload) (res *GoogleAdsKeywords, err error)
 	// Read Google Ads audience demographics — age, gender and device — for this
-	// project's account, live from the platform. A pure read-through; nothing is
-	// persisted. The three breakdowns are returned in one array discriminated by
-	// `dimension`. Each breakdown covers the SAME traffic independently, so
-	// impressions must be totalled within a dimension, never across them. Google's
-	// UNDETERMINED/UNKNOWN buckets are returned as-is rather than dropped: they
-	// are real unattributed traffic, and hiding them would make the buckets
-	// silently under-sum.
+	// project's own campaigns, live from the platform. Scoped to the campaigns
+	// this service holds for the project, NOT to the connected ad account, which
+	// is a Google Ads customer shared across foundations. A pure read-through;
+	// nothing is persisted. The three breakdowns are returned in one array
+	// discriminated by `dimension`. Each breakdown covers the SAME traffic
+	// independently, so impressions must be totalled within a dimension, never
+	// across them. Google's UNDETERMINED/UNKNOWN buckets are returned as-is rather
+	// than dropped: they are real unattributed traffic, and hiding them would make
+	// the buckets silently under-sum.
 	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the

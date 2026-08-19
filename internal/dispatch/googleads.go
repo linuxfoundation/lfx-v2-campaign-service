@@ -1161,6 +1161,11 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 // empty id list. Passing an empty list on would make campaignScopePredicate refuse anyway,
 // but relying on that would put the account-wide read one dropped guard away; refusing here
 // states the intent where the filtering happens.
+//
+// A scope that mismatches only PARTLY is likewise an ERROR rather than a reduced id list —
+// see the reasoning at the check itself. The two cases answer the same way for the same
+// reason: this function returns the ids for a read that promises to cover the project's
+// campaigns, and it has no way to say "these, but not those".
 func googleAdsScopeForCustomer(scope []model.ProjectCampaignScope, customerID, op string) ([]string, error) {
 	ids := make([]string, 0, len(scope))
 	skipped := 0
@@ -1172,9 +1177,44 @@ func googleAdsScopeForCustomer(scope []model.ProjectCampaignScope, customerID, o
 		}
 		ids = append(ids, s.PlatformCampaignID)
 	}
+	// ANY mismatch fails the whole read, not just a read left with nothing.
+	//
+	// Dropping only the mismatched entries looks like the graceful option and is the worse
+	// one. A project with campaigns under both its old and its current customer would get the
+	// current-account subset returned as though it were the project's whole picture: both
+	// endpoints report success, and neither response has any field that could disclose an
+	// omission — no omitted count, no partial-coverage flag, no per-campaign breakdown. The
+	// caller cannot tell a project whose other campaigns were silently dropped from one that
+	// genuinely has no other campaigns. For the audience read that is the more damaging of the
+	// two, because a demographic distribution computed over half a project's campaigns looks
+	// exactly like a complete one and is what a re-targeting decision is then made on.
+	//
+	// Between the two remedies the finding offers — fail closed, or extend the contract with a
+	// partial-coverage signal — this takes fail-closed DELIBERATELY, and not merely because it
+	// is the smaller change:
+	//
+	//   - It needs no new field, so design/, gen/ and the published OpenAPI are untouched and
+	//     no consumer has to learn a new flag to keep reading these endpoints safely.
+	//   - The state is already representable and already handled: ErrCampaignAccountMismatch
+	//     maps to a 409 with an actionable remedy (reconnect the original account), which is
+	//     the SAME remedy the all-mismatched case has always returned. Widening the existing
+	//     arm keeps one answer for one cause rather than splitting it in two.
+	//   - It is the conservative direction. A partial-coverage flag is only as good as the
+	//     consumers that read it; every one that ignores it silently regains today's defect,
+	//     whereas a refusal cannot be misread as complete data.
+	//   - It matches how this file already resolves the same tension on the mutate side, where
+	//     an unprovable tenant refuses rather than proceeds.
+	//
+	// A partial-coverage field remains the richer long-term answer and is a contract change
+	// worth making deliberately; it is not landed here, where the choice is between silently
+	// wrong data and an honest refusal.
+	if skipped > 0 {
+		return nil, fmt.Errorf("%s: %d of this project's %d campaigns were created under a different customer than the one its connection now resolves to (%s); returning only the rest would report a partial result as complete: %w",
+			op, skipped, len(scope), customerID, domain.ErrCampaignAccountMismatch)
+	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("%s: all %d of this project's campaigns were created under a different customer than the one its connection now resolves to (%s), so none can be read under it: %w",
-			op, skipped, customerID, domain.ErrCampaignAccountMismatch)
+		return nil, fmt.Errorf("%s: this project has no campaigns that can be read under the customer its connection resolves to (%s): %w",
+			op, customerID, domain.ErrCampaignAccountMismatch)
 	}
 	return ids, nil
 }
@@ -1358,6 +1398,24 @@ func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 	// the guard's correctness should not depend on a detail of the callee it does not state.
 	outcomes, err := client.ApplyKeywordActions(ctx, validated)
 	if err != nil {
+		// A criterion that is not a POSITIVE KEYWORD is a permanent input fault, not an
+		// upstream failure: the client resolved its type and refused before mutating, and no
+		// retry turns a negative keyword or a userList criterion into a keyword. Folded onto
+		// ErrKeywordActionInvalid so the service answers 400 with the same "these actions are
+		// not valid" remedy the other permanent batch faults get, rather than a 503 inviting a
+		// retry that can never succeed.
+		if errors.Is(err, googleads.ErrKeywordCriterionNotPositiveKeyword) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrKeywordActionInvalid, err)
+		}
+		// Classify the ambiguous outcomes the way the toggle path at ToggleStatus does. Without
+		// this the client's structural marker is the only thing carrying the ambiguity, and any
+		// client arm that reports it through createOutcomeAmbiguous alone (a 5xx, a timeout, a
+		// mutating 429) would reach the service as an unclassified error and be answered as a
+		// DEFINITE failure — telling the caller to retry a batch Google may already have run,
+		// which for an irreversible REMOVE is the one wrong answer.
+		if googleads.IsOutcomeUnconfirmed(err) {
+			return nil, &unconfirmedToggleError{err: err}
+		}
 		return nil, err
 	}
 	out := make([]model.KeywordActionOutcome, 0, len(outcomes))

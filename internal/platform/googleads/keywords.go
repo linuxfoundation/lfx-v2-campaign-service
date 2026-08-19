@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -627,6 +628,151 @@ func ValidateKeywordActions(actions []KeywordAction) ([]KeywordAction, error) {
 	return out, nil
 }
 
+// unconfirmedKeywordError marks a keyword mutate whose outcome is AMBIGUOUS — Google returned
+// 2xx but a response this client cannot reconcile with what it sent, so the batch may already
+// have been applied.
+//
+// It exists because labelling the outcome in the error TEXT is not detection. The service's
+// classifyKeywordActionError matches ambiguity STRUCTURALLY (`var unconfirmed interface{
+// Unconfirmed() bool }` + errors.As), by behaviour rather than by sentinel or by message — so
+// an arm that only says "UNCONFIRMED" in its prose falls through to the DEFINITE-failure 503
+// ("could not be applied"), telling the caller to retry a batch Google may already have run.
+// For an irreversible REMOVE that is the one answer that must never be given by mistake.
+//
+// Mirrors partialCascadeError (adgroup_ad.go) and dispatch's unconfirmedToggleError: same
+// behavioural interface, so IsOutcomeUnconfirmed picks it up with no new sentinel to share
+// across the package boundary.
+type unconfirmedKeywordError struct {
+	msg string
+	err error
+}
+
+func (e *unconfirmedKeywordError) Error() string {
+	if e.err == nil {
+		return e.msg
+	}
+	return e.msg + ": " + e.err.Error()
+}
+
+// Unwrap keeps any underlying transport/API error reachable by errors.Is/As, so a caller can
+// still inspect the cause behind the ambiguity.
+func (e *unconfirmedKeywordError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *unconfirmedKeywordError) Unconfirmed() bool { return true }
+
+// ErrKeywordCriterionNotPositiveKeyword marks a batch entry that does not address a positive
+// keyword — a NEGATIVE keyword, a userList/audience criterion, or a criterion whose type this
+// client could not resolve at all.
+//
+// It is a PERMANENT input fault, which is why the dispatcher folds it onto
+// domain.ErrKeywordActionInvalid (a 400) rather than the retryable arm: no amount of retrying
+// turns a userList criterion into a keyword.
+var ErrKeywordCriterionNotPositiveKeyword = errors.New("google-ads: keyword action does not address a positive keyword")
+
+// resolveKeywordCriteria proves every entry in validated addresses a POSITIVE KEYWORD before
+// the atomic mutate is built. It is what makes this endpoint's spend-reduction promise true.
+//
+// The dispatcher's ad-group check is necessary but NOT sufficient. An ad group holds more than
+// its positive keywords: this client itself creates userList criteria in the same ad group
+// (targeting.go, adGroupCriterionCreate.UserList), and NEGATIVE keywords live in the same
+// adGroupCriteria resource family, addressed by the same adGroupId~criterionId handle. Matching
+// only the ad group therefore lets a caller PAUSE or REMOVE an EXCLUSION through an endpoint
+// whose entire purpose is to REDUCE delivery — dropping a negative keyword or an audience
+// exclusion WIDENS what serves and what is spent, the opposite of what the caller asked for,
+// and REMOVE cannot be undone.
+//
+// The type is established the way the READ path already establishes it rather than by a second
+// mechanism invented here: GetKeywordPerformance selects FROM keyword_view, Google's own
+// type-scoped resource — it contains ad-group criteria of type KEYWORD and nothing else, which
+// is why that read needs no type predicate ("Only ad-group criteria of type KEYWORD are
+// returned"). Querying the same view is what makes "if the keywords endpoint would hand it
+// back, this endpoint accepts it" true by construction. ad_group_criterion.negative is selected
+// on top of that, because keyword_view carries BOTH polarities and only the positive ones are
+// the keywords this endpoint may act on.
+//
+// UNRESOLVABLE ids FAIL CLOSED — an id the view does not return is refused, never passed
+// through. That is deliberate, and it is the same asymmetry the dispatcher's provenance guard
+// already rests on: the two errors do not cost the same. Wrongly refusing a legitimate keyword
+// is recoverable — the caller re-reads the keywords endpoint and retries. Wrongly ADMITTING an
+// unresolved criterion risks an irreversible REMOVE of an exclusion, which silently widens
+// spend and cannot be undone. An absent row is also the exact shape of every case this guard
+// exists to catch (a userList criterion, a negative keyword, a criterion in another account),
+// so treating absence as permission would defeat the guard with the very input that triggers it.
+func (c *Client) resolveKeywordCriteria(ctx context.Context, validated []KeywordAction) error {
+	adGroupIDs := make([]string, 0, len(validated))
+	criterionIDs := make([]string, 0, len(validated))
+	seenAdGroup := map[string]struct{}{}
+	seenCriterion := map[string]struct{}{}
+	for _, a := range validated {
+		if _, dup := seenAdGroup[a.AdGroupID]; !dup {
+			seenAdGroup[a.AdGroupID] = struct{}{}
+			adGroupIDs = append(adGroupIDs, a.AdGroupID)
+		}
+		if _, dup := seenCriterion[a.CriterionID]; !dup {
+			seenCriterion[a.CriterionID] = struct{}{}
+			criterionIDs = append(criterionIDs, a.CriterionID)
+		}
+	}
+	// Every id here was proven digits-only by ValidateKeywordActions, which is what makes this
+	// interpolation safe — GAQL has no bind parameters, exactly as campaignScopePredicate
+	// documents for the campaign ids it renders. The pair is re-checked below rather than
+	// trusted from the cross product this IN/IN query returns.
+	query := fmt.Sprintf(
+		"SELECT ad_group_criterion.criterion_id, ad_group.id, ad_group_criterion.negative "+
+			"FROM keyword_view "+
+			"WHERE ad_group.id IN (%s) AND ad_group_criterion.criterion_id IN (%s)",
+		strings.Join(adGroupIDs, ", "), strings.Join(criterionIDs, ", "),
+	)
+	rows, err := c.gaqlSearch(ctx, query)
+	if err != nil {
+		// A read failure is NOT folded onto the permanent sentinel: nothing was mutated and
+		// the caller's batch may be perfectly valid, so this stays the transport/API error it
+		// already is and classifies as a retryable upstream failure rather than a 400.
+		return fmt.Errorf("google-ads keyword actions: could not resolve criterion types before mutating (no keyword was changed): %w", err)
+	}
+
+	positive := map[string]bool{}
+	for i, raw := range rows {
+		var row struct {
+			AdGroupCriterion struct {
+				CriterionID string `json:"criterionId"`
+				Negative    *bool  `json:"negative"`
+			} `json:"adGroupCriterion"`
+			AdGroup struct {
+				ID string `json:"id"`
+			} `json:"adGroup"`
+		}
+		if uErr := json.Unmarshal(raw, &row); uErr != nil {
+			return fmt.Errorf("google-ads keyword actions: decode criterion row %d while resolving types (no keyword was changed): %w", i, uErr)
+		}
+		adGroupID := strings.TrimSpace(row.AdGroup.ID)
+		criterionID := strings.TrimSpace(row.AdGroupCriterion.CriterionID)
+		if adGroupID == "" || criterionID == "" {
+			continue
+		}
+		// A row omitting `negative` decodes to nil, and that is treated as NEGATIVE: unknown
+		// polarity is refused, not assumed benign. Google omits proto fields at their default
+		// (false), so a positive keyword can legitimately arrive with the field absent — but
+		// assuming the benign default is precisely how an exclusion gets removed, and the
+		// caller's remedy (re-read the keywords endpoint) is cheap where a REMOVE is final.
+		positive[adGroupID+"~"+criterionID] = row.AdGroupCriterion.Negative != nil && !*row.AdGroupCriterion.Negative
+	}
+
+	for i, a := range validated {
+		isPositive, ok := positive[a.AdGroupID+"~"+a.CriterionID]
+		if !ok {
+			return fmt.Errorf("keyword action %d addresses criterion %s~%s, which is not a keyword in this account — it may be an audience or another criterion type, or it may not exist; no keyword was changed: %w",
+				i, a.AdGroupID, a.CriterionID, ErrKeywordCriterionNotPositiveKeyword)
+		}
+		if !isPositive {
+			return fmt.Errorf("keyword action %d addresses criterion %s~%s, which is a NEGATIVE keyword — pausing or removing an exclusion WIDENS delivery and spend, which this endpoint must never do; no keyword was changed: %w",
+				i, a.AdGroupID, a.CriterionID, ErrKeywordCriterionNotPositiveKeyword)
+		}
+	}
+	return nil
+}
+
 // ApplyKeywordActions pauses or removes existing ad-group criteria in ONE atomic mutate.
 //
 // The batch either wholly applies or wholly fails — see keywordMutateRequest. Every action
@@ -648,6 +794,14 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, actions []KeywordActio
 		return nil, fmt.Errorf("google-ads keyword actions aborted before any request (context already done; no keyword was changed): %w", ctxErr)
 	}
 
+	// Prove every criterion is a POSITIVE KEYWORD before the mutate exists. This is a read, so
+	// it changes nothing when it refuses — and refusing here is the difference between an
+	// endpoint that only reduces spend and one that can silently remove an exclusion and widen
+	// it. See resolveKeywordCriteria for why an unresolvable id fails closed.
+	if rErr := c.resolveKeywordCriteria(ctx, validated); rErr != nil {
+		return nil, rErr
+	}
+
 	ops := make([]keywordMutateOperation, 0, len(validated))
 	for _, a := range validated {
 		resourceName := fmt.Sprintf("customers/%s/adGroupCriteria/%s~%s", c.account.CustomerID, a.AdGroupID, a.CriterionID)
@@ -665,14 +819,26 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, actions []KeywordActio
 	resp, mErr := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupCriteria:mutate"), keywordMutateRequest{Operations: ops}, false)
 	if mErr != nil {
 		if createOutcomeAmbiguous(mErr) {
-			return nil, fmt.Errorf("google-ads keyword actions UNCONFIRMED (%d operation(s); the changes may have been applied — verify in Google Ads before retrying): %w", len(ops), mErr)
+			// Wrapped structurally as well as labelled in prose. createOutcomeAmbiguous(mErr)
+			// would already make IsOutcomeUnconfirmed true through the unwrap chain here, but
+			// the wrapper states the classification at the point that decides it rather than
+			// leaving it to be re-derived, matching the two 2xx arms below.
+			return nil, &unconfirmedKeywordError{
+				msg: fmt.Sprintf("google-ads keyword actions UNCONFIRMED (%d operation(s); the changes may have been applied — verify in Google Ads before retrying)", len(ops)),
+				err: mErr,
+			}
 		}
 		return nil, fmt.Errorf("google-ads keyword actions failed (%d operation(s); no change confirmed): %w", len(ops), mErr)
 	}
 
 	var mr mutateResponse
 	if uErr := json.Unmarshal(resp, &mr); uErr != nil || len(mr.Results) != len(ops) {
-		return nil, fmt.Errorf("google-ads keyword actions UNCONFIRMED (%d operation(s); 2xx with a malformed/short mutate response — the changes may have been applied — verify in Google Ads before retrying)", len(ops))
+		// A 2xx carries NO underlying error, so there is nothing for createOutcomeAmbiguous to
+		// classify — the structural wrapper is the ONLY thing that makes this reach the
+		// verify-before-retry arm instead of the definite-failure 503.
+		return nil, &unconfirmedKeywordError{
+			msg: fmt.Sprintf("google-ads keyword actions UNCONFIRMED (%d operation(s); 2xx with a malformed/short mutate response — the changes may have been applied — verify in Google Ads before retrying)", len(ops)),
+		}
 	}
 
 	outcomes := make([]KeywordActionOutcome, 0, len(validated))
@@ -682,8 +848,12 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, actions []KeywordActio
 		// substituted or cross-account response cannot be reported as a successful mutation.
 		returnedAdGroupID, returnedCriterionID := c.adGroupCriterionID(r.ResourceName)
 		if returnedAdGroupID != validated[i].AdGroupID || returnedCriterionID != validated[i].CriterionID {
-			return nil, fmt.Errorf("google-ads keyword actions UNCONFIRMED (result %d names criterion %q, which is not the %s~%s this operation addressed — verify in Google Ads before retrying)",
-				i, r.ResourceName, validated[i].AdGroupID, validated[i].CriterionID)
+			// Same 2xx-with-no-underlying-error shape as the malformed/short arm above: without
+			// the structural wrapper this ambiguous outcome is reported as a clean failure.
+			return nil, &unconfirmedKeywordError{
+				msg: fmt.Sprintf("google-ads keyword actions UNCONFIRMED (result %d names criterion %q, which is not the %s~%s this operation addressed — verify in Google Ads before retrying)",
+					i, r.ResourceName, validated[i].AdGroupID, validated[i].CriterionID),
+			}
 		}
 		outcomes = append(outcomes, KeywordActionOutcome{
 			AdGroupID:    validated[i].AdGroupID,

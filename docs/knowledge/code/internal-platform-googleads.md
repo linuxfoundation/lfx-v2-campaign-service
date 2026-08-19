@@ -928,3 +928,27 @@ match the one addressed is reported UNCONFIRMED rather than as success. A short 
 mutate response is UNCONFIRMED for the same reason — the mutations may have been applied, and
 this path changes spend, so the caller is told to verify in Google Ads rather than to assume
 nothing happened.
+
+**Every criterion's TYPE is resolved before the mutate, and only a POSITIVE KEYWORD is
+actionable** (`resolveKeywordCriteria`, LFXV2-2641). Matching the ad group is not sufficient: an
+ad group also holds the userList criteria GA-4 creates, and NEGATIVE keywords share the
+`adGroupCriteria` resource family and the same `adGroupId~criterionId` handle. Acting on either
+through this endpoint would PAUSE or REMOVE an EXCLUSION, which WIDENS delivery and spend —
+the opposite of the endpoint's guarantee, and irreversible for `REMOVE`. The type is established
+with the same mechanism the READ path uses rather than a second one: a `keyword_view` query,
+Google's type-scoped resource, which is exactly why `GetKeywordPerformance` needs no type
+predicate. `ad_group_criterion.negative` is selected on top of it because `keyword_view` carries
+both polarities. **Unresolvable ids and rows omitting `negative` FAIL CLOSED**: refusing costs a
+caller one re-read, while admitting one risks an irreversible removal of an exclusion. The
+sentinel is `ErrKeywordCriterionNotPositiveKeyword`, which the dispatcher folds onto
+`domain.ErrKeywordActionInvalid` — a permanent 400, since no retry turns an audience criterion
+into a keyword.
+
+**Ambiguous outcomes are marked STRUCTURALLY, not just in prose.** `unconfirmedKeywordError`
+implements `Unconfirmed() bool`, the behavioural interface `IsOutcomeUnconfirmed` and the
+service's `classifyKeywordActionError` match with `errors.As`. This matters because the two 2xx
+arms (malformed/short response, mismatched resource name) carry NO underlying error for
+`createOutcomeAmbiguous` to classify — labelling them "UNCONFIRMED" in the message alone left
+them falling through to the DEFINITE-failure 503 ("could not be applied"), telling a caller to
+retry a batch Google may already have run. The dispatcher preserves the marker rather than
+returning the client error raw, mirroring the status-toggle path.

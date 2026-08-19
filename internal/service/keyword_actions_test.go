@@ -151,8 +151,21 @@ func TestApplyKeywordActions_ShortOutcomeSliceIsRefusedNotPartialSuccess(t *test
 		t.Fatal("a 1-outcome result for a 2-action batch must be refused, never reported as a partial success")
 	}
 	// It is an upstream contract violation, not a caller error: the batch was valid.
-	if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+	se, ok := err.(*briefs.ConnServiceUnavailableError)
+	if !ok {
 		t.Fatalf("error = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+	}
+	// ...and it must be the UNCONFIRMED 503, not the definite-failure one. By the time the
+	// count can be short the mutate has already been ISSUED, so the atomic batch may be fully
+	// applied with only the accounting lost. Both arms are 503 by design, so asserting the type
+	// alone would pass against a plain error — the MESSAGE is what separates "verify first"
+	// from "retry", and retrying an irreversible REMOVE that already ran is the wrong remedy.
+	if se.Message == "the keyword actions could not be applied" {
+		t.Fatalf("a possibly-applied mutation answered the DEFINITE-failure message %q, inviting a "+
+			"retry of a batch that may already have run", se.Message)
+	}
+	if !strings.Contains(se.Message, "unconfirmed") || !strings.Contains(se.Message, "verify") {
+		t.Errorf("message must report the outcome as unconfirmed and tell the caller to verify, got %q", se.Message)
 	}
 }
 

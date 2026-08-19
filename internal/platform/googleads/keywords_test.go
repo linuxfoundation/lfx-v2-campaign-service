@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -450,10 +451,18 @@ func TestApplyKeywordActions_BuildsPauseAndRemoveOperations(t *testing.T) {
 	var gotBody string
 	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		// Both criteria resolve as POSITIVE keywords, so the mutate proceeds and this test can
+		// go on asserting the operation payload it exists to assert.
+		if strings.Contains(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[`+
+				criterionRowJSON("176216228", "305729261", false)+`,`+
+				criterionRowJSON("176216228", "999999999", false)+`]}`)
+			return
+		}
 		mu.Lock()
 		gotBody = string(b)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[`+
 			`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"},`+
 			`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~999999999"}]}`)
@@ -518,10 +527,9 @@ func TestApplyKeywordActions_BuildsPauseAndRemoveOperations(t *testing.T) {
 // A short or malformed mutate response must be UNCONFIRMED, never success: the mutations may
 // have been applied, and this path changes spend.
 func TestApplyKeywordActions_ShortResponseIsUnconfirmed(t *testing.T) {
-	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}]}`)
-	})
+	c := keywordCriterionServer(t,
+		criterionRowJSON("176216228", "305729261", false)+`,`+criterionRowJSON("176216228", "999999999", false),
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`, nil)
 	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
 		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
 		{AdGroupID: "176216228", CriterionID: "999999999", Action: KeywordActionRemove},
@@ -529,41 +537,47 @@ func TestApplyKeywordActions_ShortResponseIsUnconfirmed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected UNCONFIRMED for a short mutate response, got nil")
 	}
-	if !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("error is not marked UNCONFIRMED: %v", err)
+	// Structural, not textual: the service detects ambiguity through Unconfirmed(), so a
+	// message-only assertion would agree with an error the service classifies as a definite
+	// failure.
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("error is not structurally UNCONFIRMED: %v", err)
 	}
 }
 
 // A response naming a DIFFERENT criterion than the operation addressed cannot be reported as
 // a successful mutation of the requested keyword.
 func TestApplyKeywordActions_MismatchedResourceNameIsUnconfirmed(t *testing.T) {
-	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/176216228~111111111"}]}`)
-	})
+	c := keywordCriterionServer(t,
+		criterionRowJSON("176216228", "305729261", false),
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~111111111"}`, nil)
 	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
 		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
 	})
 	if err == nil {
 		t.Fatal("expected UNCONFIRMED for a mismatched resource name, got nil")
 	}
-	if !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("error is not marked UNCONFIRMED: %v", err)
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("error is not structurally UNCONFIRMED: %v", err)
 	}
 }
 
 // A resource name from ANOTHER customer must not be accepted: adGroupCriterionID rejects it,
 // so a cross-account response cannot be reported as this project's successful mutation.
 func TestApplyKeywordActions_ForeignCustomerResourceNameIsUnconfirmed(t *testing.T) {
-	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/9999999999/adGroupCriteria/176216228~305729261"}]}`)
-	})
+	// The criterion resolves as a positive keyword, so the run reaches the resource-name check
+	// this test is about rather than stopping at type resolution.
+	c := keywordCriterionServer(t,
+		criterionRowJSON("176216228", "305729261", false),
+		`{"resourceName":"customers/9999999999/adGroupCriteria/176216228~305729261"}`, nil)
 	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
 		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
 	})
 	if err == nil {
 		t.Fatal("expected UNCONFIRMED for a foreign-customer resource name, got nil")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("error is not structurally UNCONFIRMED: %v", err)
 	}
 }
 
@@ -731,5 +745,254 @@ func TestCampaignScopePredicate_RendersAnUnquotedINList(t *testing.T) {
 	}
 	if strings.Contains(got, "'") {
 		t.Errorf("predicate quotes the int64 campaign.id, making it a string comparison: %s", got)
+	}
+}
+
+// keywordCriterionServer routes the two calls ApplyKeywordActions now makes: the
+// criterion-type resolution search, then the mutate. searchResults is the raw results array
+// the keyword_view query answers with; mutateResults is the mutate's.
+//
+// Routing on the path rather than on call order is deliberate — a test that assumed "first
+// request is the search" would keep passing if the guard were dropped and the mutate went first.
+func keywordCriterionServer(t *testing.T, searchResults, mutateResults string, mutateCalled *bool) *Client {
+	t.Helper()
+	var mu sync.Mutex
+	return twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[`+searchResults+`]}`)
+			return
+		}
+		if strings.Contains(r.URL.Path, "adGroupCriteria:mutate") {
+			mu.Lock()
+			if mutateCalled != nil {
+				*mutateCalled = true
+			}
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[`+mutateResults+`]}`)
+			return
+		}
+		t.Errorf("unexpected path %s", r.URL.Path)
+	})
+}
+
+// criterionRowJSON builds one keyword_view row for the type-resolution query, rendering
+// `negative` as an explicit JSON boolean.
+func criterionRowJSON(adGroupID, criterionID string, negative bool) string {
+	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"negative":%t},"adGroup":{"id":%q}}`,
+		criterionID, negative, adGroupID)
+}
+
+// A POSITIVE keyword must still be actionable — the guard must refuse the wrong criterion
+// types WITHOUT breaking the endpoint's actual job.
+func TestApplyKeywordActions_PositiveKeywordSucceeds(t *testing.T) {
+	mutated := false
+	c := keywordCriterionServer(t,
+		criterionRowJSON("176216228", "305729261", false),
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`,
+		&mutated)
+
+	out, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
+	})
+	if err != nil {
+		t.Fatalf("a positive keyword must be actionable, got: %v", err)
+	}
+	if len(out) != 1 || out[0].CriterionID != "305729261" {
+		t.Fatalf("outcomes = %+v, want the one criterion acted on", out)
+	}
+	if !mutated {
+		t.Error("the mutate was never issued for a valid positive keyword")
+	}
+}
+
+// A NEGATIVE keyword must be REFUSED. Pausing or removing an exclusion WIDENS delivery and
+// spend — the opposite of what this endpoint guarantees — and REMOVE cannot be undone.
+//
+// The assertion is on the sentinel and on the mutate NEVER being issued, not on the message:
+// a test matching error text would pass against a version that refused for some other reason,
+// and one asserting only the ad-group id would pass against the bug entirely.
+func TestApplyKeywordActions_NegativeKeywordIsRefused(t *testing.T) {
+	mutated := false
+	c := keywordCriterionServer(t,
+		criterionRowJSON("176216228", "305729261", true),
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`,
+		&mutated)
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	})
+	if err == nil {
+		t.Fatal("removing a NEGATIVE keyword was allowed; that widens delivery and spend")
+	}
+	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
+		t.Errorf("error is not ErrKeywordCriterionNotPositiveKeyword: %v", err)
+	}
+	if mutated {
+		t.Error("the mutate was issued for a negative keyword; the refusal must happen BEFORE any mutation")
+	}
+}
+
+// A userList (audience) criterion lives in the SAME ad group and the SAME adGroupCriteria
+// resource family as a keyword, so the ad-group check alone admits it. keyword_view does not
+// return it, so it resolves to nothing and must fail closed.
+func TestApplyKeywordActions_UserListCriterionIsRefused(t *testing.T) {
+	mutated := false
+	// The type-resolution query returns NO row for this criterion — which is exactly what
+	// keyword_view does for a userList criterion, since that view holds keywords only.
+	c := keywordCriterionServer(t, "",
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~444444444"}`,
+		&mutated)
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "444444444", Action: KeywordActionRemove},
+	})
+	if err == nil {
+		t.Fatal("removing a userList/audience criterion was allowed through the keyword endpoint")
+	}
+	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
+		t.Errorf("error is not ErrKeywordCriterionNotPositiveKeyword: %v", err)
+	}
+	if mutated {
+		t.Error("the mutate was issued for a non-keyword criterion")
+	}
+}
+
+// An UNRESOLVABLE criterion fails CLOSED. This is the documented choice: admitting one risks
+// an irreversible REMOVE of an exclusion, while refusing costs the caller a re-read.
+func TestApplyKeywordActions_UnresolvableCriterionFailsClosed(t *testing.T) {
+	mutated := false
+	// One of the two resolves; the other does not. The whole batch must refuse — it is atomic.
+	c := keywordCriterionServer(t,
+		criterionRowJSON("176216228", "305729261", false),
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"},`+
+			`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~999999999"}`,
+		&mutated)
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
+		{AdGroupID: "176216228", CriterionID: "999999999", Action: KeywordActionRemove},
+	})
+	if err == nil {
+		t.Fatal("a batch with an unresolvable criterion was allowed; it must fail closed")
+	}
+	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
+		t.Errorf("error is not ErrKeywordCriterionNotPositiveKeyword: %v", err)
+	}
+	if mutated {
+		t.Error("the mutate was issued despite an unresolvable criterion")
+	}
+}
+
+// A row that OMITS `negative` is treated as negative — unknown polarity is refused, not
+// assumed benign.
+func TestApplyKeywordActions_OmittedNegativeFieldFailsClosed(t *testing.T) {
+	mutated := false
+	c := keywordCriterionServer(t,
+		`{"adGroupCriterion":{"criterionId":"305729261"},"adGroup":{"id":"176216228"}}`,
+		`{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`,
+		&mutated)
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	})
+	if err == nil {
+		t.Fatal("a criterion with unknown polarity was allowed; it must fail closed")
+	}
+	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
+		t.Errorf("error is not ErrKeywordCriterionNotPositiveKeyword: %v", err)
+	}
+	if mutated {
+		t.Error("the mutate was issued for a criterion of unknown polarity")
+	}
+}
+
+// The type-resolution query must ask keyword_view — the SAME type-scoped resource the read
+// path uses. That is what makes the guard's type claim true rather than asserted; a query
+// against a broader resource would resolve non-keyword criteria as if they were keywords.
+func TestApplyKeywordActions_ResolvesTypeViaKeywordView(t *testing.T) {
+	var mu sync.Mutex
+	var searchBody string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "googleAds:search") {
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			searchBody = string(b)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[`+criterionRowJSON("176216228", "305729261", false)+`]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}]}`)
+	})
+
+	if _, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
+	}); err != nil {
+		t.Fatalf("ApplyKeywordActions: %v", err)
+	}
+
+	mu.Lock()
+	got := searchBody
+	mu.Unlock()
+	if got == "" {
+		t.Fatal("no type-resolution query was issued before the mutate")
+	}
+	if !strings.Contains(got, "FROM keyword_view") {
+		t.Errorf("type resolution does not query keyword_view, the type-scoped resource: %s", got)
+	}
+	if !strings.Contains(got, "ad_group_criterion.negative") {
+		t.Errorf("type resolution does not select ad_group_criterion.negative, so it cannot tell a negative keyword from a positive one: %s", got)
+	}
+}
+
+// UNCONFIRMED outcomes must be detectable STRUCTURALLY — via IsOutcomeUnconfirmed /
+// errors.As on Unconfirmed() — not by their message text. The service classifies ambiguity
+// exclusively through that interface, so an arm that only says "UNCONFIRMED" in prose is
+// answered as a DEFINITE failure and the caller is told to retry a batch Google may have run.
+func TestApplyKeywordActions_UnconfirmedArmsAreStructurallyDetectable(t *testing.T) {
+	positive := criterionRowJSON("176216228", "305729261", false) + "," +
+		criterionRowJSON("176216228", "999999999", false)
+
+	cases := []struct {
+		name    string
+		mutate  string
+		actions []KeywordAction
+	}{
+		{
+			// 2xx whose result count is SHORT of the operation count.
+			name:   "short mutate response",
+			mutate: `{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}`,
+			actions: []KeywordAction{
+				{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
+				{AdGroupID: "176216228", CriterionID: "999999999", Action: KeywordActionRemove},
+			},
+		},
+		{
+			// 2xx naming a criterion the batch never addressed.
+			name:   "mismatched resource name",
+			mutate: `{"resourceName":"customers/1234567890/adGroupCriteria/176216228~888888888"}`,
+			actions: []KeywordAction{
+				{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := keywordCriterionServer(t, positive, tc.mutate, nil)
+			_, err := c.ApplyKeywordActions(context.Background(), tc.actions)
+			if err == nil {
+				t.Fatal("expected an UNCONFIRMED error, got nil")
+			}
+			// The load-bearing assertion: detected by BEHAVIOUR, the way the service detects it.
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("IsOutcomeUnconfirmed = false; the service will report this ambiguous outcome as a DEFINITE failure and invite a retry: %v", err)
+			}
+			var u interface{ Unconfirmed() bool }
+			if !errors.As(err, &u) || !u.Unconfirmed() {
+				t.Errorf("errors.As found no Unconfirmed() marker; classifyKeywordActionError matches on exactly this: %v", err)
+			}
+		})
 	}
 }

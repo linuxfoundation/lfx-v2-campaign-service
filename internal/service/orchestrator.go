@@ -2082,9 +2082,41 @@ func (o *Orchestrator) ApplyKeywordActions(ctx context.Context, projectID string
 	// same defect, and an adapter returning one outcome for a two-action batch is the more
 	// likely bug. The platform client already fails closed on a short mutate response
 	// (UNCONFIRMED), so reaching here means a dispatcher dropped an outcome after the fact.
+	//
+	// The error is marked UNCONFIRMED rather than returned plain. Reaching here means the
+	// mutate was ISSUED and the dispatcher then failed to account for it — the atomic batch may
+	// well have applied upstream, and only the reporting is short. A plain error classifies as
+	// a DEFINITE failure ("could not be applied"), whose ordinary remedy is a retry; for a
+	// batch containing an irreversible REMOVE that is exactly the wrong instruction. Marked
+	// structurally with Unconfirmed(), the service's verify-before-retry arm answers instead.
 	if len(outcomes) != len(actions) {
-		return nil, fmt.Errorf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success",
-			platform, len(outcomes), len(actions))
+		return nil, &unconfirmedOutcomeCountError{
+			platform: string(platform),
+			got:      len(outcomes),
+			want:     len(actions),
+		}
 	}
 	return outcomes, nil
 }
+
+// unconfirmedOutcomeCountError reports a dispatcher that returned a different number of keyword
+// outcomes than the batch requested.
+//
+// It carries Unconfirmed() because of WHERE it is detected: the mutate has already been issued
+// upstream by the time the count can be wrong, so the batch may be fully applied with only the
+// accounting short. Detected by BEHAVIOUR (errors.As on the Unconfirmed() interface), which is
+// the same detection classifyKeywordActionError and the status toggle use — no sentinel needs
+// to cross the dispatch/service boundary.
+type unconfirmedOutcomeCountError struct {
+	platform string
+	got      int
+	want     int
+}
+
+func (e *unconfirmedOutcomeCountError) Error() string {
+	return fmt.Sprintf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success, and the mutation may already have been applied",
+		e.platform, e.got, e.want)
+}
+
+// Unconfirmed marks the outcome as ambiguous-applied for the service's verify-before-retry arm.
+func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }

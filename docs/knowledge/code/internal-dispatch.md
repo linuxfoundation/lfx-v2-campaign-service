@@ -350,6 +350,21 @@ side is unknown; on LinkedIn, Reddit and X that arm is unreachable (each resolve
 account-less connection with `domain.ErrAccountNotSelected` first) and says so rather than
 depending on an unpinned precondition.
 
+**The Google Ads insight reads apply the same invariant to a SCOPE rather than to one campaign,
+and fail closed on a PARTIAL mismatch** (`googleAdsScopeForCustomer`, LFXV2-2641). The keyword
+and audience reads are confined to the project's own campaign ids, because Google Ads is one
+customer shared across foundations. Each id is checked against the customer the connection NOW
+resolves to; entries with NO recorded provenance are still KEPT (unknown cannot prove a
+mismatch, and a misleading read is recoverable where an irreversible `REMOVE` is not — the
+documented asymmetry against `ApplyKeywordActions`). But if ANY entry has CONFLICTING
+provenance, the WHOLE read fails with `domain.ErrCampaignAccountMismatch` rather than returning
+the matching subset. Dropping the mismatched entries would return a silent partial result: both
+endpoints report success and NEITHER response carries an omitted-campaign signal, so a caller
+cannot distinguish a filtered project from one that genuinely has no other campaigns — and an
+audience distribution computed over half a project's campaigns looks exactly like a complete
+one. The service maps the sentinel to a 409 whose remedy (reconnect the original account) is
+already the right one, so no contract field was added.
+
 ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
 narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item
 check, and LinkedIn's creative-servability check (which lives INSIDE the client call, so
