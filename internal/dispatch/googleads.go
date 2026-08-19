@@ -1102,3 +1102,162 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	}
 	return blob.AdGroupID, blob.AdID
 }
+
+// ReadKeywordPerformance implements service.KeywordInsightsReader for Google Ads.
+//
+// Project-scoped rather than campaign-scoped: it reads the account the project's connection
+// points at, so there is no campaign row to authorize against and no account-identity guard
+// to apply — the connection IS the scope, exactly as it is for ListAccounts. A caller can
+// only ever see the account they are already connected to.
+//
+// It resolves the ordinary client, which accepts the LF system fallback. That is correct
+// here and is NOT the adoption hazard resolveOwnedGoogleAdsClient exists to prevent: this
+// call names no upstream id, so it cannot reach a resource the caller chose — it reports on
+// whatever account the credential already grants, which is the same thing the existing
+// /connection-google-ads/accounts and /metrics reads do.
+func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error) {
+	// Translate and validate the window BEFORE resolving credentials: an unsupported window
+	// is a permanent input fault regardless of connection state, so it must produce the same
+	// 400 either way rather than being masked by a contingent connection failure.
+	gaWindow, err := googleads.WindowFor(window)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	kp, err := client.GetKeywordPerformance(ctx, gaWindow)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]model.KeywordRow, 0, len(kp.Rows))
+	for _, r := range kp.Rows {
+		rows = append(rows, model.KeywordRow{
+			CriterionID: r.CriterionID,
+			AdGroupID:   r.AdGroupID,
+			CampaignID:  r.CampaignID,
+			Text:        r.Text,
+			MatchType:   r.MatchType,
+			Status:      r.Status,
+			Impressions: r.Impressions,
+			Clicks:      r.Clicks,
+			CostMicros:  r.CostMicros,
+			Ctr:         r.Ctr,
+		})
+	}
+	return &model.KeywordPerformance{
+		// The REQUEST window, not the client's echoed GAQL literal: the API contract is the
+		// platform-agnostic vocabulary, and translating back would reintroduce the dialect.
+		Window:    window,
+		Rows:      rows,
+		Truncated: kp.Truncated,
+	}, nil
+}
+
+// ReadAudienceInsights implements service.KeywordInsightsReader for Google Ads. Same scoping
+// and same window-first ordering as ReadKeywordPerformance.
+func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error) {
+	gaWindow, err := googleads.WindowFor(window)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads audience insights: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	ai, err := client.GetAudienceInsights(ctx, gaWindow)
+	if err != nil {
+		return nil, err
+	}
+	buckets := make([]model.AudienceBucket, 0, len(ai.Buckets))
+	for _, b := range ai.Buckets {
+		buckets = append(buckets, model.AudienceBucket{
+			Dimension:   b.Dimension,
+			Value:       b.Value,
+			Impressions: b.Impressions,
+			Clicks:      b.Clicks,
+			CostMicros:  b.CostMicros,
+			Ctr:         b.Ctr,
+		})
+	}
+	return &model.AudienceInsights{Window: window, Buckets: buckets}, nil
+}
+
+// ApplyKeywordActions implements service.KeywordActioner for Google Ads.
+//
+// This MUTATES a live paid campaign, so it carries the full guard set the status toggle
+// uses, in the same order and for the same reasons:
+//
+//  1. The batch is validated locally first. A malformed batch is a permanent fault and must
+//     be refused before credentials are decrypted or Google is contacted.
+//  2. The campaign must be provisioned — an empty PlatformCampaignID means there is nothing
+//     upstream to act on, and an empty ad group id means GA-4's targeting step never ran, so
+//     the criteria this batch names cannot belong to this campaign.
+//  3. The campaign's creation account must match the account the project's connection NOW
+//     resolves to. Criterion ids are bare numerics unique only within their customer, and
+//     UpdateGoogleAds can re-point a connection between create and action — so on an id
+//     collision this mutate would pause or REMOVE another account's keywords. This is the
+//     same invariant ToggleStatus enforces, and it matters at least as much here because
+//     REMOVE is irreversible.
+//
+// Every one of those refusals happens before the platform is contacted.
+func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	in := make([]googleads.KeywordAction, 0, len(actions))
+	for _, a := range actions {
+		in = append(in, googleads.KeywordAction{AdGroupID: a.AdGroupID, CriterionID: a.CriterionID, Action: a.Action})
+	}
+	// Validate BEFORE resolving the connection, so a batch that can never succeed is refused
+	// without decrypting credentials — and so a permanent input fault masks any contingent
+	// connection fault rather than the other way round.
+	validated, err := googleads.ValidateKeywordActions(in)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrKeywordActionInvalid, err)
+	}
+
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return nil, fmt.Errorf("%w: google ads campaign has no platform campaign id, so it has no keywords to act on", domain.ErrCampaignNotProvisioned)
+	}
+	adGroupID, _ := googleAdsChildIDs(campaign)
+	if strings.TrimSpace(adGroupID) == "" {
+		return nil, fmt.Errorf("%w: google ads campaign %s has no provisioned ad group, so it has no keyword criteria to act on", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	// Every criterion must belong to THIS campaign's ad group. Without this a caller holding
+	// a criterion id from any campaign in the shared account could pause or remove it through
+	// a campaign they do own — the path is permission-evaluated on the campaign, so the
+	// campaign is what bounds it. The keywords read returns ad_group_id precisely so a caller
+	// can satisfy this.
+	for i, a := range validated {
+		if a.AdGroupID != adGroupID {
+			return nil, fmt.Errorf("%w: keyword action %d names ad group %s, which does not belong to campaign %s",
+				domain.ErrKeywordActionInvalid, i, a.AdGroupID, campaign.PlatformCampaignID)
+		}
+	}
+
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Same identity invariant ToggleStatus and ReadMetrics enforce. An empty recorded
+	// customer id means "unknown" (a legacy row) and is treated as permission to proceed —
+	// the same reading every other guard on this dispatcher gives it.
+	if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+		return nil, fmt.Errorf("apply google ads keyword actions: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+	}
+
+	outcomes, err := client.ApplyKeywordActions(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.KeywordActionOutcome, 0, len(outcomes))
+	for _, o := range outcomes {
+		out = append(out, model.KeywordActionOutcome{
+			AdGroupID:    o.AdGroupID,
+			CriterionID:  o.CriterionID,
+			Action:       o.Action,
+			ResourceName: o.ResourceName,
+		})
+	}
+	return out, nil
+}

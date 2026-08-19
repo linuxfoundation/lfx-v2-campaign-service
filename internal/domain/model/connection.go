@@ -269,3 +269,84 @@ type MarketingEmail struct {
 	// share a name and the date is what distinguishes them in a list.
 	UpdatedAt string
 }
+
+// KeywordRow is one keyword's live performance on an ad platform, in the
+// platform-agnostic vocabulary. Never persisted — it is a read-through snapshot.
+//
+// CriterionID and AdGroupID travel together because a criterion id is unique only within
+// its ad group: acting on a criterion id alone would mean guessing the ad group, and a
+// wrong guess addresses a different, real keyword rather than failing.
+type KeywordRow struct {
+	CriterionID string
+	AdGroupID   string
+	CampaignID  string
+	Text        string
+	MatchType   string
+	Status      string
+	Impressions int64
+	Clicks      int64
+	CostMicros  int64
+	Ctr         float64
+}
+
+// KeywordPerformance is an account-wide keyword read over one window.
+type KeywordPerformance struct {
+	Window MetricsWindow
+	Rows   []KeywordRow
+	// Truncated reports that the account holds MORE keywords than Rows carries. A consumer
+	// must not total a truncated slice and present it as account-wide spend.
+	Truncated bool
+}
+
+// Audience breakdown dimensions. A bucket names which breakdown it belongs to so all
+// three can share one flat array.
+const (
+	AudienceDimensionAge    = "age"
+	AudienceDimensionGender = "gender"
+	AudienceDimensionDevice = "device"
+)
+
+// AudienceBucket is one demographic slice's counters over a window.
+type AudienceBucket struct {
+	Dimension   string
+	Value       string
+	Impressions int64
+	Clicks      int64
+	CostMicros  int64
+	Ctr         float64
+}
+
+// AudienceInsights is an account-wide demographic read across every breakdown.
+//
+// Each dimension independently covers the SAME traffic, so impressions may be totalled
+// within a dimension but never across them — summing age, gender and device triple-counts.
+type AudienceInsights struct {
+	Window  MetricsWindow
+	Buckets []AudienceBucket
+}
+
+// KeywordAction is one requested keyword mutation on a live campaign.
+type KeywordAction struct {
+	AdGroupID   string
+	CriterionID string
+	// Action is KeywordActionPause or KeywordActionRemove.
+	Action string
+}
+
+// Keyword actions. There is deliberately no "enable": this surface only ever reduces what
+// serves. Widening delivery goes through the create/dispatch path, where budget and flight
+// are validated together.
+const (
+	KeywordActionPause = "PAUSE"
+	// KeywordActionRemove is IRREVERSIBLE upstream — a removed criterion cannot be
+	// re-enabled, only re-created with a new id.
+	KeywordActionRemove = "REMOVE"
+)
+
+// KeywordActionOutcome is one applied keyword mutation.
+type KeywordActionOutcome struct {
+	AdGroupID    string
+	CriterionID  string
+	Action       string
+	ResourceName string
+}

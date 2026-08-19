@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; and geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); and account-wide keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -849,3 +849,54 @@ The REST binding is GET (not the POST used by `:search` and `:mutate`), it takes
 body at all, and it is sent with `idempotent=true` — a pure read, so retrying a 429 cannot
 double-apply anything.
 
+
+## Keyword and audience insights, and keyword actions (LFXV2-2641)
+
+`keywords.go` adds two account-wide GAQL reads and one mutation. All three are scoped to the
+client's own customer id and none of them creates a keyword — criterion creation remains
+GA-4's `createAdGroupTargeting`.
+
+**The keyword read is capped, and says so.** `GetKeywordPerformance` orders by impressions
+descending and asks for `maxKeywordRows+1` rows; the extra row is dropped and reported as
+`Truncated`. That probe is the whole mechanism: without it a caller receiving exactly the cap
+cannot distinguish a small account from a truncated large one, and would total the slice as
+account-wide spend. `REMOVED` criteria are excluded — a removed keyword can never serve again,
+so offering it as an actionable row hands the caller a button that does nothing. A row missing
+its criterion or ad-group id is a hard error rather than a returned row, because the
+keyword-actions endpoint needs BOTH ids to address a criterion.
+
+**Audience is three queries, and partial success is not an outcome.** Age and gender are
+criterion views (`age_range_view`, `gender_view`); device is a SEGMENT of the `campaign`
+resource, which is why it selects `segments.device FROM campaign` while the others select a
+criterion field from a `*_view`. Because the device query segments campaigns, it returns one
+row per (campaign, device) pair, so buckets are AGGREGATED by value rather than assumed unique
+— taking the last row per device would report a single campaign's numbers as the account's.
+CTR is computed after aggregation, never averaged per row. A failure in any one breakdown
+fails the whole read: each dimension independently covers the same traffic, and a caller shown
+two of three cannot tell the third is missing rather than empty. Google's
+`UNDETERMINED`/`UNKNOWN` buckets are returned as-is, since they are real unattributed traffic
+and dropping them makes the buckets silently under-sum.
+
+**Keyword actions are atomic and can only reduce delivery.** `PAUSE` and `REMOVE` are the only
+supported actions; there is deliberately no `ENABLE`, because re-enabling a keyword restarts
+spend and this surface exists to reduce what serves. `partialFailure` is never set, so one
+rejected operation rolls the whole batch back — a caller pausing eight keywords to stop a
+budget leak is never told that five were paused and left to work out which three still spend.
+`PAUSE` is an update carrying `updateMask: "status"`; without that mask Google ignores the
+field and the keyword keeps serving while the call reports success. `REMOVE` is a `remove`
+operation, and it is IRREVERSIBLE upstream — a removed criterion cannot be re-enabled, only
+re-created with a new id.
+
+`ValidateKeywordActions` is split out from `ApplyKeywordActions` so the batch can be rejected
+before any credential work happens. Both ids must be digits-only, for the same reason
+`customerIDRE` guards the metrics query: they are concatenated into a resource name. A batch
+naming the same criterion twice is REFUSED rather than de-duplicated — unlike the create
+path's dedupe, two entries can carry different actions and there is no defensible way to pick
+one.
+
+Every result is verified against the operation that produced it: `adGroupCriterionID` rejects a
+resource name whose customer id is not this client's, and a returned criterion that does not
+match the one addressed is reported UNCONFIRMED rather than as success. A short or malformed
+mutate response is UNCONFIRMED for the same reason — the mutations may have been applied, and
+this path changes spend, so the caller is told to verify in Google Ads rather than to assume
+nothing happened.

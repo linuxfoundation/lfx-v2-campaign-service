@@ -159,6 +159,39 @@ var (
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 
+	// ErrKeywordInsightsUnsupported indicates the platform has no keyword/audience-insight
+	// capability wired. The platform is never contacted.
+	//
+	// Returned when a provider's dispatcher does not implement the service-side
+	// `KeywordInsightsReader` interface, and mapped to 400 — Google Ads is the only platform
+	// that models keywords as addressable criteria today, so asking any other provider for
+	// them is a caller error rather than a transient upstream failure.
+	//
+	// It lives here, not in internal/service, for the same reason as ErrAccountsUnsupported:
+	// a platform dispatcher must be able to return it without importing the orchestration
+	// layer.
+	ErrKeywordInsightsUnsupported = errors.New("keyword and audience insights are not supported for this platform")
+
+	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.
+	// The platform is never contacted.
+	//
+	// Deliberately DISTINCT from ErrKeywordInsightsUnsupported even though only Google Ads
+	// implements either today. One is a read and the other MUTATES what serves, so a
+	// platform could gain the read without the mutation; collapsing them would make that
+	// state unrepresentable and would report "cannot read keywords" for a platform that
+	// reads them fine but must not be asked to change them.
+	ErrKeywordActionsUnsupported = errors.New("keyword actions are not supported for this platform")
+
+	// ErrKeywordActionInvalid indicates a keyword-action batch was rejected BEFORE the
+	// platform was contacted: a malformed id, an unsupported action, an empty or over-long
+	// batch, or the same criterion addressed twice.
+	//
+	// It is a permanent input fault mapped to 400. It exists as its own sentinel so the
+	// service layer can distinguish "this batch can never succeed" from an upstream refusal,
+	// which is the difference between telling a caller to fix their request and telling them
+	// to retry it.
+	ErrKeywordActionInvalid = errors.New("the keyword action batch is not valid")
+
 	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
 	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
 	// nothing was learned about it, because it was never checked.

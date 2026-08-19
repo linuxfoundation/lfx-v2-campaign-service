@@ -246,6 +246,27 @@ func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.P
 	return []model.MarketingEmail{}, nil
 }
 
+func (d upstreamCapableDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow) (*model.KeywordPerformance, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordPerformance{}, nil
+}
+
+func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow) (*model.AudienceInsights, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceInsights{}, nil
+}
+
+func (d upstreamCapableDispatcher) ApplyKeywordActions(context.Context, string, model.Provider, *model.Campaign, []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return []model.KeywordActionOutcome{}, nil
+}
+
 func (d upstreamCapableDispatcher) LookupCampaign(context.Context, string, model.Provider, string) (*model.PlatformCampaignRef, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -300,6 +321,30 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opSearchEmails,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.SearchEmails(ctx, "p1", platform, "q")
+				return err
+			},
+		},
+		{
+			name: "read keywords",
+			op:   opReadKeywords,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadKeywordPerformance(ctx, "p1", platform, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "read audience",
+			op:   opReadAudience,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadAudienceInsights(ctx, "p1", platform, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "keyword actions",
+			op:   opKeywordActions,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ApplyKeywordActions(ctx, "p1", platform, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}})
 				return err
 			},
 		},

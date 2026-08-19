@@ -437,6 +437,9 @@ const (
 	opLookupCampaign = "lookup_campaign"
 	opListAccounts   = "list_accounts"
 	opSearchEmails   = "search_emails"
+	opReadKeywords   = "read_keywords"
+	opReadAudience   = "read_audience"
+	opKeywordActions = "keyword_actions"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -1867,4 +1870,145 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 		return nil, fmt.Errorf("%s email searcher returned a nil result with no error", platform)
 	}
 	return emails, nil
+}
+
+// KeywordInsightsReader is an OPTIONAL dispatcher capability: read keyword performance and
+// audience demographics for a project's ACCOUNT, live from the platform. Type-asserted like
+// MetricsReader and AccountLister, so a dispatcher without it yields a clean
+// ErrKeywordInsightsUnsupported → 400.
+//
+// Both methods are project-scoped, not campaign-scoped: they report on the account the
+// connection points at, so there is no campaign row to authorize against — the connection is
+// the scope. Both are pure reads that never mutate platform or DB state, and neither result
+// is ever persisted.
+type KeywordInsightsReader interface {
+	// ReadKeywordPerformance returns the account's top keywords by impressions over window.
+	// The result is capped; KeywordPerformance.Truncated reports whether more exist.
+	ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error)
+	// ReadAudienceInsights returns age, gender and device breakdowns over window. Each
+	// dimension independently covers the same traffic, so a consumer must total within a
+	// dimension, never across them.
+	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error)
+}
+
+// KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
+// existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
+// clean ErrKeywordActionsUnsupported → 400.
+//
+// Deliberately SEPARATE from KeywordInsightsReader. This one MUTATES what serves; that one
+// reads. A platform could plausibly gain the read without the mutation, and folding them
+// into one interface would make that state unrepresentable — a dispatcher would have to
+// implement a spend-affecting mutation it cannot support in order to expose a read it can.
+type KeywordActioner interface {
+	// ApplyKeywordActions applies every action or none — the batch is atomic upstream.
+	// campaign is the persisted row so the adapter can enforce that each criterion belongs
+	// to this campaign's ad group and that the campaign's account still matches the
+	// project's connection, both BEFORE the platform is contacted.
+	ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error)
+}
+
+// keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
+// "not supported" sentinel. Shared by the two read paths so both answer identically for an
+// unregistered or non-capable platform.
+func (o *Orchestrator) keywordInsightsFor(platform model.Provider) (KeywordInsightsReader, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(KeywordInsightsReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	return reader, nil
+}
+
+// ReadKeywordPerformance reads a project's account-wide keyword performance.
+func (o *Orchestrator) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error) {
+	reader, err := o.keywordInsightsFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kp, rerr := reader.ReadKeywordPerformance(callCtx, projectID, platform, window)
+	o.recordUpstream(ctx, platform, opReadKeywords, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kp == nil {
+		// (nil, nil) is a contract violation, not success — the handler dereferences the
+		// result unconditionally on a nil error. Same guard ReadCampaignMetrics applies.
+		return nil, fmt.Errorf("%s keyword reader returned a nil result with no error", platform)
+	}
+	// A successful read MUST carry a non-nil slice, for the reason ListAccounts documents:
+	// the caller cannot otherwise tell "this account authoritatively has no keywords" from an
+	// implementation that fell through a branch, and the two mean opposite things.
+	if kp.Rows == nil {
+		kp.Rows = []model.KeywordRow{}
+	}
+	return kp, nil
+}
+
+// ReadAudienceInsights reads a project's account-wide demographic breakdowns.
+func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error) {
+	reader, err := o.keywordInsightsFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	ai, rerr := reader.ReadAudienceInsights(callCtx, projectID, platform, window)
+	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if ai == nil {
+		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
+	}
+	if ai.Buckets == nil {
+		ai.Buckets = []model.AudienceBucket{}
+	}
+	return ai, nil
+}
+
+// ApplyKeywordActions pauses or removes keywords on one campaign.
+//
+// The pre-platform guard mirrors ToggleCampaignStatus's: never contact the ad platform for a
+// campaign with nothing provisioned upstream. The adapter re-checks provisioning in more
+// detail (it also requires an ad group), but this check belongs here too — it is the reason
+// no unprovisioned campaign ever reaches a dispatcher, independent of any one adapter.
+//
+// It uses toggleCallTimeout rather than metricsCallTimeout: this is a mutation on the same
+// footing as a status change, and a mutate that times out client-side may still have been
+// applied, so it gets the longer budget the other mutating path uses.
+func (o *Orchestrator) ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordActionsUnsupported, platform)
+	}
+	actioner, ok := d.(KeywordActioner)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordActionsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, aerr := actioner.ApplyKeywordActions(callCtx, projectID, platform, campaign, actions)
+	o.recordUpstream(ctx, platform, opKeywordActions, start, aerr)
+	if aerr != nil {
+		return nil, aerr
+	}
+	// A nil slice on a successful MUTATION is a contract violation with teeth: the handler
+	// reports applied_count from its length, so a nil would tell a caller that zero keywords
+	// were changed by a call that returned success — the exact ambiguity the all-or-nothing
+	// batch exists to remove.
+	if outcomes == nil {
+		return nil, fmt.Errorf("%s keyword actioner returned no outcomes with no error", platform)
+	}
+	return outcomes, nil
 }

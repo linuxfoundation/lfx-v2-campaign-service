@@ -91,6 +91,23 @@ type Service interface {
 	// outright (409). Read the pause's effect from the ad platform, not from this
 	// row.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
+	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
+	// paid campaign: pausing or removing a keyword changes what serves, so it is
+	// validated exactly like a create — every action is checked, the campaign's
+	// provisioning is confirmed, and the campaign's ad account is verified against
+	// the project's current connection BEFORE Google is contacted at all.
+	// ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial
+	// failure disabled, so either every action applied or none did. A caller is
+	// never left working out which half of a spend-stopping request took effect.
+	// REMOVE IS IRREVERSIBLE — Google cannot re-enable a removed criterion, only
+	// create a new one with a new id. Google Ads only: a campaign on any other
+	// platform is refused with 400, since no other adapter models keywords as
+	// addressable criteria. **409** when the change is refused before Google is
+	// contacted: the campaign is unprovisioned (no platform campaign id, or no ad
+	// group), the campaign belongs to a different ad account than the project's
+	// connection now resolves to, or the connection row itself is unusable. Those
+	// are non-retryable, which is why none of them is a 503.
+	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -123,7 +140,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [17]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [18]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -138,6 +155,21 @@ type AdoptCampaignPayload struct {
 	Platform string
 	// The ad platform's own id for the existing campaign
 	PlatformCampaignID string
+}
+
+// ApplyKeywordActionsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service apply-keyword-actions method.
+type ApplyKeywordActionsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The keyword mutations to apply, all-or-nothing.
+	Actions []*KeywordActionInput
 }
 
 // ApproveBriefPayload is the payload type of the
@@ -577,6 +609,41 @@ type JobPollResponse struct {
 	Result []*PlatformResult
 	// Terminal error, if any
 	Error *string
+}
+
+type KeywordActionInput struct {
+	// The ad group the criterion belongs to. Digits only.
+	AdGroupID string
+	// The keyword's ad-group criterion id, as returned by the keywords read.
+	// Digits only.
+	CriterionID string
+	// What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion
+	// cannot be re-enabled, only re-created with a new id.
+	Action string
+}
+
+type KeywordActionResult struct {
+	// The ad group that was addressed
+	AdGroupID string
+	// The criterion that was addressed
+	CriterionID string
+	// The action that was applied
+	Action string
+	// The criterion resource name Google returned for the applied mutation
+	ResourceName string
+}
+
+// KeywordActions is the result type of the lfx-v2-campaign-service-briefs
+// service apply-keyword-actions method.
+type KeywordActions struct {
+	// The campaign whose keywords were acted on
+	CampaignID string
+	// One entry per requested action, in request order. All applied, or the
+	// request failed and none were.
+	Results []*KeywordActionResult
+	// How many actions were applied. Always equal to the number requested — a
+	// partial application is not a possible outcome.
+	AppliedCount int
 }
 
 type PlatformResult struct {

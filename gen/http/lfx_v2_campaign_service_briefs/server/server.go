@@ -35,6 +35,7 @@ type Server struct {
 	GenerateEmailCopy    http.Handler
 	UpdateCampaign       http.Handler
 	ToggleCampaignStatus http.Handler
+	ApplyKeywordActions  http.Handler
 	DeleteCampaign       http.Handler
 	GetJob               http.Handler
 }
@@ -81,6 +82,7 @@ func New(
 			{"GenerateEmailCopy", "POST", "/projects/{project_id}/briefs/{brief_id}/email-copy"},
 			{"UpdateCampaign", "PUT", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"ToggleCampaignStatus", "PATCH", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/status"},
+			{"ApplyKeywordActions", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions"},
 			{"DeleteCampaign", "DELETE", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"GetJob", "GET", "/projects/{project_id}/jobs/{job_id}"},
 		},
@@ -99,6 +101,7 @@ func New(
 		GenerateEmailCopy:    NewGenerateEmailCopyHandler(e.GenerateEmailCopy, mux, decoder, encoder, errhandler, formatter),
 		UpdateCampaign:       NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
 		ToggleCampaignStatus: NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
+		ApplyKeywordActions:  NewApplyKeywordActionsHandler(e.ApplyKeywordActions, mux, decoder, encoder, errhandler, formatter),
 		DeleteCampaign:       NewDeleteCampaignHandler(e.DeleteCampaign, mux, decoder, encoder, errhandler, formatter),
 		GetJob:               NewGetJobHandler(e.GetJob, mux, decoder, encoder, errhandler, formatter),
 	}
@@ -124,6 +127,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GenerateEmailCopy = m(s.GenerateEmailCopy)
 	s.UpdateCampaign = m(s.UpdateCampaign)
 	s.ToggleCampaignStatus = m(s.ToggleCampaignStatus)
+	s.ApplyKeywordActions = m(s.ApplyKeywordActions)
 	s.DeleteCampaign = m(s.DeleteCampaign)
 	s.GetJob = m(s.GetJob)
 }
@@ -149,6 +153,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGenerateEmailCopyHandler(mux, h.GenerateEmailCopy)
 	MountUpdateCampaignHandler(mux, h.UpdateCampaign)
 	MountToggleCampaignStatusHandler(mux, h.ToggleCampaignStatus)
+	MountApplyKeywordActionsHandler(mux, h.ApplyKeywordActions)
 	MountDeleteCampaignHandler(mux, h.DeleteCampaign)
 	MountGetJobHandler(mux, h.GetJob)
 }
@@ -944,6 +949,60 @@ func NewToggleCampaignStatusHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "toggle-campaign-status")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountApplyKeywordActionsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint.
+func MountApplyKeywordActionsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions", f)
+}
+
+// NewApplyKeywordActionsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "apply-keyword-actions" endpoint.
+func NewApplyKeywordActionsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeApplyKeywordActionsRequest(mux, decoder)
+		encodeResponse = EncodeApplyKeywordActionsResponse(encoder)
+		encodeError    = EncodeApplyKeywordActionsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "apply-keyword-actions")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

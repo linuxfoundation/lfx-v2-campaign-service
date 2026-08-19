@@ -2724,6 +2724,178 @@ func DecodeToggleCampaignStatusResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildApplyKeywordActionsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "apply-keyword-actions" endpoint
+func (c *Client) BuildApplyKeywordActionsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.ApplyKeywordActionsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "apply-keyword-actions", "*lfxv2campaignservicebriefs.ApplyKeywordActionsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ApplyKeywordActionsLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "apply-keyword-actions", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeApplyKeywordActionsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs apply-keyword-actions server.
+func EncodeApplyKeywordActionsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.ApplyKeywordActionsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "apply-keyword-actions", "*lfxv2campaignservicebriefs.ApplyKeywordActionsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewApplyKeywordActionsRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+		}
+		return nil
+	}
+}
+
+// DecodeApplyKeywordActionsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs apply-keyword-actions endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeApplyKeywordActionsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ApplyKeywordActionsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			res := NewApplyKeywordActionsKeywordActionsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ApplyKeywordActionsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ApplyKeywordActionsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ApplyKeywordActionsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ApplyKeywordActionsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ApplyKeywordActionsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "apply-keyword-actions", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildDeleteCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "delete-campaign" endpoint
@@ -3274,6 +3446,46 @@ func marshalCampaignUpdateInputRequestBodyToLfxv2campaignservicebriefsCampaignUp
 		CampaignName: v.CampaignName,
 		Status:       v.Status,
 		Config:       v.Config,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsKeywordActionInputToKeywordActionInputRequestBody
+// builds a value of type *KeywordActionInputRequestBody from a value of type
+// *lfxv2campaignservicebriefs.KeywordActionInput.
+func marshalLfxv2campaignservicebriefsKeywordActionInputToKeywordActionInputRequestBody(v *lfxv2campaignservicebriefs.KeywordActionInput) *KeywordActionInputRequestBody {
+	res := &KeywordActionInputRequestBody{
+		AdGroupID:   v.AdGroupID,
+		CriterionID: v.CriterionID,
+		Action:      v.Action,
+	}
+
+	return res
+}
+
+// marshalKeywordActionInputRequestBodyToLfxv2campaignservicebriefsKeywordActionInput
+// builds a value of type *lfxv2campaignservicebriefs.KeywordActionInput from a
+// value of type *KeywordActionInputRequestBody.
+func marshalKeywordActionInputRequestBodyToLfxv2campaignservicebriefsKeywordActionInput(v *KeywordActionInputRequestBody) *lfxv2campaignservicebriefs.KeywordActionInput {
+	res := &lfxv2campaignservicebriefs.KeywordActionInput{
+		AdGroupID:   v.AdGroupID,
+		CriterionID: v.CriterionID,
+		Action:      v.Action,
+	}
+
+	return res
+}
+
+// unmarshalKeywordActionResultResponseBodyToLfxv2campaignservicebriefsKeywordActionResult
+// builds a value of type *lfxv2campaignservicebriefs.KeywordActionResult from
+// a value of type *KeywordActionResultResponseBody.
+func unmarshalKeywordActionResultResponseBodyToLfxv2campaignservicebriefsKeywordActionResult(v *KeywordActionResultResponseBody) *lfxv2campaignservicebriefs.KeywordActionResult {
+	res := &lfxv2campaignservicebriefs.KeywordActionResult{
+		AdGroupID:    *v.AdGroupID,
+		CriterionID:  *v.CriterionID,
+		Action:       *v.Action,
+		ResourceName: *v.ResourceName,
 	}
 
 	return res
