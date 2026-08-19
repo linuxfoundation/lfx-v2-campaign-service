@@ -2617,6 +2617,33 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	in.DSABeneficiary = strings.TrimSpace(in.DSABeneficiary)
 	in.DSAPayor = strings.TrimSpace(in.DSAPayor)
 
+	// A SUPPLIED InstagramUserID must be well-formed. It is optional (an empty value
+	// is a legitimate Facebook-only campaign and stays allowed), but when present it
+	// is only consumed at the CREATIVE POST — which runs after the campaign and ad set
+	// already exist, and where a 4xx is treated as a non-fatal per-variant failure.
+	// A malformed IGSID would therefore surface as a created_degraded campaign with no
+	// publishable ad: a billable resource that can never serve. The value is knowable-
+	// bad here, so reject it before the first mutating call, the same gate PageID and
+	// PixelID already get (Meta object ids are decimal strings).
+	if in.InstagramUserID != "" && !numericIDRE.MatchString(in.InstagramUserID) {
+		return nil, fmt.Errorf("instagramUserId %q is malformed: Meta Instagram account IDs (IGSID) are numeric strings", in.InstagramUserID)
+	}
+
+	// The two EU DSA disclosures are attached to the ad set independently, so exactly
+	// one could otherwise be sent. Meta requires BOTH to publish an ad set targeting a
+	// regulated location (docs/api-catalog.md), so a one-sided pair is deterministically
+	// incomplete: it either gets the ad set rejected after the campaign exists, or leaves
+	// it unpublishable. Unlike Meta's other publish-time requirements, one-sidedness is
+	// knowable HERE, so reject it before any mutating call. Both absent remains valid —
+	// that is the ordinary non-regulated flow and must not break.
+	if (in.DSABeneficiary == "") != (in.DSAPayor == "") {
+		supplied, missing := "dsaBeneficiary", "dsaPayor"
+		if in.DSABeneficiary == "" {
+			supplied, missing = "dsaPayor", "dsaBeneficiary"
+		}
+		return nil, fmt.Errorf("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
+	}
+
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never
 	// creates a paid campaign.
