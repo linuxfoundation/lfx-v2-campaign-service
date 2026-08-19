@@ -493,6 +493,16 @@ type CreateBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // FindBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -546,6 +556,16 @@ type FindBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// FindBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "Unauthorized" error.
+type FindBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -593,6 +613,16 @@ type GetBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "NotFound" error.
 type GetBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
+// body for the "Unauthorized" error.
+type GetBriefUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -672,6 +702,16 @@ type UpdateBriefPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ApproveBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -745,6 +785,16 @@ type ApproveBriefPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ApproveBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ApproveBriefUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -792,6 +842,16 @@ type DeleteBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteBriefUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
+// response body for the "Unauthorized" error.
+type DeleteBriefUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -851,6 +911,16 @@ type FetchEventURLNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// FetchEventURLUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "Unauthorized" error.
+type FetchEventURLUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateCampaignsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -898,6 +968,16 @@ type CreateCampaignsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCampaignsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateCampaignsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -957,6 +1037,16 @@ type AdoptCampaignNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// AdoptCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type AdoptCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1004,6 +1094,16 @@ type GetCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type GetCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1063,6 +1163,16 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetCampaignMetricsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetCampaignMetricsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetBriefMetricsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1116,6 +1226,16 @@ type GetBriefMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetBriefMetricsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetBriefMetricsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GenerateEmailCopyBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1163,6 +1283,16 @@ type GenerateEmailCopyInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "NotFound" error.
 type GenerateEmailCopyNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateEmailCopyUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GenerateEmailCopyUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1242,6 +1372,16 @@ type UpdateCampaignPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// UpdateCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ToggleCampaignStatusBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1309,6 +1449,16 @@ type ToggleCampaignStatusPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type ToggleCampaignStatusPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ToggleCampaignStatusUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ToggleCampaignStatusUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1388,6 +1538,16 @@ type DeleteCampaignPreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "Unauthorized" error.
+type DeleteCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetJobBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -1435,6 +1595,16 @@ type GetJobInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "NotFound" error.
 type GetJobNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetJobUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
+// body for the "Unauthorized" error.
+type GetJobUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1981,6 +2151,17 @@ func NewCreateBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFound
 	return body
 }
 
+// NewCreateBriefUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "create-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCreateBriefUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *CreateBriefUnauthorizedResponseBody {
+	body := &CreateBriefUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewFindBriefBadRequestResponseBody builds the HTTP response body from the
 // result of the "find-brief" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2037,6 +2218,17 @@ func NewFindBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundEr
 	return body
 }
 
+// NewFindBriefUnauthorizedResponseBody builds the HTTP response body from the
+// result of the "find-brief" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewFindBriefUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *FindBriefUnauthorizedResponseBody {
+	body := &FindBriefUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetBriefBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-brief" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2087,6 +2279,17 @@ func NewGetBriefInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.
 // service.
 func NewGetBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetBriefNotFoundResponseBody {
 	body := &GetBriefNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetBriefUnauthorizedResponseBody builds the HTTP response body from the
+// result of the "get-brief" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetBriefUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetBriefUnauthorizedResponseBody {
+	body := &GetBriefUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2171,6 +2374,17 @@ func NewUpdateBriefPreconditionRequiredResponseBody(res *lfxv2campaignservicebri
 	return body
 }
 
+// NewUpdateBriefUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "update-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateBriefUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UpdateBriefUnauthorizedResponseBody {
+	body := &UpdateBriefUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewApproveBriefBadRequestResponseBody builds the HTTP response body from the
 // result of the "approve-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2249,6 +2463,17 @@ func NewApproveBriefPreconditionRequiredResponseBody(res *lfxv2campaignservicebr
 	return body
 }
 
+// NewApproveBriefUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "approve-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApproveBriefUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ApproveBriefUnauthorizedResponseBody {
+	body := &ApproveBriefUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteBriefBadRequestResponseBody builds the HTTP response body from the
 // result of the "delete-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2299,6 +2524,17 @@ func NewDeleteBriefInternalServerErrorResponseBody(res *lfxv2campaignservicebrie
 // "lfx-v2-campaign-service-briefs" service.
 func NewDeleteBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *DeleteBriefNotFoundResponseBody {
 	body := &DeleteBriefNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteBriefUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "delete-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteBriefUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *DeleteBriefUnauthorizedResponseBody {
+	body := &DeleteBriefUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2361,6 +2597,17 @@ func NewFetchEventURLNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFou
 	return body
 }
 
+// NewFetchEventURLUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "fetch-event-url" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewFetchEventURLUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *FetchEventURLUnauthorizedResponseBody {
+	body := &FetchEventURLUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateCampaignsBadRequestResponseBody builds the HTTP response body from
 // the result of the "create-campaigns" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2411,6 +2658,17 @@ func NewCreateCampaignsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-briefs" service.
 func NewCreateCampaignsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *CreateCampaignsNotFoundResponseBody {
 	body := &CreateCampaignsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCampaignsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "create-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCreateCampaignsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *CreateCampaignsUnauthorizedResponseBody {
+	body := &CreateCampaignsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2473,6 +2731,17 @@ func NewAdoptCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFou
 	return body
 }
 
+// NewAdoptCampaignUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "adopt-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAdoptCampaignUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *AdoptCampaignUnauthorizedResponseBody {
+	body := &AdoptCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetCampaignBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2523,6 +2792,17 @@ func NewGetCampaignInternalServerErrorResponseBody(res *lfxv2campaignservicebrie
 // "lfx-v2-campaign-service-briefs" service.
 func NewGetCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCampaignNotFoundResponseBody {
 	body := &GetCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetCampaignUnauthorizedResponseBody {
+	body := &GetCampaignUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2585,6 +2865,17 @@ func NewGetCampaignMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.N
 	return body
 }
 
+// NewGetCampaignMetricsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetCampaignMetricsUnauthorizedResponseBody {
+	body := &GetCampaignMetricsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetBriefMetricsBadRequestResponseBody builds the HTTP response body from
 // the result of the "get-brief-metrics" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2641,6 +2932,17 @@ func NewGetBriefMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotF
 	return body
 }
 
+// NewGetBriefMetricsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetBriefMetricsUnauthorizedResponseBody {
+	body := &GetBriefMetricsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGenerateEmailCopyBadRequestResponseBody builds the HTTP response body
 // from the result of the "generate-email-copy" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2691,6 +2993,17 @@ func NewGenerateEmailCopyInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-briefs" service.
 func NewGenerateEmailCopyNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GenerateEmailCopyNotFoundResponseBody {
 	body := &GenerateEmailCopyNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateEmailCopyUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GenerateEmailCopyUnauthorizedResponseBody {
+	body := &GenerateEmailCopyUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2775,6 +3088,17 @@ func NewUpdateCampaignPreconditionRequiredResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewUpdateCampaignUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "update-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UpdateCampaignUnauthorizedResponseBody {
+	body := &UpdateCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewToggleCampaignStatusBadRequestResponseBody builds the HTTP response body
 // from the result of the "toggle-campaign-status" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2847,6 +3171,17 @@ func NewToggleCampaignStatusPreconditionFailedResponseBody(res *lfxv2campaignser
 // the "lfx-v2-campaign-service-briefs" service.
 func NewToggleCampaignStatusPreconditionRequiredResponseBody(res *lfxv2campaignservicebriefs.PreconditionRequiredError) *ToggleCampaignStatusPreconditionRequiredResponseBody {
 	body := &ToggleCampaignStatusPreconditionRequiredResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewToggleCampaignStatusUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "toggle-campaign-status" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewToggleCampaignStatusUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ToggleCampaignStatusUnauthorizedResponseBody {
+	body := &ToggleCampaignStatusUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2931,6 +3266,17 @@ func NewDeleteCampaignPreconditionRequiredResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewDeleteCampaignUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *DeleteCampaignUnauthorizedResponseBody {
+	body := &DeleteCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetJobBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2979,6 +3325,17 @@ func NewGetJobInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.In
 // of the "get-job" endpoint of the "lfx-v2-campaign-service-briefs" service.
 func NewGetJobNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetJobNotFoundResponseBody {
 	body := &GetJobNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetJobUnauthorizedResponseBody builds the HTTP response body from the
+// result of the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetJobUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetJobUnauthorizedResponseBody {
+	body := &GetJobUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
