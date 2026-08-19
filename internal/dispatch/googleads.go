@@ -60,6 +60,10 @@ const (
 	// translate between two spellings of the same idea.
 	googleAdsChannelSearch    = "search"
 	googleAdsChannelDemandGen = "demand-gen"
+	// Google's own advertising_channel_type enum spellings, the vocabulary the settings
+	// readback compares in. googleAdsVariantForChannelType maps these back the other way.
+	googleAdsChannelTypeSearch    = "SEARCH"
+	googleAdsChannelTypeDemandGen = "DEMAND_GEN"
 )
 
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
@@ -1086,16 +1090,56 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 // leave that campaign type's real slot open for a duplicate.
 func googleAdsVariantForChannelType(channelType string) (string, error) {
 	switch strings.ToUpper(strings.TrimSpace(channelType)) {
-	case "SEARCH":
+	case googleAdsChannelTypeSearch:
 		// Search is this platform's default slot: an absent channel and an explicit
 		// "search" both dispatch the same campaign, and both normalise to VariantDefault.
 		return model.VariantDefault, nil
-	case "DEMAND_GEN":
+	case googleAdsChannelTypeDemandGen:
 		return model.NormalizeVariant(googleAdsChannelDemandGen), nil
 	case "":
 		return "", fmt.Errorf("google ads: the campaign lookup returned no advertising channel type, so which campaign type this is cannot be established; refusing to adopt rather than assume")
 	default:
 		return "", fmt.Errorf("google ads: campaign type %q is not one this service creates, so it has no slot to adopt into", channelType)
+	}
+}
+
+// googleAdsRecordedChannelType recovers the advertising channel type this service ASKED for
+// from the row's ConfigSnapshot, expressed in Google's own enum vocabulary so it can be
+// compared against campaign.advertising_channel_type as read from the platform.
+//
+// The snapshot is the googleAdsConfig marshalled whole by applyCampaignConfig, on both the
+// create and the adoption path, so Channel is recorded for every row either path wrote.
+//
+// An ABSENT Channel maps to SEARCH, not to nil, and that is the same decision googleAdsConfig
+// documents on the field itself: every caller predating the field omits it and they all mean
+// Search, which is what the dispatcher hardcoded before the field existed. Reporting `unknown`
+// for those rows would withhold a comparison this service can actually make.
+//
+// nil is returned only where nothing was genuinely recorded or the record cannot be trusted:
+// a row with no snapshot at all (a legacy row, or one whose marshal failed and was logged),
+// a snapshot that is not the JSON object this adapter writes, or a Channel value outside the
+// closed set this service creates. That last case is not a divergence to report — it is a row
+// this code cannot interpret, and claiming `diverged` from an uninterpretable recorded value
+// would be a fabricated finding rather than an observed one.
+func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign) *string {
+	if len(campaign.ConfigSnapshot) == 0 {
+		return nil
+	}
+	var cfg googleAdsConfig
+	if err := json.Unmarshal(campaign.ConfigSnapshot, &cfg); err != nil {
+		// Not an error for the caller: the readback still reports every other field. The row
+		// simply cannot say what was asked for, which is exactly what `unknown` means.
+		slog.WarnContext(ctx, "google ads config snapshot could not be decoded; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID, "error", err)
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Channel)) {
+	case "", googleAdsChannelSearch:
+		return strPtr(googleAdsChannelTypeSearch)
+	case googleAdsChannelDemandGen:
+		return strPtr(googleAdsChannelTypeDemandGen)
+	default:
+		return nil
 	}
 }
 
@@ -1431,6 +1475,20 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		recordedEnd = strPtr(campaign.EndDate.UTC().Format(campaignDateLayout))
 	}
 
+	// Advertising channel type. This one IS recorded, unlike the four genuine upstream-only
+	// observations below: googleAdsConfig.Channel is marshalled whole into ConfigSnapshot by
+	// applyCampaignConfig on BOTH the create and the adoption path. Passing nil here would
+	// discard a request this service holds and report `unknown` forever, so a campaign
+	// recorded as demand-gen could never be shown as diverging from an upstream SEARCH —
+	// which is a real misconfiguration, and one of the few this endpoint exists to surface.
+	//
+	// The recorded side is translated INTO Google's vocabulary rather than the upstream side
+	// into ours, because the upstream value is the one an operator will recognise from the
+	// Google Ads UI, and because googleAdsVariantForChannelType already refuses any channel
+	// this service cannot create — mapping the other way would have to invent a slot for
+	// PERFORMANCE_MAX to compare against.
+	recordedChannelType := googleAdsRecordedChannelType(ctx, campaign)
+
 	rb.Fields = []model.CampaignSettingsField{
 		model.CompareSettingsField(settingsFieldBudgetAmount, recordedBudget, googleAdsUpstreamBudgetAmount(settings)),
 		model.CompareSettingsField(settingsFieldBudgetType, recordedBudgetType, upstreamBudgetType),
@@ -1445,10 +1503,11 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		model.CompareSettingsField(settingsFieldStatus, nil, settings.Status),
 		model.CompareSettingsField(settingsFieldStartDate, recordedStart, googleAdsDateOnly(settings.StartDateTime)),
 		model.CompareSettingsField(settingsFieldEndDate, recordedEnd, googleAdsDateOnly(settings.EndDateTime)),
-		// Upstream-only observations: no row column expresses any of these.
+		// Upstream-only observations: no row column expresses these. advertising_channel_type
+		// is deliberately NOT among them — see recordedChannelType above.
 		model.CompareSettingsField(settingsFieldBudgetDelivery, nil, settings.BudgetDeliveryMethod),
 		model.CompareSettingsField(settingsFieldBudgetShared, nil, boolToStrPtr(settings.BudgetExplicitlyShared)),
-		model.CompareSettingsField(settingsFieldChannelType, nil, settings.AdvertisingChannelType),
+		model.CompareSettingsField(settingsFieldChannelType, recordedChannelType, settings.AdvertisingChannelType),
 		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, settings.BiddingStrategyType),
 	}
 	rb.SummariseSettings()

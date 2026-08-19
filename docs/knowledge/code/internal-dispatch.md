@@ -264,12 +264,27 @@ field nobody could read as a match would be a fabricated "they match" — agreem
 from an observation that never happened.
 
 The Google Ads adapter compares `budget_amount`, `budget_type`, `campaign_name`,
-`start_date` and `end_date`, and reports four further settings **upstream-only** —
-`budget_delivery_method`, `budget_explicitly_shared`, `advertising_channel_type` and
+`advertising_channel_type`, `start_date` and `end_date`, and reports four settings
+**upstream-only** — `status`, `budget_delivery_method`, `budget_explicitly_shared` and
 `bidding_strategy_type`. Nothing in a Google Ads dispatch config can express those four, so
 they can never diverge and always carry an `unknown` verdict; they are reported anyway
 because a budget that reads as expected while being `ACCELERATED` or shared across campaigns
-is exactly the state that explains a spend anomaly the compared fields cannot. Flight dates
+is exactly the state that explains a spend anomaly the compared fields cannot.
+
+**`advertising_channel_type` is COMPARED, not upstream-only, and that distinction is easy to
+get wrong** — it looks like the other platform observations and it is the only compared field
+whose recorded side comes from `config_snapshot` rather than from a column.
+`googleAdsConfig.Channel` is marshalled whole into `ConfigSnapshot` by `applyCampaignConfig`
+on both the create and the adoption path, so the row DOES record which channel was asked for.
+`googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
+`search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
+field existed), `demand-gen` maps to `DEMAND_GEN`. A campaign recorded as demand-gen and
+running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
+side made it permanently `unknown` — the finding could not be produced at all. The recorded
+side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
+a row with no snapshot, a snapshot that is not this adapter's JSON object, or a channel
+outside the closed set this service creates. Claiming `diverged` from a recorded value this
+code cannot interpret would be a fabricated finding rather than an observed one. Flight dates
 are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
 returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings
 would report a divergence for every campaign that actually agrees. The recorded side of both
@@ -279,9 +294,43 @@ config that populates them starts diverging without anyone having to remember. I
 translates Google's `campaign_budget.period` into `model.BudgetType` via
 `googleAdsBudgetTypeFromPeriod` — `DAILY` -> `daily`, `CUSTOM_PERIOD` -> `lifetime` (Google
 has no `LIFETIME` value), and `UNKNOWN`/anything else -> unmapped, which fails closed to an
-`unknown` verdict rather than manufacturing one. Both sides are rendered to two decimals by
-one helper so a row holding `500` and a platform holding `500.00` are not reported as
-diverging.
+`unknown` verdict rather than manufacturing one.
+
+**Budget amounts are rendered to two decimals ONLY when the upstream value is a whole number
+of cents.** `googleAdsUpstreamBudgetAmount` is where the two sides are made comparable, and it
+deliberately does not run one uniform format over both. The row's column is `NUMERIC(14,2)`,
+so two decimals is the right rendering for a whole-cent budget and is what stops a row holding
+`500` and a platform holding `500.00` from being reported as diverging. A SUB-CENT upstream
+budget is the exception, and it is the whole point of that function's care: rounding an
+upstream `10.004` to `"10.00"` would make it compare EQUAL to a recorded `10.00` and report
+`match` for two budgets that genuinely differ. Sub-cent micros are therefore rendered at FULL
+precision, so they can only ever read as a divergence.
+
+**A REMOVED campaign must be REPORTED, and getting that requires an explicit status
+predicate.** GAQL excludes removed resources by default unless the filter names `REMOVED`, so
+a `FROM campaign WHERE campaign.id = N` query with no status clause silently returns nothing
+for a removed campaign — which `GetCampaignSettings` reads as a clean absence `(nil, nil)`,
+the dispatcher turns into `ErrPlatformCampaignAbsent`, and the API turns into a 404. That
+hides the most actionable divergence this endpoint has. The query names `ENABLED`, `PAUSED`
+and `REMOVED` explicitly; there is no "no filter" that includes removed rows. This is the
+inverse of `campaign_lookup.go`, which excludes them with `status != 'REMOVED'` so a
+tombstone cannot be adopted. Note that a stub-server test cannot catch a regression here: the
+stub returns whatever rows the test handed it and performs no filtering, so only the query
+TEXT can be asserted.
+
+**Decoding normalises absence, never the value.** `blankToNil` in `campaign_settings.go`
+maps a whitespace-only optional field to nil — a blank status or channel type is not a value a
+caller can interpret, and comparing `""` against a recorded value would report a divergence
+the platform never showed. It does NOT trim the value it keeps, and that half is the one
+that is easy to get wrong: it runs BEFORE every consumer that validates these strings, so
+trimming would hand them a well-formed value the platform never sent. `googleAdsDateOnly`
+parses with a strict layout and passes an unparseable value through WHOLE, so an upstream
+`"2026-08-01 "` trimmed to `"2026-08-01"` becomes byte-equal to a recorded `YYYY-MM-DD` and
+reports `match` for a value that never parsed; `googleAdsBudgetTypeFromPeriod` has the same
+shape with `" DAILY "`. Normalisation upstream of validation manufactures exactly the
+agreement this readback exists to make impossible. Tests that call those helpers with a
+literal cannot catch it — they never exercise the decode step — so the guard is pinned at the
+client layer instead.
 
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see

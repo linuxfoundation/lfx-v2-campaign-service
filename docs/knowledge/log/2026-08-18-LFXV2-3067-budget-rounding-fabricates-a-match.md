@@ -54,11 +54,21 @@ field was returned and nothing failed:
 fields=10  diverged=0  unknown=7
 ```
 
-Seven of the ten are permanently `unknown` **by construction** — the five upstream-only
-observations, `status` (deliberately never compared, different axes), and the two flight dates,
-whose recorded side is always empty for Google Ads today. "Could not be read" is false for all
-seven. An operator watching `unknown_count` for read failures sees a constant floor of 7 and
-cannot distinguish it from a real decode failure, so the number they would act on is inert.
+Seven of the ten are permanently `unknown` **by construction** — `status` (deliberately never
+compared, different axes), the four other upstream-only observations, and the two flight dates,
+whose recorded side is always empty for Google Ads today. Note the shape of that list: `status`
+IS one of the five upstream-only fields, so it is named once and four others are added to it,
+not five. "Could not be read" is false for all seven. An operator watching `unknown_count` for
+read failures sees a constant floor and cannot distinguish it from a real decode failure, so
+the number they would act on is inert.
+
+**Superseded in part, same PR (LFXV2-3067).** The `7` above was measured before
+`advertising_channel_type` gained a recorded side. It now reads its recorded value from
+`ConfigSnapshot`, so a row carrying a snapshot measures `unknown=6` and only a legacy row
+without one still measures `7` — the floor is a range, not a constant. That does not weaken the
+point: a floor an operator cannot predict from the response alone is, if anything, less
+distinguishable from a real failure than a fixed one. See
+`2026-08-19-LFXV2-3067-settings-readback-review-fixes.md`.
 
 This is the `pending-claim-is-overloaded` shape: one token carrying two operator meanings.
 

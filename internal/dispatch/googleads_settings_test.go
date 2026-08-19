@@ -460,11 +460,17 @@ func TestGoogleAds_ReadSettings_ConnectionUnresolvedPropagates(t *testing.T) {
 // TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations pins that settings with NO
 // counterpart on the campaign row are still REPORTED.
 //
-// Nothing in a Google Ads dispatch config can express delivery method, budget sharing,
-// channel type or bidding strategy, so they can never diverge — but a budget that reads as
-// expected while being ACCELERATED or shared across campaigns is exactly the state that
-// explains a spend anomaly the compared fields cannot. Reading them into the struct and
-// then dropping them would be dead API surface.
+// Nothing in a Google Ads dispatch config can express delivery method, budget sharing or
+// bidding strategy, so those three can never diverge — but a budget that reads as expected
+// while being ACCELERATED or shared across campaigns is exactly the state that explains a
+// spend anomaly the compared fields cannot. Reading them into the struct and then dropping
+// them would be dead API surface.
+//
+// advertising_channel_type is NOT in this set: googleAdsConfig.Channel is recorded in
+// ConfigSnapshot, so it has a recorded side and IS compared. It appears below only with a
+// campaign carrying no snapshot at all, where `unknown` is the honest verdict for a
+// different reason — nothing was recorded on that row. See the three channel-type tests
+// following this one.
 func TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations(t *testing.T) {
 	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"DEMAND_GEN","biddingStrategyType":"MANUAL_CPC"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY","deliveryMethod":"ACCELERATED","explicitlyShared":true}}]}`)
 
@@ -476,7 +482,6 @@ func TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations(t *testing.T) {
 	for _, tc := range []struct{ field, want string }{
 		{settingsFieldBudgetDelivery, "ACCELERATED"},
 		{settingsFieldBudgetShared, "true"},
-		{settingsFieldChannelType, "DEMAND_GEN"},
 		{settingsFieldBiddingStrategy, "MANUAL_CPC"},
 	} {
 		got := settingsField(t, rb, tc.field)
@@ -484,11 +489,102 @@ func TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations(t *testing.T) {
 			t.Errorf("%s Upstream = %v, want %q", tc.field, got.Upstream, tc.want)
 		}
 		if got.Recorded != nil {
-			t.Errorf("%s Recorded = %q, want nil: no row column expresses this", tc.field, *got.Recorded)
+			t.Errorf("%s Recorded = %q, want nil: nothing in a dispatch config expresses this", tc.field, *got.Recorded)
 		}
 		if got.Comparison != model.SettingsUnknown {
 			t.Errorf("%s comparison = %q, want unknown: an upstream-only observation was never compared", tc.field, got.Comparison)
 		}
+	}
+}
+
+// TestGoogleAds_ReadSettings_RecordedChannelTypeDiverges is the point of recording the
+// channel at all: a campaign this service dispatched as demand-gen, running upstream as a
+// SEARCH campaign, is a real misconfiguration and must be REPORTED as a divergence. Passing
+// nil for the recorded side made this permanently `unknown` — the finding could not exist.
+func TestGoogleAds_ReadSettings_RecordedChannelTypeDiverges(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"SEARCH"}}]}`)
+
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		ConfigSnapshot: []byte(`{"channel":"demand-gen"}`),
+	}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	got := settingsField(t, rb, settingsFieldChannelType)
+	if got.Recorded == nil {
+		t.Fatal("channel type Recorded = nil; googleAdsConfig.Channel IS persisted in " +
+			"ConfigSnapshot on both the create and the adoption path, so discarding it " +
+			"makes an upstream/recorded channel mismatch unreportable")
+	}
+	if *got.Recorded != "DEMAND_GEN" {
+		t.Errorf("Recorded = %q, want DEMAND_GEN (Google's own spelling, the vocabulary this field compares in)", *got.Recorded)
+	}
+	if got.Comparison != model.SettingsDiverged {
+		t.Errorf("comparison = %q, want diverged: recorded demand-gen against an upstream SEARCH", got.Comparison)
+	}
+}
+
+// TestGoogleAds_ReadSettings_RecordedChannelTypeMatches: the same wiring must also be able
+// to report agreement, and an ABSENT channel in the snapshot means SEARCH — the value every
+// caller predating the field meant, and the one the dispatcher hardcoded before it existed.
+func TestGoogleAds_ReadSettings_RecordedChannelTypeMatches(t *testing.T) {
+	for name, snapshot := range map[string]string{
+		"explicit search": `{"channel":"search"}`,
+		"absent channel":  `{"budget":50}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"SEARCH"}}]}`)
+
+			camp := &model.Campaign{
+				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				ConfigSnapshot: []byte(snapshot),
+			}
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			got := settingsField(t, rb, settingsFieldChannelType)
+			if got.Recorded == nil || *got.Recorded != "SEARCH" {
+				t.Fatalf("Recorded = %v, want SEARCH", got.Recorded)
+			}
+			if got.Comparison != model.SettingsMatch {
+				t.Errorf("comparison = %q, want match", got.Comparison)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ReadSettings_UninterpretableChannelIsUnknown: nil is still the answer where
+// nothing was genuinely recorded, or where what was recorded cannot be interpreted. Claiming
+// `diverged` from a snapshot this adapter cannot read would be a fabricated finding — the
+// same absent-is-not-a-value discipline the rest of this readback applies.
+func TestGoogleAds_ReadSettings_UninterpretableChannelIsUnknown(t *testing.T) {
+	for name, snapshot := range map[string]string{
+		"no snapshot at all":                 ``,
+		"not a JSON object":                  `"search"`,
+		"channel this service cannot create": `{"channel":"performance-max"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"SEARCH"}}]}`)
+
+			camp := &model.Campaign{
+				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				ConfigSnapshot: []byte(snapshot),
+			}
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			got := settingsField(t, rb, settingsFieldChannelType)
+			if got.Recorded != nil {
+				t.Errorf("Recorded = %q, want nil: nothing interpretable was recorded", *got.Recorded)
+			}
+			if got.Comparison != model.SettingsUnknown {
+				t.Errorf("comparison = %q, want unknown", got.Comparison)
+			}
+		})
 	}
 }
 

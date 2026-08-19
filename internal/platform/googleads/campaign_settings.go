@@ -192,11 +192,16 @@ func parseSettingsInt(s string) (int64, error) {
 // live campaign disagree, and a defaulted value manufactures agreement or disagreement
 // that was never observed.
 //
-// REMOVED campaigns are NOT excluded here, unlike GetCampaign. That exclusion exists to
-// stop a tombstone being adopted; this call is about a campaign the service already has
-// a row for, and "the campaign you are tracking has been removed upstream" is the single
-// most actionable divergence there is. Filtering it out would report the campaign as
-// unreadable and hide the finding.
+// REMOVED campaigns are INCLUDED here, unlike GetCampaign, and including them takes an
+// explicit predicate rather than the absence of one. GetCampaign's exclusion exists to stop
+// a tombstone being adopted; this call is about a campaign the service already has a row
+// for, and "the campaign you are tracking has been removed upstream" is the single most
+// actionable divergence there is. Filtering it out would report the campaign as absent and
+// hide the finding behind a 404.
+//
+// GAQL drops removed resources BY DEFAULT unless the status filter names REMOVED, so
+// "no predicate" is not neutral here — it is the exclusion, silently. The query below
+// therefore lists all three statuses; see the comment on it.
 func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*CampaignSettings, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
@@ -210,7 +215,20 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 		return nil, err
 	}
 
-	query := "SELECT " + settingsQueryFields + " FROM campaign WHERE campaign.id = " + campaignID
+	// The status predicate is EXPLICIT, and naming REMOVED is the whole reason it exists.
+	// GAQL excludes removed resources by default: a `FROM campaign` query with no predicate
+	// naming REMOVED silently drops removed campaigns, so a bare `campaign.id = N` returns
+	// zero rows for one — which this method reports as a clean absence (nil, nil), which the
+	// dispatcher turns into ErrPlatformCampaignAbsent and the API turns into 404. That hides
+	// the single most actionable divergence this endpoint exists to report: "the campaign you
+	// are tracking has been removed upstream". Listing all three members is how a GAQL query
+	// opts back IN to removed rows; there is no "no filter" that includes them.
+	//
+	// Single-quoted enum literals and the shared Status* constants, matching the two status
+	// predicates in campaign_lookup.go. campaign.id stays UNQUOTED: it is an int64 in GAQL
+	// and has already been proven to be nothing but digits by ValidateCampaignID above.
+	query := "SELECT " + settingsQueryFields + " FROM campaign WHERE campaign.id = " + campaignID +
+		" AND campaign.status IN ('" + StatusEnabled + "', '" + StatusPaused + "', '" + StatusRemoved + "')"
 
 	rows, err := c.gaqlSearch(ctx, query)
 	if err != nil {
@@ -309,14 +327,14 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 
 	settings := &CampaignSettings{
 		CampaignID:             id,
-		Name:                   trimmedOrNil(row.Campaign.Name),
-		Status:                 trimmedOrNil(row.Campaign.Status),
-		AdvertisingChannelType: trimmedOrNil(row.Campaign.AdvertisingChannelType),
-		BiddingStrategyType:    trimmedOrNil(row.Campaign.BiddingStrategyType),
-		StartDateTime:          trimmedOrNil(row.Campaign.StartDateTime),
-		EndDateTime:            trimmedOrNil(row.Campaign.EndDateTime),
-		BudgetPeriod:           trimmedOrNil(row.CampaignBudget.Period),
-		BudgetDeliveryMethod:   trimmedOrNil(row.CampaignBudget.DeliveryMethod),
+		Name:                   blankToNil(row.Campaign.Name),
+		Status:                 blankToNil(row.Campaign.Status),
+		AdvertisingChannelType: blankToNil(row.Campaign.AdvertisingChannelType),
+		BiddingStrategyType:    blankToNil(row.Campaign.BiddingStrategyType),
+		StartDateTime:          blankToNil(row.Campaign.StartDateTime),
+		EndDateTime:            blankToNil(row.Campaign.EndDateTime),
+		BudgetPeriod:           blankToNil(row.CampaignBudget.Period),
+		BudgetDeliveryMethod:   blankToNil(row.CampaignBudget.DeliveryMethod),
 		BudgetExplicitlyShared: row.CampaignBudget.ExplicitlyShared,
 	}
 
@@ -349,7 +367,7 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	// `unknown` verdict rather than a fabricated divergence. UNKNOWN/UNSPECIFIED pass for the
 	// same reason: a value Google explicitly declined to name contradicts nothing.
 	//
-	// settings.BudgetPeriod is used rather than the raw row field because trimmedOrNil has
+	// settings.BudgetPeriod is used rather than the raw row field because blankToNil has
 	// already applied this file's normalisation: a whitespace-only period collapses to nil and
 	// is therefore treated as absent here too, exactly as it is for every other optional string.
 	if settings.BudgetPeriod != nil {
@@ -395,21 +413,35 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	return settings, nil
 }
 
-// trimmedOrNil normalises an optional string field: a field Google omitted stays nil,
-// and one present but blank BECOMES nil.
+// blankToNil maps an optional string field to absence when it is blank, and otherwise
+// carries the value through VERBATIM: a field Google omitted stays nil, one present but
+// whitespace-only BECOMES nil, and one carrying anything else is untouched.
 //
 // Collapsing blank into absent is deliberate. A whitespace-only status or channel type
 // is not a value a caller can interpret, and carrying it through would let an empty
 // string be compared against a recorded value and reported as a DIVERGENCE — a
 // difference invented by the read rather than observed on the platform. Absent is the
 // honest reading of a field that arrived empty.
-func trimmedOrNil(s *string) *string {
+//
+// NOT trimming the surviving value is equally deliberate, and it is the half that is easy
+// to get wrong: this function runs BEFORE any of the consumers that validate these strings,
+// so trimming here normalises a malformed value into a well-formed one behind their backs.
+// googleAdsDateOnly parses with a strict layout and, on failure, passes the value through
+// WHOLE — so an upstream "2026-08-01 " trimmed to "2026-08-01" is byte-equal to a recorded
+// YYYY-MM-DD date and reports `match` for a value that never parsed. googleAdsBudgetTypeFromPeriod
+// has the same shape with " DAILY ". Both would be agreement manufactured by normalisation
+// rather than observed on the platform, which is the exact failure this readback's
+// absent-is-not-a-value discipline exists to prevent. Leaving the value verbatim keeps a
+// malformed field malformed all the way to the consumer that has to judge it.
+//
+// Whitespace-only is not an exception to that: there is no value under the whitespace to
+// preserve, so mapping it to absence withholds a comparison rather than manufacturing one.
+func blankToNil(s *string) *string {
 	if s == nil {
 		return nil
 	}
-	t := strings.TrimSpace(*s)
-	if t == "" {
+	if strings.TrimSpace(*s) == "" {
 		return nil
 	}
-	return &t
+	return s
 }

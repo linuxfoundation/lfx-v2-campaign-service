@@ -269,6 +269,95 @@ func TestGetCampaignSettings_RemovedCampaignIsReported(t *testing.T) {
 	if strings.Contains(query(), "status != '"+StatusRemoved+"'") {
 		t.Errorf("settings query must NOT exclude REMOVED; removal upstream is the finding: %s", query())
 	}
+	// The negative assertion above is not sufficient on its own, and that is the whole
+	// point of this second one. GAQL excludes removed resources BY DEFAULT: a query with
+	// no status predicate at all satisfies "does not contain status != REMOVED" while
+	// still returning nothing for a removed campaign. The stub server answers with
+	// whatever rows the test handed it and performs no filtering, so it cannot reproduce
+	// that default — only the query text can be checked. REMOVED must be named
+	// AFFIRMATIVELY for the row to come back from the real platform.
+	if !strings.Contains(query(), "'"+StatusRemoved+"'") {
+		t.Errorf("settings query must name %s affirmatively — GAQL drops removed rows unless "+
+			"the status filter lists it, so a removed campaign would return zero rows and be "+
+			"reported as a 404 absence: %s", StatusRemoved, query())
+	}
+	for _, want := range []string{StatusEnabled, StatusPaused} {
+		if !strings.Contains(query(), "'"+want+"'") {
+			t.Errorf("settings query must also name %s; opting in to REMOVED replaces the "+
+				"implicit default filter entirely, so every live status has to be listed: %s", want, query())
+		}
+	}
+}
+
+// TestGetCampaignSettings_MalformedValuesSurviveDecodeVerbatim is the test the direct
+// googleAdsDateOnly/googleAdsBudgetTypeFromPeriod tests cannot be: those call the helpers
+// with a literal, so they never exercise the DECODE step that reaches them.
+//
+// blankToNil sits on that step. While it trimmed the surviving value, it handed those
+// helpers something well-formed that the platform never sent: "2026-08-01 " arrived as
+// "2026-08-01", which googleAdsDateOnly's strict parse rejects and passes through whole —
+// byte-equal to a recorded YYYY-MM-DD, so it reported `match` for a value that never parsed.
+// " DAILY " had the same shape. Normalisation upstream of validation manufactures the
+// agreement the whole readback exists to make impossible, so the malformed bytes must reach
+// the consumer unchanged.
+func TestGetCampaignSettings_MalformedValuesSurviveDecodeVerbatim(t *testing.T) {
+	srv, _, _ := settingsServer(t, []json.RawMessage{json.RawMessage(
+		`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"c",` +
+			`"status":"ENABLED","startDateTime":"2026-08-01 ","endDateTime":"2026-08-31 garbage"},` +
+			`"campaignBudget":{"amountMicros":"500000000","period":" DAILY "}}`)})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+	if got == nil {
+		t.Fatal("settings = nil")
+	}
+	for _, tc := range []struct {
+		field string
+		got   *string
+		want  string
+	}{
+		{"startDateTime", got.StartDateTime, "2026-08-01 "},
+		{"endDateTime", got.EndDateTime, "2026-08-31 garbage"},
+		{"period", got.BudgetPeriod, " DAILY "},
+	} {
+		if tc.got == nil {
+			t.Errorf("%s = nil, want %q verbatim", tc.field, tc.want)
+			continue
+		}
+		if *tc.got != tc.want {
+			t.Errorf("%s = %q, want %q VERBATIM — normalising it here hands the comparison a "+
+				"well-formed value the platform never sent, which can then compare EQUAL to a "+
+				"recorded value and fabricate a match", tc.field, *tc.got, tc.want)
+		}
+	}
+}
+
+// TestGetCampaignSettings_WhitespaceOnlyIsStillAbsent: preserving the value verbatim must
+// not resurrect the blank-is-a-divergence bug. There is no value under the whitespace to
+// preserve, so it stays absence — withholding a comparison rather than inventing one.
+func TestGetCampaignSettings_WhitespaceOnlyIsStillAbsent(t *testing.T) {
+	srv, _, _ := settingsServer(t, []json.RawMessage{json.RawMessage(
+		`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"c",` +
+			`"status":"ENABLED","advertisingChannelType":"   ","biddingStrategyType":""},` +
+			`"campaignBudget":{"amountMicros":"500000000","period":"DAILY","deliveryMethod":"  "}}`)})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+	if got.AdvertisingChannelType != nil {
+		t.Errorf("AdvertisingChannelType = %q, want nil for a whitespace-only field", *got.AdvertisingChannelType)
+	}
+	if got.BiddingStrategyType != nil {
+		t.Errorf("BiddingStrategyType = %q, want nil for an empty field", *got.BiddingStrategyType)
+	}
+	if got.BudgetDeliveryMethod != nil {
+		t.Errorf("BudgetDeliveryMethod = %q, want nil for a whitespace-only field", *got.BudgetDeliveryMethod)
+	}
 }
 
 // TestGetCampaignSettings_UnhonouredIDFilterIsRefused: a row for a DIFFERENT campaign
