@@ -301,7 +301,7 @@ var CampaignSettingsReadback = Type("campaign-settings-readback", func() {
 	Attribute("read_at", String, "When the platform was read (RFC3339, UTC). A readback is a point-in-time observation and says nothing about the campaign after this instant.", func() { Format(FormatDateTime) })
 	Attribute("fields", ArrayOf(CampaignSettingsField), "Every setting compared, in a stable order, INCLUDING the ones that could not be compared — a field missing from this list would be indistinguishable from one this service does not know about.")
 	Attribute("diverged_count", Int, "How many fields carry the `diverged` verdict.", func() { Example(1) })
-	Attribute("unknown_count", Int, "How many fields could not be compared. Reported separately from diverged_count rather than folded into it: \"2 differ\" reads very differently next to \"and 5 could not be read\".", func() { Example(2) })
+	Attribute("unknown_count", Int, "How many fields were NOT COMPARED — either because the field has no counterpart on the campaign row (the upstream-only observations, and `status`, which is never compared) or because a side could not be read. Reported separately from diverged_count rather than folded into it: \"2 differ\" reads very differently next to \"and 5 were not compared\". NOT a read-failure count: on a fully healthy readback most fields are unknown by construction, so a consumer watching this for failures would see a constant floor. Use each field's `comparison` to see which is which.", func() { Example(7) })
 	Required("campaign_id", "platform_campaign_id", "platform", "read_at", "fields", "diverged_count", "unknown_count")
 })
 

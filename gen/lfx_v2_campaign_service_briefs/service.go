@@ -391,9 +391,14 @@ type CampaignSettingsReadback struct {
 	Fields []*CampaignSettingsField
 	// How many fields carry the `diverged` verdict.
 	DivergedCount int
-	// How many fields could not be compared. Reported separately from
-	// diverged_count rather than folded into it: "2 differ" reads very differently
-	// next to "and 5 could not be read".
+	// How many fields were NOT COMPARED — either because the field has no
+	// counterpart on the campaign row (the upstream-only observations, and
+	// `status`, which is never compared) or because a side could not be read.
+	// Reported separately from diverged_count rather than folded into it: "2
+	// differ" reads very differently next to "and 5 were not compared". NOT a
+	// read-failure count: on a fully healthy readback most fields are unknown by
+	// construction, so a consumer watching this for failures would see a constant
+	// floor. Use each field's `comparison` to see which is which.
 	UnknownCount int
 }
 

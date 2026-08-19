@@ -66,6 +66,65 @@ func settingsField(t *testing.T, rb *model.CampaignSettingsReadback, name string
 	return model.CampaignSettingsField{}
 }
 
+// TestGoogleAds_ReadSettings_SubCentBudgetIsNotRoundedIntoAMatch pins that the FORMATTER
+// cannot manufacture an agreement.
+//
+// The row's column is NUMERIC(14,2). An upstream budget of 10.004 (10_004_000 micros) rendered
+// at two decimal places becomes "10.00" — identical to a recorded 10.00 — and the field would
+// report `match` for two budgets that genuinely differ. That is the same fabricated agreement
+// the nil-handling is built to prevent, arriving through rounding instead of through an
+// absence, and it is reachable precisely on ADOPTED campaigns, which are what a readback is
+// for: this service's own create path rounds to micros from a 2dp amount and can never
+// produce one.
+func TestGoogleAds_ReadSettings_SubCentBudgetIsNotRoundedIntoAMatch(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"10004000","period":"DAILY"}}]}`)
+
+	recorded := 10.00
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		BudgetAmount: &recorded,
+	}
+
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	budget := settingsField(t, rb, settingsFieldBudgetAmount)
+	if budget.Comparison == model.SettingsMatch {
+		t.Errorf("budget reported %q for recorded=10.00 vs upstream=10.004: rounding the upstream "+
+			"side to the row's 2dp fabricated an agreement between two budgets that differ", budget.Comparison)
+	}
+	if budget.Comparison != model.SettingsDiverged {
+		t.Errorf("budget comparison = %q, want %q", budget.Comparison, model.SettingsDiverged)
+	}
+	if budget.Upstream == nil || *budget.Upstream != "10.004" {
+		t.Errorf("upstream = %v, want the full-precision 10.004: an operator cannot act on a "+
+			"divergence whose reported value has had the differing digits removed", budget.Upstream)
+	}
+}
+
+// TestGoogleAds_ReadSettings_WholeCentBudgetStillMatches is the other half: the sub-cent
+// exception must not make every ordinary budget read as a divergence.
+func TestGoogleAds_ReadSettings_WholeCentBudgetStillMatches(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500500000","period":"DAILY"}}]}`)
+
+	recorded := 500.50
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		BudgetAmount: &recorded,
+	}
+
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	budget := settingsField(t, rb, settingsFieldBudgetAmount)
+	if budget.Comparison != model.SettingsMatch {
+		t.Errorf("budget comparison = %q, want %q: 500.50 and 500500000 micros are the SAME budget, "+
+			"and reporting a divergence here would make every readback noise", budget.Comparison, model.SettingsMatch)
+	}
+}
+
 // TestGoogleAds_ReadSettings_ReportsBudgetDivergence is THE binding test.
 //
 // The campaign row records a budget of 500; the platform reports 750. The response must
@@ -521,6 +580,14 @@ func TestGoogleAdsDateOnly(t *testing.T) {
 		{"timestamp is reduced to its date", &dt, &dateOnly},
 		{"a value with no time is unchanged", &dateOnly, &dateOnly},
 		{"an unexpected shape passes through rather than vanishing", &weird, &weird},
+		// The rest are the fabricated-agreement cases. Splitting on the first space would
+		// reduce each of these to "2026-08-01" and let it compare EQUAL to a recorded
+		// 2026-08-01 — manufacturing an agreement out of a response this code cannot parse.
+		// They must pass through whole, so they can only read as a divergence.
+		{"garbage after the date is NOT truncated into a match", strPtr("2026-08-01 garbage"), strPtr("2026-08-01 garbage")},
+		{"a malformed time is NOT truncated into a match", strPtr("2026-08-01 25:99:99"), strPtr("2026-08-01 25:99:99")},
+		{"a trailing space is NOT truncated into a match", strPtr("2026-08-01 "), strPtr("2026-08-01 ")},
+		{"a second space-separated field is NOT truncated into a match", strPtr("2026-08-01 00:00:00 EXTRA"), strPtr("2026-08-01 00:00:00 EXTRA")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := googleAdsDateOnly(tc.in)

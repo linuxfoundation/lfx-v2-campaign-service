@@ -1154,6 +1154,11 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 // Google's. They match the campaign row's own column names, because the whole report is
 // "what this row records" against "what the platform holds", and naming the row's side in
 // Google's spelling would make the comparison harder to read, not easier.
+// googleAdsDateTimeLayout is the shape Google returns campaign.start_date_time /
+// end_date_time in: 'yyyy-MM-dd HH:mm:ss', in the ad account's timezone. Parsing against it
+// in full is what stops a malformed value being silently truncated into a plausible date.
+const googleAdsDateTimeLayout = "2006-01-02 15:04:05"
+
 const (
 	settingsFieldBudgetAmount = "budget_amount"
 	settingsFieldBudgetType   = "budget_type"
@@ -1209,6 +1214,15 @@ func googleAdsBudgetTypeFromPeriod(period string) model.BudgetType {
 //
 // The two sides are compared as whole units rather than micros because that is what the
 // row stores; the conversion happens here, once, rather than in the comparison.
+//
+// A budget carrying SUB-CENT micros is rendered at full precision instead of at the row's two
+// decimal places, and that exception is the whole point of this function's care. The row's
+// column is NUMERIC(14,2), so rounding an upstream 10.004 to "10.00" would make it compare
+// EQUAL to a recorded 10.00 and report `match` for two budgets that genuinely differ — a
+// fabricated agreement manufactured by the formatter rather than by a nil, which is precisely
+// the defect this readback exists to make impossible. Sub-cent values cannot come from this
+// service's own create path (it rounds to micros from a 2dp amount), but they can and do come
+// from campaigns ADOPTED from outside it — exactly the population a readback is for.
 func googleAdsUpstreamBudgetAmount(s *googleads.CampaignSettings) *string {
 	if s == nil {
 		return nil
@@ -1220,7 +1234,31 @@ func googleAdsUpstreamBudgetAmount(s *googleads.CampaignSettings) *string {
 	if micros == nil {
 		return nil
 	}
+	// Exact integer arithmetic, never float division: at 2^53 micros float64 stops being able
+	// to represent every value, and a budget comparison must not depend on that boundary.
+	if *micros%microsPerCent != 0 {
+		return strPtr(formatSubCentBudgetUnits(*micros))
+	}
 	return strPtr(formatBudgetUnits(float64(*micros) / microsPerBudgetUnit))
+}
+
+// formatSubCentBudgetUnits renders micros that do not divide evenly into cents, keeping every
+// digit the platform reported. The trailing zeroes are trimmed so the value reads as a number
+// rather than as padding, but nothing significant is dropped: this string exists to be shown
+// beside the recorded amount and to compare UNEQUAL to it.
+func formatSubCentBudgetUnits(micros int64) string {
+	neg := micros < 0
+	if neg {
+		micros = -micros
+	}
+	whole := micros / int64(microsPerBudgetUnit)
+	frac := micros % int64(microsPerBudgetUnit)
+	out := strconv.FormatInt(whole, 10) + "." + fmt.Sprintf("%06d", frac)
+	out = strings.TrimRight(out, "0")
+	if neg {
+		out = "-" + out
+	}
+	return out
 }
 
 // Budget rendering constants for the settings readback.
@@ -1232,6 +1270,10 @@ const (
 	microsPerBudgetUnit = 1_000_000.0
 	// budgetDecimalPlaces matches the campaigns.budget_amount column, NUMERIC(14,2).
 	budgetDecimalPlaces = 2
+	// microsPerCent is the divisor that decides whether an upstream budget is expressible at
+	// the row's two decimal places. A remainder means rendering it at 2dp would round it into
+	// a value the platform never reported — and, worse, possibly into the recorded one.
+	microsPerCent = 10_000
 )
 
 // formatBudgetUnits renders a budget amount the same way on both sides of the comparison.
@@ -1255,12 +1297,19 @@ func formatBudgetUnits(v float64) string {
 // A value that is not in the expected shape is returned unchanged rather than discarded: it
 // is still what the platform said, and showing it beside a differing recorded date is more
 // use to an operator than an unexplained absence.
+//
+// The time component is stripped ONLY when the whole value parses as Google's documented
+// 'yyyy-MM-dd HH:mm:ss'. Splitting on the first space unconditionally would turn
+// "2026-08-01 garbage" into "2026-08-01" and let it compare EQUAL to a recorded 2026-08-01 —
+// a fabricated agreement manufactured out of a malformed response, which is the one outcome
+// this readback exists to make impossible. An unparseable value is passed through whole, so
+// it can only ever read as a divergence, never as a match.
 func googleAdsDateOnly(s *string) *string {
 	if s == nil {
 		return nil
 	}
-	if date, _, found := strings.Cut(*s, " "); found {
-		return strPtr(date)
+	if t, err := time.Parse(googleAdsDateTimeLayout, *s); err == nil {
+		return strPtr(t.Format(campaignDateLayout))
 	}
 	return s
 }

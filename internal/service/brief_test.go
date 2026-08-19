@@ -4256,6 +4256,65 @@ func TestBriefService_GetCampaignSettings_ReportsUpstreamDivergence(t *testing.T
 	}
 }
 
+// TestBriefService_GetCampaignSettings_PersistsNothing pins the read-only doctrine at the
+// SERVICE layer, where it was previously unpinned.
+//
+// The dispatch-layer test (TestGoogleAds_ReadSettings_DoesNotWriteBackOntoTheRow) proves the
+// adapter does not mutate the campaign STRUCT it is handed. That is a different property from
+// this one: a handler can leave the struct pristine and still persist the observation through
+// the repository. A mutation that added an UpsertCampaign call to this handler survived the
+// whole suite, which is what this test now kills.
+//
+// It matters because the row means "what this dispatch asked for". Persisting the observation
+// would change the column's meaning from request to observation and erase the very thing the
+// readback compares against — after one such write, every subsequent read reports `match` no
+// matter how far the platform has drifted.
+func TestBriefService_GetCampaignSettings_PersistsNothing(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	recorded, upstream := "500.00", "750.00"
+	rb := &model.CampaignSettingsReadback{
+		CampaignID: "c1", PlatformCampaignID: "ga-1", Platform: model.ProviderGoogleAds,
+		ReadAt: time.Now().UTC(),
+		Fields: []model.CampaignSettingsField{
+			model.CompareSettingsField("budget_amount", &recorded, &upstream),
+		},
+	}
+	rb.SummariseSettings()
+
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{byID: map[string]*model.Campaign{camp.ID: camp}}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		camp.Platform: &settingsOnlyDispatcher{readback: rb},
+	})
+	s := NewBriefService(repo, camps, jobs, orch)
+
+	if _, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	}); err != nil {
+		t.Fatalf("GetCampaignSettings: %v", err)
+	}
+
+	camps.mu.Lock()
+	upserted, adopted := len(camps.upserted), len(camps.adopted)
+	camps.mu.Unlock()
+	if upserted != 0 {
+		t.Errorf("the readback persisted %d campaign row(s) via UpsertCampaign; it must write NOTHING — "+
+			"the row records what was REQUESTED, and writing the observation onto it erases what the readback compares against", upserted)
+	}
+	if adopted != 0 {
+		t.Errorf("the readback persisted %d campaign row(s) via AdoptCampaign; it must write NOTHING", adopted)
+	}
+	// The struct handed to the dispatcher must also come back untouched in the compared
+	// fields, so a future in-memory write cannot slip through this layer either.
+	if camp.Status != model.CampaignStatusCreated || camp.Version != 1 {
+		t.Errorf("campaign row was mutated in memory: status=%q version=%d, want created/1", camp.Status, camp.Version)
+	}
+}
+
 // TestBriefService_GetCampaignSettings_UnknownStaysAbsentInTheResponse pins that an
 // unreadable side survives to the wire as ABSENT (a nil the encoder omits) rather than as
 // an empty string. An "" in the response would be indistinguishable from a real empty

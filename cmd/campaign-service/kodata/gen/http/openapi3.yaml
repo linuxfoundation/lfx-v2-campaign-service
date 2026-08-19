@@ -1993,7 +1993,7 @@ paths:
                                 platform: google-ads
                                 platform_campaign_id: "21398765432"
                                 read_at: "1992-10-25T00:19:13Z"
-                                unknown_count: 2
+                                unknown_count: 7
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -8450,8 +8450,8 @@ components:
                     format: date-time
                 unknown_count:
                     type: integer
-                    description: 'How many fields could not be compared. Reported separately from diverged_count rather than folded into it: "2 differ" reads very differently next to "and 5 could not be read".'
-                    example: 2
+                    description: 'How many fields were NOT COMPARED — either because the field has no counterpart on the campaign row (the upstream-only observations, and `status`, which is never compared) or because a side could not be read. Reported separately from diverged_count rather than folded into it: "2 differ" reads very differently next to "and 5 were not compared". NOT a read-failure count: on a fully healthy readback most fields are unknown by construction, so a consumer watching this for failures would see a constant floor. Use each field''s `comparison` to see which is which.'
+                    example: 7
                     format: int64
             example:
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -8476,7 +8476,7 @@ components:
                 platform: google-ads
                 platform_campaign_id: "21398765432"
                 read_at: "1979-04-05T21:47:28Z"
-                unknown_count: 2
+                unknown_count: 7
             required:
                 - campaign_id
                 - platform_campaign_id
