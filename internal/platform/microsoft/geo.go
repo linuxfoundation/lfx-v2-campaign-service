@@ -118,8 +118,23 @@ const (
 	// to READ them back via GetCampaignCriterionsByIds — is rejected on Add.
 	criterionTypeTargets = "Targets"
 
-	// criterionTypeLocation is the nested Criterion's Type discriminator.
+	// criterionTypeLocation is the nested Criterion's JSON TYPE DISCRIMINATOR, used inside the
+	// CampaignCriterion body on the ADD path. It is NOT the CriterionType request enum — see
+	// readCriterionTypeLocation, which is a different vocabulary with a different spelling.
 	criterionTypeLocation = "LocationCriterion"
+
+	// readCriterionTypeLocation is the CriterionType REQUEST ENUM for
+	// POST /CampaignCriterions/QueryByIds. It is the bare "Location", not the discriminator
+	// "LocationCriterion" and not the ADD path's "Targets": Microsoft documents that Targets
+	// "is not allowed for this operation", and that a read asks for one concrete type — the
+	// enum members being Age, DayTime, Device, Gender, Location, LocationIntent, Radius.
+	//
+	// These are deliberately THREE separate constants rather than one reused across the add
+	// body, the add request and the read request. Collapsing any two of them produces a call
+	// that is silently wrong rather than rejected at compile time: sending the discriminator
+	// here made the read return no criteria, which the reuse path would then read as "nothing
+	// attached" and re-attach every location, duplicating them.
+	readCriterionTypeLocation = "Location"
 
 	// campaignCriterionTypeBiddable is the CampaignCriterion subtype discriminator. Biddable
 	// (not Negative) is a POSITIVE target: these are the places the campaign SHOULD serve.
@@ -913,7 +928,7 @@ func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (ma
 	body, err := c.doRequest(ctx, http.MethodPost, "CampaignCriterions/QueryByIds", queryCampaignCriterionsRequest{
 		CampaignCriterionIds: nil, // null => every criterion of this type on the campaign
 		CampaignId:           json.Number(campaignID),
-		CriterionType:        criterionTypeLocation,
+		CriterionType:        readCriterionTypeLocation,
 	}, true)
 	if err != nil {
 		return nil, err
@@ -921,6 +936,13 @@ func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (ma
 	var resp queryCampaignCriterionsResponse
 	if uErr := json.Unmarshal(body, &resp); uErr != nil {
 		return nil, fmt.Errorf("decode CampaignCriterions/QueryByIds response: %w", uErr)
+	}
+	// A TRUNCATED error array cannot be read as "no errors" here for the same reason it cannot
+	// on the add path: an error past the decode cap was DISCARDED, so a clean-looking prefix is
+	// not evidence the read succeeded. Under-reporting the existing criteria sends the reuse
+	// path into re-attaching locations that are already there.
+	if resp.PartialErrors.Truncated {
+		return nil, errors.New("microsoft-ads location criterion read returned a truncated error array, so the campaign's existing targeting cannot be determined")
 	}
 	if partialErrorsHaveAny(resp.PartialErrors.Items) {
 		// A read that partly failed does not describe the campaign's targeting, so it cannot be

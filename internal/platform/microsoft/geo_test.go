@@ -71,6 +71,8 @@ type geoAPI struct {
 	criterionBody   string
 	criterionStatus int
 	criterionSeen   *createCampaignCriterionsRequest
+	// criterionReadSeen captures the POST /CampaignCriterions/QueryByIds request body.
+	criterionReadSeen *queryCampaignCriterionsRequest
 	// criterionReadBody scripts POST /CampaignCriterions/QueryByIds (default: none attached).
 	criterionReadBody string
 	// sawCriterionRead records whether the existing-criteria read was issued.
@@ -146,6 +148,7 @@ func (g *geoAPI) handler(t *testing.T) http.HandlerFunc {
 			g.mu.Lock()
 			g.sawCriterionRead = true
 			g.mu.Unlock()
+			decodeTo(t, r, g.criterionReadSeen)
 			writeOr(w, g.criterionReadBody, `{"CampaignCriterions":[],"PartialErrors":[]}`)
 		case strings.HasSuffix(p, "/CampaignCriterions"):
 			decodeTo(t, r, g.criterionSeen)
@@ -986,5 +989,55 @@ func TestParseGeoLocations_RepeatedIdenticalRowIsNotAmbiguous(t *testing.T) {
 	}
 	if got["united states"] != "190" {
 		t.Fatalf("a duplicated identical row must still resolve, got %q", got["united states"])
+	}
+}
+
+// The READ path's CriterionType is the bare "Location" enum, NOT the JSON discriminator
+// "LocationCriterion" and not the ADD path's "Targets". Microsoft documents that Targets "is
+// not allowed for this operation". Sending the discriminator made the read return no criteria,
+// which the reuse path reads as "nothing attached" and re-attaches — duplicating every location.
+func TestExistingLocationIDs_SendsTheReadCriterionTypeEnum(t *testing.T) {
+	var seen queryCampaignCriterionsRequest
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadSeen: &seen,
+		criterionReadBody: `{"CampaignCriterions":[{"Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+
+	got, err := c.existingLocationIDs(context.Background(), "321")
+	if err != nil {
+		t.Fatalf("existingLocationIDs: %v", err)
+	}
+	if seen.CriterionType != "Location" {
+		t.Errorf("CriterionType = %q, want %q (the read enum, not the type discriminator)", seen.CriterionType, "Location")
+	}
+	if seen.CriterionType == "LocationCriterion" {
+		t.Error("the JSON type discriminator must not be reused as the read request enum")
+	}
+	// Null ids mean "every criterion of this type on the campaign" — the only way to enumerate
+	// criteria whose ids this run never learned.
+	if seen.CampaignCriterionIds != nil {
+		t.Errorf("CampaignCriterionIds = %v, want null (all criterions)", seen.CampaignCriterionIds)
+	}
+	if _, ok := got["190"]; !ok {
+		t.Errorf("existing ids = %v, want 190 present", got)
+	}
+}
+
+// A truncated error array on the READ cannot be read as "no errors": an error past the decode
+// cap was discarded, so under-reporting the existing criteria would re-attach duplicates.
+func TestExistingLocationIDs_TruncatedErrorArrayRefuses(t *testing.T) {
+	var errs []string
+	for i := 0; i < maxDecodedErrorItems+3; i++ {
+		errs = append(errs, `{"Index":`+strconv.Itoa(i)+`}`)
+	}
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadBody: `{"CampaignCriterions":[],"PartialErrors":[` + strings.Join(errs, ",") + `]}`,
+	}
+	c := newGeoClient(t, g)
+	if _, err := c.existingLocationIDs(context.Background(), "321"); err == nil {
+		t.Fatal("a truncated error array must refuse — a clean prefix is not evidence the read succeeded")
 	}
 }

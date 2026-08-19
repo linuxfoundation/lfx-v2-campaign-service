@@ -56,3 +56,15 @@ skip (caught by the attach-the-missing test), treating a read failure as "no cri
 the truncation flags, and restoring first-wins on an ambiguous name. Twenty-seven mutations have
 now been run across this branch with none surviving; the two that survived earlier rounds were
 reported and fixed rather than weakened.
+
+**Follow-up: the read itself had two defects, both found by Cursor on the reconcile commit.**
+`existingLocationIDs` sent `CriterionType` as the JSON type DISCRIMINATOR (`LocationCriterion`)
+where the read wants the bare request ENUM (`Location`). Three vocabularies meet on this path —
+the add body's discriminator, the add request's `Targets`, and the read request's `Location` —
+and collapsing any two produces a call that is silently wrong rather than rejected: the read
+returned no criteria, which the reuse path would then read as "nothing attached" and re-attach
+every location, duplicating exactly what the reconcile exists to prevent. They are now three
+separate constants whose comments say which vocabulary each belongs to. The read also skipped
+the truncation invariant the add path had just gained, so a discarded error past the decode cap
+could make an incomplete read look clean and under-report the existing criteria. Both fixes are
+mutation-verified (29 mutations across the branch, none surviving).
