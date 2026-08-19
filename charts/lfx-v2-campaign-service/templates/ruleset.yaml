@@ -60,6 +60,15 @@ spec:
     # request lacking OIDC credentials BEFORE OpenFGA can evaluate it, and it is
     # openfga_check that actually rejects the anonymous subject. The pairing also
     # lets the openfga.enabled=false branch fall back to allow_all for local dev.
+    #
+    # :projectId is a SLUG (self-serve sends slugs on this API, never UIDs — see
+    # campaign-service.service.ts in lfx-self-serve), but campaign_manager/
+    # marketing_ops OpenFGA tuples are seeded on project UID. project_slug_resolver_
+    # contextualizer (lfx-v2-helm, LFXV2-3324) resolves the slug to its UID via
+    # lfx-v2-project-service before openfga_check runs; the object below reads the
+    # resolved .Outputs.project_slug_resolver_contextualizer.uid, NOT the raw
+    # capture. Gated on openfga.enabled (not its own toggle) because its only
+    # purpose is feeding openfga_check.
     - id: "rule:lfx:lfx-v2-campaign-service:project-api"
       allow_encoded_slashes: 'off'
       match:
@@ -148,11 +157,15 @@ spec:
         - contextualizer: oidc_contextualizer
         {{- end }}
         {{- if .Values.openfga.enabled }}
+        - contextualizer: project_slug_resolver_contextualizer
+          config:
+            values:
+              slug: "{{ "{{- .Request.URL.Captures.projectId -}}" }}"
         - authorizer: openfga_check
           config:
             values:
               relation: campaign_manager
-              object: "project:{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+              object: "project:{{ "{{- .Outputs.project_slug_resolver_contextualizer.uid -}}" }}"
         {{- else }}
         - authorizer: allow_all
         {{- end }}
