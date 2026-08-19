@@ -832,8 +832,16 @@ func isNonDuplicateKeywordItem(it msErrorItem) bool {
 // Null placeholder entries are ignored the same way partialErrorsHaveAny ignores them: an
 // index-aligned PartialErrors array can carry zero-value items for the entries that succeeded,
 // and those are not errors to classify.
-func isDuplicateKeywordPartial(items []msErrorItem) bool {
-	found := false
+//
+// anyErrors carries whole-array presence from decode, because items may be only the RETAINED
+// prefix of the wire array. When the errors all landed past the retention cap the prefix is
+// all-null, and a presence term computed from items alone would answer "no error found" for a
+// body that plainly had them — refusing an ordinary full-duplicate batch. Presence is therefore
+// taken from the decoder; only the "is every error a duplicate?" question is answered from the
+// items, and the caller pairs this with a whole-array NonDuplicateKeywords == 0 check so a
+// non-duplicate discarded past the cap still blocks the duplicate-only conclusion.
+func isDuplicateKeywordPartial(items []msErrorItem, anyErrors bool) bool {
+	found := anyErrors
 	for _, it := range items {
 		// Re-checked here rather than delegated: a placeholder must SKIP without setting
 		// found, whereas isNonDuplicateKeywordItem merely reports false for one. Collapsing

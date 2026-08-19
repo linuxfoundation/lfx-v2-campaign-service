@@ -799,7 +799,7 @@ func TestIsDuplicateKeywordPartial(t *testing.T) {
 		{"a real rejection alone", []msErrorItem{editorial}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isDuplicateKeywordPartial(tc.items); got != tc.want {
+			if got := isDuplicateKeywordPartial(tc.items, false); got != tc.want {
 				t.Errorf("isDuplicateKeywordPartial(%+v) = %v, want %v", tc.items, got, tc.want)
 			}
 		})
@@ -1090,8 +1090,12 @@ func TestCreateCampaign_ReusedTreeWithAllDuplicateKeywordsIsStillAnUntouchedTree
 // boundedNumberIDs because a 16-item bound sized for a campaign create truncated a 60-keyword
 // response. The ids were widened; the error array was not.
 //
-// Absence of a rejection in a truncated array is not evidence there was none, so a truncated
-// array must fall through to the rejection path.
+// Absence of a rejection in the RETAINED prefix is not evidence there was none. Note the
+// property is about the rejection, not about truncation itself: truncation alone does NOT force
+// the rejection path, because an ordinary reuse retry re-posts the whole batch and exceeds the
+// cap on every run. What must fall through is a batch whose whole-array tally counts a
+// non-duplicate rejection — which is what NonDuplicateKeywords reports and what this test drives
+// with an editorial rejection past the cap.
 func TestCreateCampaign_TruncatedErrorArrayIsNotDuplicateOnlySuccess(t *testing.T) {
 	const (
 		n              = 60 // maxKeywords: the batch size that makes truncation reachable
@@ -1326,5 +1330,70 @@ func TestCreateCampaign_UnparseableCodePastTheCapIsNotDuplicateOnlySuccess(t *te
 	}
 	if res.AlreadyExisted {
 		t.Error("AlreadyExisted = true, want false: a genuine rejection travelled with the duplicates")
+	}
+}
+
+// TestCreateCampaign_DuplicatesOnlyPastTheCapStillConverge pins the INVERSE ordering to
+// TestCreateCampaign_NullPaddedSuccessesPastTheCapAreNotRejections: the succeeded entries
+// occupy the LEADING slots as index-aligned nulls, and every real duplicate error falls past
+// the 16-item retention cap.
+//
+// This is the ordering the outer gate could not see. createKeywords enters the partial-error
+// branch on partialErrorsHaveAny(resp.PartialErrors.Items), which reads only the RETAINED
+// prefix; with the first 16 items null, that prefix carries no code, the branch is skipped
+// entirely, and the null KeywordIds of the duplicate entries then fall through to the
+// cardinality check and surface as errNoID/UNCONFIRMED — instead of the ordinary
+// converge-on-reuse success this path exists to produce.
+//
+// Microsoft does not document PartialErrors ordering, so "errors come first" is an assumption
+// the wire is under no obligation to honor. The gate must therefore ask about the WHOLE array,
+// which is what the decode-time tally already knows.
+func TestCreateCampaign_DuplicatesOnlyPastTheCapStillConverge(t *testing.T) {
+	const (
+		n         = 38 // past maxDecodedErrorItems (16)
+		succeeded = 18 // leading null slots, so the retained prefix is entirely null
+	)
+	in := validInput()
+	in.Keywords = make([]Keyword, 0, n)
+	for i := 0; i < n; i++ {
+		in.Keywords = append(in.Keywords, Keyword{Text: fmt.Sprintf("keyword %02d", i), MatchType: MatchTypeExact})
+	}
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+
+	ids := make([]string, 0, n)
+	errs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		if i < succeeded {
+			// Created, with an index-aligned null placeholder in PartialErrors.
+			ids = append(ids, fmt.Sprintf("%d", 700+i))
+			errs = append(errs, `null`)
+			continue
+		}
+		// Already attached: null id slot, duplicate error — all of them past the cap.
+		ids = append(ids, "null")
+		errs = append(errs, fmt.Sprintf(
+			`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i))
+	}
+
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+		keywordPostBody: `{"KeywordIds":[` + strings.Join(ids, ",") + `],"PartialErrors":[` +
+			strings.Join(errs, ",") + `]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("duplicates past the retention cap must still converge as ordinary reuse: %v", err)
+	}
+	if len(res.KeywordIDs) != succeeded {
+		t.Errorf("KeywordIDs = %d, want the %d newly-created ids", len(res.KeywordIDs), succeeded)
+	}
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true, want false: this run created keywords")
 	}
 }

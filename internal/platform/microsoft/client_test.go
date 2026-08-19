@@ -751,7 +751,7 @@ func TestBoundedErrorItems_NonDuplicateKeywordsCountsPastTheRetentionCap(t *test
 		}
 		// The proof that the tally is not just reading the retained prefix: the rejection is
 		// absent from Items yet present in the count.
-		if isDuplicateKeywordPartial(b.Items) != true {
+		if isDuplicateKeywordPartial(b.Items, b.AnyErrors) != true {
 			t.Fatal("precondition: the RETAINED prefix must look wholly duplicate for this to be meaningful")
 		}
 		if b.NonDuplicateKeywords != 1 {

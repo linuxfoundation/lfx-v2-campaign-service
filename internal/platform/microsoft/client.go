@@ -1014,13 +1014,13 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // maxDecodedErrorItems elements — later elements are decoded into a scratch and dropped, so
 // a pathological fault with thousands of tiny items can't balloon memory before the cap.
 //
-// Truncation is RECORDED rather than silent, because at least one consumer's correctness
-// depends on completeness rather than on a sample. isDuplicateKeywordPartial is ALL-not-ANY:
-// it concludes "every rejection here is an already-exists duplicate" and lets the caller
-// report the batch as a no-op success. Reading that conclusion off a truncated array is
-// unsound — AddKeywords sends up to maxKeywords (60) and only 16 errors are retained, so a
-// genuine editorial rejection at index 40 was discarded BEFORE classification and the batch
-// was reported as duplicate-only success, which is exactly what ALL exists to prevent.
+// Completeness matters here because at least one consumer's correctness depends on it rather
+// than on a sample. isDuplicateKeywordPartial is ALL-not-ANY: it concludes "every rejection here
+// is an already-exists duplicate" and lets the caller report the batch as a no-op success.
+// Reading that conclusion off a truncated array is unsound — AddKeywords sends up to maxKeywords
+// (60) and only 16 errors are retained, so a genuine editorial rejection at index 40 would be
+// discarded BEFORE classification and the batch reported as duplicate-only success, which is
+// exactly what ALL exists to prevent.
 //
 // Widening the bound to maxKeywords was the other candidate and was rejected: it fixes the
 // 60-keyword case but leaves the invariant resting on a size coincidence, so it breaks again
@@ -1038,10 +1038,15 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // against the request.) Both alternatives, and why they were rejected, are recorded in
 // docs/knowledge/log/2026-08-18-LFXV2-3279-truncation-refused-the-ordinary-reuse.md.
 //
-// So the classification is done DURING decode, where every element is seen.
-// NonDuplicateKeywords tallies the entries that carry an actual error code which is not an
-// already-exists keyword code — including the ones dropped for memory. A consumer can then ask
-// the ALL question of the whole array while still holding only maxDecodedErrorItems of it.
+// So the classification is done DURING decode, where every element is seen. The two whole-array
+// terms that carry the safety are NonDuplicateKeywords (entries whose actual error code is not an
+// already-exists keyword code, including ones dropped for memory) and AnyErrors (whether any
+// element carried an actual code at all). A consumer can then ask both the ALL question and the
+// presence question of the whole array while still holding only maxDecodedErrorItems of it.
+//
+// Truncated is DESCRIPTIVE METADATA, not a safety term: no production path reads it. It records
+// truthfully that Items is a prefix, and is the natural signal for a future consumer that needs
+// to know so, but the terms doing the work at the call site are the two tallies above.
 type boundedErrorItems struct {
 	Items []msErrorItem
 	// Truncated reports that the body carried MORE error items than were retained, so Items
@@ -1064,6 +1069,21 @@ type boundedErrorItems struct {
 	// is the one place every element is visible, and counting is side-effect free, so an unread
 	// value on those paths costs a comparison per item and changes no behaviour.
 	NonDuplicateKeywords int
+	// AnyErrors reports that at least one element of the WHOLE wire array carried an actual
+	// error code, whether or not that element was retained.
+	//
+	// The outer partial-error gate previously asked partialErrorsHaveAny(Items), which reads
+	// only the retained prefix. Microsoft does not document PartialErrors ordering, so a body
+	// that index-aligns its null placeholders into the leading slots and puts its real errors
+	// after them presents an all-null prefix: the gate saw no error, skipped the branch, and the
+	// null id slots of the failed entries then surfaced as errNoID/UNCONFIRMED rather than the
+	// ordinary duplicate convergence. Tracking presence during decode — the one place every
+	// element is visible — makes the gate independent of where in the array the errors landed.
+	//
+	// Presence is tested on the RAW bytes for the same reason NonDuplicateKeywords is: a code
+	// this client cannot render is still an error, and naming-failure must not read as
+	// absence-of-error.
+	AnyErrors bool
 }
 
 func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
@@ -1088,6 +1108,9 @@ func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 		// stream, so this is free and stays O(1) in memory.
 		if isNonDuplicateKeywordItem(it) {
 			b.NonDuplicateKeywords++
+		}
+		if rawCodePresent(it.ErrorCode) || rawCodePresent(it.Code) {
+			b.AnyErrors = true
 		}
 		if len(b.Items) < maxDecodedErrorItems {
 			b.Items = append(b.Items, it)

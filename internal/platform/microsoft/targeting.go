@@ -314,10 +314,17 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 	// ACTIVATE, and what a reconciliation needs in order to avoid creating a second copy — a blind
 	// retry of this batch would duplicate every keyword that did succeed.
 	//
-	// Gated on partialErrorsHaveAny so a null-only placeholder slice does not count, and
-	// classified BEFORE the cardinality check below, because a rejected entry legitimately
+	// Gated on the WHOLE-ARRAY presence flag so a null-only placeholder slice does not count,
+	// and classified BEFORE the cardinality check below, because a rejected entry legitimately
 	// returns fewer usable ids and must not be reported as the ambiguous short-response case.
-	if partialErrorsHaveAny(resp.PartialErrors.Items) {
+	//
+	// AnyErrors rather than partialErrorsHaveAny(Items): the latter reads only the RETAINED
+	// prefix, so a body that null-pads its succeeded entries into the leading slots and puts its
+	// real errors past the 16-item cap presented an all-null prefix, skipped this branch, and
+	// surfaced the failed entries' null ids as errNoID/UNCONFIRMED instead of ordinary duplicate
+	// convergence. Microsoft does not document PartialErrors ordering, so that arrangement is
+	// not a pathological body — it is one the wire is under no obligation to avoid.
+	if resp.PartialErrors.AnyErrors {
 		created := make([]string, 0, len(resp.KeywordIds))
 		for _, raw := range resp.KeywordIds {
 			if id := numberID(raw); id != "" {
@@ -364,13 +371,13 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 		// branch reads correctly on its own — a null-only placeholder array is visibly not a
 		// duplicate batch here, without consulting a different `if`.
 		//
-		// Residual, pre-dating this change and unchanged by it: the branch is entered on
-		// partialErrorsHaveAny(Items), which reads the RETAINED prefix. A body that null-pads the
-		// succeeded entries into the leading slots and puts its real duplicate errors after them
-		// does not enter here at all and falls to the cardinality check below as UNCONFIRMED —
-		// fail-closed, but narrower than "every full-duplicate batch converges".
+		// The ordering residual this comment used to record is now closed: the branch is entered
+		// on the whole-array AnyErrors flag, so a body that null-pads its succeeded entries into
+		// the leading slots and puts its duplicate errors past the retention cap converges the
+		// same as any other full-duplicate batch. Covered by
+		// TestCreateCampaign_DuplicatesOnlyPastTheCapStillConverge.
 		sawNoKeywordRejections := resp.PartialErrors.NonDuplicateKeywords == 0
-		if sawNoKeywordRejections && isDuplicateKeywordPartial(resp.PartialErrors.Items) {
+		if sawNoKeywordRejections && isDuplicateKeywordPartial(resp.PartialErrors.Items, resp.PartialErrors.AnyErrors) {
 			return created, fmt.Errorf("%w (%d of %d keywords were created; the rest already existed): %s",
 				errDuplicateKeywords, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors.Items))
 		}
