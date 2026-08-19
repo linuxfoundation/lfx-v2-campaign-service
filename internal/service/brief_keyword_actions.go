@@ -99,6 +99,11 @@ func (s *BriefService) ApplyKeywordActions(ctx context.Context, p *briefs.ApplyK
 // caller acting on them takes the same remedies. Every 409 below is refused BEFORE Google is
 // contacted, which is why none of them is a 503: waiting changes nothing.
 func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs.ApplyKeywordActionsPayload, platform model.Provider, aerr error) error {
+	// Matched by BEHAVIOUR, not by sentinel: the dispatch layer signals an ambiguous outcome
+	// with an unexported wrapper exposing Unconfirmed() (dispatch/reddit.go), so there is no
+	// shared sentinel to compare against across the package boundary. Same detection the
+	// status toggle uses.
+	var unconfirmed interface{ Unconfirmed() bool }
 	switch {
 	case errors.Is(aerr, domain.ErrKeywordActionsUnsupported):
 		return &briefs.BadRequestError{Code: "400", Message: "keyword actions are not supported for this campaign's platform"}
@@ -176,9 +181,33 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 			Code:    "409",
 			Message: "the stored google ads connection cannot be used as configured: check that it is active, that the stored credential is valid json with every field set, and that login_customer_id is digits only",
 		}
+	case errors.As(aerr, &unconfirmed) && unconfirmed.Unconfirmed():
+		// UNCONFIRMED: the mutate MAY already have been applied upstream — a short or
+		// mismatched mutate response, a 5xx, a timeout. This must sit ABOVE the default,
+		// which would otherwise give an ambiguous outcome the same answer a DEFINITE failure
+		// gets, and those two must not answer the same thing.
+		//
+		// The distinction has teeth here in a way it does not for a read: REMOVE is
+		// IRREVERSIBLE (Google cannot re-enable a removed criterion, only create a new one
+		// with a new id), so "retry" — the ordinary reading of a 503 — is precisely the wrong
+		// remedy for a batch that may already have run. The caller is told to VERIFY first.
+		//
+		// The status stays 503 rather than gaining a new code, mirroring the status toggle's
+		// unconfirmed arm (brief.go): the ambiguity is carried by the MESSAGE, and the
+		// endpoint's declared error set (commonBriefErrors) is unchanged, so no design or
+		// gen/ change rides along. The adapter's text is logged, never returned.
+		slog.WarnContext(ctx, "keyword actions outcome is UNCONFIRMED (the platform may or may not reflect the change)",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+			"platform", platform, "error", safeErrSummary(aerr))
+		return &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the keyword actions are unconfirmed — they may or may not have been applied on the ad platform; verify this campaign's keywords in the platform before retrying, because REMOVE cannot be undone",
+		}
 	default:
-		// Includes the UNCONFIRMED outcomes the client reports when a mutate may have been
-		// applied. The adapter's text is logged, never returned.
+		// A DEFINITE upstream failure: the platform was reached and refused, or was never
+		// reached at all. Either way nothing was applied, so a plain retry is the right
+		// remedy — which is exactly what separates this arm from the unconfirmed one above.
+		// The adapter's text is logged, never returned.
 		slog.WarnContext(ctx, "keyword actions failed upstream",
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 			"platform", platform, "error", safeErrSummary(aerr))

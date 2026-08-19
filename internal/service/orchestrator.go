@@ -2028,16 +2028,31 @@ func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID strin
 
 // ApplyKeywordActions pauses or removes keywords on one campaign.
 //
-// The pre-platform guard mirrors ToggleCampaignStatus's: never contact the ad platform for a
-// campaign with nothing provisioned upstream. The adapter re-checks provisioning in more
-// detail (it also requires an ad group), but this check belongs here too — it is the reason
-// no unprovisioned campaign ever reaches a dispatcher, independent of any one adapter.
+// The provisioning guard mirrors ToggleCampaignStatus's — never contact the ad platform for a
+// campaign with nothing provisioned upstream — but it is applied only where no adapter will
+// apply it, and the ORDER matters. The adapter validates the batch BEFORE it checks
+// provisioning or resolves a connection, deliberately, "so a permanent input fault masks any
+// contingent connection fault rather than the other way round" (dispatch/googleads.go). Running
+// this guard ahead of the adapter inverted that: a malformed batch against an unprovisioned
+// campaign answered 409 ("try later") instead of 400 ("fix your request"), so a caller retried
+// forever on input only they could correct. A permanent input fault must dominate a contingent
+// state fault, and the two layers must not disagree about which one wins.
+//
+// So the id check is DELEGATED to the adapter, which raises the same
+// ErrCampaignNotProvisioned in more detail (it also requires an ad group) and raises it in the
+// right order — after validating the batch. A VALID batch against an unprovisioned campaign
+// therefore still answers 409 exactly as before; only the malformed-batch case changes, and it
+// changes to the 400 the caller can act on.
+//
+// A nil campaign is still refused HERE, ahead of everything: it is not an input fault the
+// caller can fix and not a state a KeywordActioner should have to defend against — every
+// adapter would have to nil-check before it could validate anything at all.
 //
 // It uses toggleCallTimeout rather than metricsCallTimeout: this is a mutation on the same
 // footing as a status change, and a mutate that times out client-side may still have been
 // applied, so it gets the longer budget the other mutating path uses.
 func (o *Orchestrator) ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
-	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+	if campaign == nil {
 		return nil, ErrCampaignNotProvisioned
 	}
 	d, ok := o.dispatchers[platform]

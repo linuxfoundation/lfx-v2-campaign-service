@@ -297,6 +297,195 @@ func TestApplyKeywordActions_AdapterTextIsNotEchoed(t *testing.T) {
 	}
 }
 
+// unconfirmedKeywordActionError mirrors the dispatch layer's unexported unconfirmedToggleError:
+// an ambiguous outcome is signalled across the package boundary by BEHAVIOUR (an Unconfirmed()
+// method found with errors.As), not by a shared sentinel. A test in this package cannot
+// construct the dispatch type, so it reproduces the contract the service actually matches on.
+type unconfirmedKeywordActionError struct{ err error }
+
+func (e *unconfirmedKeywordActionError) Error() string {
+	return "keyword action outcome is unconfirmed (it may have been applied): " + e.err.Error()
+}
+func (e *unconfirmedKeywordActionError) Unwrap() error     { return e.err }
+func (e *unconfirmedKeywordActionError) Unconfirmed() bool { return true }
+
+// An UNCONFIRMED mutate must NOT answer the same thing a definite failure does.
+//
+// The client reports UNCONFIRMED when a keyword mutate MAY already have been applied (a short
+// or mismatched mutate response, a 5xx, a timeout). A plain 503 reads as "retry", and retrying
+// a REMOVE that already ran is the wrong remedy — Google cannot re-enable a removed criterion,
+// only create a new one with a new id. So the ambiguous answer must be distinguishable from the
+// definite one and must tell the caller to VERIFY first.
+//
+// Asserted on the MESSAGE, because both arms are 503 by design (the endpoint's declared error
+// set is unchanged): a test that checked only the status code would pass against the defect.
+func TestApplyKeywordActions_UnconfirmedTellsCallerToVerifyNotRetry(t *testing.T) {
+	upstream := errors.New("adGroupCriteria:mutate returned 2 results for a 3-action batch")
+	s := keywordActionService(t, model.ProviderGoogleAds,
+		&keywordActionDispatcher{err: &unconfirmedKeywordActionError{err: upstream}})
+
+	_, err := s.ApplyKeywordActions(context.Background(), keywordActionPayload(
+		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "777", Action: "REMOVE"},
+	))
+	if err == nil {
+		t.Fatal("expected an error for an unconfirmed mutate, got nil")
+	}
+	se, ok := err.(*briefs.ConnServiceUnavailableError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+	}
+	// The definite-failure arm's message. Answering it here is exactly the defect: it tells a
+	// caller whose REMOVE may already have run to retry it.
+	if se.Message == "the keyword actions could not be applied" {
+		t.Fatalf("an UNCONFIRMED outcome answered the DEFINITE-failure message %q — a caller whose "+
+			"irreversible REMOVE may already have applied is being told to retry", se.Message)
+	}
+	if !strings.Contains(se.Message, "unconfirmed") {
+		t.Errorf("message must say the outcome is unconfirmed, got %q", se.Message)
+	}
+	if !strings.Contains(se.Message, "verify") {
+		t.Errorf("message must tell the caller to verify before retrying, got %q", se.Message)
+	}
+	// The adapter's own text names upstream detail and must never be echoed.
+	if strings.Contains(se.Message, "adGroupCriteria") {
+		t.Errorf("response echoed adapter detail: %q", se.Message)
+	}
+}
+
+// A PERMANENT input fault must dominate a CONTINGENT state fault, and the two layers must
+// agree about it.
+//
+// The dispatcher validates the batch before it checks provisioning or resolves a connection,
+// deliberately — "so a permanent input fault masks any contingent connection fault rather than
+// the other way round" (dispatch/googleads.go). The orchestrator used to run its own
+// provisioning guard FIRST, inverting that: a malformed batch against an unprovisioned campaign
+// answered 409 ("try later") instead of 400 ("fix your request"), so the caller retried forever
+// on input only they could correct.
+//
+// The dispatcher here validates before it reports provisioning, reproducing the real adapter's
+// documented ordering — so if the orchestrator preempts it, this test sees the 409.
+func TestApplyKeywordActions_MalformedBatchBeatsUnprovisionedCampaign(t *testing.T) {
+	d := &orderedKeywordActionDispatcher{
+		invalid:         domain.ErrKeywordActionInvalid,
+		notProvisioned:  domain.ErrCampaignNotProvisioned,
+		invalidCriteria: "999",
+	}
+	s := keywordActionServiceUnprovisioned(t, model.ProviderGoogleAds, d)
+
+	_, err := s.ApplyKeywordActions(context.Background(), keywordActionPayload(
+		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "999", Action: "PAUSE"},
+	))
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if ce, ok := err.(*briefs.ConflictError); ok {
+		t.Fatalf("a malformed batch against an unprovisioned campaign answered 409 %q — the "+
+			"contingent state fault masked the permanent input fault, so the caller is told to "+
+			"retry input they must fix", ce.Message)
+	}
+	if _, ok := err.(*briefs.BadRequestError); !ok {
+		t.Fatalf("error = %T (%v), want *briefs.BadRequestError", err, err)
+	}
+	if !d.validated {
+		t.Error("the dispatcher never got to validate the batch — the orchestrator refused it first")
+	}
+}
+
+// A VALID batch against an unprovisioned campaign must STILL answer 409. The reordering above
+// must not cost the provisioning guard: only the malformed case changes.
+func TestApplyKeywordActions_ValidBatchStillReportsUnprovisioned(t *testing.T) {
+	d := &orderedKeywordActionDispatcher{
+		invalid:         domain.ErrKeywordActionInvalid,
+		notProvisioned:  domain.ErrCampaignNotProvisioned,
+		invalidCriteria: "999",
+	}
+	s := keywordActionServiceUnprovisioned(t, model.ProviderGoogleAds, d)
+
+	_, err := s.ApplyKeywordActions(context.Background(), keywordActionPayload(
+		&briefs.KeywordActionInput{AdGroupID: "333", CriterionID: "777", Action: "PAUSE"},
+	))
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if _, ok := err.(*briefs.ConflictError); !ok {
+		t.Fatalf("error = %T (%v), want *briefs.ConflictError — a valid batch against an "+
+			"unprovisioned campaign is still a state conflict", err, err)
+	}
+}
+
+// A nil campaign is refused by the orchestrator itself rather than delegated: it is not an
+// input fault a caller can fix, and no adapter should have to nil-check before validating.
+func TestApplyKeywordActions_NilCampaignIsRefusedBeforeTheDispatcher(t *testing.T) {
+	d := &orderedKeywordActionDispatcher{
+		invalid:        domain.ErrKeywordActionInvalid,
+		notProvisioned: domain.ErrCampaignNotProvisioned,
+	}
+	orch := NewOrchestrator(&fakeCampaignRepo{byID: map[string]*model.Campaign{}}, newFakeJobRepo(),
+		map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: d})
+
+	_, err := orch.ApplyKeywordActions(context.Background(), "cncf", model.ProviderGoogleAds, nil,
+		[]model.KeywordAction{{AdGroupID: "333", CriterionID: "777", Action: "PAUSE"}})
+	if !errors.Is(err, ErrCampaignNotProvisioned) {
+		t.Fatalf("err = %v, want ErrCampaignNotProvisioned", err)
+	}
+	if d.called {
+		t.Error("the dispatcher was handed a nil campaign")
+	}
+}
+
+// orderedKeywordActionDispatcher reproduces the real Google Ads adapter's DOCUMENTED ordering:
+// it validates the batch BEFORE it reports the campaign's provisioning state. That order is the
+// contract under test — a dispatcher that checked provisioning first would make the orchestrator
+// look correct no matter what it does.
+type orderedKeywordActionDispatcher struct {
+	invalid         error
+	notProvisioned  error
+	invalidCriteria string
+
+	validated bool
+	called    bool
+}
+
+func (d *orderedKeywordActionDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *orderedKeywordActionDispatcher) ApplyKeywordActions(_ context.Context, _ string, _ model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	d.called = true
+	// Validate FIRST — the permanent fault dominates.
+	d.validated = true
+	for _, a := range actions {
+		if d.invalidCriteria != "" && a.CriterionID == d.invalidCriteria {
+			return nil, d.invalid
+		}
+	}
+	// Provisioning SECOND — the contingent fault.
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return nil, d.notProvisioned
+	}
+	out := make([]model.KeywordActionOutcome, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, model.KeywordActionOutcome{
+			AdGroupID: a.AdGroupID, CriterionID: a.CriterionID, Action: a.Action,
+			ResourceName: "customers/1/adGroupCriteria/" + a.AdGroupID + "~" + a.CriterionID,
+		})
+	}
+	return out, nil
+}
+
+// keywordActionServiceUnprovisioned wires a service whose campaign row carries NO upstream
+// platform campaign id — the state that used to short-circuit the orchestrator's guard.
+func keywordActionServiceUnprovisioned(t *testing.T, platform model.Provider, d PlatformDispatcher) *BriefService {
+	t.Helper()
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{byID: map[string]*model.Campaign{
+		"c1": {ID: "c1", Platform: platform, PlatformCampaignID: ""},
+	}}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{platform: d})
+	return NewBriefService(repo, camps, jobs, orch)
+}
+
 // ─── connection-service reads ───
 
 func keywordInsightsService(t *testing.T, d PlatformDispatcher) *ConnectionService {
@@ -570,23 +759,46 @@ func TestOrchestratorKeywordReads_NilSlicesAreNormalised(t *testing.T) {
 	}
 }
 
-// The orchestrator's own pre-platform guard: never contact the ad platform for a campaign
-// with nothing provisioned upstream. Independent of any one adapter's re-check.
+// An unprovisioned campaign is still refused with ErrCampaignNotProvisioned — but WHICH LAYER
+// refuses it differs, and that is the point of this test.
+//
+// This previously asserted that the ORCHESTRATOR refused both rows ahead of the dispatcher, and
+// it passed only because its fake (keywordActionDispatcher) ignores the campaign argument
+// entirely and never raises the sentinel itself. That pre-dispatch ordering was the defect: it
+// let a contingent state fault mask a permanent input fault, so a malformed batch against an
+// unprovisioned campaign answered 409 instead of 400 (see
+// TestApplyKeywordActions_MalformedBatchBeatsUnprovisionedCampaign).
+//
+// The contract now: a NIL campaign is refused by the orchestrator itself — no adapter should
+// have to nil-check before it can validate — while an empty PlatformCampaignID is DELEGATED to
+// the adapter, which validates the batch first and then raises the same sentinel. Both rows use
+// a dispatcher that actually implements that ordering, so neither passes by accident.
 func TestOrchestratorApplyKeywordActions_UnprovisionedIsRefused(t *testing.T) {
-	orch := keywordOrchestrator(&keywordActionDispatcher{})
 	actions := []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}}
 
 	for _, tc := range []struct {
 		name     string
 		campaign *model.Campaign
+		// wantDispatched records whether the refusal is expected to come from the adapter
+		// (true) or from the orchestrator ahead of it (false). Asserting this is what keeps
+		// the two layers' division of labour pinned rather than merely the sentinel.
+		wantDispatched bool
 	}{
-		{"nil campaign", nil},
-		{"empty platform campaign id", &model.Campaign{Platform: model.ProviderGoogleAds}},
+		{"nil campaign", nil, false},
+		{"empty platform campaign id", &model.Campaign{Platform: model.ProviderGoogleAds}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			d := &orderedKeywordActionDispatcher{
+				invalid:        domain.ErrKeywordActionInvalid,
+				notProvisioned: domain.ErrCampaignNotProvisioned,
+			}
+			orch := keywordOrchestrator(d)
 			_, err := orch.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds, tc.campaign, actions)
 			if !errors.Is(err, ErrCampaignNotProvisioned) {
 				t.Fatalf("error = %v, want ErrCampaignNotProvisioned", err)
+			}
+			if d.called != tc.wantDispatched {
+				t.Errorf("dispatcher called = %v, want %v", d.called, tc.wantDispatched)
 			}
 		})
 	}

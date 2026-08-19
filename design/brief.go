@@ -350,11 +350,13 @@ var GoogleAdsKeyword = Type("google-ads-keyword", func() {
 	Attribute("ad_group_id", String, "The ad group this criterion belongs to. Required to address the criterion: a criterion id alone does not identify a keyword.", func() { Example("176216228") })
 	Attribute("campaign_id", String, "The Google Ads campaign this keyword serves under", func() { Example("21234567890") })
 	Attribute("text", String, "The keyword text as Google stores it", func() { Example("kubernetes training") })
-	// UNKNOWN is a member here for the same reason it is on `status`: this is an ACCOUNT-WIDE
-	// read returning keywords this service never created, so a match type outside the three
-	// Google documents (its enum also carries UNSPECIFIED/UNKNOWN, and an omitted proto field
-	// decodes to "") is reachable. Without a member to fold onto, the generated CLIENT — which
-	// is where Goa emits response validation — would reject the entire response over one row.
+	// UNKNOWN is a member here for the same reason it is on `status`: this read returns
+	// keywords this service never created — it is scoped to the project's own campaigns, but
+	// an ADOPTED campaign's criteria were authored in the Google Ads console, not by any
+	// dispatch this service ran. So a match type outside the three Google documents (its enum
+	// also carries UNSPECIFIED/UNKNOWN, and an omitted proto field decodes to "") is reachable.
+	// Without a member to fold onto, the generated CLIENT — which is where Goa emits response
+	// validation — would reject the entire response over one row.
 	Attribute("match_type", String, "How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.", func() { Enum("EXACT", "PHRASE", "BROAD", "UNKNOWN") })
 	Attribute("status", String, "The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.", func() { Enum("ENABLED", "PAUSED", "REMOVED", "UNKNOWN") })
 	Attribute("impressions", Int64, "Impressions over the window", func() { Example(4820) })
@@ -924,7 +926,16 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the project's connection now resolves to, the campaign does not record which ad account it was " +
 			"created under (it must be re-dispatched before its keywords can be acted on — a different " +
 			"remedy from reconnecting, which is why it is reported separately), or the connection row " +
-			"itself is unusable. Those are non-retryable, which is why none of them is a 503.")
+			"itself is unusable. Those are non-retryable, which is why none of them is a 503. " +
+			"A malformed batch is **400 even when the campaign is also unprovisioned**: a permanent " +
+			"input fault the caller must fix dominates a contingent state fault they can only wait " +
+			"on, matching the order the adapter validates in. " +
+			"**503** carries two distinct outcomes and the MESSAGE separates them, so do not branch " +
+			"on the status alone: a DEFINITE failure (nothing was applied — retry), and an " +
+			"UNCONFIRMED one where the mutate may ALREADY have been applied (a short or mismatched " +
+			"mutate response, a 5xx, a timeout). The unconfirmed message tells the caller to VERIFY " +
+			"the campaign's keywords in the platform before retrying, because retrying an " +
+			"irreversible REMOVE that already ran cannot undo it.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
