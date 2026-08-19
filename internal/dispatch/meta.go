@@ -442,14 +442,29 @@ func metaCreationAccountID(campaign *model.Campaign) string {
 // normalizeMetaAccountID puts a Meta ad account id into the single "act_<digits>" vocabulary
 // both sides of the provenance comparison must speak. The connection stores the prefixed form
 // while MetaURL carries the bare digits, so comparing them raw would report every legacy row
-// as a mismatch — a false 409 on a campaign that is perfectly in scope. An empty input stays
-// empty ("unknown"), never "act_".
+// as a mismatch — a false 409 on a campaign that is perfectly in scope.
+//
+// Anything that is not a well-formed id normalises to "" — "unknown" — rather than to some
+// non-empty token. That is what keeps a malformed value in the guard's "proceed" arm instead
+// of letting it act as a REAL account: a bare "act_" (or a stray "act_abc") carries no account,
+// but returning it non-empty would compare unequal to every legitimate connection and
+// manufacture a false mismatch on a campaign nobody can re-point. Rejecting to "" costs
+// nothing, because such a value could never have named an account in the first place.
+//
+// Meta's documented form is "act_<digits>" (design/connection.go constrains the stored
+// connection id to ^act_[0-9]+$), so digits are the whole of the accepted shape and the
+// prefix is stripped at most once — "act_act_777" names no account either.
 func normalizeMetaAccountID(id string) string {
-	trimmed := strings.TrimSpace(id)
-	if trimmed == "" {
+	digits := strings.TrimPrefix(strings.TrimSpace(id), "act_")
+	if digits == "" {
 		return ""
 	}
-	return "act_" + strings.TrimPrefix(trimmed, "act_")
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return "act_" + digits
 }
 
 // verifyMetaAccountMatch refuses an operation on a campaign that was created under a DIFFERENT
@@ -464,13 +479,31 @@ func normalizeMetaAccountID(id string) string {
 //
 // Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
 // domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+//
+// BOTH sides may be unknown, and neither unknown is a mismatch. An absent CREATED id is the
+// pre-existing-row case every adapter documents. An empty CURRENT id is specific to Meta:
+// unlike every sibling, toggle and metrics deliberately do NOT require an account selection —
+// they address the campaign node by id (POST /{campaignID}, GET /{campaignID}/insights) and
+// never read AccountConfig.AccountID, so a connection whose account was cleared via PUT can
+// still pause a campaign and read its metrics (see resolveMetaCredentials, and the
+// NoAccountIDNeeded tests that pin it). "Not selected" is an ABSENCE, not a different account:
+// treating it as one would 409 exactly those paths for any row that records provenance — which,
+// via the MetaURL act= fallback, is nearly every historical row — turning a working pause into
+// a failure. It would also render the message as "resolves to account " with an empty name.
+//
+// Takes the account id as a plain string rather than the client the microsoft/reddit/twitter
+// siblings accept: those build their client inside a resolve* helper and the caller never holds
+// the raw id, so client.AccountID() is their only accessible source. Here — and on linkedin —
+// the call site already has res.accountID in hand. normalizeMetaAccountID is applied inside, so
+// callers pass the connection value untouched and one place owns the vocabulary.
 func verifyMetaAccountMatch(op string, campaign *model.Campaign, accountID string) error {
 	created := metaCreationAccountID(campaign)
-	if created == "" || created == normalizeMetaAccountID(accountID) {
+	current := normalizeMetaAccountID(accountID)
+	if created == "" || current == "" || created == current {
 		return nil
 	}
 	return fmt.Errorf("%s: campaign %s was created under meta ad account %s but the project's current connection resolves to account %s: %w",
-		op, campaign.PlatformCampaignID, created, normalizeMetaAccountID(accountID), domain.ErrCampaignAccountMismatch)
+		op, campaign.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
 }
 
 // metaRunStatus maps the service run state (active/paused) to Meta's status enum.

@@ -581,13 +581,27 @@ func linkedInCreationAccountID(campaign *model.Campaign) string {
 //
 // Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
 // domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
+//
+// Takes the account id as a plain string rather than the client the microsoft/reddit/twitter
+// siblings accept: those build their client inside a resolve* helper and the caller never holds
+// the raw id, so client.AccountID() is their only accessible source. Here — and on meta — the
+// call site already has res.accountID in hand, so threading the client through would add a
+// dependency for no additional information. This helper owns the trimming so both callers and
+// the comparison speak one form.
 func verifyLinkedInAccountMatch(op string, campaign *model.Campaign, accountID string) error {
 	created := linkedInCreationAccountID(campaign)
-	if created == "" || created == strings.TrimSpace(accountID) {
+	current := strings.TrimSpace(accountID)
+	// Neither unknown is a mismatch. An absent CREATED id is the pre-existing-row case. An
+	// empty CURRENT id cannot prove anything either — "not selected" is an absence, not a
+	// different account, and reporting one would render as "resolves to account " with an
+	// empty name. resolveLinkedInCredentials already refuses an account-less connection with
+	// ErrAccountNotSelected, so this arm is unreachable today; it is stated rather than relied
+	// upon so the guard stays correct if that precondition is ever relaxed, as it is on meta.
+	if created == "" || current == "" || created == current {
 		return nil
 	}
 	return fmt.Errorf("%s: campaign %s was created under linkedin ad account %s but the project's current connection resolves to account %s: %w",
-		op, campaign.PlatformCampaignID, created, strings.TrimSpace(accountID), domain.ErrCampaignAccountMismatch)
+		op, campaign.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
 }
 
 // linkedinRunStatus maps the service run state (active/paused) to LinkedIn's status enum.

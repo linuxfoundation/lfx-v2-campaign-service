@@ -308,6 +308,8 @@ func twitterCreationAccountID(campaign *model.Campaign) string {
 		return ""
 	}
 	var blob struct {
+		// PascalCase deliberately: the blob is an UNTAGGED marshal, so the persisted key is
+		// the Go field name. See the docblock above before "correcting" this to accountId.
 		AccountID string `json:"AccountID"`
 	}
 	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
@@ -330,11 +332,18 @@ func twitterCreationAccountID(campaign *model.Campaign) string {
 // domain.ErrCampaignAccountMismatch exactly as the google-ads and microsoft adapters do.
 func verifyTwitterAccountMatch(op string, campaign *model.Campaign, client *twitter.Client) error {
 	created := twitterCreationAccountID(campaign)
-	if created == "" || created == strings.TrimSpace(client.AccountID()) {
+	current := strings.TrimSpace(client.AccountID())
+	// Neither unknown is a mismatch. An absent CREATED id is the pre-existing-row case. An
+	// empty CURRENT id cannot prove anything either — "not selected" is an absence, not a
+	// different account, and reporting one would render as "resolves to account " with an
+	// empty name. validateTwitterConnection already refuses an account-less connection with
+	// ErrAccountNotSelected, so this arm is unreachable today; it is stated rather than relied
+	// upon so the guard stays correct if that precondition is ever relaxed, as it is on meta.
+	if created == "" || current == "" || created == current {
 		return nil
 	}
 	return fmt.Errorf("%s: campaign %s was created under x ads account %s but the project's current connection resolves to account %s: %w",
-		op, campaign.PlatformCampaignID, created, strings.TrimSpace(client.AccountID()), domain.ErrCampaignAccountMismatch)
+		op, campaign.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
 }
 
 // ToggleStatus implements service.StatusToggler for X (Twitter) Ads.

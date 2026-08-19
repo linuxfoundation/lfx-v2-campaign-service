@@ -977,3 +977,52 @@ func TestReddit_DispatchStampsCreatingAccount(t *testing.T) {
 		t.Errorf("a created row must record its creating account: redditCreationAccountID = %q, want %q (blob: %s)", got, "t2_acct", camp.Result)
 	}
 }
+
+// TestReddit_NoAccountSelectedIsRefusedBeforeTheProvenanceGuard pins the PRECONDITION the
+// provenance guard's `current == ""` arm rests on.
+//
+// verifyRedditAccountMatch treats an empty CURRENT account as "unknown, proceed", because an
+// absence cannot prove a mismatch. On reddit that arm is unreachable today: resolveRedditClient
+// refuses an account-less connection with ErrAccountNotSelected before any campaign row is
+// consulted. That is a precondition, not a coincidence — and an unpinned precondition is one
+// somebody relaxes later, silently turning the unreachable arm into live behaviour with nothing
+// failing. This test is what fails in that case.
+//
+// Both entry points, because the guard is shared by both and they resolve independently.
+func TestReddit_NoAccountSelectedIsRefusedBeforeTheProvenanceGuard(t *testing.T) {
+	noAccount := activeRedditConn(goodRedditCreds)
+	noAccount.AccountID = ""
+	for _, ep := range []struct {
+		name string
+		call func(d *RedditDispatcher) error
+	}{
+		{"ToggleStatus", func(d *RedditDispatcher) error {
+			return d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds,
+				&model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_other"}`)},
+				model.CampaignRunPaused)
+		}},
+		{"ReadMetrics", func(d *RedditDispatcher) error {
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds,
+				&model.Campaign{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_other"}`)},
+				model.MetricsWindowToday)
+			return err
+		}},
+	} {
+		t.Run(ep.name, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+			d := NewRedditDispatcher(fakeConnReader{conn: noAccount}, identityEncryptor{})
+			err := ep.call(d)
+			if err == nil {
+				t.Fatal("an account-less connection must be refused")
+			}
+			// The connection defect is the answer, NOT the account mismatch: the guard is never
+			// reached, so a row recording a foreign account is beside the point here.
+			if !errors.Is(err, domain.ErrAccountNotSelected) {
+				t.Errorf("want ErrAccountNotSelected (the precondition the guard's empty-current arm rests on), got %T: %v", err, err)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("want ErrConnectionNotUsable so the response maps to 409, got %v", err)
+			}
+		})
+	}
+}

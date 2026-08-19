@@ -2255,8 +2255,12 @@ type CampaignResult struct {
 	Platform     string
 	CampaignName string
 	CampaignID   string
-	// AccountID is the ad account the campaign was CREATED under, in Meta's documented
-	// "act_<digits>" form. The dispatcher's metaCreationAccountID reads it back so a later
+	// AccountID is the ad account the campaign was CREATED under, stored verbatim as the
+	// connection carries it — this field applies no normalisation of its own. It is Meta's
+	// documented "act_<digits>" form because design/connection.go constrains the stored
+	// connection id to ^act_[0-9]+$, not because anything here enforces it; the dispatcher's
+	// normalizeMetaAccountID re-derives that shape on both sides of the comparison rather than
+	// trusting this field to have it. metaCreationAccountID reads the value back so a later
 	// read/toggle resolving to a DIFFERENT account is refused rather than addressing the
 	// stored campaign id under the wrong account. This struct is marshalled UNTAGGED, so
 	// the persisted key is the Go field name "AccountID" — the reader matches that.
