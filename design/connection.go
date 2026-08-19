@@ -112,10 +112,16 @@ var BadRequestError = Type("bad-request-error", func() {
 // `www_authenticate` is an ATTRIBUTE, not a constant emitted by the framework: Goa's
 // Response-level Header() maps an attribute of the error type onto a response header,
 // and has no form that writes a fixed string. Making it a field of the error is what
-// gets `WWW-Authenticate: Bearer` onto the wire at all, and it is Required so the
-// challenge cannot be omitted by a caller constructing the error — RFC 9110 §15.5.2
-// makes the challenge mandatory on a 401, and an optional field would let the service
-// emit a bare 401 that a spec-following client is entitled to reject.
+// gets `WWW-Authenticate: Bearer` onto the wire at all. `Required` states that the
+// challenge is part of the contract — RFC 9110 §15.5.2 makes it mandatory on a 401 —
+// but it is a DESIGN-TIME declaration, not a runtime guarantee on the response path:
+// the generated field is a plain `string`, and the server encoder writes whatever it
+// holds, so service code constructing this error with an empty value still emits a bare
+// 401. What `Required` buys is the generated CLIENT decoder, which rejects a 401 whose
+// `Www-Authenticate` header is empty (`goa.MissingFieldError`), plus the openapi
+// contract. Populating the field is the handlers' job — every one of them fills it from
+// the shared `bearerChallenge` constant, and
+// TestEveryConnectionUnauthorizedEncoderSetsTheChallenge is what keeps that true.
 //
 // The message stays as opaque as the 400 it replaces. The status distinguishes "your
 // credential is the problem" from "your payload is the problem"; it deliberately does

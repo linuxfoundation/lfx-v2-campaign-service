@@ -39,17 +39,17 @@ services rather than connections. A failure log naming `...EncodesBadRequest` fo
 `Unauthorized` regression costs debugging time. `docs/knowledge/code/design.md` cites the new
 name.
 
-## "Both were 400 before" was false in five places
+## Stale 400-era prose, swept
 
 This change moved only **token-side refusals** from 400 to 401. The `unavailable` branch —
 no verifier wired, or `domain.ErrKeyUnavailable` from a JWKS fetch — has always answered
 **503** and is untouched. Prose claiming "both were 400" therefore asserted that the 503 case
 used to be a 400, contradicting the 503 section a few paragraphs below it in the same files.
 
-Fixed at `internal/service/auth.go:72`, `docs/knowledge/code/internal-service.md:739`, and
-three sites in `internal/service/auth_test.go` (`:69`, `:122`, `:149`). The last three are
-worth noting because they are the class the previous round missed: the earlier fix commit
-corrected the concept file's line 716 and the log, but the same false claim survived in the
+Fixed in `internal/service/auth.go`, `docs/knowledge/code/internal-service.md`, and three
+sites in `internal/service/auth_test.go`. The last three are worth noting because they are
+the class the previous round missed: the earlier fix commit corrected the concept file's
+line 716 and the log, but the same false claim survived in the
 test file's godoc and — sharpest — in a `t.Errorf` **failure message**, which told a developer
 that token-side refusals "must map to 400" while the contract this PR establishes is 401.
 The assertion itself was always correct; it checks the `unavailable` bool, not a status.
@@ -57,8 +57,19 @@ The assertion itself was always correct; it checks the `unavailable` bool, not a
 These lines are pre-existing text this change *falsified* rather than lines it added, which
 is precisely when documentation drift becomes this PR's to fix.
 
-`internal/infrastructure/auth/jwt.go` carries similar 400-era prose and is deliberately left
-alone: that package is untouched by this branch, so it is genuine pre-existing drift.
+`internal/infrastructure/auth/jwt.go:64` was initially left alone on the reasoning that the
+package is untouched by this branch, so its 400-era prose was pre-existing drift. That was
+wrong, and the distinction is worth stating: the line says the service layer maps "every
+token-side refusal" to 400 in the PRESENT TENSE, describing the mapping this branch
+CHANGES. This change falsified it, so it is this PR's to fix, and it now says 401.
+
+Whether the file is edited by the branch is the wrong test — what matters is whether the
+claim was true before the change and false after. Three neighbouring 400 mentions in the
+same file (`:245`, `:257`, `:613`) are NOT in that class and stay as they are: each narrates
+the counterfactual a guard prevents ("a JWKS misconfiguration would have come back as a 400
+to a caller holding a good token"), describing the era before `ErrKeyUnavailable` split the
+two branches. They are historical framing of a path that no longer reaches the token side at
+all, not present-tense claims about today's mapping.
 
 ## The log fragment was missing its kind marker
 
