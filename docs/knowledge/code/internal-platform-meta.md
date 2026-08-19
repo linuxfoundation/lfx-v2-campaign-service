@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached by URL as `link_data.picture`, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -40,6 +40,69 @@ create the campaign then fail at the ad set, orphaning it. OUTCOME_TRAFFIC
 supports LINK_CLICKS with no pixel requirement, so the flow is spendable
 end-to-end. Full LEAD_GENERATION / instant-form (or OUTCOME_LEADS + pixel) parity
 with the TS contract is deferred (LFXV2-2665).
+
+Ad creatives are website-click ads built from `object_story_spec.link_data`
+(page id, the UTM click URL, primary text, headline, optional description). A
+variant may additionally carry an OPTIONAL `AdVariant.ImageURL`, which turns the
+ad into a SINGLE-IMAGE ad: the URL is attached to that variant's creative as
+`link_data.picture`. The field is additive — a variant with no `ImageURL`
+produces exactly the previous bare-link creative.
+
+`picture` is the DOCUMENTED by-URL field on `AdCreativeLinkData`: "URL of a
+picture to use in the post. Specify this field or `image_hash` but not both. ...
+The image specified at the URL will be saved into the ad accounts image library."
+META fetches the image server-side, so the client never dereferences the caller's
+URL and acquires no outbound-fetch (or SSRF) surface, and the whole creative stays
+one JSON create inside the ordinary hardened request path — no second transport.
+Because the reference makes `picture` and `image_hash` mutually exclusive, only
+`picture` is ever sent.
+
+An earlier revision instead uploaded to `POST /act_<id>/adimages` with a `url`
+field and attached the returned hash as `link_data.image_hash`. That was wrong:
+the adimages edge documents only `bytes` (base64) and `copy_from` as CREATE
+parameters — `url` is a field on the RETURNED image object, not an accepted
+input — so the call would have been rejected against a live account, after the
+campaign and ad set already existed. `picture` reaches the same by-URL outcome
+with one fewer round-trip and no undocumented parameter. Nothing in the repo
+calls `/adimages` any more.
+
+The URL is validated up front alongside the copy-limit checks (absolute, https,
+no embedded userinfo) so a malformed URL is rejected BEFORE any paid resource
+exists, rather than at the per-variant creative step where the campaign and ad
+set are already created. Meta fetches the URL, so userinfo is rejected
+specifically to avoid handing a basic-auth secret to Meta.
+
+A creative rejected over its picture URL is non-fatal per-variant and is reported
+in `Steps` like any other per-variant failure. Because the URL now travels as a
+creative parameter, Meta can echo it back in `error.message`, which `do` copies
+verbatim into `APIError.Message`; every per-variant failure step therefore renders
+through `scrubURLFromErr`, which replaces the caller's URL (verbatim or
+percent-encoded) with its `redactURL` form before the message reaches the
+persisted `Steps` sink. A caller URL may be pre-signed — the signature is a
+bearer credential — and `Steps` are persisted and logged, so the step keeps the
+identifying scheme+host+path and drops the query, fragment, and userinfo. This
+mirrors `displayMetaUTMURL`: the full value still goes to Meta, only the persisted
+copy is sanitized.
+
+`scrubURLFromErr` FAILS CLOSED, and it does so STRUCTURALLY rather than by
+searching the text for the secret. When the image URL carries a query or fragment
+— the components that hold a pre-signed signature — upstream-derived text is never
+emitted at all: the step becomes the URL's `redactURL` form plus a fixed
+"message withheld" note. When the URL has no query or fragment there is nothing
+secret to protect, so the message is kept with the URL replaced in place.
+
+The structural rule replaced an earlier verify-the-text approach, which was not
+sound. The text reaching this sink has been through transformations that
+replacement cannot invert and a verifier cannot enumerate: `do` truncates a
+non-Graph body at 300 runes (clipping a signature mid-value), and a proxy or WAF
+may re-encode or line-wrap the echo. A substring verifier only rejects the residues
+it thought to look for — an echo of `?sig=SECRET_SIG` wrapped to `?sig=SEC\nRET_SIG`
+defeats both the replacement and a prefix scan, because no contiguous run of the
+value survives to be found. Arbitrary transformed text cannot be proven clean by
+substring checks, so the scrubber no longer tries; it withholds on the input's
+shape. An unparseable URL is likewise treated as secret-bearing. Every return path,
+including the withheld one, is clamped to the caller's `max`, since `redactURL`
+preserves the caller-controlled path.
 
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are

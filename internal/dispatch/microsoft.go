@@ -70,12 +70,16 @@ type microsoftConfig struct {
 	// (no micros, no FX). Omitted/zero means unset, and Microsoft then applies the
 	// account-currency minimum — a documented, serve-capable floor, so omitting it is safe.
 	CpcBid float64 `json:"cpcBid"`
-	// NOTE: there is deliberately no geoTargets field, unlike redditConfig/metaConfig/
-	// linkedInConfig. Microsoft's location targeting takes its own numeric LocationId values
-	// (from Microsoft's geographical-locations file) and accepts ISO-2 country codes NOWHERE,
-	// so a `geoTargets: ["US"]` here could not be honoured without an invented ISO→LocationId
-	// mapping. Carrying the field would advertise targeting this dispatcher silently drops —
-	// worse than not offering it. See internal/platform/microsoft/targeting.go.
+	// GeoTargets are ISO 3166-1 alpha-2 country codes, the SAME vocabulary
+	// redditConfig/metaConfig/googleAdsConfig take (LFXV2-3279). Microsoft's location
+	// criteria take numeric LocationIds rather than ISO codes, so the client resolves each
+	// code against Microsoft's own geographical-locations file at create time — see
+	// internal/platform/microsoft/geo.go.
+	//
+	// Left EMPTY, the campaign is created with no location criteria and Microsoft serves it
+	// EVERYWHERE once enabled. A code that cannot be resolved fails the create BEFORE
+	// anything is created, rather than silently producing that untargeted campaign.
+	GeoTargets []string `json:"geoTargets"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -128,6 +132,7 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		RegistrationURL: bf.RegistrationURL,
 		Keywords:        microsoftKeywords(cfg.Keywords),
 		CpcBid:          cfg.CpcBid,
+		GeoTargets:      cfg.GeoTargets,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
