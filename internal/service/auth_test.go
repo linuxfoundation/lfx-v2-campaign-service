@@ -66,7 +66,7 @@ func TestAuthenticate_RejectionMessagesAreOpaque(t *testing.T) {
 	_, msgFail, failUnavail := failing.authenticate(context.Background(), "t")
 	_, msgNil, nilUnavail := nilActor.authenticate(context.Background(), "t")
 	if failUnavail || nilUnavail {
-		t.Errorf("both are token-side refusals and must map to 400: %v / %v", failUnavail, nilUnavail)
+		t.Errorf("both are token-side refusals and must map to 401: %v / %v", failUnavail, nilUnavail)
 	}
 	if msgFail == "" || msgNil == "" {
 		t.Fatalf("both must be rejections: %q / %q", msgFail, msgNil)
@@ -119,9 +119,9 @@ func TestAuthenticate_EmptyTokenIsTheVerifiersCallNotTheGuards(t *testing.T) {
 }
 
 // TestAuthenticate_KeyUnavailableIsOurOutageNotTheCallersFault pins the disposition split.
-// Every reason a TOKEN is refused collapses to one opaque 400; a JWKS fetch that failed is
+// Every reason a TOKEN is refused collapses to one opaque 401; a JWKS fetch that failed is
 // not such a reason — nothing was learned about the token, because it was never checked.
-// Answering 400 there tells a caller holding a perfectly good credential that theirs is
+// Answering 401 there tells a caller holding a perfectly good credential that theirs is
 // bad, and tells them not to retry a condition that clears when Heimdall recovers. It is
 // reachable on a cold cache and at every TTL expiry, not only at startup.
 func TestAuthenticate_KeyUnavailableIsOurOutageNotTheCallersFault(t *testing.T) {
@@ -146,7 +146,7 @@ func TestAuthenticate_KeyUnavailableIsOurOutageNotTheCallersFault(t *testing.T) 
 // TestJWTAuth_UnverifiableIsUnavailableOnEveryService pins the disposition at all three
 // boundaries. The mapping is written out once per service (Goa gives each its own error
 // types), so a split that only the brief service honours is a split two thirds of the API
-// does not have — and the failure mode is silent: a 400 for a JWKS outage looks like an
+// does not have — and the failure mode is silent: a 401 for a JWKS outage looks like an
 // ordinary rejection in every log and dashboard.
 func TestJWTAuth_UnverifiableIsUnavailableOnEveryService(t *testing.T) {
 	keysDown := &stubVerifier{err: fmt.Errorf("fetch jwks: %w", domain.ErrKeyUnavailable)}

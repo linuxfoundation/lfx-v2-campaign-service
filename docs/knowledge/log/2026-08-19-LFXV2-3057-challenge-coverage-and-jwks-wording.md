@@ -1,6 +1,6 @@
 # 2026-08-19 — LFXV2-3057 challenge coverage, and the JWKS claim was wrong
 
-Three review findings on the 401 change, all verified before acting.
+**Fix** — three review findings on the 401 change, all verified before acting.
 
 ## The brief/audience challenge header had no test behind it
 

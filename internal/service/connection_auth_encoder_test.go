@@ -12,9 +12,9 @@ import (
 	"testing"
 )
 
-// connectionsErrorEncoders is the generated file this test reads. It is generated from
-// design/connection.go by `make apigen`, so what the test really pins is a property of
-// that design file — see the comment on the test.
+// connectionsErrorEncoders is the connections service's generated encoder file. It is
+// generated from design/connection.go by `make apigen`, so what the tests below really pin
+// is a property of that design file — see the comment on each test.
 const connectionsErrorEncoders = "../../gen/http/lfx_v2_campaign_service_connections/server/encode_decode.go"
 
 // authErrorEncoders is every generated server encoder file that carries a 401. The
@@ -28,11 +28,11 @@ var authErrorEncoders = []string{
 	"../../gen/http/lfx_v2_campaign_service_audiences/server/encode_decode.go",
 }
 
-// TestEveryConnectionMethodEncodesBadRequest pins the one thing that makes JWTAuth's 401
-// reach the caller as a 401.
+// TestEverySecuredMethodEncodesAuthErrors pins the one thing that makes JWTAuth's 401
+// reach the caller as a 401, across every service that answers one.
 //
-// JWTAuth (connection_handler.go) returns *conn.UnauthorizedError for any refused token, on
-// EVERY method — the reads and the delete included, since they carry bearerToken() exactly
+// JWTAuth returns the service's typed Unauthorized error for any refused token, on EVERY
+// method — the reads and the delete included, since they carry bearerToken() exactly
 // as the writes do. But Goa generates a method's error encoder from the errors that method
 // DECLARES: a method whose design block omits `Error("Unauthorized", ...)` has no
 // `case "Unauthorized"` in its encoder, so the typed error falls through to the generic
@@ -44,27 +44,37 @@ var authErrorEncoders = []string{
 // hazard is a NEW method (a new provider's get/delete/test) added without the declaration.
 // A hand-maintained list of encoders to exercise would not include the new one, which is
 // precisely the case that must fail.
-func TestEveryConnectionMethodEncodesBadRequest(t *testing.T) {
+func TestEverySecuredMethodEncodesAuthErrors(t *testing.T) {
 	// Unauthorized is the one JWTAuth returns; BadRequest still carries payload and
 	// path-parameter validation (create-* constrains project_id to a slug Pattern, so
 	// the generated decoder can reject before any handler runs). Both are checked because
 	// either one missing is the same invisible 500.
+	//
+	// Every service that answers 401, not just connections: briefs and audiences declare
+	// these errors through commonBriefErrors() (design/brief.go), a SEPARATELY maintained
+	// helper from connections' authErrors() (design/connection.go). A method added to
+	// either without the declaration is the same silent 500, and a connections-only guard
+	// cannot see it. The sibling challenge test cannot cover this gap either: it compares
+	// challenge-writes against Unauthorized-cases, and a method omitting the case entirely
+	// decrements BOTH counts, so its equality still holds.
 	for _, errName := range []string{"BadRequest", "Unauthorized"} {
 		t.Run(errName, func(t *testing.T) {
-			assertEveryConnectionEncoderHandles(t, errName)
+			for _, path := range authErrorEncoders {
+				assertEveryEncoderHandles(t, path, errName)
+			}
 		})
 	}
 }
 
-// assertEveryConnectionEncoderHandles fails for each generated Encode*Error function whose
+// assertEveryEncoderHandles fails for each generated Encode*Error function in path whose
 // switch has no case for errName.
-func assertEveryConnectionEncoderHandles(t *testing.T, errName string) {
+func assertEveryEncoderHandles(t *testing.T, path, errName string) {
 	t.Helper()
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, connectionsErrorEncoders, nil, 0)
+	file, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
-		t.Fatalf("parsing the generated connection encoders: %v", err)
+		t.Fatalf("parsing the generated encoders %s: %v", path, err)
 	}
 
 	want := `"` + errName + `"`
@@ -99,9 +109,10 @@ func assertEveryConnectionEncoderHandles(t *testing.T, errName string) {
 
 		if !handled {
 			method := strings.TrimSuffix(strings.TrimPrefix(name, "Encode"), "Error")
-			t.Errorf("%s has no %s case: the %s method in design/connection.go does not "+
-				"declare Error(%s, ...) via authErrors(), so that rejection is encoded as a 500",
-				name, errName, method, want)
+			t.Errorf("%s (%s) has no %s case: the %s method's design block does not declare "+
+				"Error(%s, ...) via authErrors() (design/connection.go) or commonBriefErrors() "+
+				"(design/brief.go), so that rejection is encoded as a 500",
+				name, path, errName, method, want)
 		}
 	}
 
@@ -110,7 +121,7 @@ func assertEveryConnectionEncoderHandles(t *testing.T, errName string) {
 	// file moved or the generated naming changed, and the test is then checking nothing.
 	if checked == 0 {
 		t.Fatalf("no Encode*Error functions found in %s; the test is not exercising anything",
-			connectionsErrorEncoders)
+			path)
 	}
 }
 

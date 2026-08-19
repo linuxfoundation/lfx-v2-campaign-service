@@ -41,12 +41,14 @@ and the real status appears nowhere in OpenAPI. Nothing on the Go side shows it:
 compiles, the handler returns the correct typed error, and only the wire status is wrong.
 `JWTAuth`'s refusal is exactly such an error, which is why the declaration follows the
 security scheme rather than the payload: a bodyless `GET` needs it as much as a create.
-`TestEveryConnectionMethodEncodesBadRequest`
+`TestEverySecuredMethodEncodesAuthErrors`
 (`internal/service/connection_auth_encoder_test.go`) pins this by parsing the
 **generated** encoders and requiring a `case` for BOTH `"BadRequest"` and `"Unauthorized"`
 in every `Encode*Error` — it reads generated source rather than driving a list of encoders
 because the case that must fail is a *newly added* provider method, which no
-hand-maintained list would contain. `Unauthorized` is the arm that matters for `JWTAuth`:
+hand-maintained list would contain. It parses all three generated encoder files, because
+briefs and audiences declare these errors through `commonBriefErrors()` (`design/brief.go`),
+a separately maintained helper from connections' `authErrors()`. `Unauthorized` is the arm that matters for `JWTAuth`:
 its refusal is returned on every method, including bodyless `GET`s that declare no
 `BadRequest` payload at all.
 
