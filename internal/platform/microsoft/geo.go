@@ -80,6 +80,12 @@ const (
 
 	// geoCacheTTL bounds how long a parsed locations map is reused before it is re-fetched.
 	//
+	// SCOPE: the cache lives on the Client, and MicrosoftDispatcher builds a NEW client per
+	// Dispatch call, so today this coalesces the fetches WITHIN one campaign create (and any
+	// concurrent callers sharing that client) — not across jobs. A cross-job cache would need a
+	// longer-lived owner injected into the dispatcher, which is a separate change; claiming one
+	// here would be false. The TTL still governs any client that IS retained.
+	//
 	// Microsoft's own guidance is to "consider calling the GetGeoLocationsFileUrl operation
 	// once or twice each month to determine if the contents of the file have changed e.g.,
 	// status" — the data moves on the order of months, not minutes. 24h is deliberately far
@@ -522,6 +528,9 @@ func parseGeoLocations(raw []byte) (map[string]string, error) {
 	}
 
 	out := make(map[string]string)
+	// Names seen on two or more DISTINCT Active Country rows. They are removed below rather
+	// than resolved arbitrarily.
+	ambiguous := make(map[string]struct{})
 	for {
 		rec, rErr := r.Read()
 		if errors.Is(rErr, io.EOF) {
@@ -557,11 +566,16 @@ func parseGeoLocations(raw []byte) (map[string]string, error) {
 		if name == "" {
 			continue
 		}
-		if _, dup := out[name]; dup {
-			// FIRST row wins. Microsoft warns that "Multiple location IDs can have the same
-			// display name", and the order of rows is not guaranteed, so this is arbitrary
-			// between duplicates — but it is at least STABLE within one file, and both rows
-			// are Active countries of the same name.
+		if prev, dup := out[name]; dup {
+			// AMBIGUOUS, not first-wins. Microsoft warns that "Multiple location IDs can have
+			// the same display name" and that row order is not guaranteed — so picking the
+			// first is arbitrary ACROSS REFRESHES, not merely within one file: the same brief
+			// could silently resolve to a different LocationId tomorrow. A name with two Active
+			// Country rows is therefore recorded as unusable, and resolving it REFUSES. Failing
+			// closed on an ambiguous name beats spending money on an arbitrary one.
+			if prev != id {
+				ambiguous[name] = struct{}{}
+			}
 			continue
 		}
 		if len(out) >= maxGeoFileRows {
@@ -573,6 +587,9 @@ func parseGeoLocations(raw []byte) (map[string]string, error) {
 			return nil, fmt.Errorf("microsoft-ads geo locations file contains more than %d active country rows, which exceeds this client's limit", maxGeoFileRows)
 		}
 		out[name] = id
+	}
+	for name := range ambiguous {
+		delete(out, name)
 	}
 	return out, nil
 }
@@ -798,6 +815,15 @@ func (c *Client) createCampaignCriterions(ctx context.Context, campaignID string
 		return nil, fmt.Errorf("decode CampaignCriterionIds response (%v): %w", uErr, errNoID)
 	}
 
+	// A TRUNCATED error array is NOT evidence of success. boundedNestedErrorItems retains
+	// maxDecodedErrorItems entries while this call sends up to maxGeoTargets, so a rejection
+	// past the cap was DISCARDED during decode and the surviving prefix can read as clean.
+	// Absence of a rejection in a truncated array is not absence of a rejection — refusing
+	// beats reporting an untargeted campaign as targeted. (Same invariant the keyword path
+	// applies via PartialErrors.Truncated.)
+	if resp.NestedPartialErrors.Truncated || nestedTruncated(resp.NestedPartialErrors.Items) {
+		return nil, fmt.Errorf("microsoft-ads geo targeting returned a truncated error array for campaign %s, so the outcome cannot be classified: %w", campaignID, errNoID)
+	}
 	if nestedErrorsHaveAny(resp.NestedPartialErrors.Items) {
 		created := make([]string, 0, len(resp.CampaignCriterionIds))
 		for _, raw := range resp.CampaignCriterionIds {
@@ -836,4 +862,88 @@ func (c *Client) createCampaignCriterions(ctx context.Context, campaignID string
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+// ---------------------------------------------------------------------------
+// Reading existing location criteria (POST /CampaignCriterions/QueryByIds).
+//
+// This exists because neither guess about a REUSED campaign is safe. Re-posting blindly
+// duplicates every location (AddCampaignCriterions publishes no duplicate refusal, unlike
+// AddKeywords' 1517/1542). Skipping blindly reports success for a campaign whose earlier attach
+// was REJECTED — an untargeted campaign that serves everywhere, the exact harm this ticket
+// exists to prevent. Only a READ distinguishes "already targeted" from "never targeted".
+//
+// Two wire details differ from the ADD path and are easy to get wrong:
+//   - CriterionType is "Location" here, NOT "Targets". Microsoft: "The Targets value is not
+//     allowed for this operation." Targets is the ADD-side grouping; the read asks for one
+//     concrete type.
+//   - CampaignCriterionIds is sent as NULL to mean "all of them": "If this element is null,
+//     all criterions for the specified CampaignId will be retrieved." That is the only way to
+//     enumerate criteria whose ids this run never learned.
+//
+// PartialErrors here is the FLAT BatchError array (like most reads), not the nested
+// BatchErrorCollection the ADD path returns.
+// ---------------------------------------------------------------------------
+
+// queryCampaignCriterionsRequest is the POST /CampaignCriterions/QueryByIds body.
+// CampaignCriterionIds is a nil slice rendered as JSON null — see the block comment.
+type queryCampaignCriterionsRequest struct {
+	CampaignCriterionIds []json.Number `json:"CampaignCriterionIds"`
+	CampaignId           json.Number   `json:"CampaignId"`
+	CriterionType        string        `json:"CriterionType"`
+}
+
+// queryCampaignCriterionsResponse is the (subset of the) 200 body.
+type queryCampaignCriterionsResponse struct {
+	CampaignCriterions []struct {
+		Criterion struct {
+			Type       string       `json:"Type"`
+			LocationId *json.Number `json:"LocationId"`
+		} `json:"Criterion"`
+	} `json:"CampaignCriterions"`
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
+}
+
+// existingLocationIDs returns the set of LocationIds already attached to the campaign.
+//
+// A READ, so it is retried on 429. Any failure is propagated rather than being reported as an
+// empty set: "we could not check" must never collapse into "there is no targeting", which would
+// send the caller down the re-attach path and duplicate every criterion.
+func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (map[string]struct{}, error) {
+	body, err := c.doRequest(ctx, http.MethodPost, "CampaignCriterions/QueryByIds", queryCampaignCriterionsRequest{
+		CampaignCriterionIds: nil, // null => every criterion of this type on the campaign
+		CampaignId:           json.Number(campaignID),
+		CriterionType:        criterionTypeLocation,
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	var resp queryCampaignCriterionsResponse
+	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+		return nil, fmt.Errorf("decode CampaignCriterions/QueryByIds response: %w", uErr)
+	}
+	if partialErrorsHaveAny(resp.PartialErrors.Items) {
+		// A read that partly failed does not describe the campaign's targeting, so it cannot be
+		// used to decide whether to attach.
+		return nil, fmt.Errorf("microsoft-ads location criterion read reported errors: %s", partialErrorCodes(resp.PartialErrors.Items))
+	}
+	out := make(map[string]struct{}, len(resp.CampaignCriterions))
+	for _, cc := range resp.CampaignCriterions {
+		if id := numberID(cc.Criterion.LocationId); id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// nestedTruncated reports whether any collection's own BatchErrors array was truncated during
+// decode. The outer array has its own flag; this covers the inner ones, which are bounded
+// independently and can hide a rejection just as effectively.
+func nestedTruncated(items []msNestedErrorCollection) bool {
+	for _, it := range items {
+		if it.BatchErrors.Truncated {
+			return true
+		}
+	}
+	return false
 }

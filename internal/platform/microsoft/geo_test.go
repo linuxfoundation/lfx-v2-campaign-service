@@ -71,6 +71,10 @@ type geoAPI struct {
 	criterionBody   string
 	criterionStatus int
 	criterionSeen   *createCampaignCriterionsRequest
+	// criterionReadBody scripts POST /CampaignCriterions/QueryByIds (default: none attached).
+	criterionReadBody string
+	// sawCriterionRead records whether the existing-criteria read was issued.
+	sawCriterionRead bool
 	// campaignQueryBody scripts the campaign name lookup (default: absent).
 	campaignQueryBody string
 	// fileServerURL is filled in by newGeoClient.
@@ -138,6 +142,11 @@ func (g *geoAPI) handler(t *testing.T) http.HandlerFunc {
 			_, _ = io.WriteString(w, fmt.Sprintf(
 				`{"FileUrl":%q,"FileUrlExpiryTimeUtc":"2026-08-18T12:15:00Z","LastModifiedTimeUtc":"2026-06-05T18:43:00Z"}`,
 				g.fileServerURL))
+		case strings.HasSuffix(p, "/CampaignCriterions/QueryByIds"):
+			g.mu.Lock()
+			g.sawCriterionRead = true
+			g.mu.Unlock()
+			writeOr(w, g.criterionReadBody, `{"CampaignCriterions":[],"PartialErrors":[]}`)
 		case strings.HasSuffix(p, "/CampaignCriterions"):
 			decodeTo(t, r, g.criterionSeen)
 			writeStatusOr(w, g.criterionStatus, g.criterionBody, `{"CampaignCriterionIds":[9001],"NestedPartialErrors":[]}`)
@@ -737,11 +746,15 @@ func TestCreateCampaignCriterions_PartialSuccessCarriesCreatedIDs(t *testing.T) 
 	}
 }
 
-// A REUSED campaign must NOT be re-attached. AddCampaignCriterions publishes no duplicate
-// refusal (unlike AddKeywords' 1517/1542), and the dispatcher retries by design with a stable
-// name, so re-posting would append a second copy of every location on a live paid campaign.
+// A REUSED campaign whose criteria are ALREADY present must not be re-attached: re-posting
+// would duplicate every location, since AddCampaignCriterions publishes no duplicate refusal.
+// The decision is made from a READ, not assumed.
 func TestCreateCampaign_ReusedCampaignDoesNotReattachGeo(t *testing.T) {
-	g := &geoAPI{fileBody: geoFileFixture(geoRowUS)}
+	g := &geoAPI{
+		fileBody: geoFileFixture(geoRowUS),
+		// The campaign already carries US (LocationId 190).
+		criterionReadBody: `{"CampaignCriterions":[{"Criterion":{"Type":"LocationCriterion","LocationId":190}}],"PartialErrors":[]}`,
+	}
 	c := newGeoClient(t, g)
 	in := validInput()
 	in.GeoTargets = []string{"US"}
@@ -753,8 +766,62 @@ func TestCreateCampaign_ReusedCampaignDoesNotReattachGeo(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if g.sawPath("/CampaignCriterions") {
-		t.Fatal("a reused campaign must NOT be re-attached — re-posting would duplicate every location criterion")
+	if !g.sawCriterionRead {
+		t.Error("the existing criteria must be READ before deciding whether to attach")
+	}
+	for _, p := range g.mutatingPaths() {
+		if strings.HasSuffix(p, "/CampaignCriterions") {
+			t.Fatal("a reused campaign whose locations are already attached must NOT be re-attached — re-posting would duplicate them")
+		}
+	}
+}
+
+// The other half, and the one a blind skip got wrong: a reused campaign whose earlier attach
+// FAILED has NO criteria, so the retry must attach them rather than report success for a
+// campaign that would serve everywhere.
+func TestCreateCampaign_ReusedCampaignWithNoGeoIsAttached(t *testing.T) {
+	var seen createCampaignCriterionsRequest
+	g := &geoAPI{
+		fileBody:      geoFileFixture(geoRowUS),
+		criterionSeen: &seen,
+		// The read reports NO existing location criteria.
+		criterionReadBody: `{"CampaignCriterions":[],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+	g.campaignQueryBody = `{"Campaigns":[{"Id":321,"Name":` + strconv.Quote(composeName(in)) + `}]}`
+
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if !g.sawPath("/CampaignCriterions") {
+		t.Fatal("a reused campaign with NO geo targeting must have its criteria attached, not skipped")
+	}
+	if len(seen.CampaignCriterions) != 1 || seen.CampaignCriterions[0].Criterion.LocationId.String() != "190" {
+		t.Fatalf("the missing location must be attached, got %+v", seen.CampaignCriterions)
+	}
+}
+
+// A read FAILURE must not collapse into "no criteria" — that would send the retry down the
+// re-attach path and duplicate every location.
+func TestCreateCampaign_ReusedCampaignCriterionReadFailureRefuses(t *testing.T) {
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadBody: `{"CampaignCriterions":[],"PartialErrors":[{"ErrorCode":"CampaignServiceSystemError","Code":105}]}`,
+	}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+	g.campaignQueryBody = `{"Campaigns":[{"Id":321,"Name":` + strconv.Quote(composeName(in)) + `}]}`
+
+	if _, err := c.CreateCampaign(context.Background(), in); err == nil {
+		t.Fatal("an unreadable criterion set must refuse, not be treated as 'no criteria'")
+	}
+	for _, p := range g.mutatingPaths() {
+		if strings.HasSuffix(p, "/CampaignCriterions") {
+			t.Fatal("no criteria may be posted when the existing set could not be read")
+		}
 	}
 }
 
@@ -865,4 +932,59 @@ func (p panicOnGeoFile) RoundTrip(r *http.Request) (*http.Response, error) {
 		panic("simulated panic during the locations-file download")
 	}
 	return p.base.RoundTrip(r)
+}
+
+// A TRUNCATED error array cannot be classified as success: a rejection past the decode cap was
+// discarded, so the surviving prefix reads clean while a criterion was actually refused.
+func TestCreateCampaignCriterions_TruncatedErrorArrayIsUnconfirmed(t *testing.T) {
+	// More nested error collections than maxDecodedErrorItems, all null-ish placeholders, so
+	// nothing "has any" error but the array is known-incomplete.
+	var errs []string
+	for i := 0; i < maxDecodedErrorItems+3; i++ {
+		errs = append(errs, `{"BatchErrors":[],"Index":`+strconv.Itoa(i)+`}`)
+	}
+	g := &geoAPI{
+		fileBody:      geoFileFixture(geoRowUS),
+		criterionBody: `{"CampaignCriterionIds":[9001],"NestedPartialErrors":[` + strings.Join(errs, ",") + `]}`,
+	}
+	c := newGeoClient(t, g)
+	_, err := c.createCampaignCriterions(context.Background(), "321", []string{"190"})
+	if err == nil {
+		t.Fatal("a truncated error array must not be classified as success")
+	}
+	if !errors.Is(err, errNoID) {
+		t.Fatalf("error = %v, want errNoID (UNCONFIRMED)", err)
+	}
+}
+
+// Two Active Country rows sharing a display name make the LocationId arbitrary ACROSS
+// refreshes, because Microsoft does not guarantee row order. Such a name must be dropped so
+// resolution refuses, rather than spending money on whichever row happened to come first.
+func TestParseGeoLocations_AmbiguousDisplayNameIsDropped(t *testing.T) {
+	got, err := parseGeoLocations([]byte(geoFileFixture(
+		"190,United States,Country,,Active,2840",
+		"999,United States,Country,,Active,2840",
+		geoRowGB,
+	)))
+	if err != nil {
+		t.Fatalf("parseGeoLocations: %v", err)
+	}
+	if id, ok := got["united states"]; ok {
+		t.Fatalf("an ambiguous country name must not resolve, got %q", id)
+	}
+	// An unambiguous neighbour in the same file is unaffected.
+	if got["united kingdom"] != "200" {
+		t.Errorf("unambiguous rows must still resolve, got %q", got["united kingdom"])
+	}
+}
+
+// The same LocationId repeated on two rows is NOT ambiguous — it names one place.
+func TestParseGeoLocations_RepeatedIdenticalRowIsNotAmbiguous(t *testing.T) {
+	got, err := parseGeoLocations([]byte(geoFileFixture(geoRowUS, geoRowUS)))
+	if err != nil {
+		t.Fatalf("parseGeoLocations: %v", err)
+	}
+	if got["united states"] != "190" {
+		t.Fatalf("a duplicated identical row must still resolve, got %q", got["united states"])
+	}
 }
