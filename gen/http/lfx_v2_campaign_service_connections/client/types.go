@@ -805,6 +805,16 @@ type CreateGoogleAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateGoogleAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -839,6 +849,16 @@ type GetGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetGoogleAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -905,6 +925,16 @@ type UpdateGoogleAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateGoogleAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -939,6 +969,16 @@ type DeleteGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteGoogleAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -985,6 +1025,16 @@ type TestGoogleAdsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestGoogleAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1019,6 +1069,16 @@ type SetCredentialGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialGoogleAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialGoogleAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1068,6 +1128,16 @@ type CreateLinkedinAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateLinkedinAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetLinkedinAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1102,6 +1172,16 @@ type GetLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetLinkedinAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1168,6 +1248,16 @@ type UpdateLinkedinAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateLinkedinAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteLinkedinAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1202,6 +1292,16 @@ type DeleteLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteLinkedinAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1248,6 +1348,16 @@ type TestLinkedinAdsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestLinkedinAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialLinkedinAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1282,6 +1392,16 @@ type SetCredentialLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialLinkedinAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialLinkedinAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1331,6 +1451,16 @@ type CreateMetaAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1365,6 +1495,16 @@ type GetMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetMetaAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1431,6 +1571,16 @@ type UpdateMetaAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteMetaAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1465,6 +1615,16 @@ type DeleteMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteMetaAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1511,6 +1671,16 @@ type TestMetaAdsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type TestMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialMetaAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1545,6 +1715,16 @@ type SetCredentialMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialMetaAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1594,6 +1774,16 @@ type CreateRedditAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateRedditAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetRedditAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1628,6 +1818,16 @@ type GetRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetRedditAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1694,6 +1894,16 @@ type UpdateRedditAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateRedditAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteRedditAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1728,6 +1938,16 @@ type DeleteRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteRedditAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1774,6 +1994,16 @@ type TestRedditAdsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestRedditAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialRedditAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -1808,6 +2038,16 @@ type SetCredentialRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialRedditAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialRedditAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1857,6 +2097,16 @@ type CreateTwitterAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateTwitterAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetTwitterAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1891,6 +2141,16 @@ type GetTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetTwitterAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1957,6 +2217,16 @@ type UpdateTwitterAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateTwitterAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteTwitterAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1991,6 +2261,16 @@ type DeleteTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteTwitterAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2037,6 +2317,16 @@ type TestTwitterAdsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestTwitterAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialTwitterAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2071,6 +2361,16 @@ type SetCredentialTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialTwitterAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialTwitterAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2120,6 +2420,16 @@ type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type CreateMicrosoftAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2154,6 +2464,16 @@ type GetMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2220,6 +2540,16 @@ type UpdateMicrosoftAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type UpdateMicrosoftAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteMicrosoftAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2254,6 +2584,16 @@ type DeleteMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type DeleteMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type DeleteMicrosoftAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2300,6 +2640,16 @@ type TestMicrosoftAdsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "Unauthorized" error.
+type TestMicrosoftAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialMicrosoftAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2334,6 +2684,16 @@ type SetCredentialMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialMicrosoftAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialMicrosoftAdsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2383,6 +2743,16 @@ type CreateHubspotInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateHubspotUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetHubspotBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -2417,6 +2787,16 @@ type GetHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type GetHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetHubspotUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2483,6 +2863,16 @@ type UpdateHubspotPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateHubspotUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteHubspotBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -2517,6 +2907,16 @@ type DeleteHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type DeleteHubspotUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2563,6 +2963,16 @@ type TestHubspotNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// TestHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "Unauthorized" error.
+type TestHubspotUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // SetCredentialHubspotBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2597,6 +3007,16 @@ type SetCredentialHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SetCredentialHubspotUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SetCredentialHubspotUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2643,6 +3063,16 @@ type ListGoogleAdsAccountsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListGoogleAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListGoogleAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2677,6 +3107,16 @@ type ListMetaAdsAccountsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "NotFound" error.
 type ListMetaAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaAdsAccountsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2723,6 +3163,16 @@ type ListLinkedinAdsAccountsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListLinkedinAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListLinkedinAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListMicrosoftAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -2763,6 +3213,16 @@ type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMicrosoftAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMicrosoftAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListHubspotEmailsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2797,6 +3257,16 @@ type ListHubspotEmailsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "NotFound" error.
 type ListHubspotEmailsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListHubspotEmailsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ListHubspotEmailsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -3311,6 +3781,18 @@ func NewCreateGoogleAdsInternalServerError(body *CreateGoogleAdsInternalServerEr
 	return v
 }
 
+// NewCreateGoogleAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service create-google-ads endpoint Unauthorized error.
+func NewCreateGoogleAdsUnauthorized(body *CreateGoogleAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetGoogleAdsGoogleAdsConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint
 // result from a HTTP "OK" response.
@@ -3372,6 +3854,18 @@ func NewGetGoogleAdsNotFound(body *GetGoogleAdsNotFoundResponseBody) *lfxv2campa
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetGoogleAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-google-ads endpoint Unauthorized error.
+func NewGetGoogleAdsUnauthorized(body *GetGoogleAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -3465,6 +3959,18 @@ func NewUpdateGoogleAdsPreconditionRequired(body *UpdateGoogleAdsPreconditionReq
 	return v
 }
 
+// NewUpdateGoogleAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service update-google-ads endpoint Unauthorized error.
+func NewUpdateGoogleAdsUnauthorized(body *UpdateGoogleAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteGoogleAdsBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-google-ads endpoint BadRequest error.
 func NewDeleteGoogleAdsBadRequest(body *DeleteGoogleAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -3507,6 +4013,18 @@ func NewDeleteGoogleAdsNotFound(body *DeleteGoogleAdsNotFoundResponseBody) *lfxv
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteGoogleAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service delete-google-ads endpoint Unauthorized error.
+func NewDeleteGoogleAdsUnauthorized(body *DeleteGoogleAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -3569,6 +4087,18 @@ func NewTestGoogleAdsNotFound(body *TestGoogleAdsNotFoundResponseBody) *lfxv2cam
 	return v
 }
 
+// NewTestGoogleAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-google-ads endpoint Unauthorized error.
+func NewTestGoogleAdsUnauthorized(body *TestGoogleAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialGoogleAdsBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-google-ads
 // endpoint BadRequest error.
@@ -3613,6 +4143,19 @@ func NewSetCredentialGoogleAdsNotFound(body *SetCredentialGoogleAdsNotFoundRespo
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialGoogleAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-google-ads
+// endpoint Unauthorized error.
+func NewSetCredentialGoogleAdsUnauthorized(body *SetCredentialGoogleAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -3683,6 +4226,19 @@ func NewCreateLinkedinAdsInternalServerError(body *CreateLinkedinAdsInternalServ
 	return v
 }
 
+// NewCreateLinkedinAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service create-linkedin-ads endpoint
+// Unauthorized error.
+func NewCreateLinkedinAdsUnauthorized(body *CreateLinkedinAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetLinkedinAdsLinkedinAdsConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // result from a HTTP "OK" response.
@@ -3744,6 +4300,18 @@ func NewGetLinkedinAdsNotFound(body *GetLinkedinAdsNotFoundResponseBody) *lfxv2c
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetLinkedinAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-linkedin-ads endpoint Unauthorized error.
+func NewGetLinkedinAdsUnauthorized(body *GetLinkedinAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -3837,6 +4405,19 @@ func NewUpdateLinkedinAdsPreconditionRequired(body *UpdateLinkedinAdsPreconditio
 	return v
 }
 
+// NewUpdateLinkedinAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service update-linkedin-ads endpoint
+// Unauthorized error.
+func NewUpdateLinkedinAdsUnauthorized(body *UpdateLinkedinAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteLinkedinAdsBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-linkedin-ads endpoint BadRequest error.
 func NewDeleteLinkedinAdsBadRequest(body *DeleteLinkedinAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -3879,6 +4460,19 @@ func NewDeleteLinkedinAdsNotFound(body *DeleteLinkedinAdsNotFoundResponseBody) *
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteLinkedinAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service delete-linkedin-ads endpoint
+// Unauthorized error.
+func NewDeleteLinkedinAdsUnauthorized(body *DeleteLinkedinAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -3941,6 +4535,18 @@ func NewTestLinkedinAdsNotFound(body *TestLinkedinAdsNotFoundResponseBody) *lfxv
 	return v
 }
 
+// NewTestLinkedinAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-linkedin-ads endpoint Unauthorized error.
+func NewTestLinkedinAdsUnauthorized(body *TestLinkedinAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialLinkedinAdsBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-linkedin-ads
 // endpoint BadRequest error.
@@ -3985,6 +4591,19 @@ func NewSetCredentialLinkedinAdsNotFound(body *SetCredentialLinkedinAdsNotFoundR
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialLinkedinAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-linkedin-ads
+// endpoint Unauthorized error.
+func NewSetCredentialLinkedinAdsUnauthorized(body *SetCredentialLinkedinAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4056,6 +4675,18 @@ func NewCreateMetaAdsInternalServerError(body *CreateMetaAdsInternalServerErrorR
 	return v
 }
 
+// NewCreateMetaAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service create-meta-ads endpoint Unauthorized error.
+func NewCreateMetaAdsUnauthorized(body *CreateMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMetaAdsMetaAdsConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint result
 // from a HTTP "OK" response.
@@ -4117,6 +4748,18 @@ func NewGetMetaAdsNotFound(body *GetMetaAdsNotFoundResponseBody) *lfxv2campaigns
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetMetaAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-meta-ads endpoint Unauthorized error.
+func NewGetMetaAdsUnauthorized(body *GetMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4211,6 +4854,18 @@ func NewUpdateMetaAdsPreconditionRequired(body *UpdateMetaAdsPreconditionRequire
 	return v
 }
 
+// NewUpdateMetaAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service update-meta-ads endpoint Unauthorized error.
+func NewUpdateMetaAdsUnauthorized(body *UpdateMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteMetaAdsBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-meta-ads endpoint BadRequest error.
 func NewDeleteMetaAdsBadRequest(body *DeleteMetaAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -4253,6 +4908,18 @@ func NewDeleteMetaAdsNotFound(body *DeleteMetaAdsNotFoundResponseBody) *lfxv2cam
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteMetaAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service delete-meta-ads endpoint Unauthorized error.
+func NewDeleteMetaAdsUnauthorized(body *DeleteMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4315,6 +4982,18 @@ func NewTestMetaAdsNotFound(body *TestMetaAdsNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewTestMetaAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-meta-ads endpoint Unauthorized error.
+func NewTestMetaAdsUnauthorized(body *TestMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialMetaAdsBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-meta-ads endpoint
 // BadRequest error.
@@ -4358,6 +5037,19 @@ func NewSetCredentialMetaAdsNotFound(body *SetCredentialMetaAdsNotFoundResponseB
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialMetaAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-meta-ads endpoint
+// Unauthorized error.
+func NewSetCredentialMetaAdsUnauthorized(body *SetCredentialMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4428,6 +5120,18 @@ func NewCreateRedditAdsInternalServerError(body *CreateRedditAdsInternalServerEr
 	return v
 }
 
+// NewCreateRedditAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service create-reddit-ads endpoint Unauthorized error.
+func NewCreateRedditAdsUnauthorized(body *CreateRedditAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetRedditAdsRedditAdsConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint
 // result from a HTTP "OK" response.
@@ -4489,6 +5193,18 @@ func NewGetRedditAdsNotFound(body *GetRedditAdsNotFoundResponseBody) *lfxv2campa
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetRedditAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads endpoint Unauthorized error.
+func NewGetRedditAdsUnauthorized(body *GetRedditAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4582,6 +5298,18 @@ func NewUpdateRedditAdsPreconditionRequired(body *UpdateRedditAdsPreconditionReq
 	return v
 }
 
+// NewUpdateRedditAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service update-reddit-ads endpoint Unauthorized error.
+func NewUpdateRedditAdsUnauthorized(body *UpdateRedditAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteRedditAdsBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-reddit-ads endpoint BadRequest error.
 func NewDeleteRedditAdsBadRequest(body *DeleteRedditAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -4624,6 +5352,18 @@ func NewDeleteRedditAdsNotFound(body *DeleteRedditAdsNotFoundResponseBody) *lfxv
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteRedditAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service delete-reddit-ads endpoint Unauthorized error.
+func NewDeleteRedditAdsUnauthorized(body *DeleteRedditAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4686,6 +5426,18 @@ func NewTestRedditAdsNotFound(body *TestRedditAdsNotFoundResponseBody) *lfxv2cam
 	return v
 }
 
+// NewTestRedditAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-reddit-ads endpoint Unauthorized error.
+func NewTestRedditAdsUnauthorized(body *TestRedditAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialRedditAdsBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-reddit-ads
 // endpoint BadRequest error.
@@ -4730,6 +5482,19 @@ func NewSetCredentialRedditAdsNotFound(body *SetCredentialRedditAdsNotFoundRespo
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialRedditAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-reddit-ads
+// endpoint Unauthorized error.
+func NewSetCredentialRedditAdsUnauthorized(body *SetCredentialRedditAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4800,6 +5565,18 @@ func NewCreateTwitterAdsInternalServerError(body *CreateTwitterAdsInternalServer
 	return v
 }
 
+// NewCreateTwitterAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service create-twitter-ads endpoint Unauthorized error.
+func NewCreateTwitterAdsUnauthorized(body *CreateTwitterAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetTwitterAdsTwitterAdsConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // result from a HTTP "OK" response.
@@ -4861,6 +5638,18 @@ func NewGetTwitterAdsNotFound(body *GetTwitterAdsNotFoundResponseBody) *lfxv2cam
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetTwitterAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-twitter-ads endpoint Unauthorized error.
+func NewGetTwitterAdsUnauthorized(body *GetTwitterAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -4954,6 +5743,18 @@ func NewUpdateTwitterAdsPreconditionRequired(body *UpdateTwitterAdsPreconditionR
 	return v
 }
 
+// NewUpdateTwitterAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service update-twitter-ads endpoint Unauthorized error.
+func NewUpdateTwitterAdsUnauthorized(body *UpdateTwitterAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteTwitterAdsBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-twitter-ads endpoint BadRequest error.
 func NewDeleteTwitterAdsBadRequest(body *DeleteTwitterAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -4996,6 +5797,18 @@ func NewDeleteTwitterAdsNotFound(body *DeleteTwitterAdsNotFoundResponseBody) *lf
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteTwitterAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service delete-twitter-ads endpoint Unauthorized error.
+func NewDeleteTwitterAdsUnauthorized(body *DeleteTwitterAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5058,6 +5871,18 @@ func NewTestTwitterAdsNotFound(body *TestTwitterAdsNotFoundResponseBody) *lfxv2c
 	return v
 }
 
+// NewTestTwitterAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-twitter-ads endpoint Unauthorized error.
+func NewTestTwitterAdsUnauthorized(body *TestTwitterAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialTwitterAdsBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-twitter-ads
 // endpoint BadRequest error.
@@ -5102,6 +5927,19 @@ func NewSetCredentialTwitterAdsNotFound(body *SetCredentialTwitterAdsNotFoundRes
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialTwitterAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-twitter-ads
+// endpoint Unauthorized error.
+func NewSetCredentialTwitterAdsUnauthorized(body *SetCredentialTwitterAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5172,6 +6010,19 @@ func NewCreateMicrosoftAdsInternalServerError(body *CreateMicrosoftAdsInternalSe
 	return v
 }
 
+// NewCreateMicrosoftAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service create-microsoft-ads endpoint
+// Unauthorized error.
+func NewCreateMicrosoftAdsUnauthorized(body *CreateMicrosoftAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsMicrosoftAdsConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // result from a HTTP "OK" response.
@@ -5233,6 +6084,18 @@ func NewGetMicrosoftAdsNotFound(body *GetMicrosoftAdsNotFoundResponseBody) *lfxv
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-microsoft-ads endpoint Unauthorized error.
+func NewGetMicrosoftAdsUnauthorized(body *GetMicrosoftAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5326,6 +6189,19 @@ func NewUpdateMicrosoftAdsPreconditionRequired(body *UpdateMicrosoftAdsPrecondit
 	return v
 }
 
+// NewUpdateMicrosoftAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service update-microsoft-ads endpoint
+// Unauthorized error.
+func NewUpdateMicrosoftAdsUnauthorized(body *UpdateMicrosoftAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteMicrosoftAdsBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-microsoft-ads endpoint BadRequest error.
 func NewDeleteMicrosoftAdsBadRequest(body *DeleteMicrosoftAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -5368,6 +6244,19 @@ func NewDeleteMicrosoftAdsNotFound(body *DeleteMicrosoftAdsNotFoundResponseBody)
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteMicrosoftAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service delete-microsoft-ads endpoint
+// Unauthorized error.
+func NewDeleteMicrosoftAdsUnauthorized(body *DeleteMicrosoftAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5430,6 +6319,18 @@ func NewTestMicrosoftAdsNotFound(body *TestMicrosoftAdsNotFoundResponseBody) *lf
 	return v
 }
 
+// NewTestMicrosoftAdsUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-microsoft-ads endpoint Unauthorized error.
+func NewTestMicrosoftAdsUnauthorized(body *TestMicrosoftAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialMicrosoftAdsBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-microsoft-ads
 // endpoint BadRequest error.
@@ -5474,6 +6375,19 @@ func NewSetCredentialMicrosoftAdsNotFound(body *SetCredentialMicrosoftAdsNotFoun
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialMicrosoftAdsUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-microsoft-ads
+// endpoint Unauthorized error.
+func NewSetCredentialMicrosoftAdsUnauthorized(body *SetCredentialMicrosoftAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5547,6 +6461,18 @@ func NewCreateHubspotInternalServerError(body *CreateHubspotInternalServerErrorR
 	return v
 }
 
+// NewCreateHubspotUnauthorized builds a lfx-v2-campaign-service-connections
+// service create-hubspot endpoint Unauthorized error.
+func NewCreateHubspotUnauthorized(body *CreateHubspotUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetHubspotHubspotConnectionOK builds a
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint result
 // from a HTTP "OK" response.
@@ -5610,6 +6536,18 @@ func NewGetHubspotNotFound(body *GetHubspotNotFoundResponseBody) *lfxv2campaigns
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewGetHubspotUnauthorized builds a lfx-v2-campaign-service-connections
+// service get-hubspot endpoint Unauthorized error.
+func NewGetHubspotUnauthorized(body *GetHubspotUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5706,6 +6644,18 @@ func NewUpdateHubspotPreconditionRequired(body *UpdateHubspotPreconditionRequire
 	return v
 }
 
+// NewUpdateHubspotUnauthorized builds a lfx-v2-campaign-service-connections
+// service update-hubspot endpoint Unauthorized error.
+func NewUpdateHubspotUnauthorized(body *UpdateHubspotUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteHubspotBadRequest builds a lfx-v2-campaign-service-connections
 // service delete-hubspot endpoint BadRequest error.
 func NewDeleteHubspotBadRequest(body *DeleteHubspotBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
@@ -5748,6 +6698,18 @@ func NewDeleteHubspotNotFound(body *DeleteHubspotNotFoundResponseBody) *lfxv2cam
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewDeleteHubspotUnauthorized builds a lfx-v2-campaign-service-connections
+// service delete-hubspot endpoint Unauthorized error.
+func NewDeleteHubspotUnauthorized(body *DeleteHubspotUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5810,6 +6772,18 @@ func NewTestHubspotNotFound(body *TestHubspotNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewTestHubspotUnauthorized builds a lfx-v2-campaign-service-connections
+// service test-hubspot endpoint Unauthorized error.
+func NewTestHubspotUnauthorized(body *TestHubspotUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewSetCredentialHubspotBadRequest builds a
 // lfx-v2-campaign-service-connections service set-credential-hubspot endpoint
 // BadRequest error.
@@ -5853,6 +6827,19 @@ func NewSetCredentialHubspotNotFound(body *SetCredentialHubspotNotFoundResponseB
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewSetCredentialHubspotUnauthorized builds a
+// lfx-v2-campaign-service-connections service set-credential-hubspot endpoint
+// Unauthorized error.
+func NewSetCredentialHubspotUnauthorized(body *SetCredentialHubspotUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -5922,6 +6909,19 @@ func NewListGoogleAdsAccountsNotFound(body *ListGoogleAdsAccountsNotFoundRespons
 	return v
 }
 
+// NewListGoogleAdsAccountsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-google-ads-accounts
+// endpoint Unauthorized error.
+func NewListGoogleAdsAccountsUnauthorized(body *ListGoogleAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMetaAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -5982,6 +6982,19 @@ func NewListMetaAdsAccountsNotFound(body *ListMetaAdsAccountsNotFoundResponseBod
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewListMetaAdsAccountsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts endpoint
+// Unauthorized error.
+func NewListMetaAdsAccountsUnauthorized(body *ListMetaAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -6051,6 +7064,19 @@ func NewListLinkedinAdsAccountsNotFound(body *ListLinkedinAdsAccountsNotFoundRes
 	return v
 }
 
+// NewListLinkedinAdsAccountsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// endpoint Unauthorized error.
+func NewListLinkedinAdsAccountsUnauthorized(body *ListLinkedinAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMicrosoftAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -6116,6 +7142,19 @@ func NewListMicrosoftAdsAccountsNotFound(body *ListMicrosoftAdsAccountsNotFoundR
 	return v
 }
 
+// NewListMicrosoftAdsAccountsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// endpoint Unauthorized error.
+func NewListMicrosoftAdsAccountsUnauthorized(body *ListMicrosoftAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListHubspotEmailsResultOK builds a "lfx-v2-campaign-service-connections"
 // service "list-hubspot-emails" endpoint result from a HTTP "OK" response.
 func NewListHubspotEmailsResultOK(body *ListHubspotEmailsResponseBody) *lfxv2campaignserviceconnections.ListHubspotEmailsResult {
@@ -6174,6 +7213,19 @@ func NewListHubspotEmailsNotFound(body *ListHubspotEmailsNotFoundResponseBody) *
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewListHubspotEmailsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-hubspot-emails endpoint
+// Unauthorized error.
+func NewListHubspotEmailsUnauthorized(body *ListHubspotEmailsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -6983,6 +8035,18 @@ func ValidateCreateGoogleAdsInternalServerErrorResponseBody(body *CreateGoogleAd
 	return
 }
 
+// ValidateCreateGoogleAdsUnauthorizedResponseBody runs the validations defined
+// on create-google-ads_Unauthorized_response_body
+func ValidateCreateGoogleAdsUnauthorizedResponseBody(body *CreateGoogleAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetGoogleAdsBadRequestResponseBody runs the validations defined on
 // get-google-ads_BadRequest_response_body
 func ValidateGetGoogleAdsBadRequestResponseBody(body *GetGoogleAdsBadRequestResponseBody) (err error) {
@@ -7022,6 +8086,18 @@ func ValidateGetGoogleAdsInternalServerErrorResponseBody(body *GetGoogleAdsInter
 // ValidateGetGoogleAdsNotFoundResponseBody runs the validations defined on
 // get-google-ads_NotFound_response_body
 func ValidateGetGoogleAdsNotFoundResponseBody(body *GetGoogleAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsUnauthorizedResponseBody runs the validations defined on
+// get-google-ads_Unauthorized_response_body
+func ValidateGetGoogleAdsUnauthorizedResponseBody(body *GetGoogleAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7103,6 +8179,18 @@ func ValidateUpdateGoogleAdsPreconditionRequiredResponseBody(body *UpdateGoogleA
 	return
 }
 
+// ValidateUpdateGoogleAdsUnauthorizedResponseBody runs the validations defined
+// on update-google-ads_Unauthorized_response_body
+func ValidateUpdateGoogleAdsUnauthorizedResponseBody(body *UpdateGoogleAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteGoogleAdsBadRequestResponseBody runs the validations defined
 // on delete-google-ads_BadRequest_response_body
 func ValidateDeleteGoogleAdsBadRequestResponseBody(body *DeleteGoogleAdsBadRequestResponseBody) (err error) {
@@ -7142,6 +8230,18 @@ func ValidateDeleteGoogleAdsInternalServerErrorResponseBody(body *DeleteGoogleAd
 // ValidateDeleteGoogleAdsNotFoundResponseBody runs the validations defined on
 // delete-google-ads_NotFound_response_body
 func ValidateDeleteGoogleAdsNotFoundResponseBody(body *DeleteGoogleAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteGoogleAdsUnauthorizedResponseBody runs the validations defined
+// on delete-google-ads_Unauthorized_response_body
+func ValidateDeleteGoogleAdsUnauthorizedResponseBody(body *DeleteGoogleAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7199,6 +8299,18 @@ func ValidateTestGoogleAdsNotFoundResponseBody(body *TestGoogleAdsNotFoundRespon
 	return
 }
 
+// ValidateTestGoogleAdsUnauthorizedResponseBody runs the validations defined
+// on test-google-ads_Unauthorized_response_body
+func ValidateTestGoogleAdsUnauthorizedResponseBody(body *TestGoogleAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateSetCredentialGoogleAdsBadRequestResponseBody runs the validations
 // defined on set-credential-google-ads_BadRequest_response_body
 func ValidateSetCredentialGoogleAdsBadRequestResponseBody(body *SetCredentialGoogleAdsBadRequestResponseBody) (err error) {
@@ -7240,6 +8352,18 @@ func ValidateSetCredentialGoogleAdsInternalServerErrorResponseBody(body *SetCred
 // ValidateSetCredentialGoogleAdsNotFoundResponseBody runs the validations
 // defined on set-credential-google-ads_NotFound_response_body
 func ValidateSetCredentialGoogleAdsNotFoundResponseBody(body *SetCredentialGoogleAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSetCredentialGoogleAdsUnauthorizedResponseBody runs the validations
+// defined on set-credential-google-ads_Unauthorized_response_body
+func ValidateSetCredentialGoogleAdsUnauthorizedResponseBody(body *SetCredentialGoogleAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7302,6 +8426,18 @@ func ValidateCreateLinkedinAdsInternalServerErrorResponseBody(body *CreateLinked
 	return
 }
 
+// ValidateCreateLinkedinAdsUnauthorizedResponseBody runs the validations
+// defined on create-linkedin-ads_Unauthorized_response_body
+func ValidateCreateLinkedinAdsUnauthorizedResponseBody(body *CreateLinkedinAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetLinkedinAdsBadRequestResponseBody runs the validations defined on
 // get-linkedin-ads_BadRequest_response_body
 func ValidateGetLinkedinAdsBadRequestResponseBody(body *GetLinkedinAdsBadRequestResponseBody) (err error) {
@@ -7341,6 +8477,18 @@ func ValidateGetLinkedinAdsInternalServerErrorResponseBody(body *GetLinkedinAdsI
 // ValidateGetLinkedinAdsNotFoundResponseBody runs the validations defined on
 // get-linkedin-ads_NotFound_response_body
 func ValidateGetLinkedinAdsNotFoundResponseBody(body *GetLinkedinAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsUnauthorizedResponseBody runs the validations defined
+// on get-linkedin-ads_Unauthorized_response_body
+func ValidateGetLinkedinAdsUnauthorizedResponseBody(body *GetLinkedinAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7422,6 +8570,18 @@ func ValidateUpdateLinkedinAdsPreconditionRequiredResponseBody(body *UpdateLinke
 	return
 }
 
+// ValidateUpdateLinkedinAdsUnauthorizedResponseBody runs the validations
+// defined on update-linkedin-ads_Unauthorized_response_body
+func ValidateUpdateLinkedinAdsUnauthorizedResponseBody(body *UpdateLinkedinAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteLinkedinAdsBadRequestResponseBody runs the validations defined
 // on delete-linkedin-ads_BadRequest_response_body
 func ValidateDeleteLinkedinAdsBadRequestResponseBody(body *DeleteLinkedinAdsBadRequestResponseBody) (err error) {
@@ -7461,6 +8621,18 @@ func ValidateDeleteLinkedinAdsInternalServerErrorResponseBody(body *DeleteLinked
 // ValidateDeleteLinkedinAdsNotFoundResponseBody runs the validations defined
 // on delete-linkedin-ads_NotFound_response_body
 func ValidateDeleteLinkedinAdsNotFoundResponseBody(body *DeleteLinkedinAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteLinkedinAdsUnauthorizedResponseBody runs the validations
+// defined on delete-linkedin-ads_Unauthorized_response_body
+func ValidateDeleteLinkedinAdsUnauthorizedResponseBody(body *DeleteLinkedinAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7518,6 +8690,18 @@ func ValidateTestLinkedinAdsNotFoundResponseBody(body *TestLinkedinAdsNotFoundRe
 	return
 }
 
+// ValidateTestLinkedinAdsUnauthorizedResponseBody runs the validations defined
+// on test-linkedin-ads_Unauthorized_response_body
+func ValidateTestLinkedinAdsUnauthorizedResponseBody(body *TestLinkedinAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateSetCredentialLinkedinAdsBadRequestResponseBody runs the validations
 // defined on set-credential-linkedin-ads_BadRequest_response_body
 func ValidateSetCredentialLinkedinAdsBadRequestResponseBody(body *SetCredentialLinkedinAdsBadRequestResponseBody) (err error) {
@@ -7559,6 +8743,18 @@ func ValidateSetCredentialLinkedinAdsInternalServerErrorResponseBody(body *SetCr
 // ValidateSetCredentialLinkedinAdsNotFoundResponseBody runs the validations
 // defined on set-credential-linkedin-ads_NotFound_response_body
 func ValidateSetCredentialLinkedinAdsNotFoundResponseBody(body *SetCredentialLinkedinAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSetCredentialLinkedinAdsUnauthorizedResponseBody runs the
+// validations defined on set-credential-linkedin-ads_Unauthorized_response_body
+func ValidateSetCredentialLinkedinAdsUnauthorizedResponseBody(body *SetCredentialLinkedinAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7621,6 +8817,18 @@ func ValidateCreateMetaAdsInternalServerErrorResponseBody(body *CreateMetaAdsInt
 	return
 }
 
+// ValidateCreateMetaAdsUnauthorizedResponseBody runs the validations defined
+// on create-meta-ads_Unauthorized_response_body
+func ValidateCreateMetaAdsUnauthorizedResponseBody(body *CreateMetaAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsBadRequestResponseBody runs the validations defined on
 // get-meta-ads_BadRequest_response_body
 func ValidateGetMetaAdsBadRequestResponseBody(body *GetMetaAdsBadRequestResponseBody) (err error) {
@@ -7660,6 +8868,18 @@ func ValidateGetMetaAdsInternalServerErrorResponseBody(body *GetMetaAdsInternalS
 // ValidateGetMetaAdsNotFoundResponseBody runs the validations defined on
 // get-meta-ads_NotFound_response_body
 func ValidateGetMetaAdsNotFoundResponseBody(body *GetMetaAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMetaAdsUnauthorizedResponseBody runs the validations defined on
+// get-meta-ads_Unauthorized_response_body
+func ValidateGetMetaAdsUnauthorizedResponseBody(body *GetMetaAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7741,6 +8961,18 @@ func ValidateUpdateMetaAdsPreconditionRequiredResponseBody(body *UpdateMetaAdsPr
 	return
 }
 
+// ValidateUpdateMetaAdsUnauthorizedResponseBody runs the validations defined
+// on update-meta-ads_Unauthorized_response_body
+func ValidateUpdateMetaAdsUnauthorizedResponseBody(body *UpdateMetaAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteMetaAdsBadRequestResponseBody runs the validations defined on
 // delete-meta-ads_BadRequest_response_body
 func ValidateDeleteMetaAdsBadRequestResponseBody(body *DeleteMetaAdsBadRequestResponseBody) (err error) {
@@ -7780,6 +9012,18 @@ func ValidateDeleteMetaAdsInternalServerErrorResponseBody(body *DeleteMetaAdsInt
 // ValidateDeleteMetaAdsNotFoundResponseBody runs the validations defined on
 // delete-meta-ads_NotFound_response_body
 func ValidateDeleteMetaAdsNotFoundResponseBody(body *DeleteMetaAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteMetaAdsUnauthorizedResponseBody runs the validations defined
+// on delete-meta-ads_Unauthorized_response_body
+func ValidateDeleteMetaAdsUnauthorizedResponseBody(body *DeleteMetaAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7837,6 +9081,18 @@ func ValidateTestMetaAdsNotFoundResponseBody(body *TestMetaAdsNotFoundResponseBo
 	return
 }
 
+// ValidateTestMetaAdsUnauthorizedResponseBody runs the validations defined on
+// test-meta-ads_Unauthorized_response_body
+func ValidateTestMetaAdsUnauthorizedResponseBody(body *TestMetaAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateSetCredentialMetaAdsBadRequestResponseBody runs the validations
 // defined on set-credential-meta-ads_BadRequest_response_body
 func ValidateSetCredentialMetaAdsBadRequestResponseBody(body *SetCredentialMetaAdsBadRequestResponseBody) (err error) {
@@ -7878,6 +9134,18 @@ func ValidateSetCredentialMetaAdsInternalServerErrorResponseBody(body *SetCreden
 // ValidateSetCredentialMetaAdsNotFoundResponseBody runs the validations
 // defined on set-credential-meta-ads_NotFound_response_body
 func ValidateSetCredentialMetaAdsNotFoundResponseBody(body *SetCredentialMetaAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSetCredentialMetaAdsUnauthorizedResponseBody runs the validations
+// defined on set-credential-meta-ads_Unauthorized_response_body
+func ValidateSetCredentialMetaAdsUnauthorizedResponseBody(body *SetCredentialMetaAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7940,6 +9208,18 @@ func ValidateCreateRedditAdsInternalServerErrorResponseBody(body *CreateRedditAd
 	return
 }
 
+// ValidateCreateRedditAdsUnauthorizedResponseBody runs the validations defined
+// on create-reddit-ads_Unauthorized_response_body
+func ValidateCreateRedditAdsUnauthorizedResponseBody(body *CreateRedditAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetRedditAdsBadRequestResponseBody runs the validations defined on
 // get-reddit-ads_BadRequest_response_body
 func ValidateGetRedditAdsBadRequestResponseBody(body *GetRedditAdsBadRequestResponseBody) (err error) {
@@ -7979,6 +9259,18 @@ func ValidateGetRedditAdsInternalServerErrorResponseBody(body *GetRedditAdsInter
 // ValidateGetRedditAdsNotFoundResponseBody runs the validations defined on
 // get-reddit-ads_NotFound_response_body
 func ValidateGetRedditAdsNotFoundResponseBody(body *GetRedditAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsUnauthorizedResponseBody runs the validations defined on
+// get-reddit-ads_Unauthorized_response_body
+func ValidateGetRedditAdsUnauthorizedResponseBody(body *GetRedditAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8060,6 +9352,18 @@ func ValidateUpdateRedditAdsPreconditionRequiredResponseBody(body *UpdateRedditA
 	return
 }
 
+// ValidateUpdateRedditAdsUnauthorizedResponseBody runs the validations defined
+// on update-reddit-ads_Unauthorized_response_body
+func ValidateUpdateRedditAdsUnauthorizedResponseBody(body *UpdateRedditAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteRedditAdsBadRequestResponseBody runs the validations defined
 // on delete-reddit-ads_BadRequest_response_body
 func ValidateDeleteRedditAdsBadRequestResponseBody(body *DeleteRedditAdsBadRequestResponseBody) (err error) {
@@ -8099,6 +9403,18 @@ func ValidateDeleteRedditAdsInternalServerErrorResponseBody(body *DeleteRedditAd
 // ValidateDeleteRedditAdsNotFoundResponseBody runs the validations defined on
 // delete-reddit-ads_NotFound_response_body
 func ValidateDeleteRedditAdsNotFoundResponseBody(body *DeleteRedditAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteRedditAdsUnauthorizedResponseBody runs the validations defined
+// on delete-reddit-ads_Unauthorized_response_body
+func ValidateDeleteRedditAdsUnauthorizedResponseBody(body *DeleteRedditAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8156,6 +9472,18 @@ func ValidateTestRedditAdsNotFoundResponseBody(body *TestRedditAdsNotFoundRespon
 	return
 }
 
+// ValidateTestRedditAdsUnauthorizedResponseBody runs the validations defined
+// on test-reddit-ads_Unauthorized_response_body
+func ValidateTestRedditAdsUnauthorizedResponseBody(body *TestRedditAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateSetCredentialRedditAdsBadRequestResponseBody runs the validations
 // defined on set-credential-reddit-ads_BadRequest_response_body
 func ValidateSetCredentialRedditAdsBadRequestResponseBody(body *SetCredentialRedditAdsBadRequestResponseBody) (err error) {
@@ -8197,6 +9525,18 @@ func ValidateSetCredentialRedditAdsInternalServerErrorResponseBody(body *SetCred
 // ValidateSetCredentialRedditAdsNotFoundResponseBody runs the validations
 // defined on set-credential-reddit-ads_NotFound_response_body
 func ValidateSetCredentialRedditAdsNotFoundResponseBody(body *SetCredentialRedditAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSetCredentialRedditAdsUnauthorizedResponseBody runs the validations
+// defined on set-credential-reddit-ads_Unauthorized_response_body
+func ValidateSetCredentialRedditAdsUnauthorizedResponseBody(body *SetCredentialRedditAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8259,6 +9599,18 @@ func ValidateCreateTwitterAdsInternalServerErrorResponseBody(body *CreateTwitter
 	return
 }
 
+// ValidateCreateTwitterAdsUnauthorizedResponseBody runs the validations
+// defined on create-twitter-ads_Unauthorized_response_body
+func ValidateCreateTwitterAdsUnauthorizedResponseBody(body *CreateTwitterAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetTwitterAdsBadRequestResponseBody runs the validations defined on
 // get-twitter-ads_BadRequest_response_body
 func ValidateGetTwitterAdsBadRequestResponseBody(body *GetTwitterAdsBadRequestResponseBody) (err error) {
@@ -8298,6 +9650,18 @@ func ValidateGetTwitterAdsInternalServerErrorResponseBody(body *GetTwitterAdsInt
 // ValidateGetTwitterAdsNotFoundResponseBody runs the validations defined on
 // get-twitter-ads_NotFound_response_body
 func ValidateGetTwitterAdsNotFoundResponseBody(body *GetTwitterAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsUnauthorizedResponseBody runs the validations defined
+// on get-twitter-ads_Unauthorized_response_body
+func ValidateGetTwitterAdsUnauthorizedResponseBody(body *GetTwitterAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8379,6 +9743,18 @@ func ValidateUpdateTwitterAdsPreconditionRequiredResponseBody(body *UpdateTwitte
 	return
 }
 
+// ValidateUpdateTwitterAdsUnauthorizedResponseBody runs the validations
+// defined on update-twitter-ads_Unauthorized_response_body
+func ValidateUpdateTwitterAdsUnauthorizedResponseBody(body *UpdateTwitterAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteTwitterAdsBadRequestResponseBody runs the validations defined
 // on delete-twitter-ads_BadRequest_response_body
 func ValidateDeleteTwitterAdsBadRequestResponseBody(body *DeleteTwitterAdsBadRequestResponseBody) (err error) {
@@ -8418,6 +9794,18 @@ func ValidateDeleteTwitterAdsInternalServerErrorResponseBody(body *DeleteTwitter
 // ValidateDeleteTwitterAdsNotFoundResponseBody runs the validations defined on
 // delete-twitter-ads_NotFound_response_body
 func ValidateDeleteTwitterAdsNotFoundResponseBody(body *DeleteTwitterAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteTwitterAdsUnauthorizedResponseBody runs the validations
+// defined on delete-twitter-ads_Unauthorized_response_body
+func ValidateDeleteTwitterAdsUnauthorizedResponseBody(body *DeleteTwitterAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8475,6 +9863,18 @@ func ValidateTestTwitterAdsNotFoundResponseBody(body *TestTwitterAdsNotFoundResp
 	return
 }
 
+// ValidateTestTwitterAdsUnauthorizedResponseBody runs the validations defined
+// on test-twitter-ads_Unauthorized_response_body
+func ValidateTestTwitterAdsUnauthorizedResponseBody(body *TestTwitterAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateSetCredentialTwitterAdsBadRequestResponseBody runs the validations
 // defined on set-credential-twitter-ads_BadRequest_response_body
 func ValidateSetCredentialTwitterAdsBadRequestResponseBody(body *SetCredentialTwitterAdsBadRequestResponseBody) (err error) {
@@ -8516,6 +9916,18 @@ func ValidateSetCredentialTwitterAdsInternalServerErrorResponseBody(body *SetCre
 // ValidateSetCredentialTwitterAdsNotFoundResponseBody runs the validations
 // defined on set-credential-twitter-ads_NotFound_response_body
 func ValidateSetCredentialTwitterAdsNotFoundResponseBody(body *SetCredentialTwitterAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSetCredentialTwitterAdsUnauthorizedResponseBody runs the validations
+// defined on set-credential-twitter-ads_Unauthorized_response_body
+func ValidateSetCredentialTwitterAdsUnauthorizedResponseBody(body *SetCredentialTwitterAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8578,6 +9990,18 @@ func ValidateCreateMicrosoftAdsInternalServerErrorResponseBody(body *CreateMicro
 	return
 }
 
+// ValidateCreateMicrosoftAdsUnauthorizedResponseBody runs the validations
+// defined on create-microsoft-ads_Unauthorized_response_body
+func ValidateCreateMicrosoftAdsUnauthorizedResponseBody(body *CreateMicrosoftAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsBadRequestResponseBody runs the validations defined
 // on get-microsoft-ads_BadRequest_response_body
 func ValidateGetMicrosoftAdsBadRequestResponseBody(body *GetMicrosoftAdsBadRequestResponseBody) (err error) {
@@ -8617,6 +10041,18 @@ func ValidateGetMicrosoftAdsInternalServerErrorResponseBody(body *GetMicrosoftAd
 // ValidateGetMicrosoftAdsNotFoundResponseBody runs the validations defined on
 // get-microsoft-ads_NotFound_response_body
 func ValidateGetMicrosoftAdsNotFoundResponseBody(body *GetMicrosoftAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsUnauthorizedResponseBody runs the validations defined
+// on get-microsoft-ads_Unauthorized_response_body
+func ValidateGetMicrosoftAdsUnauthorizedResponseBody(body *GetMicrosoftAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8699,6 +10135,18 @@ func ValidateUpdateMicrosoftAdsPreconditionRequiredResponseBody(body *UpdateMicr
 	return
 }
 
+// ValidateUpdateMicrosoftAdsUnauthorizedResponseBody runs the validations
+// defined on update-microsoft-ads_Unauthorized_response_body
+func ValidateUpdateMicrosoftAdsUnauthorizedResponseBody(body *UpdateMicrosoftAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteMicrosoftAdsBadRequestResponseBody runs the validations
 // defined on delete-microsoft-ads_BadRequest_response_body
 func ValidateDeleteMicrosoftAdsBadRequestResponseBody(body *DeleteMicrosoftAdsBadRequestResponseBody) (err error) {
@@ -8738,6 +10186,18 @@ func ValidateDeleteMicrosoftAdsInternalServerErrorResponseBody(body *DeleteMicro
 // ValidateDeleteMicrosoftAdsNotFoundResponseBody runs the validations defined
 // on delete-microsoft-ads_NotFound_response_body
 func ValidateDeleteMicrosoftAdsNotFoundResponseBody(body *DeleteMicrosoftAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteMicrosoftAdsUnauthorizedResponseBody runs the validations
+// defined on delete-microsoft-ads_Unauthorized_response_body
+func ValidateDeleteMicrosoftAdsUnauthorizedResponseBody(body *DeleteMicrosoftAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8795,6 +10255,18 @@ func ValidateTestMicrosoftAdsNotFoundResponseBody(body *TestMicrosoftAdsNotFound
 	return
 }
 
+// ValidateTestMicrosoftAdsUnauthorizedResponseBody runs the validations
+// defined on test-microsoft-ads_Unauthorized_response_body
+func ValidateTestMicrosoftAdsUnauthorizedResponseBody(body *TestMicrosoftAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateSetCredentialMicrosoftAdsBadRequestResponseBody runs the validations
 // defined on set-credential-microsoft-ads_BadRequest_response_body
 func ValidateSetCredentialMicrosoftAdsBadRequestResponseBody(body *SetCredentialMicrosoftAdsBadRequestResponseBody) (err error) {
@@ -8836,6 +10308,19 @@ func ValidateSetCredentialMicrosoftAdsInternalServerErrorResponseBody(body *SetC
 // ValidateSetCredentialMicrosoftAdsNotFoundResponseBody runs the validations
 // defined on set-credential-microsoft-ads_NotFound_response_body
 func ValidateSetCredentialMicrosoftAdsNotFoundResponseBody(body *SetCredentialMicrosoftAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSetCredentialMicrosoftAdsUnauthorizedResponseBody runs the
+// validations defined on
+// set-credential-microsoft-ads_Unauthorized_response_body
+func ValidateSetCredentialMicrosoftAdsUnauthorizedResponseBody(body *SetCredentialMicrosoftAdsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -8898,6 +10383,18 @@ func ValidateCreateHubspotInternalServerErrorResponseBody(body *CreateHubspotInt
 	return
 }
 
+// ValidateCreateHubspotUnauthorizedResponseBody runs the validations defined
+// on create-hubspot_Unauthorized_response_body
+func ValidateCreateHubspotUnauthorizedResponseBody(body *CreateHubspotUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetHubspotBadRequestResponseBody runs the validations defined on
 // get-hubspot_BadRequest_response_body
 func ValidateGetHubspotBadRequestResponseBody(body *GetHubspotBadRequestResponseBody) (err error) {
@@ -8937,6 +10434,18 @@ func ValidateGetHubspotInternalServerErrorResponseBody(body *GetHubspotInternalS
 // ValidateGetHubspotNotFoundResponseBody runs the validations defined on
 // get-hubspot_NotFound_response_body
 func ValidateGetHubspotNotFoundResponseBody(body *GetHubspotNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetHubspotUnauthorizedResponseBody runs the validations defined on
+// get-hubspot_Unauthorized_response_body
+func ValidateGetHubspotUnauthorizedResponseBody(body *GetHubspotUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -9018,6 +10527,18 @@ func ValidateUpdateHubspotPreconditionRequiredResponseBody(body *UpdateHubspotPr
 	return
 }
 
+// ValidateUpdateHubspotUnauthorizedResponseBody runs the validations defined
+// on update-hubspot_Unauthorized_response_body
+func ValidateUpdateHubspotUnauthorizedResponseBody(body *UpdateHubspotUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteHubspotBadRequestResponseBody runs the validations defined on
 // delete-hubspot_BadRequest_response_body
 func ValidateDeleteHubspotBadRequestResponseBody(body *DeleteHubspotBadRequestResponseBody) (err error) {
@@ -9066,6 +10587,18 @@ func ValidateDeleteHubspotNotFoundResponseBody(body *DeleteHubspotNotFoundRespon
 	return
 }
 
+// ValidateDeleteHubspotUnauthorizedResponseBody runs the validations defined
+// on delete-hubspot_Unauthorized_response_body
+func ValidateDeleteHubspotUnauthorizedResponseBody(body *DeleteHubspotUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateTestHubspotBadRequestResponseBody runs the validations defined on
 // test-hubspot_BadRequest_response_body
 func ValidateTestHubspotBadRequestResponseBody(body *TestHubspotBadRequestResponseBody) (err error) {
@@ -9105,6 +10638,18 @@ func ValidateTestHubspotInternalServerErrorResponseBody(body *TestHubspotInterna
 // ValidateTestHubspotNotFoundResponseBody runs the validations defined on
 // test-hubspot_NotFound_response_body
 func ValidateTestHubspotNotFoundResponseBody(body *TestHubspotNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestHubspotUnauthorizedResponseBody runs the validations defined on
+// test-hubspot_Unauthorized_response_body
+func ValidateTestHubspotUnauthorizedResponseBody(body *TestHubspotUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -9164,6 +10709,18 @@ func ValidateSetCredentialHubspotNotFoundResponseBody(body *SetCredentialHubspot
 	return
 }
 
+// ValidateSetCredentialHubspotUnauthorizedResponseBody runs the validations
+// defined on set-credential-hubspot_Unauthorized_response_body
+func ValidateSetCredentialHubspotUnauthorizedResponseBody(body *SetCredentialHubspotUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListGoogleAdsAccountsBadRequestResponseBody runs the validations
 // defined on list-google-ads-accounts_BadRequest_response_body
 func ValidateListGoogleAdsAccountsBadRequestResponseBody(body *ListGoogleAdsAccountsBadRequestResponseBody) (err error) {
@@ -9205,6 +10762,18 @@ func ValidateListGoogleAdsAccountsInternalServerErrorResponseBody(body *ListGoog
 // ValidateListGoogleAdsAccountsNotFoundResponseBody runs the validations
 // defined on list-google-ads-accounts_NotFound_response_body
 func ValidateListGoogleAdsAccountsNotFoundResponseBody(body *ListGoogleAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsAccountsUnauthorizedResponseBody runs the validations
+// defined on list-google-ads-accounts_Unauthorized_response_body
+func ValidateListGoogleAdsAccountsUnauthorizedResponseBody(body *ListGoogleAdsAccountsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -9264,6 +10833,18 @@ func ValidateListMetaAdsAccountsNotFoundResponseBody(body *ListMetaAdsAccountsNo
 	return
 }
 
+// ValidateListMetaAdsAccountsUnauthorizedResponseBody runs the validations
+// defined on list-meta-ads-accounts_Unauthorized_response_body
+func ValidateListMetaAdsAccountsUnauthorizedResponseBody(body *ListMetaAdsAccountsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListLinkedinAdsAccountsBadRequestResponseBody runs the validations
 // defined on list-linkedin-ads-accounts_BadRequest_response_body
 func ValidateListLinkedinAdsAccountsBadRequestResponseBody(body *ListLinkedinAdsAccountsBadRequestResponseBody) (err error) {
@@ -9305,6 +10886,18 @@ func ValidateListLinkedinAdsAccountsInternalServerErrorResponseBody(body *ListLi
 // ValidateListLinkedinAdsAccountsNotFoundResponseBody runs the validations
 // defined on list-linkedin-ads-accounts_NotFound_response_body
 func ValidateListLinkedinAdsAccountsNotFoundResponseBody(body *ListLinkedinAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsAccountsUnauthorizedResponseBody runs the validations
+// defined on list-linkedin-ads-accounts_Unauthorized_response_body
+func ValidateListLinkedinAdsAccountsUnauthorizedResponseBody(body *ListLinkedinAdsAccountsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -9364,6 +10957,18 @@ func ValidateListMicrosoftAdsAccountsNotFoundResponseBody(body *ListMicrosoftAds
 	return
 }
 
+// ValidateListMicrosoftAdsAccountsUnauthorizedResponseBody runs the
+// validations defined on list-microsoft-ads-accounts_Unauthorized_response_body
+func ValidateListMicrosoftAdsAccountsUnauthorizedResponseBody(body *ListMicrosoftAdsAccountsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListHubspotEmailsBadRequestResponseBody runs the validations defined
 // on list-hubspot-emails_BadRequest_response_body
 func ValidateListHubspotEmailsBadRequestResponseBody(body *ListHubspotEmailsBadRequestResponseBody) (err error) {
@@ -9403,6 +11008,18 @@ func ValidateListHubspotEmailsInternalServerErrorResponseBody(body *ListHubspotE
 // ValidateListHubspotEmailsNotFoundResponseBody runs the validations defined
 // on list-hubspot-emails_NotFound_response_body
 func ValidateListHubspotEmailsNotFoundResponseBody(body *ListHubspotEmailsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListHubspotEmailsUnauthorizedResponseBody runs the validations
+// defined on list-hubspot-emails_Unauthorized_response_body
+func ValidateListHubspotEmailsUnauthorizedResponseBody(body *ListHubspotEmailsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
