@@ -454,7 +454,16 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		return nil, false, 0, fmt.Errorf("new request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+	// Resolve through accessTokenValue, NOT c.creds.AccessToken: this is the metrics
+	// read path — the one that surfaced the expired-token 500 — so it must take the
+	// same refresh and fail-closed discipline as doRequest. Reading the field directly
+	// would send a known-expired token and also race the refresher's creds update.
+	token, err := c.accessTokenValue(attemptCtx)
+	if err != nil {
+		cancel()
+		return nil, false, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("LinkedIn-Version", c.apiVersion)
 	req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
 

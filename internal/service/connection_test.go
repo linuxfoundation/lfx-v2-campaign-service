@@ -730,3 +730,50 @@ func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 		t.Errorf("an update omitting conversion_pixel_id must CLEAR it (PUT is a full replace), got %v", *updated.ConversionPixelID)
 	}
 }
+
+// TestLinkedInRefreshCredentialsAreAllOrNone pins the all-or-none rule on the optional
+// refresh trio. LinkedIn's exchange needs refresh_token, client_id AND client_secret
+// together, and CanRefresh() gates on all three — so storing a partial set would
+// SILENTLY degrade the connection to bearer-only while the operator believes renewal is
+// configured, recreating the very 60-day expiry this feature prevents.
+func TestLinkedInRefreshCredentialsAreAllOrNone(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	cases := []struct {
+		name    string
+		creds   *conn.LinkedinAdsCredentials
+		wantErr bool
+	}{
+		{"bearer-only (the common non-MDP case)", &conn.LinkedinAdsCredentials{AccessToken: "at"}, false},
+		{"all three present", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs")}, false},
+		{"refresh token alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt")}, true},
+		{"refresh token without secret", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci")}, true},
+		{"client credentials without refresh token", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientID: s("ci"), ClientSecret: s("cs")}, true},
+		// Whitespace is not presence: a blank field cannot participate in an exchange.
+		{"whitespace-only companions", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("  "), ClientSecret: s("\t")}, true},
+		{"nil payload", nil, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateLinkedInRefreshCredentials(tc.creds)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected a 400 for a partial refresh credential set")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantErr {
+				var bad *conn.BadRequestError
+				if !errors.As(err, &bad) {
+					t.Errorf("err = %T, want *conn.BadRequestError so the caller gets a 400", err)
+				}
+			}
+		})
+	}
+}

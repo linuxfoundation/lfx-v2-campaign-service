@@ -270,6 +270,25 @@ var (
 	// but its status is not "active". Nothing was validated beyond that.
 	ErrConnectionInactive = errors.New("the stored connection is not active")
 
+	// ErrCredentialsExpired — the connection decrypted and decoded cleanly, but the
+	// stored access token has expired and could not be renewed: either no refresh
+	// token is stored (LinkedIn issues programmatic refresh tokens only to approved
+	// Marketing Developer Platform partners, so a connection may legitimately have
+	// none) or the refresh token is itself expired/revoked.
+	//
+	// It is distinct from ErrCredentialsIncomplete: nothing is MISSING from the row —
+	// what was saved was valid and simply aged out. The remedy differs accordingly.
+	// An incomplete connection is fixed by filling a field; an expired one can only be
+	// fixed by the member re-authorizing through the OAuth flow, so telling an operator
+	// to "complete the connection" would send them looking for a blank field that does
+	// not exist.
+	//
+	// It exists because the alternative is a 500 with the cause visible only in a server
+	// log: LinkedIn answers an expired token with a bare 401, and one expired token on
+	// the LF SYSTEM connection disables LinkedIn for every project falling back to it —
+	// surfacing separately at each dispatch rather than once, at the point of expiry.
+	ErrCredentialsExpired = errors.New("the stored credentials have expired and must be re-authorized")
+
 	// ErrCredentialsAbsent — the connection row exists but its credential column is
 	// EMPTY. Nothing was decrypted because there was nothing to decrypt.
 	//

@@ -15,7 +15,10 @@
 // config source the caller wires up. The package only knows about HTTP.
 package linkedin
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // baseURL is the LinkedIn Marketing API base. Mirrors LINKEDIN_BASE_URL.
 const baseURL = "https://api.linkedin.com/rest"
@@ -45,6 +48,38 @@ const (
 	minDailyBudgetUSD    = 10.0
 	minLifetimeBudgetUSD = 100.0
 )
+
+// oauthTokenURL is LinkedIn's OAuth2 token endpoint, used for the
+// refresh_token -> access_token exchange. Per LinkedIn's published contract the
+// exchange is a POST with Content-Type x-www-form-urlencoded carrying
+// grant_type=refresh_token, refresh_token, client_id and client_secret.
+// https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens
+const oauthTokenURL = "https://www.linkedin.com/oauth/v2/accessToken"
+
+// tokenExpiryBuffer refreshes the access token this long before its stated
+// expiry so an in-flight request is not made with a just-expired token. Mirrors
+// the google-ads and microsoft clients.
+const tokenExpiryBuffer = 60 * time.Second
+
+// defaultTokenTTL is the fallback access-token lifetime used when the OAuth
+// response omits (or reports a non-positive) expires_in, so a valid-but-
+// lifetimeless token still works without caching an already-expired entry.
+const defaultTokenTTL = 30 * time.Minute
+
+// refreshTokenExpiryWarning is how far ahead of the REFRESH token's own deadline
+// the client starts warning. LinkedIn does NOT reset a refresh token's TTL when
+// it is used, so the whole connection hard-stops ~365 days after the member last
+// authorized it and only a human re-authorization can restore it. Warning 30 days
+// out leaves a full campaign cycle to schedule that reconnect.
+const refreshTokenExpiryWarning = 30 * 24 * time.Hour
+
+// serviceErrorCodeExpiredAccessToken is LinkedIn's subcode for an expired access
+// token, observed on a 401 as {"serviceErrorCode":65602,"status":401}. It is
+// treated as ONE of several expiry signals, never the sole test: LinkedIn's
+// published error-handling guide documents expired/revoked/invalid tokens as
+// distinct 401 conditions WITHOUT committing to a subcode for each, so matching
+// only 65602 would miss revocation and plain invalidity.
+const serviceErrorCodeExpiredAccessToken = 65602
 
 // retryMax is the number of times a 429 (rate-limited) request is retried
 // before giving up. Mirrors the resilience the Twitter client (#19) applies.
@@ -140,11 +175,62 @@ var geoResolveMap = map[string]GeoTarget{
 	"united kingdom": {Label: "United Kingdom", URN: "urn:li:geo:101165590"},
 }
 
-// Credentials carries the injected OAuth2 bearer token used for every request.
-// In production this is the decrypted access token from the stored connection.
+// Credentials carries the injected OAuth2 material used for every request. In
+// production these are the decrypted values from the stored connection; the
+// package never reads them from env, disk, or the database.
+//
+// Refresh is OPTIONAL and degrades cleanly. LinkedIn issues programmatic refresh
+// tokens only to approved Marketing Developer Platform partners
+// (https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens),
+// so a connection may legitimately carry an access token alone. When RefreshToken,
+// ClientID or ClientSecret is empty the client behaves exactly as before —
+// bearer-only, no refresh attempt — and an expired token surfaces as
+// ErrCredentialsExpired naming the connection, rather than as an opaque 401.
 type Credentials struct {
 	// AccessToken is the OAuth2 bearer token (LINKEDIN_ACCESS_TOKEN equivalent).
+	// Per LinkedIn's docs this is valid for 60 days.
 	AccessToken string
+
+	// AccessTokenExpiresAt is when AccessToken expires, when known. The zero value
+	// means "unknown": the client then trusts the token until LinkedIn rejects it,
+	// rather than assuming an expiry it was never told.
+	AccessTokenExpiresAt time.Time
+
+	// RefreshToken is exchanged for a fresh access token. Empty when the app is not
+	// approved for programmatic refresh tokens.
+	RefreshToken string
+
+	// RefreshTokenExpiresAt is when RefreshToken itself expires (LinkedIn: ~365
+	// days, and the TTL does NOT reset on use). The zero value means unknown.
+	RefreshTokenExpiresAt time.Time
+
+	// ClientID and ClientSecret authenticate the refresh exchange. Both are
+	// required alongside RefreshToken for refresh to be possible.
+	ClientID     string
+	ClientSecret string
+
+	// ConnectionName names the stored connection these credentials came from. It is
+	// used ONLY to make an expiry error actionable ("which connection do I
+	// reconnect?"). It must never carry credential material.
+	ConnectionName string
+}
+
+// CanRefresh reports whether these credentials carry everything the refresh
+// exchange needs. LinkedIn requires grant_type, refresh_token, client_id and
+// client_secret; without all three stored values no exchange is possible.
+func (c Credentials) CanRefresh() bool {
+	return strings.TrimSpace(c.RefreshToken) != "" &&
+		strings.TrimSpace(c.ClientID) != "" &&
+		strings.TrimSpace(c.ClientSecret) != ""
+}
+
+// ConnectionLabel returns a safe, non-empty identifier for the connection in
+// error messages. ConnectionName is operator-set metadata, never a secret.
+func (c Credentials) ConnectionLabel() string {
+	if n := strings.TrimSpace(c.ConnectionName); n != "" {
+		return n
+	}
+	return "the LinkedIn connection"
 }
 
 // Account is one ad-account / organization pairing in the runtime config.

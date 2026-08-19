@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -37,6 +39,69 @@ const campaignStatusUnconfirmed = "unconfirmed"
 // authenticates with a single OAuth2 bearer access token.
 type linkedinCreds struct {
 	AccessToken string
+
+	// The fields below are OPTIONAL and support token refresh. LinkedIn issues
+	// programmatic refresh tokens only to approved Marketing Developer Platform
+	// partners, so a connection may legitimately carry AccessToken alone; when these
+	// are absent the client stays bearer-only and behaves exactly as before.
+	RefreshToken          string
+	ClientID              string
+	ClientSecret          string
+	AccessTokenExpiresAt  time.Time
+	RefreshTokenExpiresAt time.Time
+}
+
+// linkedinConnectionLabel names the connection an operator must reconnect. It
+// prefers the connection's friendly Label column and falls back to naming the LF
+// system row explicitly when the credentials came from that fallback — one expired
+// system token disables LinkedIn for every project without its own connection, and
+// "the LinkedIn connection" would send each of those operators looking at a row
+// they do not own. Never carries credential material.
+func linkedinConnectionLabel(res *resolved) string {
+	if res == nil {
+		return "the LinkedIn connection"
+	}
+	if res.fromSystem {
+		if l := strings.TrimSpace(res.label); l != "" {
+			return "the LF system LinkedIn connection (" + l + ")"
+		}
+		return "the LF system LinkedIn connection"
+	}
+	if l := strings.TrimSpace(res.label); l != "" {
+		return "the LinkedIn connection " + strconv.Quote(l)
+	}
+	return "the LinkedIn connection"
+}
+
+// linkedinExpiry re-tags a linkedin.ErrCredentialsExpired as the connection-defect
+// pair the service layer already classifies: ErrConnectionNotUsable decides the HTTP
+// status (a NON-retryable 4xx, never a 503 or an opaque 500) while
+// ErrCredentialsExpired carries the machine-readable reason. Without this a token
+// that simply aged out reaches the caller as a generic upstream failure whose cause
+// is visible only in a server log.
+//
+// A no-op for every other error, so call sites can apply it unconditionally. The
+// client's message already names the connection; no credential material is added.
+func linkedinExpiry(err error) error {
+	if err == nil || !errors.Is(err, linkedin.ErrCredentialsExpired) {
+		return err
+	}
+	return fmt.Errorf("%w: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialsExpired, err)
+}
+
+// linkedinCredentials maps the decrypted stored credentials onto the client's
+// injected Credentials, including the connection label used to name the connection
+// in an expiry error. The label is operator-set metadata and never secret.
+func linkedinCredentials(creds linkedinCreds, connLabel string) linkedin.Credentials {
+	return linkedin.Credentials{
+		AccessToken:           creds.AccessToken,
+		AccessTokenExpiresAt:  creds.AccessTokenExpiresAt,
+		RefreshToken:          creds.RefreshToken,
+		RefreshTokenExpiresAt: creds.RefreshTokenExpiresAt,
+		ClientID:              creds.ClientID,
+		ClientSecret:          creds.ClientSecret,
+		ConnectionName:        connLabel,
+	}
 }
 
 // linkedinConfig is the per-platform campaign config the caller passes for LinkedIn
@@ -182,7 +247,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		AdAccountID:      adAccountID,
 	}
 
-	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), runtime, d.opts...)
 
 	// Release the claim ONLY when result==nil (definitely nothing created). Do NOT
 	// gate on an empty CampaignID: LinkedIn returns a NON-NIL result even on a
@@ -193,6 +258,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
 		if result == nil {
+			if errors.Is(cerr, linkedin.ErrCredentialsExpired) {
+				// Nothing was created: the client failed closed BEFORE sending a request.
+				return nil, notCreated(res.systemScoped(linkedinExpiry(cerr)))
+			}
 			return nil, notCreated(fmt.Errorf("linkedin campaign creation failed before any upstream create: %w", cerr))
 		}
 		// A non-nil result means a permanent resource exists (campaign group, and maybe
@@ -226,7 +295,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		DefaultAccountID: accountID,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
-	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), runtime, d.opts...)
 	// Cascade to the campaign's creatives too: CreateCampaign leaves them DRAFT, so
 	// activating only the campaign would not serve (a DRAFT creative never serves, and the
 	// creative's effective status is gated by the campaign). The client discovers the
@@ -235,6 +304,11 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		// An activate refused up front because the campaign has no servable creatives is a
 		// local/state error (the platform mutation never ran), so classify it as
 		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.
+		// An unrefreshable credential never reached the platform: surface it as an
+		// actionable connection defect rather than an opaque upstream failure.
+		if errors.Is(uerr, linkedin.ErrCredentialsExpired) {
+			return res.systemScoped(linkedinExpiry(uerr))
+		}
 		if linkedin.IsNotServable(uerr) {
 			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
 		}
@@ -344,22 +418,28 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 // untrimmed access token while this resolver trimmed it, which is why a padded credential listed
 // accounts here and failed on create. That is fixed, but by a regression test rather than by
 // shared code, so the invariant this comment may claim is the narrower one.
-func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (linkedinCreds, error) {
-	_, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
+//
+// It returns the *resolved alongside the credentials so this endpoint can name the
+// connection (and attribute a defect to the LF SYSTEM row) exactly as the create,
+// toggle and metrics paths do. Account discovery is a SETUP-time call, so it is one of
+// the likeliest places to meet an expired system credential — the one path that must
+// not answer with a generic label.
+func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (*resolved, linkedinCreds, error) {
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
 	switch {
 	case err == nil:
-		return creds, nil
+		return res, creds, nil
 	case errors.Is(err, domain.ErrAccountNotSelected):
 		// The one error this endpoint exists to serve: everything about the connection is
 		// valid except the choice this call is meant to inform. The resolver returns the
 		// validated credential alongside that error precisely so discovery can proceed
 		// without re-decrypting or re-validating anything.
-		return creds, nil
+		return res, creds, nil
 	default:
 		// Any other failure is a real defect in the connection and must propagate with its
 		// sentinel intact, so the endpoint's 400-vs-503 mapping stays pinned to the same
 		// sentinels the dispatch path answers with.
-		return linkedinCreds{}, err
+		return nil, linkedinCreds{}, err
 	}
 }
 
@@ -371,17 +451,19 @@ func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Con
 // type-asserts on the dispatcher for the requested platform. It deliberately does NOT
 // require an account id to be selected — see resolveLinkedInDiscoveryCredentials.
 func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
-	creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
 	// RuntimeConfig is left ZERO: the accounts finder asks what the TOKEN reaches, so
 	// scoping the client to one of the answers would narrow the response to a subset of
 	// the question. Same rationale as meta's zero AccountConfig.
-	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, linkedin.RuntimeConfig{}, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), linkedin.RuntimeConfig{}, d.opts...)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {
-		return nil, lerr
+		// systemScoped like the other three paths, so an expired LF SYSTEM credential is
+		// attributed to the row that actually owns it.
+		return nil, res.systemScoped(linkedinExpiry(lerr))
 	}
 	// make(..., 0, n), never nil: a token that legitimately reaches zero ad accounts is an
 	// empty ANSWER, not an error, and Orchestrator.ReadAccounts rejects a nil result as a
@@ -480,22 +562,25 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	if err != nil {
 		return nil, err
 	}
-	// Already trimmed and non-empty: resolveLinkedInCredentials does both.
-	accessToken := creds.AccessToken
-
 	accountID := strings.TrimSpace(res.accountID)
 
 	runtime := linkedin.RuntimeConfig{
 		DefaultAccountID: accountID,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
-	client := linkedin.NewClient(linkedin.Credentials{AccessToken: accessToken}, runtime, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), runtime, d.opts...)
 
 	// Call GetCampaignMetrics with the bare campaign id and account id.
 	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
 	if err != nil {
 		if errors.Is(err, linkedin.ErrUnsupportedWindow) {
 			return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+		}
+		// This is the path that produced the observed production 500: an expired token
+		// made the monitor read fail with LinkedIn's bare 401, diagnosable only from the
+		// server log. Surface it as a named, actionable connection defect instead.
+		if errors.Is(err, linkedin.ErrCredentialsExpired) {
+			return nil, res.systemScoped(linkedinExpiry(err))
 		}
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)
 	}

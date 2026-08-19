@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -163,6 +164,8 @@ func unusableConnectionReason(err error) string {
 		return "credential_blob_malformed"
 	case errors.Is(err, domain.ErrCredentialsAbsent):
 		return "credentials_absent"
+	case errors.Is(err, domain.ErrCredentialsExpired):
+		return "credentials_expired"
 	case errors.Is(err, domain.ErrAccountNotSelected):
 		return "account_not_selected"
 	default:
@@ -543,8 +546,41 @@ func (s *ConnectionService) buildLinkedinAdsResult(c *model.Connection) *conn.Li
 	return r
 }
 
+// validateLinkedInRefreshCredentials enforces all-or-none on the optional refresh
+// trio. LinkedIn's exchange requires refresh_token, client_id AND client_secret
+// together, so a payload carrying some-but-not-all is unusable for refresh — and
+// because Credentials.CanRefresh() gates on all three, storing it would SILENTLY
+// degrade the connection to bearer-only. The operator would see a saved refresh token
+// and reasonably believe renewal was configured, then meet the same 60-day expiry this
+// feature exists to prevent. Reject it at the door instead, where the caller can act.
+//
+// All three absent is the normal, supported case: LinkedIn issues programmatic refresh
+// tokens only to approved Marketing Developer Platform partners.
+func validateLinkedInRefreshCredentials(c *conn.LinkedinAdsCredentials) error {
+	if c == nil {
+		return nil
+	}
+	present := 0
+	for _, f := range []*string{c.RefreshToken, c.ClientID, c.ClientSecret} {
+		if f != nil && strings.TrimSpace(*f) != "" {
+			present++
+		}
+	}
+	if present == 0 || present == 3 {
+		return nil
+	}
+	return &conn.BadRequestError{
+		Code: "400",
+		Message: "linkedin refresh credentials are all-or-none: refresh_token, client_id and " +
+			"client_secret must be supplied together, or all omitted for a bearer-only connection",
+	}
+}
+
 func (s *ConnectionService) CreateLinkedinAds(ctx context.Context, p *conn.CreateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
 	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
+	if err := validateLinkedInRefreshCredentials(p.Credentials); err != nil {
 		return nil, err
 	}
 	cfg := p.Config
@@ -601,6 +637,9 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 }
 
 func (s *ConnectionService) SetCredentialLinkedinAds(ctx context.Context, p *conn.SetCredentialLinkedinAdsPayload) error {
+	if err := validateLinkedInRefreshCredentials(p.Credentials); err != nil {
+		return err
+	}
 	return s.setCredential(ctx, p.ProjectID, model.ProviderLinkedInAds, p.Credentials, actorFromCtx(ctx))
 }
 

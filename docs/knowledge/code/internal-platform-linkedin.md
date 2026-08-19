@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, and ad-account discovery."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -11,6 +11,7 @@ tags:
   - go-package
   - metrics
   - account-discovery
+  - token-refresh
 timestamp: "2026-08-09T20:00:00Z"
 ---
 
@@ -23,7 +24,28 @@ process environment or files.
 
 Authentication is a Bearer access token; every request also sends the
 `LinkedIn-Version` and `X-RestLi-Protocol-Version` headers required by the
-Marketing API. `CreateCampaign` builds the full sponsored-content hierarchy in
+Marketing API.
+
+**Token refresh is OPTIONAL.** LinkedIn issues programmatic refresh tokens only
+to approved Marketing Developer Platform partners, so `Credentials` may carry an
+access token alone; `CanRefresh()` gates the whole path on `RefreshToken`,
+`ClientID` and `ClientSecret` all being present, and a bearer-only connection
+behaves exactly as it did before refresh existed. When refresh material IS
+present the client exchanges it at LinkedIn's token endpoint before the access
+token expires, coalescing concurrent callers single-flight (`tokenMu` is never
+held across the network call) so N callers produce ONE exchange — the same
+discipline as the google-ads and microsoft clients.
+
+Because LinkedIn does NOT reset a refresh token's TTL when it is used, refresh
+defers the 60-day access-token expiry but cannot remove the ~365-day deadline on
+the connection itself; the client logs a warning inside the final 30 days. A
+credential that is expired and unrefreshable — including a mid-flight 401, which
+revocation can trigger with no advance notice — fails CLOSED with the exported
+`ErrCredentialsExpired`, naming the connection so an operator knows what to
+re-authorize, rather than degrading into an unauthenticated call. The dispatch
+layer re-tags that as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, which
+keeps it out of the retryable bucket and out of an opaque 500. No token, secret
+or upstream body is ever logged or echoed into an error. `CreateCampaign` builds the full sponsored-content hierarchy in
 one call — Campaign Group (ACTIVE) -> Campaign (PAUSED) -> Dark Post
 (`feedDistribution: NONE`) -> Creative — with targeting assembled from the
 runtime config's profile (skills/groups/job-functions) and resolved geo URNs.
