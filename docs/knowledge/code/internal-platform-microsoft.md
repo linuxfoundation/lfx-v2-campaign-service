@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -333,21 +333,79 @@ usable id per keyword. The step text previously hedged to a "count PARSED" becau
 bound made a valid response come back short — LFXV2-3279 closed that, so the count is now a
 confirmed figure.
 
-**GEO TARGETING IS NOT IMPLEMENTED, and the reason is an API constraint rather than a scoping
-preference.** Microsoft takes location criteria at the CAMPAIGN level
-(`POST /CampaignCriterions` with a `LocationCriterion`), whose `LocationId` — a numeric
-Microsoft identifier — is its ONLY Add-writable element; `DisplayName` and `LocationType` are
-read-only, so a country cannot be named. Those ids come from Microsoft's geographical-locations
-CSV, fetched via `POST /GeoLocationsFileUrl/Query`, which this service does not ingest. The v13
-API accepts an ISO 3166 code for targeting **nowhere** — the ISO table in Microsoft's own
-Geographical Location Codes guide is explicitly scoped to account business addresses, and the
-locations file has no ISO column. Since the sibling dispatchers' `geoTargets` are ISO-2 strings
-("US", "JP"), honouring them here would mean hardcoding an invented ISO→LocationId map on the
-path that spends money, one that silently rots as locations are deprecated. `microsoftConfig`
-therefore carries **no** `geoTargets` field at all: offering one the dispatcher would silently
-drop is worse than not offering it. Doing this properly needs the locations file as a real,
-refreshable input, plus handling for the auto-created `LocationIntentCriterion` (which can
-never be deleted) and the rule that ad-group geo OVERRIDES campaign geo wholesale.
+## Geo targeting (LFXV2-3279)
+
+`geo.go` attaches CAMPAIGN-level location criteria, so a Bing campaign created by this service
+serves where the brief asked rather than everywhere.
+
+**The constraint held; its stated proof did not.** An earlier revision of this section argued
+geo was impossible without an invented table, partly on the claim that the ISO country table in
+Microsoft's Geographical Location Codes guide is "explicitly scoped to account business
+addresses". Checked against the primary sources, that overstated it — the guide says "In some
+contexts the API requires a country code string **e.g.**, for the business address of an
+`AdvertiserAccount` object", an example rather than a scope limit. The two claims that *do*
+hold are the ones that matter: `LocationCriterion.LocationId` is **Add: Required** and the only
+Add-writable element (`DisplayName`, `LocationType` and `EnclosedLocationIds` are all
+**Add: Read-only**, as is the inherited `Type`), and the locations file has **no ISO column** —
+its version 2.0 columns are exactly `Location Id`, `Bing Display Name`, `Location Type`,
+`Replaces`, `Status`, `AdWords Location Id`. No documented operation resolves a code or name to
+a `LocationId`. So an ISO code is genuinely not a targetable value, and the file is genuinely
+the only source of ids.
+
+**Resolution is ISO-2 → country name → Location Id.** `isoCountryNames` (`geo_countries.go`)
+transcribes Microsoft's own published Country Codes table, which yields a NAME; the name is
+then matched against the `Bing Display Name` of the file's `Country` rows. Both halves come
+from Microsoft, so **no `LocationId` is hardcoded in this repo** — the property the original
+deferral correctly insisted on. A wrong name here fails CLOSED (it matches no row and
+resolution refuses) rather than targeting the wrong country, which is why the fragile half is
+the one delegated to the file.
+
+**The file is ingested, cached and refreshable.** `POST /GeoLocationsFileUrl/Query` returns a
+`FileUrl` plus `FileUrlExpiryTimeUtc`/`LastModifiedTimeUtc`; the URL is short-lived (Microsoft:
+"set to expire 15 minutes… however, you should not depend on a fixed duration"), so it is
+re-fetched on every refresh and never cached — only the PARSED map is, under `geoCacheTTL`
+(24h) with a leader/follower single-flight that mirrors the token refresh, so N concurrent
+creates trigger ONE multi-MiB download. The download is a plain GET that deliberately carries
+**no** developer token or bearer: the URL is pre-signed storage on another host, and the size
+cap is applied to the DECOMPRESSED stream so a compressed file cannot expand without bound.
+
+**Parsing is by column NAME, and `Status` is enforced.** Microsoft warns that "New columns may
+be added at any time, so your implementation must ignore unknown columns" and that row order is
+not guaranteed, so a positional parser would eventually read the wrong column — the failure
+mode that puts a wrong `LocationId` on a paid campaign. Rows whose `Status` is not `Active` are
+DROPPED, because a `PendingDeprecation` location "is no longer used for targeting or
+exclusions" and deprecated criteria cannot be added at all; admitting one would recreate the
+untargeted-campaign harm through the front door.
+
+**The wire contract differs from every other create here in two ways.** `CriterionType` must be
+**`Targets`** — Microsoft: "To add, delete, or update target criterions i.e., age, day and
+time, device, gender, **location**, location intent, and radius criterions, you must specify
+the *CriterionType* value as *Targets*" (`Location` is a READ-path value). And the response
+carries **`NestedPartialErrors`** — an array of `BatchErrorCollection`, each with its own
+nested `BatchErrors` — **not** the flat `PartialErrors` every other create returns; a flat
+decode would see zero errors and report a REJECTED criterion as success, i.e. an untargeted
+campaign reported as targeted. Each entry is a `BiddableCampaignCriterion` whose nested
+`Criterion` carries only `Type` + `LocationId`; `CriterionBid` is omitted (a bid multiplier is
+a separate product decision). Microsoft auto-creates a `LocationIntentCriterion` with the
+default `PeopleInOrSearchingForOrViewingPages` on the campaign's first criterion, so this
+client sends none — inventing an intent option would silently change who sees the ads.
+
+**FAIL CLOSED, before the first mutating call.** Codes are shape-checked offline in
+`CreateCampaign`'s validation prologue, then RESOLVED to numeric ids **before** the campaign
+create — not at attach time. That ordering is the whole safety property: criteria can only be
+attached after the campaign exists, so resolving there would leave a campaign with NO location
+criteria on failure, and Microsoft serves such a campaign EVERYWHERE. It is created PAUSED, but
+a paused untargeted campaign is one click from global spend and the operator has no signal its
+targeting went missing. Resolution is also all-or-nothing: one unresolvable code fails the
+whole set rather than returning the ids that did resolve, since a campaign targeting a subset
+of the requested countries still spends money on a shape nobody approved. A rejected attach is
+likewise an error carrying the campaign id (for reconciliation), never a warning, and it stops
+the ad-group cascade. An empty `GeoTargets` is still legal and still means "serve everywhere" —
+that is the pre-existing behaviour, and the decision belongs to the caller.
+
+`CampaignResult.GeoCriterionIDs` reports what THIS RUN attached. On a retry that reuses an
+existing campaign it is empty even though the targeting exists upstream, because this client
+calls no criterion read.
 
 ## Ad-account discovery
 

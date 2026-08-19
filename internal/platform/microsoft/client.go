@@ -82,6 +82,12 @@ const (
 	// the advertising audience.
 	msAdsScope = "https://ads.microsoft.com/msads.manage offline_access"
 
+	// geoDownloadTimeout bounds the geographical-locations FILE download. It is much
+	// larger than msAdsRequestTimeout because that value sizes a JSON API round trip,
+	// while this is a multi-MiB CSV transfer; reusing the API timeout would make the
+	// download fail on a slow link and take geo targeting down with it.
+	geoDownloadTimeout = 3 * time.Minute
+
 	// msAdsRequestTimeout bounds a single API call.
 	msAdsRequestTimeout = 30 * time.Second
 
@@ -193,6 +199,13 @@ type Client struct {
 	tokenMu     sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
+
+	// geo caches the parsed geographical-locations map used to resolve ISO-2 country
+	// codes to Microsoft LocationIds. It is a separate lock from tokenMu because the two
+	// have very different hold profiles — a token refresh is a small JSON round trip,
+	// a locations refresh is a multi-MiB download — and sharing one mutex would let a
+	// slow file fetch stall every token read. See geo.go.
+	geo geoCache
 
 	// inflight coalesces concurrent token refreshes. The caller that finds the
 	// cache empty/expired becomes the leader: it publishes a *tokenRefresh here and

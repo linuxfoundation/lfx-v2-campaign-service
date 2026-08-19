@@ -263,6 +263,10 @@ type targeting struct {
 	keywords  []Keyword
 	cpcBid    float64
 	cpcBidSet bool
+	// geoCriterionIDs are the CAMPAIGN-level location criterion ids already attached by
+	// CreateCampaign. They are carried through so every result this function builds reports
+	// the run's geo targeting; nothing here attaches or re-attaches them.
+	geoCriterionIDs []string
 }
 
 func (c *Client) createAdGroupAndAd(

@@ -158,6 +158,18 @@ type CampaignInput struct {
 	// field rather than inventing a default that could not be currency-correct across every
 	// account. A non-zero value must be within [minCpcBid, maxCpcBid].
 	CpcBid float64
+	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
+	// (LFXV2-3279), attached as CAMPAIGN-level location criteria. Optional at this layer: an
+	// empty list creates the campaign with NO location criteria, which is what this client
+	// did before geo targeting existed and means Microsoft serves it EVERYWHERE.
+	//
+	// That default is why an unresolvable code is a HARD FAILURE rather than a silent drop.
+	// Microsoft takes numeric LocationIds, not ISO codes, so each code is resolved against
+	// Microsoft's own geographical-locations file at create time; if any code cannot be
+	// resolved, CreateCampaign REFUSES before its first mutating call. Dropping it instead
+	// would produce a campaign that spends globally while reporting success — the exact
+	// defect this ticket fixes. See geo.go.
+	GeoTargets []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -203,6 +215,15 @@ type CampaignResult struct {
 	// with NO keywords is re-keyworded on the next run (they are posted, not skipped), so the
 	// ids land and ACTIVATE succeeds.
 	KeywordIDs []string `json:"keywordIds,omitempty"`
+	// GeoCriterionIDs are the ids of the CAMPAIGN-level location criteria THIS RUN attached
+	// (LFXV2-3279). Empty means the campaign carries no geo targeting from this run, which —
+	// unlike an empty KeywordIDs — means Microsoft will serve it EVERYWHERE once enabled.
+	//
+	// Unlike keywords, these are NOT re-attached on a reused campaign: this client calls no
+	// criterion read, so on a retry that finds an existing campaign the ids are unknown to
+	// this run and the field is empty even though the targeting is present upstream. The
+	// field therefore reports what this RUN did, not the campaign's total targeting.
+	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -477,6 +498,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign bid invalid: %w", err)
 	}
+	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
+	// below, before the first mutating call. Splitting the two is deliberate: this half needs
+	// no network, so an unsupported code fails with nothing sent at all.
+	geoCodes, err := validateGeoTargets(in.GeoTargets)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err)
+	}
 
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
@@ -497,6 +525,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// classify as an ambiguous transportError.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign creation aborted before any request (context already done): %w", ctxErr)
+	}
+
+	// Resolve the geo codes to numeric Microsoft LocationIds BEFORE anything is created.
+	//
+	// This is a NETWORK call (it may download Microsoft's geographical-locations file), so it
+	// cannot live in the pure-validation prologue above — but it must still happen before the
+	// first MUTATING call, and that ordering is the entire safety property of this ticket.
+	// Location criteria can only be attached AFTER the campaign exists; if resolution ran at
+	// that point instead, a failure would leave a campaign with NO location criteria, which
+	// Microsoft serves EVERYWHERE. The campaign is created paused, but a paused untargeted
+	// campaign is one human click away from spending globally, and the operator enabling it
+	// has no signal that its targeting silently went missing.
+	//
+	// Refusing here costs nothing: the lookup and the create below never run, so there is no
+	// orphaned campaign to reconcile and a clean (nil, err) is honest about it.
+	geoLocationIDs, err := c.resolveGeoTargets(ctx, geoCodes)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo targeting could not be resolved (nothing was created): %w", err)
 	}
 
 	// Step 1: idempotency lookup by the deterministic (case-insensitively unique) name,
@@ -602,10 +648,43 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// UNCONFIRMED ad-group/ad step, where this run may have created (or attempted) a lower
 	// level even though the campaign was reused — so "created nothing" is not true. Only the
 	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
+	// geoCriterionIDs accumulates the ids of the location criteria attached below, so a later
+	// ad-group/ad failure still reports the targeting this run put on the campaign.
+	var geoCriterionIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
+		r.GeoCriterionIDs = geoCriterionIDs
 		return r
+	}
+
+	// Step 2.5: attach the CAMPAIGN-level location criteria, before the ad-group cascade.
+	//
+	// Location criteria belong to the campaign, so this is the earliest point they CAN be
+	// attached — and attaching them first is deliberate: it narrows the window in which a
+	// campaign exists with no targeting. The ids were resolved before the campaign was
+	// created, so this step can no longer fail for an unresolvable code; only the POST itself
+	// can fail, and that failure is reported rather than swallowed.
+	//
+	// A geo failure is NOT downgraded to a warning. An untargeted campaign is the harm this
+	// ticket exists to prevent, so the caller gets an error and a partial carrying the
+	// campaign id, which is what a reconciliation needs to either finish or delete the tree.
+	if len(geoLocationIDs) > 0 {
+		geoIDs, gerr := c.createCampaignCriterions(ctx, campaignID, geoLocationIDs)
+		if gerr != nil {
+			partial := campaignPartial()
+			partial.GeoCriterionIDs = geoIDs
+			switch {
+			case createOutcomeAmbiguous(gerr) || errors.Is(gerr, errNoID):
+				return partial, fmt.Errorf("microsoft-ads geo targeting UNCONFIRMED (campaign %s exists; its location criteria may or may not have been attached — verify its targeting in Microsoft Advertising before enabling or retrying, since a blind retry would duplicate them): %w", campaignID, gerr)
+			case errors.Is(gerr, context.Canceled) || errors.Is(gerr, context.DeadlineExceeded):
+				return partial, fmt.Errorf("microsoft-ads geo targeting aborted (campaign %s exists with NO location criteria and would serve everywhere if enabled; context done): %w", campaignID, gerr)
+			default:
+				return partial, fmt.Errorf("microsoft-ads geo targeting rejected (campaign %s exists but is NOT geo-targeted and would serve everywhere if enabled; do not enable it until its targeting is fixed): %w", campaignID, gerr)
+			}
+		}
+		geoCriterionIDs = geoIDs
+		steps = append(steps, fmt.Sprintf("Geo targeting attached: %d location criteria (%s)", len(geoIDs), strings.Join(geoCodes, ", ")))
 	}
 
 	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
@@ -615,7 +694,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet})
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, geoCriterionIDs: geoCriterionIDs})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
