@@ -6662,15 +6662,16 @@ definitions:
                 format: int64
             match_type:
                 type: string
-                description: How broadly the keyword matches queries
-                example: BROAD
+                description: How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.
+                example: PHRASE
                 enum:
                     - EXACT
                     - PHRASE
                     - BROAD
+                    - UNKNOWN
             status:
                 type: string
-                description: The criterion's current serving status upstream
+                description: The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.
                 example: PAUSED
                 enum:
                     - ENABLED
@@ -6689,7 +6690,7 @@ definitions:
             criterion_id: "305729261"
             ctr: 0.0645
             impressions: 4820
-            match_type: EXACT
+            match_type: PHRASE
             status: PAUSED
             text: kubernetes training
         required:

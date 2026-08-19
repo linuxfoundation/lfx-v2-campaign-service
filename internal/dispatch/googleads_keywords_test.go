@@ -291,6 +291,42 @@ func TestGoogleAdsReadAudienceInsights_MapsBucketsAndKeepsRequestWindow(t *testi
 	}
 }
 
+// The platform package and the model package each declare a dimension vocabulary, and the
+// dispatcher copies the token straight through without mapping. Nothing else pins them
+// together: changing googleads.DimensionGender alone left the whole suite green while the
+// response would have violated the design's Enum("age","gender","device"). Assert all three
+// pairs so a divergence fails here rather than at a consumer.
+func TestGoogleAdsReadAudienceInsights_DimensionTokensMatchTheModelVocabulary(t *testing.T) {
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(string(b), "FROM age_range_view"):
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
+		case strings.Contains(string(b), "FROM gender_view"):
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"gender":{"type":"MALE"}},"metrics":{"impressions":"20","clicks":"2","costMicros":"10"}}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"results":[{"segments":{"device":"MOBILE"},"metrics":{"impressions":"30","clicks":"3","costMicros":"15"}}]}`)
+		}
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	ai, err := d.ReadAudienceInsights(context.Background(), "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadAudienceInsights: %v", err)
+	}
+	got := map[string]bool{}
+	for _, b := range ai.Buckets {
+		got[b.Dimension] = true
+	}
+	// These are the exact three tokens design/brief.go declares in Enum("age","gender","device").
+	for _, want := range []string{model.AudienceDimensionAge, model.AudienceDimensionGender, model.AudienceDimensionDevice} {
+		if !got[want] {
+			t.Errorf("no bucket carried dimension %q; got %v — the platform and model vocabularies have drifted, and the response would violate the design Enum", want, got)
+		}
+	}
+}
+
 // An unusable connection must surface as ErrConnectionNotUsable so the service layer answers
 // "repair your connection" rather than "retry later".
 func TestGoogleAdsKeywordInsights_UnusableConnectionIsTagged(t *testing.T) {

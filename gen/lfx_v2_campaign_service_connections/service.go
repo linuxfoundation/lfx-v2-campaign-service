@@ -529,9 +529,15 @@ type GoogleAdsKeyword struct {
 	CampaignID string
 	// The keyword text as Google stores it
 	Text string
-	// How broadly the keyword matches queries
+	// How broadly the keyword matches queries. UNKNOWN means Google reported a
+	// value this service does not recognise, never that the keyword lacks a match
+	// type.
 	MatchType string
-	// The criterion's current serving status upstream
+	// The criterion's current serving status upstream. UNKNOWN means Google
+	// reported a status this service does not recognise. REMOVED is not returned
+	// by the keywords read — its query allow-lists ENABLED and PAUSED — but the
+	// member is retained so the type stays usable if a future caller reads
+	// tombstones.
 	Status string
 	// Impressions over the window
 	Impressions int64

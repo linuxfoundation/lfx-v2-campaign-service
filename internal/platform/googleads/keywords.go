@@ -39,6 +39,14 @@ const (
 	// is refused by the generated decoder before any handler runs.
 	maxKeywordActions = 60
 
+	// KeywordStatusUnknown and MatchTypeUnknown are the contract's escape hatches for an
+	// upstream value this client does not recognise. They are declared here rather than
+	// alongside StatusEnabled/MatchTypeExact because they are NOT Google vocabulary — nothing
+	// is ever SENT with these values; they exist only so an account-wide read can report an
+	// unrecognised upstream value without emitting one the API contract forbids.
+	KeywordStatusUnknown = "UNKNOWN"
+	MatchTypeUnknown     = "UNKNOWN"
+
 	// KeywordActionPause and KeywordActionRemove are the two supported keyword mutations.
 	//
 	// There is deliberately no "enable": re-enabling a keyword makes a campaign spend
@@ -154,8 +162,10 @@ func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clic
 	return impressions, clicks, costMicros, nil
 }
 
-// ctrFor is Clicks/Impressions, 0 when Impressions is 0. Centralised so every row type
-// computes it identically and none divides by zero.
+// ctrFor is Clicks/Impressions, 0 when Impressions is 0, so no caller divides by zero.
+// Shared by the keyword and audience row builders in this file. GetCampaignMetrics still
+// computes the same expression inline (metrics.go) — deliberately left alone here rather
+// than refactored in a change that does not otherwise touch that path.
 func ctrFor(impressions, clicks int64) float64 {
 	if impressions <= 0 {
 		return 0
@@ -177,11 +187,61 @@ func resolveWindow(window MetricsWindow, describe string) (MetricsWindow, error)
 	return w, nil
 }
 
+// normaliseKeywordStatus maps Google's AdGroupCriterionStatus onto the closed vocabulary the
+// API contract declares, folding anything unrecognised onto StatusUnknown.
+//
+// This is required rather than cosmetic. The design declares Enum("ENABLED","PAUSED",
+// "REMOVED","UNKNOWN") on the response attribute, and Goa generates a matching validator in
+// the CLIENT — the server never validates its own response body, so an out-of-enum value is
+// not caught here, it makes the generated client reject the ENTIRE response. Google's enum
+// also carries UNSPECIFIED/UNKNOWN, and an omitted proto field decodes to "", none of which
+// the contract admits.
+//
+// Folding onto UNKNOWN rather than dropping the row is deliberate and follows this package's
+// established reading (see CampaignRef.AdvertisingChannelType): a caller must be able to tell
+// "Google said something we don't handle" from "Google said nothing". The row still carries
+// its ids and counters, which are what the caller acts on.
+func normaliseKeywordStatus(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case StatusEnabled:
+		return StatusEnabled
+	case StatusPaused:
+		return StatusPaused
+	case StatusRemoved:
+		return StatusRemoved
+	default:
+		return KeywordStatusUnknown
+	}
+}
+
+// normaliseKeywordMatchType maps Google's KeywordMatchType onto the closed vocabulary the API
+// contract declares. Same reasoning as normaliseKeywordStatus — and the same hazard, since
+// KeywordMatchType carries UNSPECIFIED and UNKNOWN of its own.
+func normaliseKeywordMatchType(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case MatchTypeExact:
+		return MatchTypeExact
+	case MatchTypePhrase:
+		return MatchTypePhrase
+	case MatchTypeBroad:
+		return MatchTypeBroad
+	default:
+		return MatchTypeUnknown
+	}
+}
+
 // GetKeywordPerformance reads the account's top keywords by impressions over window.
 //
-// Only ad-group criteria of type KEYWORD are returned, and REMOVED criteria are excluded:
-// a removed keyword can never serve again, so listing it among actionable rows would offer
-// the caller a pause/remove action that is meaningless.
+// Only ad-group criteria of type KEYWORD are returned, and the status predicate is an
+// ALLOW-LIST (ENABLED, PAUSED) rather than an exclusion of REMOVED. The difference matters:
+// AdGroupCriterionStatus also carries UNSPECIFIED and UNKNOWN, and an omitted proto field
+// decodes to "" — all three survive `!= 'REMOVED'` and would be offered as actionable rows
+// carrying a pause/remove action that cannot meaningfully apply. Enumerate the live states
+// and default-deny, matching campaignRowIdentity's positive switch.
+//
+// Status and MatchType are additionally normalised on the way out: this is an ACCOUNT-WIDE
+// read that returns keywords this service never created, so an unrecognised upstream value
+// is reachable regardless of what the create path restricts itself to. See normaliseKeywordStatus.
 //
 // The query asks for maxKeywordRows+1 rows so a full page can be told from a truncated
 // one; the extra row is dropped and reported as Truncated. Ordering is by impressions
@@ -202,7 +262,7 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 			"ad_group.id, campaign.id, "+
 			"metrics.impressions, metrics.clicks, metrics.cost_micros "+
 			"FROM keyword_view "+
-			"WHERE segments.date DURING %s AND ad_group_criterion.status != 'REMOVED' "+
+			"WHERE segments.date DURING %s AND ad_group_criterion.status IN ('ENABLED', 'PAUSED') "+
 			"ORDER BY metrics.impressions DESC "+
 			"LIMIT %d",
 		w, maxKeywordRows+1,
@@ -244,8 +304,8 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 			AdGroupID:   row.AdGroup.ID,
 			CampaignID:  row.Campaign.ID,
 			Text:        row.AdGroupCriterion.Keyword.Text,
-			MatchType:   row.AdGroupCriterion.Keyword.MatchType,
-			Status:      row.AdGroupCriterion.Status,
+			MatchType:   normaliseKeywordMatchType(row.AdGroupCriterion.Keyword.MatchType),
+			Status:      normaliseKeywordStatus(row.AdGroupCriterion.Status),
 			Impressions: impressions,
 			Clicks:      clicks,
 			CostMicros:  costMicros,

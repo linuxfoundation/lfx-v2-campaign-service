@@ -350,8 +350,13 @@ var GoogleAdsKeyword = Type("google-ads-keyword", func() {
 	Attribute("ad_group_id", String, "The ad group this criterion belongs to. Required to address the criterion: a criterion id alone does not identify a keyword.", func() { Example("176216228") })
 	Attribute("campaign_id", String, "The Google Ads campaign this keyword serves under", func() { Example("21234567890") })
 	Attribute("text", String, "The keyword text as Google stores it", func() { Example("kubernetes training") })
-	Attribute("match_type", String, "How broadly the keyword matches queries", func() { Enum("EXACT", "PHRASE", "BROAD") })
-	Attribute("status", String, "The criterion's current serving status upstream", func() { Enum("ENABLED", "PAUSED", "REMOVED", "UNKNOWN") })
+	// UNKNOWN is a member here for the same reason it is on `status`: this is an ACCOUNT-WIDE
+	// read returning keywords this service never created, so a match type outside the three
+	// Google documents (its enum also carries UNSPECIFIED/UNKNOWN, and an omitted proto field
+	// decodes to "") is reachable. Without a member to fold onto, the generated CLIENT — which
+	// is where Goa emits response validation — would reject the entire response over one row.
+	Attribute("match_type", String, "How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.", func() { Enum("EXACT", "PHRASE", "BROAD", "UNKNOWN") })
+	Attribute("status", String, "The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.", func() { Enum("ENABLED", "PAUSED", "REMOVED", "UNKNOWN") })
 	Attribute("impressions", Int64, "Impressions over the window", func() { Example(4820) })
 	Attribute("clicks", Int64, "Clicks over the window", func() { Example(311) })
 	Attribute("cost_micros", Int64, "Cost over the window in micro-units of the account's native currency. This service performs no FX conversion, so do not blend it with another account's figures.", func() { Example(1284000) })

@@ -336,6 +336,11 @@ func TestGetGoogleAdsKeywords_ErrorMapping(t *testing.T) {
 		want any
 	}{
 		{"unsupported", domain.ErrKeywordInsightsUnsupported, &conn.BadRequestError{}},
+		// This arm exists so an unsupported window answers 400 rather than falling through to
+		// classifyDiscoveryError's 503 default — telling a caller to retry a request that can
+		// never succeed. Reachable only for non-HTTP callers, since the design Enum stops it
+		// at the decoder, which is exactly why nothing else pins it.
+		{"window unsupported", domain.ErrMetricsWindowUnsupported, &conn.BadRequestError{}},
 		{"no connection", domain.ErrNotFound, &conn.NotFoundError{}},
 		{"connection unusable", domain.ErrConnectionNotUsable, &conn.BadRequestError{}},
 		{"system connection unusable", domain.ErrSystemConnectionNotUsable, &conn.InternalServerError{}},
@@ -344,28 +349,180 @@ func TestGetGoogleAdsKeywords_ErrorMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := keywordInsightsService(t, &keywordActionDispatcher{err: tc.err})
-			_, err := svc.GetGoogleAdsKeywords(context.Background(), &conn.GetGoogleAdsKeywordsPayload{ProjectID: "cncf"})
-			if err == nil {
-				t.Fatalf("expected an error for %v, got nil", tc.err)
-			}
-			switch tc.want.(type) {
-			case *conn.BadRequestError:
-				if _, ok := err.(*conn.BadRequestError); !ok {
-					t.Fatalf("error = %T (%v), want *conn.BadRequestError", err, err)
-				}
-			case *conn.NotFoundError:
-				if _, ok := err.(*conn.NotFoundError); !ok {
-					t.Fatalf("error = %T (%v), want *conn.NotFoundError", err, err)
-				}
-			case *conn.InternalServerError:
-				if _, ok := err.(*conn.InternalServerError); !ok {
-					t.Fatalf("error = %T (%v), want *conn.InternalServerError", err, err)
-				}
-			case *conn.ConnServiceUnavailableError:
-				if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
-					t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
-				}
+			// Driven through BOTH readers. They share classifyInsightsError today, but they are
+			// separate call sites: without this, the audience path's entire classification
+			// could be deleted and the suite would stay green.
+			for _, read := range []struct {
+				name string
+				call func() error
+			}{
+				{"keywords", func() error {
+					_, e := svc.GetGoogleAdsKeywords(context.Background(), &conn.GetGoogleAdsKeywordsPayload{ProjectID: "cncf"})
+					return e
+				}},
+				{"audience", func() error {
+					_, e := svc.GetGoogleAdsAudience(context.Background(), &conn.GetGoogleAdsAudiencePayload{ProjectID: "cncf"})
+					return e
+				}},
+			} {
+				t.Run(read.name, func(t *testing.T) {
+					assertInsightsErr(t, read.call(), tc.want, tc.err)
+				})
 			}
 		})
+	}
+}
+
+// assertInsightsErr checks that err is the concrete generated type `want` names.
+func assertInsightsErr(t *testing.T, err error, want any, src error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error for %v, got nil", src)
+	}
+	switch want.(type) {
+	case *conn.BadRequestError:
+		if _, ok := err.(*conn.BadRequestError); !ok {
+			t.Fatalf("error = %T (%v), want *conn.BadRequestError", err, err)
+		}
+	case *conn.NotFoundError:
+		if _, ok := err.(*conn.NotFoundError); !ok {
+			t.Fatalf("error = %T (%v), want *conn.NotFoundError", err, err)
+		}
+	case *conn.InternalServerError:
+		if _, ok := err.(*conn.InternalServerError); !ok {
+			t.Fatalf("error = %T (%v), want *conn.InternalServerError", err, err)
+		}
+	case *conn.ConnServiceUnavailableError:
+		if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+			t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
+		}
+	}
+}
+
+// nilResultDispatcher returns (nil, nil) — a contract violation the orchestrator must convert
+// into an error rather than pass to a handler that dereferences it unconditionally.
+type nilResultDispatcher struct{}
+
+func (d nilResultDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d nilResultDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow) (*model.KeywordPerformance, error) {
+	return nil, nil
+}
+
+func (d nilResultDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow) (*model.AudienceInsights, error) {
+	return nil, nil
+}
+
+func (d nilResultDispatcher) ApplyKeywordActions(context.Context, string, model.Provider, *model.Campaign, []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	return nil, nil
+}
+
+// nilSliceDispatcher returns non-nil results carrying NIL slices, so the orchestrator's
+// normalisation is the only thing standing between the caller and a `null` on the wire.
+type nilSliceDispatcher struct{}
+
+func (d nilSliceDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d nilSliceDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow) (*model.KeywordPerformance, error) {
+	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days}, nil
+}
+
+func (d nilSliceDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow) (*model.AudienceInsights, error) {
+	return &model.AudienceInsights{Window: model.MetricsWindowLast30Days}, nil
+}
+
+func keywordOrchestrator(d PlatformDispatcher) *Orchestrator {
+	return NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: d,
+	})
+}
+
+// (nil, nil) is a contract violation, not success: the handler dereferences the result
+// unconditionally on a nil error, so passing it through is a panicked request.
+func TestOrchestratorKeywordReads_NilResultIsAnError(t *testing.T) {
+	orch := keywordOrchestrator(nilResultDispatcher{})
+	ctx := context.Background()
+
+	if _, err := orch.ReadKeywordPerformance(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); err == nil {
+		t.Error("ReadKeywordPerformance: a nil result with no error must be rejected")
+	}
+	if _, err := orch.ReadAudienceInsights(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); err == nil {
+		t.Error("ReadAudienceInsights: a nil result with no error must be rejected")
+	}
+	// On the MUTATION the stakes are higher: applied_count is derived from the slice length,
+	// so a nil normalised to empty would report "zero keywords changed" for a call that
+	// returned success — the exact ambiguity the all-or-nothing batch exists to remove.
+	campaign := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "555"}
+	if _, err := orch.ApplyKeywordActions(ctx, "p1", model.ProviderGoogleAds, campaign,
+		[]model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}}); err == nil {
+		t.Error("ApplyKeywordActions: no outcomes with no error must be rejected, never reported as zero applied")
+	}
+}
+
+// A successful read must carry a non-nil slice so it serializes as `[]`, never `null` — the
+// caller cannot otherwise tell "this account authoritatively has none" from a fall-through.
+func TestOrchestratorKeywordReads_NilSlicesAreNormalised(t *testing.T) {
+	orch := keywordOrchestrator(nilSliceDispatcher{})
+	ctx := context.Background()
+
+	kp, err := orch.ReadKeywordPerformance(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadKeywordPerformance: %v", err)
+	}
+	if kp.Rows == nil {
+		t.Error("Rows is nil; it must be an empty slice so the wire shape is [] not null")
+	}
+
+	ai, err := orch.ReadAudienceInsights(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadAudienceInsights: %v", err)
+	}
+	if ai.Buckets == nil {
+		t.Error("Buckets is nil; it must be an empty slice so the wire shape is [] not null")
+	}
+}
+
+// The orchestrator's own pre-platform guard: never contact the ad platform for a campaign
+// with nothing provisioned upstream. Independent of any one adapter's re-check.
+func TestOrchestratorApplyKeywordActions_UnprovisionedIsRefused(t *testing.T) {
+	orch := keywordOrchestrator(&keywordActionDispatcher{})
+	actions := []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}}
+
+	for _, tc := range []struct {
+		name     string
+		campaign *model.Campaign
+	}{
+		{"nil campaign", nil},
+		{"empty platform campaign id", &model.Campaign{Platform: model.ProviderGoogleAds}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := orch.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds, tc.campaign, actions)
+			if !errors.Is(err, ErrCampaignNotProvisioned) {
+				t.Fatalf("error = %v, want ErrCampaignNotProvisioned", err)
+			}
+		})
+	}
+}
+
+// A platform with no keyword capability wired must answer a clean "not supported", never a
+// transient failure the caller would retry forever.
+func TestOrchestratorKeywords_UnsupportedPlatform(t *testing.T) {
+	// A dispatcher implementing ONLY Dispatch — neither keyword capability.
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderRedditAds: upstreamCapableDispatcher{},
+	})
+	ctx := context.Background()
+
+	// An unregistered platform.
+	if _, err := orch.ReadKeywordPerformance(ctx, "p1", model.ProviderGoogleAds, model.MetricsWindowLast30Days); !errors.Is(err, domain.ErrKeywordInsightsUnsupported) {
+		t.Errorf("unregistered platform: error = %v, want ErrKeywordInsightsUnsupported", err)
+	}
+	campaign := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "555"}
+	if _, err := orch.ApplyKeywordActions(ctx, "p1", model.ProviderGoogleAds, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}}); !errors.Is(err, domain.ErrKeywordActionsUnsupported) {
+		t.Errorf("unregistered platform: error = %v, want ErrKeywordActionsUnsupported", err)
 	}
 }

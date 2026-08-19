@@ -69,9 +69,9 @@ func TestGetKeywordPerformance_HappyPath(t *testing.T) {
 	if !strings.Contains(body, "DURING LAST_30_DAYS") {
 		t.Errorf("query missing window: %s", body)
 	}
-	if !strings.Contains(body, "ad_group_criterion.status != 'REMOVED'") {
-		t.Errorf("query does not exclude REMOVED criteria: %s", body)
-	}
+	// The status predicate itself is asserted by
+	// TestGetKeywordPerformance_QueryAllowListsLiveStatuses, which pins the ALLOW-LIST form
+	// specifically — an exclusion would admit UNSPECIFIED/UNKNOWN/"" as actionable rows.
 	// The LIMIT must be the cap PLUS ONE — that extra row is the only way a full page can be
 	// told from a truncated one.
 	if !strings.Contains(body, fmt.Sprintf("LIMIT %d", maxKeywordRows+1)) {
@@ -596,12 +596,94 @@ func TestApplyKeywordActions_CancelledContextAbortsBeforeRequest(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.ApplyKeywordActions(ctx, []KeywordAction{
+	_, err := c.ApplyKeywordActions(ctx, []KeywordAction{
 		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionPause},
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("expected an error for a cancelled context, got nil")
 	}
 	if called {
 		t.Fatal("the platform was contacted with an already-cancelled context")
+	}
+	// Assert the GUARD's own diagnostic, not merely that some error came back. The transport
+	// layer also refuses a cancelled context during token fetch, so a test checking only
+	// "errored and did not call" passes with this guard deleted — it would be pinning the
+	// backstop instead of the thing under test. The distinctive promise here is that NO
+	// keyword was changed, which is what a caller needs told.
+	if !strings.Contains(err.Error(), "no keyword was changed") {
+		t.Errorf("error does not carry the pre-request guard's diagnostic: %v", err)
+	}
+}
+
+// An ACCOUNT-WIDE read returns keywords this service never created, so an upstream value
+// outside the API contract's closed enums is reachable no matter what the create path
+// restricts itself to. The design declares Enum(...) on the RESPONSE and Goa emits that
+// validation in the generated CLIENT — the server never validates its own response body — so
+// an un-normalised passthrough makes a client reject the ENTIRE response over one row.
+func TestGetKeywordPerformance_NormalisesUnrecognisedEnums(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		status, matchType string
+		wantStatus        string
+		wantMatch         string
+	}{
+		{"unspecified", "UNSPECIFIED", "UNSPECIFIED", KeywordStatusUnknown, MatchTypeUnknown},
+		{"google unknown", "UNKNOWN", "UNKNOWN", KeywordStatusUnknown, MatchTypeUnknown},
+		{"absent proto field", "", "", KeywordStatusUnknown, MatchTypeUnknown},
+		{"garbage", "WAT", "WAT", KeywordStatusUnknown, MatchTypeUnknown},
+		{"recognised passes through", "ENABLED", "EXACT", StatusEnabled, MatchTypeExact},
+		{"paused passes through", "PAUSED", "PHRASE", StatusPaused, MatchTypePhrase},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+
+					keywordRowJSON("777", "333", "555", "kw", tc.matchType, tc.status, 10, 1, 100)+`]}`)
+			})
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days)
+			if err != nil {
+				t.Fatalf("GetKeywordPerformance: %v", err)
+			}
+			if kp.Rows[0].Status != tc.wantStatus {
+				t.Errorf("Status = %q, want %q — an out-of-enum value makes the generated client reject the whole response", kp.Rows[0].Status, tc.wantStatus)
+			}
+			if kp.Rows[0].MatchType != tc.wantMatch {
+				t.Errorf("MatchType = %q, want %q", kp.Rows[0].MatchType, tc.wantMatch)
+			}
+			// The row is normalised, never dropped: a caller must be able to tell "Google said
+			// something we don't handle" from "Google said nothing", and the ids/counters are
+			// what it acts on.
+			if kp.Rows[0].CriterionID != "777" || kp.Rows[0].Impressions != 10 {
+				t.Errorf("row was altered beyond its enums: %+v", kp.Rows[0])
+			}
+		})
+	}
+}
+
+// The status predicate must be an ALLOW-LIST, not an exclusion. `!= 'REMOVED'` leaves
+// UNSPECIFIED, UNKNOWN and the empty string an omitted proto field decodes to being treated
+// as live, and offers them as actionable rows.
+func TestGetKeywordPerformance_QueryAllowListsLiveStatuses(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days); err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	mu.Lock()
+	body := gotBody
+	mu.Unlock()
+	if !strings.Contains(body, "ad_group_criterion.status IN ('ENABLED', 'PAUSED')") {
+		t.Errorf("query does not allow-list live statuses: %s", body)
+	}
+	if strings.Contains(body, "!= 'REMOVED'") {
+		t.Errorf("query still uses an exclusion, which admits UNSPECIFIED/UNKNOWN/\"\": %s", body)
 	}
 }

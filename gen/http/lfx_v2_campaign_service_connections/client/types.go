@@ -3125,9 +3125,15 @@ type GoogleAdsKeywordResponseBody struct {
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// The keyword text as Google stores it
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
-	// How broadly the keyword matches queries
+	// How broadly the keyword matches queries. UNKNOWN means Google reported a
+	// value this service does not recognise, never that the keyword lacks a match
+	// type.
 	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
-	// The criterion's current serving status upstream
+	// The criterion's current serving status upstream. UNKNOWN means Google
+	// reported a status this service does not recognise. REMOVED is not returned
+	// by the keywords read — its query allow-lists ENABLED and PAUSED — but the
+	// member is retained so the type stays usable if a future caller reads
+	// tombstones.
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Impressions over the window
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
@@ -10037,8 +10043,8 @@ func ValidateGoogleAdsKeywordResponseBody(body *GoogleAdsKeywordResponseBody) (e
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
 	}
 	if body.MatchType != nil {
-		if !(*body.MatchType == "EXACT" || *body.MatchType == "PHRASE" || *body.MatchType == "BROAD") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"EXACT", "PHRASE", "BROAD"}))
+		if !(*body.MatchType == "EXACT" || *body.MatchType == "PHRASE" || *body.MatchType == "BROAD" || *body.MatchType == "UNKNOWN") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"EXACT", "PHRASE", "BROAD", "UNKNOWN"}))
 		}
 	}
 	if body.Status != nil {

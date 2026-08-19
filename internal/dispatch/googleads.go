@@ -1246,7 +1246,11 @@ func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
 	}
 
-	outcomes, err := client.ApplyKeywordActions(ctx, in)
+	// `validated`, not `in`: the ownership loop above checked the NORMALISED batch, so sending
+	// the raw one would mean the guard and the request operate on different values. The client
+	// re-validates internally and validation is idempotent, so this is not a live defect — but
+	// the guard's correctness should not depend on a detail of the callee it does not state.
+	outcomes, err := client.ApplyKeywordActions(ctx, validated)
 	if err != nil {
 		return nil, err
 	}

@@ -860,8 +860,15 @@ GA-4's `createAdGroupTargeting`.
 descending and asks for `maxKeywordRows+1` rows; the extra row is dropped and reported as
 `Truncated`. That probe is the whole mechanism: without it a caller receiving exactly the cap
 cannot distinguish a small account from a truncated large one, and would total the slice as
-account-wide spend. `REMOVED` criteria are excluded — a removed keyword can never serve again,
-so offering it as an actionable row hands the caller a button that does nothing. A row missing
+account-wide spend. The status predicate is an ALLOW-LIST (`ENABLED`, `PAUSED`), not an exclusion of `REMOVED`:
+`AdGroupCriterionStatus` also carries `UNSPECIFIED` and `UNKNOWN`, and an omitted proto field
+decodes to `""` — all three survive `!= 'REMOVED'` and would be offered as actionable rows
+carrying a pause/remove that cannot apply. `status` and `match_type` are additionally
+NORMALISED onto the closed vocabularies the API contract declares. That is not cosmetic: Goa
+emits response validation in the generated CLIENT, not the server, so one out-of-enum value
+makes a client reject the ENTIRE response. Unrecognised values fold onto `UNKNOWN` rather than
+dropping the row, following this package's existing reading — a caller must be able to tell
+"Google said something we don't handle" from "Google said nothing". A row missing
 its criterion or ad-group id is a hard error rather than a returned row, because the
 keyword-actions endpoint needs BOTH ids to address a criterion.
 

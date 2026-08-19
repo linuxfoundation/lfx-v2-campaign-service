@@ -2963,9 +2963,15 @@ type GoogleAdsKeywordResponseBody struct {
 	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
 	// The keyword text as Google stores it
 	Text string `form:"text" json:"text" xml:"text"`
-	// How broadly the keyword matches queries
+	// How broadly the keyword matches queries. UNKNOWN means Google reported a
+	// value this service does not recognise, never that the keyword lacks a match
+	// type.
 	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
-	// The criterion's current serving status upstream
+	// The criterion's current serving status upstream. UNKNOWN means Google
+	// reported a status this service does not recognise. REMOVED is not returned
+	// by the keywords read — its query allow-lists ENABLED and PAUSED — but the
+	// member is retained so the type stays usable if a future caller reads
+	// tombstones.
 	Status string `form:"status" json:"status" xml:"status"`
 	// Impressions over the window
 	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
