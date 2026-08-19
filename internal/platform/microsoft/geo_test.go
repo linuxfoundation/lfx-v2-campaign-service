@@ -1185,3 +1185,59 @@ func TestExistingLocationIDs_ReportsExclusionsSeparately(t *testing.T) {
 		t.Errorf("excluded = %v, want [77]: an exclusion must be REPORTED, not silently dropped, or the caller attaches a target that cannot take effect", excluded)
 	}
 }
+
+// composeName does not encode GeoTargets, so re-running the same brief with a NARROWER geo list
+// reuses the campaign. A subset check would find every requested id present, attach nothing and
+// report success — for a campaign still carrying the wider previous targeting, spending in
+// countries nobody approved.
+func TestCreateCampaign_ReusedCampaignWithExtraTargetsRefuses(t *testing.T) {
+	g := &geoAPI{
+		fileBody: geoFileFixture(geoRowUS),
+		// The campaign already targets US (190) AND FR (77); this run asks for US only.
+		criterionReadBody: `{"CampaignCriterions":[` +
+			`{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}},` +
+			`{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":77}}` +
+			`],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+
+	name := composeName(in)
+	g.campaignQueryBody = `{"Campaigns":[{"Id":321,"Name":` + strconv.Quote(name) + `}]}`
+
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("the reused campaign targets a country this brief did not request, so it would serve more widely than asked; a subset check reports success for exactly that campaign")
+	}
+	if !strings.Contains(err.Error(), "77") {
+		t.Errorf("error = %v, want it to name the unrequested location so the fix is mechanical", err)
+	}
+}
+
+// The exact-set check must not fire when the sets MATCH — that is the ordinary idempotent
+// retry, and refusing it would break every re-run.
+func TestCreateCampaign_ReusedCampaignWithExactlyTheRequestedTargetsSucceeds(t *testing.T) {
+	g := &geoAPI{
+		fileBody: geoFileFixture(geoRowUS, geoRowGB),
+		criterionReadBody: `{"CampaignCriterions":[` +
+			`{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":190}},` +
+			`{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":200}}` +
+			`],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	in := validInput()
+	in.GeoTargets = []string{"US", "GB"}
+
+	name := composeName(in)
+	g.campaignQueryBody = `{"Campaigns":[{"Id":321,"Name":` + strconv.Quote(name) + `}]}`
+
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("an exact match is the ordinary idempotent retry and must succeed: %v", err)
+	}
+	for _, p := range g.mutatingPaths() {
+		if strings.HasSuffix(p, "/CampaignCriterions") {
+			t.Fatal("every requested target is already attached, so nothing may be re-posted")
+		}
+	}
+}

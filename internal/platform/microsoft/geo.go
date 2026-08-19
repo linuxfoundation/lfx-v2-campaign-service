@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1054,5 +1055,28 @@ func intersectExcluded(wanted, excluded []string) []string {
 			out = append(out, id)
 		}
 	}
+	return out
+}
+
+// unrequestedTargets returns the positive LocationIds attached to the campaign that the caller
+// did NOT request, in sorted order for a stable error message. It is the other half of the
+// reconcile: `missing` answers "what must I add", this answers "what is here that should not
+// be" — and only both together establish that the effective targeting equals the requested
+// targeting.
+func unrequestedTargets(existing map[string]struct{}, wanted []string) []string {
+	if len(existing) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(wanted))
+	for _, id := range wanted {
+		want[id] = struct{}{}
+	}
+	var out []string
+	for id := range existing {
+		if _, ok := want[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
 	return out
 }

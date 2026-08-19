@@ -716,6 +716,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting CONFLICTS with existing exclusions on reused campaign %s: location(s) %s are requested as targets but are already EXCLUDED by a negative campaign criterion, and Microsoft applies exclusions after inclusions, so attaching them would not take effect (remove the exclusions in Microsoft Advertising, or target different countries, before retrying)",
 					campaignID, strings.Join(conflicts, ", "))
 			}
+			// The reconcile compares the EXACT positive set, not just "is what I asked for a
+			// subset of what is there". composeName does not include GeoTargets — the name is
+			// LFX | Search Campaign | project | event | brief.ID — so the same brief re-run with
+			// a NARROWER geo list reuses the same campaign, and a subset check would find every
+			// requested id present, attach nothing, and report success for a campaign still
+			// carrying the WIDER previous targeting. That is a campaign spending in countries
+			// nobody approved, reported as correctly targeted: the same class of harm as an
+			// untargeted campaign, just smaller in blast radius.
+			//
+			// Extra criteria are REFUSED rather than removed, for the same reason a conflicting
+			// exclusion is: deleting location criteria from a live paid campaign is a targeting
+			// decision that belongs to an operator, not to a retry path. The error names the
+			// unexpected locations so the fix is mechanical.
+			if extra := unrequestedTargets(existing, geoLocationIDs); len(extra) > 0 {
+				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting MISMATCH on reused campaign %s: it carries location criteria that were NOT requested (%s), so it would serve more widely than this brief asks (requested: %s). The campaign name does not encode geo targeting, so a re-run with a narrower list reuses the same campaign; remove the unexpected location criteria in Microsoft Advertising, or create a distinct campaign, before retrying",
+					campaignID, strings.Join(extra, ", "), strings.Join(geoCodes, ", "))
+			}
 			missing := make([]string, 0, len(geoLocationIDs))
 			for _, id := range geoLocationIDs {
 				if _, have := existing[id]; !have {
