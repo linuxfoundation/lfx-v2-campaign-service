@@ -952,6 +952,32 @@ sentinel is `ErrKeywordCriterionNotPositiveKeyword`, which the dispatcher folds 
 `domain.ErrKeywordActionInvalid` — a permanent 400, since no retry turns an audience criterion
 into a keyword.
 
+**The type-resolution query carries the READ path's status ALLOW-LIST (`ENABLED`, `PAUSED`),
+and it is load-bearing on a mutating path in a way it is not on a read.** `keyword_view` DOES
+return `REMOVED` criteria, and Google rejects a pause or removal of an already-removed
+criterion as permanently unmutable. Without the predicate such a row resolved as an ordinary
+positive keyword, the mutate was sent, and that PERMANENT rejection came back through the
+transport-error path as a RETRYABLE 503 — a stale handle advertised as "try again", which no
+number of retries can repair. Excluded by the allow-list the row is simply absent, so the
+fail-closed `!ok` arm answers `ErrKeywordCriterionNotPositiveKeyword` (a 400) before anything
+is mutated. Enumerating the live states rather than excluding `REMOVED` also default-denies
+`UNSPECIFIED`, `UNKNOWN` and the `""` an omitted proto field decodes to — the same reasoning
+`GetKeywordPerformance` documents. Asserting only that a query lacks `!= 'REMOVED'` does not
+pin this: a predicate-free query satisfies that assertion, which is the trap the settings
+readback's REMOVED test fell into.
+
+**Both ids are length-capped at runtime, mirroring the design's `MaxLength(20)`**
+(`maxKeywordIDLen`). Goa enforces the bound for HTTP callers, but a direct service caller
+never passes through the generated decoder, so digits-only alone admitted a 21+ digit id:
+syntactically fine and injection-safe, yet incapable of naming a real criterion (Google Ads
+ids are `int64`). Left unchecked it was interpolated into the type-resolution request and
+Google's permanent rejection was again mapped onto the retryable 503 path. Refusing it in
+`ValidateKeywordActions` makes it the local 400 it always was. The general rule this and the
+status predicate share: **a non-HTTP validation backstop must mirror every design constraint,
+not only the character class — whatever it lets through becomes an upstream error this code
+then has to classify, and a permanent upstream fault reached by a request we should have
+refused reads as transient.**
+
 **Ambiguous outcomes are marked STRUCTURALLY, not just in prose.** `unconfirmedKeywordError`
 implements `Unconfirmed() bool`, the behavioural interface `IsOutcomeUnconfirmed` and the
 service's `classifyKeywordActionError` match with `errors.As`. This matters because the two 2xx

@@ -288,6 +288,46 @@ func TestApplyKeywordActions_ErrorMapping(t *testing.T) {
 	}
 }
 
+// TestInsightsAccountMismatch_RemedyCoversMixedProvenance pins the REMEDY, not just the
+// status code, because the code was already right while the instruction was wrong.
+//
+// googleAdsScopeForCustomer raises this sentinel on ANY mismatch, so the common case is a
+// MIXED one: some of the project's campaigns sit under the account the connection now
+// resolves to, others under an older one. "Reconnect the original account" is actively
+// harmful advice there — it would only swap which subset mismatches, breaking the campaigns
+// that currently work. The remedy has to name reconciling the mismatched campaign rows, and
+// may offer reconnecting only for the case where one account owns all of them.
+//
+// The ad account ids must still stay out of the message: which account a project connects to
+// is connection configuration, not something a keyword read discloses.
+func TestInsightsAccountMismatch_RemedyCoversMixedProvenance(t *testing.T) {
+	svc := keywordInsightsService(t, &keywordActionDispatcher{
+		err: errors.Join(ErrCampaignAccountMismatch, errors.New("customer 7777777777 vs 1234567890")),
+	})
+
+	_, err := svc.GetGoogleAdsKeywords(context.Background(), &conn.GetGoogleAdsKeywordsPayload{ProjectID: "cncf"})
+	ce, ok := err.(*conn.ConflictError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *conn.ConflictError", err, err)
+	}
+	msg := strings.ToLower(ce.Message)
+	// The mismatch is partial-capable, so the message must not assert that every campaign is
+	// in the other account.
+	if strings.Contains(msg, "this project's campaigns belong to a different") {
+		t.Errorf("message asserts ALL campaigns mismatch, but the sentinel is raised on a "+
+			"PARTIAL mismatch too: %q", ce.Message)
+	}
+	// It must point at reconciling/re-dispatching the offending rows — the only remedy that
+	// works when some campaigns already match the current account.
+	if !strings.Contains(msg, "reconcile") && !strings.Contains(msg, "re-dispatch") {
+		t.Errorf("message does not tell the caller to reconcile or re-dispatch the mismatched "+
+			"campaigns; reconnecting alone breaks the campaigns that currently match: %q", ce.Message)
+	}
+	if strings.Contains(ce.Message, "7777777777") || strings.Contains(ce.Message, "1234567890") {
+		t.Errorf("response disclosed an ad account id: %q", ce.Message)
+	}
+}
+
 // The adapter's own error text can name ad group ids and embed upstream response bodies. It
 // must never be echoed to the caller.
 func TestApplyKeywordActions_AdapterTextIsNotEchoed(t *testing.T) {
@@ -585,11 +625,12 @@ func TestGetGoogleAdsKeywords_ErrorMapping(t *testing.T) {
 		// never succeed. Reachable only for non-HTTP callers, since the design Enum stops it
 		// at the decoder, which is exactly why nothing else pins it.
 		{"window unsupported", domain.ErrMetricsWindowUnsupported, &conn.BadRequestError{}},
-		// Reachable once the scope filter refuses every campaign: they were all created under
-		// an account this project's connection no longer resolves to. PERMANENT until someone
-		// reconnects, so it must be a 409 rather than the 503 default, which would invite
-		// retrying a read that will keep failing.
-		{"every campaign in another account", ErrCampaignAccountMismatch, &conn.ConflictError{}},
+		// Reachable once the scope filter refuses ANY campaign — googleAdsScopeForCustomer
+		// fails closed on a partial mismatch too, rather than returning the matching subset as
+		// though it were the project's whole picture. PERMANENT until the rows and the
+		// connection are reconciled, so it must be a 409 rather than the 503 default, which
+		// would invite retrying a read that will keep failing.
+		{"a campaign in another account", ErrCampaignAccountMismatch, &conn.ConflictError{}},
 		{"no connection", domain.ErrNotFound, &conn.NotFoundError{}},
 		{"connection unusable", domain.ErrConnectionNotUsable, &conn.BadRequestError{}},
 		{"system connection unusable", domain.ErrSystemConnectionNotUsable, &conn.InternalServerError{}},

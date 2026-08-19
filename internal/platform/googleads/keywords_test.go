@@ -400,6 +400,45 @@ func TestValidateKeywordActions_RejectsNonNumericIDs(t *testing.T) {
 	}
 }
 
+// TestValidateKeywordActions_RejectsOverLongIDs pins the runtime half of the design's
+// MaxLength(20) on both ids. Goa enforces that bound for HTTP callers; a DIRECT service
+// caller never passes through the generated decoder, so without this check the two entry
+// points disagreed about what a valid request is.
+//
+// Digits-only alone admits a 21-digit id: syntactically fine, injection-safe, and incapable
+// of naming a real criterion (Google Ads ids are int64). Left unchecked it reached the
+// type-resolution GAQL request, where Google's PERMANENT rejection was classified onto the
+// retryable 503 path — telling the caller to retry a request that can never succeed. The
+// boundary is asserted on BOTH sides: 20 digits must still be accepted, or the check would
+// be refusing ids the design declares valid.
+func TestValidateKeywordActions_RejectsOverLongIDs(t *testing.T) {
+	at := strings.Repeat("1", maxKeywordIDLen)
+	over := strings.Repeat("1", maxKeywordIDLen+1)
+
+	for _, tc := range []struct {
+		name    string
+		action  KeywordAction
+		wantErr bool
+	}{
+		{"ad group over the cap", KeywordAction{AdGroupID: over, CriterionID: "305729261", Action: "PAUSE"}, true},
+		{"criterion over the cap", KeywordAction{AdGroupID: "176216228", CriterionID: over, Action: "PAUSE"}, true},
+		{"both exactly at the cap", KeywordAction{AdGroupID: at, CriterionID: at, Action: "PAUSE"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateKeywordActions([]KeywordAction{tc.action})
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected a local rejection for an id longer than the design's MaxLength(%d); "+
+					"admitting it sends a GAQL request whose permanent rejection is mapped onto the "+
+					"retryable 503 path", maxKeywordIDLen)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("an id of exactly %d digits is within the design's cap and must be accepted, got: %v",
+					maxKeywordIDLen, err)
+			}
+		})
+	}
+}
+
 func TestValidateKeywordActions_RejectsUnsupportedAction(t *testing.T) {
 	// ENABLE is the notable one: this surface must only ever reduce what serves, so
 	// accepting it would let a caller restart spend through an endpoint documented as
@@ -1022,6 +1061,65 @@ func TestApplyKeywordActions_ResolvesTypeViaKeywordView(t *testing.T) {
 	}
 	if !strings.Contains(got, "ad_group_criterion.negative") {
 		t.Errorf("type resolution does not select ad_group_criterion.negative, so it cannot tell a negative keyword from a positive one: %s", got)
+	}
+	// The status predicate must be an ALLOW-LIST, exactly as the read path's is. Asserting
+	// only that REMOVED is absent from the query text would pass against a predicate-free
+	// query, which is the very defect this pins — the same trap the settings readback's
+	// REMOVED test fell into.
+	for _, want := range []string{StatusEnabled, StatusPaused} {
+		if !strings.Contains(got, "'"+want+"'") {
+			t.Errorf("type resolution must name %s in an ad_group_criterion.status allow-list; "+
+				"without one keyword_view returns REMOVED criteria, whose mutation Google "+
+				"rejects PERMANENTLY and which this path then reports as a retryable 503: %s", want, got)
+		}
+	}
+	if !strings.Contains(got, "ad_group_criterion.status") {
+		t.Errorf("type resolution carries no ad_group_criterion.status predicate at all: %s", got)
+	}
+}
+
+// TestApplyKeywordActions_RemovedCriterionFailsLocally is the behavioural half of the query
+// assertion above, and the one that states the CONSEQUENCE rather than the query text.
+//
+// A criterion already REMOVED upstream is a permanently stale handle: Google rejects a pause
+// or removal of it as unmutable, however many times it is retried. With no status predicate,
+// keyword_view returned the removed row, the guard admitted it as a positive keyword, the
+// mutate was sent, and that permanent rejection came back through the transport-error path as
+// a retryable upstream 503. Excluded by the allow-list, the row is simply absent, so the
+// existing fail-closed `!ok` arm answers with the permanent sentinel BEFORE anything is
+// mutated — and the mutate endpoint is never called at all.
+func TestApplyKeywordActions_RemovedCriterionFailsLocally(t *testing.T) {
+	var mu sync.Mutex
+	mutateCalled := false
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "googleAds:search") {
+			// The server honours the allow-list the query asks for: a REMOVED criterion is
+			// filtered out server-side, so the response carries no row for it. This is what
+			// Google does with the predicate present, and what it does NOT do without it.
+			_, _ = io.WriteString(w, `{"results":[]}`)
+			return
+		}
+		mu.Lock()
+		mutateCalled = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupCriteria/176216228~305729261"}]}`)
+	})
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	})
+	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
+		t.Fatalf("err = %v, want ErrKeywordCriterionNotPositiveKeyword: a removed criterion is a "+
+			"permanently stale handle and must fail LOCALLY as an invalid action, not as a "+
+			"retryable upstream failure", err)
+	}
+	mu.Lock()
+	called := mutateCalled
+	mu.Unlock()
+	if called {
+		t.Error("a removed criterion must be refused BEFORE the mutate is issued; sending it " +
+			"turns a permanent rejection into the retryable 503 path")
 	}
 }
 

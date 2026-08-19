@@ -40,6 +40,18 @@ const (
 	// is refused by the generated decoder before any handler runs.
 	maxKeywordActions = 60
 
+	// maxKeywordIDLen bounds each id in a keyword action, mirroring the MaxLength(20) the
+	// design declares on keyword-action-input's ad_group_id and criterion_id. Goa enforces
+	// that for HTTP callers; this constant is what makes a DIRECT service caller — which
+	// never passes through the generated decoder — get the same answer.
+	//
+	// Digits-only alone is not enough. A 21+ digit id is syntactically fine and injection-safe,
+	// but it cannot name a real criterion (Google Ads ids are int64), so without a cap it was
+	// interpolated into the type-resolution GAQL request and Google's PERMANENT rejection was
+	// then classified as a retryable upstream 503. Refusing it locally makes it the 400 it is.
+	// 20 is the digit count of math.MaxInt64 (19) plus one, which is the design's bound.
+	maxKeywordIDLen = 20
+
 	// KeywordStatusUnknown and MatchTypeUnknown are the contract's escape hatches for an
 	// upstream value this client does not recognise. They are declared here rather than
 	// alongside StatusEnabled/MatchTypeExact because they are NOT Google vocabulary — nothing
@@ -607,6 +619,17 @@ func ValidateKeywordActions(actions []KeywordAction) ([]KeywordAction, error) {
 		if !customerIDRE.MatchString(criterionID) {
 			return nil, fmt.Errorf("google-ads: keyword action %d has a criterion id that is not digits only", i)
 		}
+		// Length is checked alongside the character class, mirroring the design's
+		// MaxLength(20), so a direct (non-HTTP) caller cannot get past a bound the generated
+		// decoder enforces. An over-long id is refused HERE as a permanent 400 rather than
+		// being interpolated into the type-resolution query, where Google's permanent
+		// rejection would be mapped onto the retryable 503 path.
+		if len(adGroupID) > maxKeywordIDLen {
+			return nil, fmt.Errorf("google-ads: keyword action %d has an ad group id longer than %d digits", i, maxKeywordIDLen)
+		}
+		if len(criterionID) > maxKeywordIDLen {
+			return nil, fmt.Errorf("google-ads: keyword action %d has a criterion id longer than %d digits", i, maxKeywordIDLen)
+		}
 		action := strings.ToUpper(strings.TrimSpace(a.Action))
 		switch action {
 		case KeywordActionPause, KeywordActionRemove:
@@ -704,6 +727,18 @@ var ErrKeywordCriterionNotPositiveKeyword = errors.New("google-ads: keyword acti
 // spend and cannot be undone. An absent row is also the exact shape of every case this guard
 // exists to catch (a userList criterion, a negative keyword, a criterion in another account),
 // so treating absence as permission would defeat the guard with the very input that triggers it.
+//
+// The status predicate is the same ALLOW-LIST GetKeywordPerformance uses (ENABLED, PAUSED),
+// and for the same reason plus one more that is specific to mutating. `keyword_view` DOES
+// return REMOVED criteria, and Google rejects a pause or removal of an already-removed
+// criterion as permanently unmutable. Admitting such a row would send the mutate anyway and
+// let that permanent rejection be classified as a retryable upstream failure — a 503 telling
+// the caller to try again on a handle that can never succeed, however many times it is
+// retried. Excluding it here makes the row absent, so it takes the `!ok` arm below and fails
+// LOCALLY as an invalid action (a 400) before anything is mutated, which is the honest
+// verdict for a stale handle. Enumerating the live states rather than excluding REMOVED also
+// default-denies UNSPECIFIED, UNKNOWN and the "" an omitted proto field decodes to, none of
+// which name a criterion this endpoint can act on.
 func (c *Client) resolveKeywordCriteria(ctx context.Context, validated []KeywordAction) error {
 	adGroupIDs := make([]string, 0, len(validated))
 	criterionIDs := make([]string, 0, len(validated))
@@ -726,8 +761,10 @@ func (c *Client) resolveKeywordCriteria(ctx context.Context, validated []Keyword
 	query := fmt.Sprintf(
 		"SELECT ad_group_criterion.criterion_id, ad_group.id, ad_group_criterion.negative "+
 			"FROM keyword_view "+
-			"WHERE ad_group.id IN (%s) AND ad_group_criterion.criterion_id IN (%s)",
+			"WHERE ad_group.id IN (%s) AND ad_group_criterion.criterion_id IN (%s) "+
+			"AND ad_group_criterion.status IN ('%s', '%s')",
 		strings.Join(adGroupIDs, ", "), strings.Join(criterionIDs, ", "),
+		StatusEnabled, StatusPaused,
 	)
 	rows, err := c.gaqlSearch(ctx, query)
 	if err != nil {

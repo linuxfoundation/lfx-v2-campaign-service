@@ -67,17 +67,26 @@ func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.BadRequestError{Code: "400", Message: "this reporting window is not supported"}
 	case errors.Is(err, ErrCampaignAccountMismatch):
-		// Reachable only once the scope filter refuses EVERY campaign: each of the project's
-		// campaigns was created under an ad account its connection no longer resolves to.
-		// That is permanent until someone reconnects the original account, so it must not
+		// Raised when the scope filter refuses ANY campaign, not only when it refuses every
+		// one — googleAdsScopeForCustomer fails closed on a PARTIAL mismatch too, rather than
+		// returning the matching subset as though it were the project's whole picture. Either
+		// way it is permanent until the rows and the connection are reconciled, so it must not
 		// reach the 503 default, which invites retrying a read that will keep failing.
+		//
+		// The remedy must therefore cover the MIXED case, which is the common one: some
+		// campaigns were created under the account the connection now resolves to and others
+		// under an older one. "Reconnect the original account" is wrong there — it would only
+		// swap which subset mismatches, breaking the campaigns that currently match. Naming
+		// reconciliation of the mismatched ROWS first is the remedy that works in both cases;
+		// reconnecting is offered only for the case where a single account really does own
+		// every campaign in scope.
 		//
 		// The two customer ids stay server-side, as on every sibling arm — which ad account a
 		// project is connected to is connection configuration, not something a keyword read
-		// should disclose.
-		slog.WarnContext(ctx, "keyword insights blocked: every campaign in scope belongs to a different ad account than the current connection",
+		// should disclose. That is also why the message cannot say WHICH campaigns mismatch.
+		slog.WarnContext(ctx, "keyword insights blocked: at least one campaign in scope belongs to a different ad account than the current connection",
 			"project_id", projectID, "error", safeErrSummary(err))
-		return &conn.ConflictError{Code: "409", Message: "this project's campaigns belong to a different ad account than its current connection — reconnect the original account to read their keywords"}
+		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns were created under a different ad account than its current connection — re-dispatch or reconcile those campaigns onto the connected account to read their keywords, or reconnect the account that owns all of them"}
 	default:
 		return s.classifyDiscoveryError(ctx, projectID, googleAdsKeywordInsights, err)
 	}

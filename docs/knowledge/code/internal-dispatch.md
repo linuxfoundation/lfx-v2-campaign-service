@@ -362,8 +362,17 @@ the matching subset. Dropping the mismatched entries would return a silent parti
 endpoints report success and NEITHER response carries an omitted-campaign signal, so a caller
 cannot distinguish a filtered project from one that genuinely has no other campaigns — and an
 audience distribution computed over half a project's campaigns looks exactly like a complete
-one. The service maps the sentinel to a 409 whose remedy (reconnect the original account) is
-already the right one, so no contract field was added.
+one. The service maps the sentinel to a 409, so no contract field was added — but the REMEDY
+the 409 carries had to change with it, and that is easy to miss when only the failure mode is
+widened. Failing closed on ANY mismatch makes the MIXED case the common one: some campaigns
+under the account the connection now resolves to, others under an older one. "Reconnect the
+original account" — correct on the single-campaign paths, where exactly one account is in
+play — is actively wrong advice there, because reconnecting merely swaps WHICH subset
+mismatches and breaks the campaigns that currently work. `classifyInsightsError` therefore
+tells the caller to reconcile or re-dispatch the mismatched campaign ROWS onto the connected
+account, offering the reconnect only for the case where one account owns every campaign in
+scope. **Widening a guard from "all" to "any" changes who the remedy is addressed to**; the
+message has to be re-read against the new condition, not carried over with the sentinel.
 
 ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
 narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item
