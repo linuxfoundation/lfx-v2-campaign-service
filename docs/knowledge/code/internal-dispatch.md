@@ -282,8 +282,10 @@ field existed), `demand-gen` maps to `DEMAND_GEN`. A campaign recorded as demand
 running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
 side made it permanently `unknown` — the finding could not be produced at all. The recorded
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
-a row with no snapshot, a snapshot that is not this adapter's JSON object, or a channel
-outside the closed set this service creates. Claiming `diverged` from a recorded value this
+a row with no snapshot, a snapshot that is not a JSON object, an object carrying no `"channel"`
+key at all (so not one `applyCampaignConfig` wrote — see the recognisability rule below), a
+`"channel"` that is not a JSON string, or a channel outside the closed set this service
+creates. Claiming `diverged` from a recorded value this
 code cannot interpret would be a fabricated finding rather than an observed one. The
 `campaign-settings-field` description in `design/brief.go` enumerates that compared list, so
 moving a field between compared and upstream-only is a CONTRACT change: the description is
@@ -351,6 +353,53 @@ absent upstream side, `unknown` verdict. `googleAdsDateOnly`'s strict parse is t
 discipline for dates. The general rule: when a decode step stops normalising so that
 malformed input stays malformed, every consumer downstream of it must be checked for a trim
 of its own — a single one is enough to undo the guarantee for its field.
+
+**And the RECORDED side is a consumer too.** The rule above was applied only downstream of the
+upstream decode, so `campaign_name` kept the same defect on the other side of the comparison:
+`recordedName` was built as `strPtr(strings.TrimSpace(campaign.CampaignName))` while
+`settings.Name` was carried verbatim, so a row holding `" name "` compared EQUAL to an
+upstream `"name"` and reported `match`. That row is reachable rather than theoretical —
+`UpdateCampaign` assigns `p.Campaign.CampaignName` verbatim with no whitespace validation in
+the service layer, in `design/`, or on the column.
+
+`TrimSpace` still has a job on the recorded side, and only one: DETECTING an all-blank legacy
+value, which means the row never captured a name and must read `unknown` rather than diverge
+against a real upstream one. The distinction to hold is **detect versus produce** — trim to
+decide whether a value exists, never to build the value you compare. Deleting the trim
+outright would swap one fabricated verdict for another, turning every blank column into a
+divergence. A test proving this needs PADDED recorded values: trimming a string with no
+surrounding whitespace is the identity, so an unpadded fixture passes against the bug.
+
+Symmetry is the actual invariant, not "never normalise". `budget_amount` runs both sides
+through the same numeric formatter, and `advertising_channel_type` trims and lowercases the
+recorded value onto a FIXED constant (`"SEARCH"`, `"DEMAND_GEN"`) rather than onto
+caller-derived text — neither can manufacture agreement. What must not happen is a
+normalisation applied to one side of a string comparison only.
+
+**A default may only be applied over the population it was reasoned about.**
+`googleAdsRecordedChannelType` decoded the snapshot into `googleAdsConfig`, whose
+`Channel string` cannot distinguish an omitted key, an explicit `"channel": null`, and a
+config object carrying no Google Ads fields at all: all three decode to `""` and all three
+were reported as a recorded `SEARCH`. Only the first is the legacy caller the default exists
+for, and `UpdateCampaign` persists arbitrary caller-supplied `config` JSON, so the other two
+arrive from an untrusted request — a fabricated match or divergence against a value nobody
+recorded, breaking the "both sides were read" rule.
+
+Recognisability is now decided BEFORE the default, on a property this adapter guarantees:
+`applyCampaignConfig` marshals the `googleAdsConfig` STRUCT VALUE whole and no field carries
+`omitempty`, so a snapshot this adapter wrote ALWAYS contains the `"channel"` key even when
+its value is `""`. Presence of the key is therefore equivalent to "written by this adapter".
+The snapshot is decoded into `map[string]json.RawMessage` first, because decoding straight
+into the struct is what collapses the three cases; a missing key, a value that is not a JSON
+string, and an explicit `null` each yield `nil`/`unknown`. **Absence still means exactly what
+it meant before**: the default was never "an empty string means Search", it was "a caller
+predating the field means Search", and such a caller's row was written by
+`applyCampaignConfig` and so HAS the key with an empty value. Those rows still read `SEARCH`.
+
+One trap worth recording: `json.Unmarshal` of `null` into a `string` SUCCEEDS in Go and leaves
+the zero value, so a decode error alone does not catch an explicit null — it needs its own
+check before the decode. That gap survived the first version of this fix and was caught only
+because the test table enumerated `null` separately from the wrong-typed values.
 
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see

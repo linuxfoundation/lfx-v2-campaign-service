@@ -216,6 +216,104 @@ func TestGoogleAds_ReadSettings_MatchWhenBothAgree(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ReadSettings_PaddedRecordedNameDoesNotFabricateAMatch pins the sibling of the
+// budget-period defect: a normalisation applied to only ONE side of a comparison manufactures
+// agreement the data does not support.
+//
+// The recorded name used to be TrimSpace'd on its way into the comparison while the upstream
+// name was carried verbatim, so a row holding `" same name "` compared EQUAL to an upstream
+// `"same name"` and was reported as a `match`. The two plainly differ, and Google is showing
+// the operator a name this service did not record — which is exactly the finding this readback
+// exists to surface.
+//
+// The padded row is reachable rather than hypothetical: UpdateCampaign assigns
+// `p.Campaign.CampaignName` verbatim (internal/service/brief.go), and there is no whitespace
+// validation in the service layer, in design/, or on the column.
+//
+// Every case here uses a PADDED recorded value. A test built from unpadded names passes
+// against the bug, because trimming a string with no surrounding whitespace is the identity —
+// which is why the existing match/divergence tests above could not have caught this.
+func TestGoogleAds_ReadSettings_PaddedRecordedNameDoesNotFabricateAMatch(t *testing.T) {
+	for name, recordedName := range map[string]string{
+		"leading space":      " same name",
+		"trailing space":     "same name ",
+		"both ends":          "  same name  ",
+		"trailing newline":   "same name\n",
+		"leading tab":        "\tsame name",
+		"internal is fine":   " same name\t",
+		"non-breaking space": "same name\u00a0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"same name","status":"ENABLED"}}]}`)
+
+			camp := &model.Campaign{
+				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				CampaignName: recordedName,
+			}
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			got := settingsField(t, rb, settingsFieldName)
+			if got.Comparison == model.SettingsMatch {
+				t.Errorf("comparison = match for recorded %q against upstream %q — trimming one "+
+					"side of the comparison fabricates an agreement the two values do not have, "+
+					"and hides that Google holds a name this service did not record",
+					recordedName, "same name")
+			}
+			if got.Comparison != model.SettingsDiverged {
+				t.Errorf("comparison = %q, want diverged: both sides were read and they differ", got.Comparison)
+			}
+			// The reported recorded value must be the row's OWN bytes. Reporting a trimmed
+			// value beside an "diverged" verdict shows an operator two strings that look
+			// identical, with no way to see why they were called different.
+			if got.Recorded == nil {
+				t.Fatal("Recorded = nil; the row holds a name")
+			}
+			if *got.Recorded != recordedName {
+				t.Errorf("Recorded = %q, want the row's verbatim %q — a normalised value in the "+
+					"report leaves the divergence unexplainable", *got.Recorded, recordedName)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ReadSettings_BlankRecordedNameIsUnknownNotDiverged is the narrowing half.
+// TrimSpace still has a job here: DETECTING an all-blank legacy value, which means the row
+// never captured a name. Reporting that as a divergence against a real upstream name would
+// invent a finding out of an absence — and a fix that simply deleted the TrimSpace would do
+// exactly that, while satisfying every assertion in the test above.
+func TestGoogleAds_ReadSettings_BlankRecordedNameIsUnknownNotDiverged(t *testing.T) {
+	for name, recordedName := range map[string]string{
+		"empty":    "",
+		"spaces":   "   ",
+		"tab":      "\t",
+		"newline":  "\n",
+		"mixed ws": " \t\n ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"upstream name","status":"ENABLED"}}]}`)
+
+			camp := &model.Campaign{
+				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				CampaignName: recordedName,
+			}
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			got := settingsField(t, rb, settingsFieldName)
+			if got.Recorded != nil {
+				t.Errorf("Recorded = %q, want nil: an all-blank column never captured a name, and "+
+					"comparing it would report a divergence for a row that recorded nothing", *got.Recorded)
+			}
+			if got.Comparison != model.SettingsUnknown {
+				t.Errorf("comparison = %q, want unknown", got.Comparison)
+			}
+		})
+	}
+}
+
 // TestGoogleAds_ReadSettings_IssuesNoMutatingCall proves the whole capability cannot spend
 // money, asserted over every request the dispatcher made rather than the one expected.
 func TestGoogleAds_ReadSettings_IssuesNoMutatingCall(t *testing.T) {
@@ -567,12 +665,29 @@ func TestGoogleAds_ReadSettings_RecordedChannelTypeDiverges(t *testing.T) {
 }
 
 // TestGoogleAds_ReadSettings_RecordedChannelTypeMatches: the same wiring must also be able
-// to report agreement, and an ABSENT channel in the snapshot means SEARCH — the value every
-// caller predating the field meant, and the one the dispatcher hardcoded before it existed.
+// to report agreement, and an EMPTY channel in a snapshot this adapter wrote means SEARCH —
+// the value every caller predating the field meant, and the one the dispatcher hardcoded
+// before it existed.
+//
+// The "absent channel" case previously used `{"budget":50}` — a JSON object with no
+// `"channel"` key at all — and asserted it recorded SEARCH. That agreed with the bug rather
+// than with the intent. `applyCampaignConfig` marshals the googleAdsConfig STRUCT whole and
+// no field carries `omitempty`, so a snapshot this adapter wrote ALWAYS carries the key;
+// `{"budget":50}` is therefore not a legacy row, it is a config blob something else supplied.
+// The legacy population is represented correctly by `{"budget":50,"channel":""}`, which is
+// what such a row genuinely looks like on disk, and that is what this case now asserts.
 func TestGoogleAds_ReadSettings_RecordedChannelTypeMatches(t *testing.T) {
 	for name, snapshot := range map[string]string{
 		"explicit search": `{"channel":"search"}`,
-		"absent channel":  `{"budget":50}`,
+		// What a caller predating the field ACTUALLY leaves on disk: the key present,
+		// holding the struct's zero value. This is the row the SEARCH default is for.
+		"empty channel written by applyCampaignConfig": `{"budget":50,"channel":""}`,
+		// The full shape applyCampaignConfig emits, to pin that the presence test is
+		// satisfied by a real snapshot and not only by a hand-trimmed one.
+		"full marshalled config with empty channel": `{"budget":50,"channel":"","headlines":null,` +
+			`"descriptions":null,"keywords":null,"audienceSegments":null,"geoTargets":null,` +
+			`"adoptExisting":false}`,
+		"padded channel value": `{"channel":"  SEARCH  "}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"SEARCH"}}]}`)
@@ -600,11 +715,30 @@ func TestGoogleAds_ReadSettings_RecordedChannelTypeMatches(t *testing.T) {
 // nothing was genuinely recorded, or where what was recorded cannot be interpreted. Claiming
 // `diverged` from a snapshot this adapter cannot read would be a fabricated finding — the
 // same absent-is-not-a-value discipline the rest of this readback applies.
+//
+// The table's second half pins the ABSENCE cases, which a `Channel string` decode cannot
+// separate: an omitted key, an explicit null and a wrong-typed value all produce "", and all
+// three were being reported as a recorded SEARCH. A default is only sound over the population
+// it was reasoned about — callers predating the field, whose rows applyCampaignConfig wrote
+// WITH the key — and `UpdateCampaign` accepts arbitrary config JSON, so nothing else may
+// borrow it.
 func TestGoogleAds_ReadSettings_UninterpretableChannelIsUnknown(t *testing.T) {
 	for name, snapshot := range map[string]string{
 		"no snapshot at all":                 ``,
 		"not a JSON object":                  `"search"`,
 		"channel this service cannot create": `{"channel":"performance-max"}`,
+		// The three cases the string decode could not tell apart. All three used to
+		// decode to "" and be reported as a recorded SEARCH — a channel nobody wrote.
+		// UpdateCampaign persists arbitrary caller-supplied config JSON, so each is
+		// reachable from an untrusted request, not only from this service's own writes.
+		"object with no channel key":  `{"budget":50}`,
+		"empty config object":         `{}`,
+		"explicit null channel":       `{"budget":50,"channel":null}`,
+		"channel is a number":         `{"budget":50,"channel":7}`,
+		"channel is an object":        `{"budget":50,"channel":{"name":"search"}}`,
+		"channel is an array":         `{"budget":50,"channel":["search"]}`,
+		"channel is a bool":           `{"budget":50,"channel":true}`,
+		"a foreign platform's config": `{"objective":"OUTCOME_TRAFFIC","pageId":"111"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"SEARCH"}}]}`)

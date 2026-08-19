@@ -1110,14 +1110,39 @@ func googleAdsVariantForChannelType(channelType string) (string, error) {
 // The snapshot is the googleAdsConfig marshalled whole by applyCampaignConfig, on both the
 // create and the adoption path, so Channel is recorded for every row either path wrote.
 //
-// An ABSENT Channel maps to SEARCH, not to nil, and that is the same decision googleAdsConfig
-// documents on the field itself: every caller predating the field omits it and they all mean
-// Search, which is what the dispatcher hardcoded before the field existed. Reporting `unknown`
-// for those rows would withhold a comparison this service can actually make.
+// An ABSENT Channel maps to SEARCH, not to nil — but ONLY once the snapshot has been
+// confirmed to be one this adapter wrote. That qualification is the whole of the fix here,
+// and without it the default is a fabrication.
 //
-// nil is returned only where nothing was genuinely recorded or the record cannot be trusted:
+// `json.Unmarshal` into a `Channel string` cannot tell three different things apart. An
+// omitted `"channel"` key, an explicit `"channel": null`, and a config object carrying no
+// Google Ads fields whatsoever all decode to `""`, and all three were then reported as a
+// recorded SEARCH. Only the FIRST of those means "a legacy caller who meant Search". The
+// other two are snapshots that say nothing about the channel at all, and `UpdateCampaign`
+// persists arbitrary caller-supplied `config` JSON into this column, so both are reachable
+// from an untrusted request rather than only from this service's own writes. Defaulting them
+// manufactured a match or a divergence against a value nobody recorded, breaking the rule
+// this readback rests on: report agreement only when BOTH sides were actually read.
+//
+// So "recognisable" is decided BEFORE the default is applied, and it is decided on a property
+// this adapter guarantees and a caller is unlikely to reproduce by accident:
+// `applyCampaignConfig` marshals the `googleAdsConfig` STRUCT VALUE whole, on both the create
+// (googleads.go:391) and the adoption (:454) path, and no field on that struct carries
+// `omitempty` — so a snapshot this adapter wrote ALWAYS contains the `"channel"` key, even
+// when the value is `""`. Presence of the key is therefore exactly equivalent to "written by
+// this adapter", which is the population the legacy default was reasoned about.
+//
+// Absence still means what it always meant. The default was never "an empty string means
+// Search"; it was "a caller who predates the field means Search", and such a caller's row was
+// written by applyCampaignConfig and so HAS the key with an empty value. That row still reads
+// SEARCH. What changes is that a snapshot which never carried the key — something this
+// adapter did not write — no longer borrows a default that was justified for a different
+// population. It reports `unknown`, which is the accurate statement: nothing was recorded.
+//
+// nil is returned wherever nothing was genuinely recorded or the record cannot be trusted:
 // a row with no snapshot at all (a legacy row, or one whose marshal failed and was logged),
-// a snapshot that is not the JSON object this adapter writes, or a Channel value outside the
+// a snapshot that is not a JSON object, an object with no `"channel"` key, a `"channel"` that
+// is not a JSON string (an explicit null, a number, an object), or a Channel value outside the
 // closed set this service creates. That last case is not a divergence to report — it is a row
 // this code cannot interpret, and claiming `diverged` from an uninterpretable recorded value
 // would be a fabricated finding rather than an observed one.
@@ -1125,15 +1150,45 @@ func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign)
 	if len(campaign.ConfigSnapshot) == 0 {
 		return nil
 	}
-	var cfg googleAdsConfig
-	if err := json.Unmarshal(campaign.ConfigSnapshot, &cfg); err != nil {
+	// Decoded into RawMessage first, so presence and JSON type survive the decode. Decoding
+	// straight into googleAdsConfig collapses "absent", "null" and "wrong type" onto the same
+	// zero value, which is precisely the distinction this function needs to keep.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(campaign.ConfigSnapshot, &raw); err != nil {
 		// Not an error for the caller: the readback still reports every other field. The row
 		// simply cannot say what was asked for, which is exactly what `unknown` means.
 		slog.WarnContext(ctx, "google ads config snapshot could not be decoded; advertising_channel_type has no recorded side",
 			"campaign_id", campaign.ID, "error", err)
 		return nil
 	}
-	switch strings.ToLower(strings.TrimSpace(cfg.Channel)) {
+	rawChannel, ok := raw["channel"]
+	if !ok {
+		// Not a snapshot this adapter wrote — applyCampaignConfig always emits the key. The
+		// legacy SEARCH default was justified for rows this service wrote and must not be
+		// extended to a config blob some caller supplied through UpdateCampaign.
+		slog.WarnContext(ctx, "google ads config snapshot carries no channel key; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return nil
+	}
+	// An explicit JSON null is checked SEPARATELY, before the decode. json.Unmarshal of
+	// `null` into a string SUCCEEDS in Go, leaving the zero value untouched — so a decode
+	// error alone does not catch it, and `{"channel": null}` would take the SEARCH default
+	// by the very route this function exists to close.
+	var channel string
+	if strings.TrimSpace(string(rawChannel)) == "null" {
+		slog.WarnContext(ctx, "google ads config snapshot channel is explicitly null; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return nil
+	}
+	if err := json.Unmarshal(rawChannel, &channel); err != nil {
+		// Present but not a JSON string: an explicit null, a number, an object. The key being
+		// there does not make its value a recorded channel, and coercing it to "" would
+		// resurrect the same fabricated SEARCH by a different route.
+		slog.WarnContext(ctx, "google ads config snapshot channel is not a string; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(channel)) {
 	case "", googleAdsChannelSearch:
 		return strPtr(googleAdsChannelTypeSearch)
 	case googleAdsChannelDemandGen:
@@ -1461,9 +1516,23 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 	// Campaign name. Recorded as a plain column, so an empty one is treated as unrecorded
 	// rather than compared as "" — comparing an empty string against a real name would
 	// report a divergence for a row that simply never captured the name.
+	//
+	// TrimSpace DETECTS the all-blank legacy value; it does not produce the compared one.
+	// Trimming into `recordedName` fabricated agreement: a row holding `" name "` compared
+	// equal to an upstream `"name"` and was reported as a MATCH, when the two sides plainly
+	// differ and Google is showing the operator a name this service did not record. That
+	// padded row is reachable — UpdateCampaign assigns `p.Campaign.CampaignName` verbatim
+	// (internal/service/brief.go) with no whitespace validation in the service layer, the
+	// design, or the column.
+	//
+	// This is the same defect fixed on the budget period a moment ago, in a sibling field:
+	// a normalisation applied to only ONE side of a comparison reports agreement the data
+	// does not support. The recorded value is therefore carried VERBATIM, and any
+	// difference — including one that is only whitespace — is a divergence, which is the
+	// honest answer for a readback whose whole job is to say whether the two sides agree.
 	var recordedName *string
-	if n := strings.TrimSpace(campaign.CampaignName); n != "" {
-		recordedName = strPtr(n)
+	if strings.TrimSpace(campaign.CampaignName) != "" {
+		recordedName = strPtr(campaign.CampaignName)
 	}
 
 	// Flight dates. The RECORDED side is always nil for Google Ads today —
