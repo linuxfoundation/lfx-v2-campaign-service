@@ -73,10 +73,9 @@ in-memory suite alone would not have caught the `DEFAULT FALSE` or `COALESCE` mu
 **What the local review trio added, and it was the important part.** Two reviewers
 independently found the same hole by mutation: the seven
 `defer func() { res.stampProvenance(camp) }()` calls — the ONLY thing moving provenance from
-the credential onto the campaign — had no test. Deleting one left the entire suite green, and
-for five of the seven it still COMPILED, because those `Dispatch` bodies use `res` elsewhere.
-(Reddit and hubspot use `res` for nothing else, so the compiler catches those two — stricter,
-but not a property the other five have, and not one to rely on.) The three original test files each covered a piece in
+the credential onto the campaign — had no test. Neutralising one left the entire suite green.
+(A plain line-DELETE is not the right probe — see the mutation note below.) The three original
+test files each covered a piece in
 isolation (`stampProvenance` called directly; the orchestrator handed a campaign that already
 carried the flag) and nothing ran a real `Dispatch` and looked at the field. The change's own
 argument — that a defer beats seventeen per-return edits because a future exit cannot be
@@ -102,12 +101,20 @@ while dropping only the effect:
 Under that mutation all seven COMPILE and all seven are killed by real TEST failures, each
 naming its dispatcher. That is the form the evidence rests on.
 
-Each row also DECLARES which exit it drives (`wantErr`) and asserts it. Eleven reach a clean
-create; the two linkedin rows reach the UNCONFIRMED arm, because the fake answers the
+Each row also DECLARES which exit it drives (`wantErrContains`) and asserts it. Eleven reach a
+clean create; the two linkedin rows reach the UNCONFIRMED arm, because the fake answers the
 dark-post step with a plain id where the client requires a `urn:li:share/ugcPost` URN. That is
 kept rather than "fixed": the error-carrying exit is the one per-return stamping would most
 plausibly miss. Asserting it stops the table from silently degrading into all-partials, which
 would still stamp and so would slip past the provenance assertion alone.
+
+It is a SUBSTRING, not a bool, and the difference is not fussiness. A bool pins only that
+*some* error occurred, so a fake that drifted into a different failure would keep passing
+while the comment explaining the row went stale — a 500 on the campaign-group POST aborts
+before the dark-post step, still returns a partial, and still satisfies "expect an error".
+Verified by mutation: that exact drift is caught (`expected an error containing
+"urn:li:share/ugcPost", got ... campaign group creation UNCONFIRMED`), where the bool version
+passed.
 
 The first version of that table was itself the bug it was written to prevent: pointing all
 seven at one 5xx server made nine of fourteen cases hit `t.Skip` (most adapters return
