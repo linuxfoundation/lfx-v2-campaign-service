@@ -231,8 +231,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// and forth on every element, and above 2^53 float64 cannot represent every consecutive
 	// integer, so each round trip can silently drop increments (and feed the overflow check
 	// below a value that is no longer the true sum).
+	//
+	// Two flags, not one, because presence and completeness are different questions.
+	// conversionsMeasured records that at least one element CARRIED the metric;
+	// conversionsIncomplete records that at least one element OMITTED it. Accumulating
+	// outside metrics.Conversions is what lets an omission found on a LATER element still
+	// withdraw a total the earlier ones already contributed to — writing straight to the
+	// response field would leave that partial sum published.
 	var conversions int64
 	var conversionsMeasured bool
+	conversionsIncomplete := false
 	for _, elem := range *resp.Elements {
 		// Reject negative counts and check the running sum before adding, the same
 		// guard costInUsd's aggregation applies below: two individually valid int64
@@ -263,12 +271,32 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		}
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
-		// Conversions aggregate only across elements that actually CARRIED the metric, and
-		// the result stays nil if none did. Treating an absent externalWebsiteConversions as
-		// a zero addend would silently convert "LinkedIn did not report this" into a measured
-		// zero — the substitution the pointer exists to prevent — and it would do so most
-		// often on exactly the responses where the field was never requested.
-		if elem.ExternalWebsiteConversions != nil {
+		// Conversions are published only when EVERY element carried the metric: one element
+		// omitting externalWebsiteConversions withdraws the whole total to nil, and so does a
+		// response where none carried it. Treating an absent value as a zero addend would
+		// silently convert "LinkedIn did not report this" into a measured zero — the
+		// substitution the pointer exists to prevent — and it would do so most often on
+		// exactly the responses where the field was never requested.
+		if elem.ExternalWebsiteConversions == nil {
+			// An OMITTED metric poisons the whole total rather than being skipped over.
+			//
+			// The alternative — sum the elements that do carry a value and report that — is
+			// wrong in a way the type cannot express: it hands every consumer a PARTIAL count
+			// labelled as a complete measurement. Consider two elements where the first omits
+			// the field and the second reports an explicit 0. Summing the present ones yields
+			// exactly 0, while the clicks from BOTH elements still aggregate — so once they
+			// clear minClicksForConversions the no_conversions rule fires HIGH against a
+			// campaign whose real conversion count is simply unknown. That is the rule
+			// manufacturing its own finding rather than measuring one.
+			//
+			// nil already means precisely "LinkedIn did not report this", which is the honest
+			// answer for a partially-covered response, and model.CampaignMetrics.Conversions
+			// documents that the rule refuses to fire on nil. This mirrors the convIncomplete
+			// discipline in microsoft/metrics.go, where one blank ConversionsQualified cell
+			// withdraws that report's entire total, for the same reason and against the same
+			// rule.
+			conversionsIncomplete = true
+		} else {
 			conv := *elem.ExternalWebsiteConversions
 			// Same guards the counters above get, and for the same reason: a negative count
 			// is malformed upstream data rather than a small number, and two valid int64
@@ -311,10 +339,11 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		}
 	}
 
-	// Widen the aggregated count once, and only if at least one element carried the metric:
-	// a nil Conversions means LinkedIn never reported it, which stays distinct from a
-	// measured zero.
-	if conversionsMeasured {
+	// Widen the aggregated count once, and only if EVERY element carried the metric. One
+	// element omitting it anywhere in the response leaves Conversions nil — see the reasoning
+	// at the accumulation site. A nil Conversions means LinkedIn never reported it, or
+	// reported it incompletely; both stay distinct from a measured zero.
+	if conversionsMeasured && !conversionsIncomplete {
 		total := float64(conversions)
 		metrics.Conversions = &total
 	}

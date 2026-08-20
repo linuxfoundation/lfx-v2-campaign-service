@@ -114,13 +114,22 @@ the domain model uses exactly once, after aggregation — the same shape `CostMi
 accumulator is deliberately NOT the `*float64` domain field itself: reading the running total back
 out of it converts int64 to float64 and back on every element, and above 2^53 float64 cannot
 represent every consecutive integer, so each round trip can silently drop increments and hand the
-overflow check a value that is no longer the true sum. A separate boolean, not a non-nil pointer,
-carries the "some element reported this" state, so the nil-versus-measured-zero distinction
-survives without the field doubling as storage. The metric is aggregated ONLY across response elements that actually carried
-it, and the result stays nil when none did — treating an absent element value as a zero addend
-would convert "LinkedIn did not report this" into a measured zero, which is the substitution the
-pointer exists to prevent, and it would do so most often on exactly the responses where the
-field was never requested.
+overflow check a value that is no longer the true sum. Separate booleans, not a non-nil pointer,
+carry the presence state, so the nil-versus-measured-zero distinction survives without the
+field doubling as storage.
+
+The count is published ONLY when EVERY element carried the metric. One element omitting it
+withdraws the whole total to nil, even if other elements reported values and even if the
+omission is found after they were already summed — which is why the accumulator lives outside
+the response field. Summing just the elements that carried the metric would hand consumers a
+PARTIAL count labelled as a complete one: an element that omits the field followed by one
+reporting `0` sums to exactly `0` while the clicks of BOTH elements still aggregate, so once
+they clear `minClicksForConversions` the `no_conversions` rule fires HIGH against a campaign
+whose real conversion count is unknown — the rule manufacturing its own finding. Treating an
+absent element value as a zero addend is the substitution the pointer exists to prevent, and
+it lands most often on exactly the responses where the field was never requested. This is the
+same discipline `microsoft/metrics.go` applies with `convIncomplete`, where one blank
+`ConversionsQualified` cell withdraws that report's entire total.
 
 The same Rest.li-vs-transport encoding split applies to the find-or-create name filter, and
 `doRequest` handles it inline rather than by bypass. `restliEncode` produces the FINAL bytes

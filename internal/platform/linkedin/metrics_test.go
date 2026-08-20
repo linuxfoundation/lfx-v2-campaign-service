@@ -1618,3 +1618,57 @@ func TestGetCampaignMetrics_NegativeConversionsIsAnError(t *testing.T) {
 		t.Error("a negative externalWebsiteConversions was accepted as a measurement")
 	}
 }
+
+// A response in which SOME elements carry externalWebsiteConversions and others omit it is
+// an INCOMPLETE measurement, and the aggregate must withdraw to nil rather than publish the
+// sum of the present ones. Summing only the elements that carried the metric presents a
+// PARTIAL count to every consumer as a complete one, with nothing left in the type to say
+// otherwise — and the failure mode is not hypothetical. Consider the fixture below: one
+// element omits the field and a later one reports an explicit 0. Summing the present
+// elements yields exactly 0, and because both elements' clicks still aggregate to 50 — the
+// no_conversions rule's minClicksForConversions floor — the rule fires HIGH against a
+// campaign whose true conversion count is simply unknown. That is the rule manufacturing
+// its own finding rather than measuring one.
+//
+// This mirrors internal/platform/microsoft/metrics.go, whose convIncomplete flag poisons
+// the WHOLE ConversionsQualified total when any single cell is blank, for the same reason
+// and against the same rule. LinkedIn was not brought along when that discipline landed.
+func TestGetCampaignMetrics_PartialConversionsCoverageIsNilNotAPartialSum(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30},
+		{"impressions":400,"clicks":20,"externalWebsiteConversions":0}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Clicks != 50 {
+		t.Fatalf("Clicks = %d, want 50: the fixture must reach minClicksForConversions for "+
+			"this test to describe the no_conversions firing it exists to prevent", m.Clicks)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v across elements where one OMITTED the metric and a later "+
+			"one reported 0; an incomplete measurement was published as a measured zero, and "+
+			"with %d clicks the no_conversions rule now fires HIGH on data LinkedIn never "+
+			"fully reported", *m.Conversions, m.Clicks)
+	}
+}
+
+// The withdrawal must not depend on element ORDER: a present value seen BEFORE the omission
+// must be retracted just as a later one is never published. Accumulating into the response
+// field directly would leave the first element's total already written when the second is
+// found to be missing.
+func TestGetCampaignMetrics_ConversionsWithdrawnWhenOmissionFollowsAValue(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30,"externalWebsiteConversions":9},
+		{"impressions":400,"clicks":20}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v: a value from the first element survived a later element "+
+			"omitting the metric, publishing a partial sum as a complete count", *m.Conversions)
+	}
+}

@@ -183,11 +183,18 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		// A no-activity window is a MEASUREMENT, not an absence of one. Google Ads omits a
 		// campaign from results entirely when it had no impressions, so this branch means the
 		// query ran and the answer was zero — not that conversions could not be measured here.
-		// Conversions must therefore be a non-nil zero, exactly as the row-decoding path below
-		// materialises it, or the struct's own invariant ("this adapter never leaves it nil")
-		// is false on the one path where it matters most: the no_conversions rule refuses to
-		// fire on a nil count, so leaving it nil here would silence that rule for precisely the
-		// campaign it exists to catch — one delivering nothing and converting nobody.
+		// Conversions is therefore a non-nil zero, exactly as the row-decoding path below
+		// materialises it, keeping this adapter's invariant ("it never leaves the count nil")
+		// true on every path. nil is reserved for platforms that cannot report a campaign-level
+		// conversion count at all, and this is not one of them.
+		//
+		// The reason is the invariant itself, NOT any effect on the no_conversions rule. That
+		// rule cannot fire on this branch whichever way the pointer goes: it is gated on
+		// in.Clicks >= minClicksForConversions (internal/service/rules/actions.go), and a
+		// window with no rows has zero clicks. What the honest zero actually buys is that
+		// every consumer of this struct — the metrics response, a conversion total, anything
+		// reading the pointer — sees "measured, and the answer was none" rather than
+		// "unmeasured", which is the true state of a window Google did answer.
 		zero := 0.0
 		return &CampaignMetrics{CampaignID: id, Window: w, Conversions: &zero}, nil
 	}
