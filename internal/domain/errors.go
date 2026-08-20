@@ -327,7 +327,7 @@ var (
 	// created to retire, one taxonomy level down.
 	//
 	// The remedy it carries is "file a bug against this service", which is why it must not
-	// share a reason token with either credential fault: an operator greping the reason
+	// share a reason token with either credential fault: an operator grepping the reason
 	// vocabulary needs to see that nothing they own is broken.
 	//
 	// PERMANENT, never retryable: nothing about waiting corrects a request this service is
