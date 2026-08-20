@@ -382,19 +382,38 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 		-- stamped (the retained-partial persist and the success persist are both upserts
 		-- over the same claim). An unattributed re-persist is an ordinary event.
 		updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by),
-		-- ran_on_system_account is NOT in the update list either, and unlike created_by the
-		-- reason is not only repository hygiene — it is what the column MEANS. It records
-		-- which ad account actually served this campaign at creation, which is a historical
-		-- fact about money already spent. Re-deriving it on a later write would let a project
-		-- that connects its own ad account today rewrite who paid for a campaign the LF
-		-- funded months ago, turning an audit record into a description of the current
-		-- config. The INSERT arm above stamps it once, from the credential the dispatcher
-		-- actually used; every subsequent update and status toggle leaves it alone.
+		-- ran_on_system_account is WRITE-ONCE: this arm fills it only while the stored value
+		-- is still NULL, and never revises a value already there.
 		--
-		-- Note this is a bare omission, NOT a COALESCE. COALESCE would be wrong here in a way
-		-- it is not for updated_by: the column is nullable with three meanings, and a row
-		-- legitimately holding FALSE ("ran on the project's own account") must not be
-		-- upgradable to TRUE by a later write that happens to carry one.
+		-- The column records which ad account actually served this campaign, which is a
+		-- historical fact about money already spent. Re-deriving it on a later write would
+		-- let a project that connects its own ad account today rewrite who paid for a
+		-- campaign the LF funded months ago, turning an audit record into a description of
+		-- the current config. Hence the campaigns.ran_on_system_account IS NULL guard
+		-- rather than a bare assignment.
+		--
+		-- It must be a guard rather than a bare OMISSION, though, because the INSERT arm
+		-- above is NOT the arm that runs on a normal dispatch. dispatchPlatform reaches an
+		-- upsert only after ClaimCampaignDispatch won, and that claim ALREADY INSERTED a
+		-- 'pending' row on this exact (brief_id, platform, variant) slot — so the row exists
+		-- and the upsert lands HERE, on the conflict arm. Omitting the column therefore did
+		-- not protect a historical fact; it discarded the dispatcher's value on every
+		-- dispatch and left the column NULL forever, which is the "unknown" state the
+		-- three-way column exists to distinguish from a real answer. The claim row is
+		-- precisely a row whose provenance is still NULL, so the guard stamps it there.
+		-- Pinned by TestLiveClaimThenUpsertPersistsProvenance.
+		--
+		-- And it must be the IS NULL guard rather than a COALESCE on EXCLUDED. COALESCE is
+		-- right for updated_by above but wrong here: it only defends against an incoming
+		-- NULL, so a row legitimately holding FALSE ("ran on the project's own account")
+		-- would still be upgradable to TRUE by a later write that happens to carry one.
+		-- Guarding on the STORED value freezes false and true alike, and an incoming NULL
+		-- over a stored NULL is a no-op either way. Pinned by
+		-- TestLiveProvenanceIsWrittenOnceThenFrozen.
+		ran_on_system_account=CASE
+			WHEN campaigns.ran_on_system_account IS NULL THEN EXCLUDED.ran_on_system_account
+			ELSE campaigns.ran_on_system_account
+		END,
 		version=campaigns.version+1, updated_at=now()
 	RETURNING ` + campaignCols
 

@@ -141,9 +141,11 @@ type Campaign struct {
 	//
 	// A HISTORICAL FACT, fixed at creation. It is never recomputed from whether the
 	// project has its own connection TODAY: a project connecting its own account later
-	// does not change who paid for a campaign already created. UpsertCampaign's conflict
-	// arm omits the column so a later update or status toggle cannot rewrite it, exactly
-	// as it omits created_by.
+	// does not change who paid for a campaign already created. The column is WRITE-ONCE
+	// in the repository: UpsertCampaign's conflict arm fills it only while the stored
+	// value is NULL, so the first write after the dispatch claim stamps it and every
+	// later update or status toggle leaves it alone. A stored false is frozen just as a
+	// stored true is — it is not upgradable by a later write carrying true.
 	RanOnSystemAccount *bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time

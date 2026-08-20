@@ -326,6 +326,14 @@ func TestAdoptCampaign_RefusesToRepointALiveBinding(t *testing.T) {
 // build error, no test failure elsewhere, and no wrong-looking data until someone asks who
 // authorized a campaign months later. This package has no live-database harness in CI, so the
 // assertion is against the SQL text.
+//
+// Note the asymmetry the third assertion below turns on. The reasoning above — "the claim
+// INSERTed the row, so this arm only ever FINALIZES it" — is exactly why created_by can be
+// safely OMITTED here: the claim already stamped it. That same fact makes omission the wrong
+// answer for ran_on_system_account, which the claim does NOT stamp and cannot, since
+// fromSystem is not known until the dispatcher resolves credentials after the claim is won.
+// Omitting a column the INSERT arm would have written means it is never written on any real
+// path. Hence: created_by absent, ran_on_system_account present but guarded.
 func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
 	_, updateArm, found := strings.Cut(upsertCampaignQuery, "DO UPDATE SET")
 	require.True(t, found, "upsertCampaignQuery has no DO UPDATE SET arm; if the statement was "+
@@ -341,32 +349,44 @@ func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
 			"re-dispatch passes NULL, and writing that over a real actor turns "+
 			"\"we know who\" into \"we do not\"")
 
-	// ran_on_system_account is protected the same way and for a stronger reason: it records
-	// which ad account actually PAID for this campaign, at creation. Assigning it here would
-	// let a project that connects its own ad account later rewrite who funded a campaign the
-	// LF already paid for.
+	// ran_on_system_account is protected for a stronger reason still: it records which ad
+	// account actually PAID for this campaign, at creation. But unlike created_by it must be
+	// PRESENT in this arm, because this arm is the only one a real dispatch ever reaches —
+	// ClaimCampaignDispatch has already INSERTed the row by the time the upsert runs, so the
+	// INSERT arm is unreachable on the normal path and an absent column is never written at
+	// all. This assertion previously demanded the column be ABSENT, and passed for the whole
+	// period during which the value was silently discarded on every dispatch.
 	//
-	// The assertion is on the column name alone, so it catches BOTH shapes of the mistake —
-	// the bare `=EXCLUDED.` copy and the plausible-looking COALESCE. COALESCE is wrong here
-	// in a way it is not for updated_by: a row holding FALSE ("ran on the project's own
-	// account") is not NULL, so a later write carrying TRUE would still overwrite it.
-	// The behaviour is pinned live by TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate; this
-	// keeps the guard in the unit suite, which runs without a database.
+	// So the guard is on the SHAPE of the assignment, not on its presence. It must be
+	// conditional on the STORED value being NULL, which is what makes the write happen once
+	// and never again. The two wrong shapes are a bare `=EXCLUDED.` copy (revises freely) and
+	// the plausible-looking COALESCE on EXCLUDED, which is wrong here in a way it is not for
+	// updated_by: a row holding FALSE ("ran on the project's own account") is not NULL, so a
+	// later write carrying TRUE would still overwrite it. Both are pinned live by
+	// TestLiveProvenanceIsWrittenOnceThenFrozen alongside
+	// TestLiveClaimThenUpsertPersistsProvenance, which drives the real claim-then-upsert
+	// sequence; this keeps the guard in the unit suite, which runs without a database.
 	//
 	// Asserted against the SET LIST ALONE, with SQL comments stripped. Two things would
 	// otherwise defeat it, and neither is hypothetical — both were observed while writing
-	// this test. The comment explaining the omission necessarily names the column, so a
-	// check over the raw text matches the PROSE and fails whatever the statement does. And
+	// this test. The comment explaining the assignment necessarily names the column, so a
+	// check over the raw text matches the PROSE and passes whatever the statement does. And
 	// the RETURNING clause is `campaignCols`, which legitimately SELECTS the column, so a
 	// check over the whole arm matches a READ and reports it as a write. Cutting at
 	// RETURNING leaves only the assignments, which is what the guard is about.
 	setList, _, cut := strings.Cut(stripSQLComments(updateArm), "RETURNING")
 	require.True(t, cut, "upsertCampaignQuery's conflict arm has no RETURNING clause; if the "+
 		"statement was restructured, update this test deliberately")
-	assert.NotContains(t, setList, "ran_on_system_account",
-		"ran_on_system_account is assigned in the conflict arm: the column records which "+
-			"account served the campaign AT CREATION, so any assignment here — including a "+
-			"COALESCE — lets a later update revise who paid for spend that already happened")
+
+	assert.Contains(t, normalizeWS(setList),
+		"ran_on_system_account=CASE WHEN campaigns.ran_on_system_account IS NULL "+
+			"THEN EXCLUDED.ran_on_system_account ELSE campaigns.ran_on_system_account END",
+		"ran_on_system_account must be assigned in the conflict arm, guarded on the STORED "+
+			"value being NULL. Omitting it does NOT protect the column: a dispatch always "+
+			"claims (INSERTing the row) before it upserts, so the INSERT arm never runs and "+
+			"an absent column is never written at all. Guarding on the stored value is what "+
+			"stamps the claim row once and freezes it — including a stored FALSE, which a "+
+			"COALESCE on EXCLUDED would still let a later TRUE overwrite")
 }
 
 // stripSQLComments removes `-- ...` line comments so an assertion can be made about the
