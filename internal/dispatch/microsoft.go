@@ -95,11 +95,23 @@ type MicrosoftDispatcher struct {
 	// Sharing one instance across concurrent callers is safe for this client specifically. That
 	// needed checking separately from Google Ads rather than assumed: this client is the one
 	// with multi-customer discovery, so a CustomerID mutated per call would have made a shared
-	// instance serve one caller's request against another's customer. It does not — the only
-	// fields written after construction are the token cache and the in-flight refresh handle,
-	// both exclusively under c.tokenMu (client.go accessTokenValue/fetchToken), and the customer
-	// id travels as a per-call argument (doCustomerRequest / accountsInfoForCustomer) rather
-	// than being stashed on the receiver.
+	// instance serve one caller's request against another's customer. It does not — the customer
+	// id travels as a per-call argument (doCustomerRequest / accountsInfoForCustomer) rather than
+	// being stashed on the receiver.
+	//
+	// Everything written after construction is mutex-guarded, under TWO separate locks:
+	//
+	//   - the access token + its in-flight refresh handle, under c.tokenMu
+	//     (client.go accessTokenValue/fetchToken); and
+	//   - the parsed geo-locations snapshot + its in-flight fetch handle (c.geo.snapshot /
+	//     c.geo.inflight), under c.geo.mu (geo.go locationsSnapshot).
+	//
+	// The two are deliberately separate rather than one lock: a token refresh is a small JSON
+	// round trip while a locations refresh is a multi-MiB download, so sharing a mutex would let
+	// a slow file fetch stall every token read. Neither lock is held across its network call.
+	// The geo cache is the one that only became SHARED state when this cache landed — before it,
+	// a per-Dispatch client meant a per-create geo cache — so a future field added to this client
+	// must be given the same treatment before it is shared.
 	clients *clientCache
 	opts    []microsoft.Option
 }

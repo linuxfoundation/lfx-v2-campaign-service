@@ -904,9 +904,15 @@ owned-connection path is likewise excluded as a one-shot rather than the polling
 for.
 
 **Sharing one client instance across concurrent callers is a per-client property, verified per
-provider rather than inherited.** All three cached clients guard their token cache and in-flight
-refresh handle with a mutex and stash no per-call state on the receiver, so the instance is safe to
-share. Microsoft needed the check most: it is the client with multi-customer discovery, so a
+provider rather than inherited.** All three cached clients guard everything they write after
+construction with a mutex and stash no per-call state on the receiver, so the instance is safe to
+share. For Google Ads and Reddit that is the token cache plus its in-flight refresh handle, under
+one mutex. Microsoft has TWO locks and the count matters: `tokenMu` for the token cache and its
+refresh handle, and the separate `geo.mu` for the parsed geo-locations snapshot and its in-flight
+fetch — separate because a token refresh is a small JSON round trip while a locations refresh is a
+multi-MiB download, and one lock would let a slow file fetch stall every token read. Caching the
+client is also what made that geo cache SHARED state: it now spans creates for one connection
+rather than living and dying with a single `Dispatch`. Microsoft needed the check most: it is the client with multi-customer discovery, so a
 `CustomerID` mutated per call would have made a shared instance serve one caller against another's
 customer — it does not, because the customer id travels as a per-call argument
 (`doCustomerRequest` / `accountsInfoForCustomer`) rather than on the receiver. A future provider
@@ -923,6 +929,22 @@ case the warm-key reuse does not cover: N callers all miss, each builds its own 
 mints its own token from its own instance cache — measured at 16 exchanges across 16 concurrent
 callers, i.e. a cold key behaved as though there were no cache at all. That is the shape a
 dashboard produces when several panels load at once or a pod restarts.
+
+**Three properties of these tests were asserted before they were exercised, and each needed a
+compiling mutation to expose.** They are recorded here because the shapes recur:
+
+* A probe reached a base URL the fixture did not stub. `microsoft.Client` splits its API across
+  three hosts, an un-overridden origin falls back to the PRODUCTION default rather than failing,
+  and the probes discard their API error — so the Microsoft cache tests dialled
+  `reporting.api.bingads.microsoft.com` on every run while passing, with the cache assertions
+  resting on a live network error. The guard is a dialler that refuses non-loopback addresses, not
+  a timing assertion.
+* A bookkeeping mutex held across the probe (`mu.Lock(); defer mu.Unlock()` before the call) made
+  the 16-caller `-race` burst run strictly serially. Deleting the production-side locking from
+  `reddit.Client.refreshToken` left it passing; the lock must cover only the shared appends.
+* The cache tests all drove `resolveMicrosoftClient`, so `Dispatch`'s own construction line was
+  unbound — reverting it to a direct `microsoft.NewClient` kept the whole suite green. The binding
+  assertion is the token COUNT across two dispatches of an unchanged connection.
 
 **The TTL bounds memory residency, not staleness.** Correctness comes from the id+version check;
 the 5-minute TTL and 512-entry LRU cap exist because entries hold plaintext, and an unbounded cache

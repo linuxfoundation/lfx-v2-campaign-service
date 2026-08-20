@@ -5,7 +5,10 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,9 +100,94 @@ func redditProbe(t *testing.T, c *reddit.Client) {
 
 // microsoftProbe is redditProbe for Microsoft. Its id and the connection's ACCOUNT id must both be
 // digits only — the client rejects either locally, before authenticating.
+//
+// GetCampaignMetrics submits to the REPORTING origin (c.reportingBaseURL), not the Campaign
+// Management one, so every caller must point microsoft.WithReportingBaseURL at the stub as well
+// as WithBaseURL — see newMicrosoftCacheDispatcher. Stubbing only WithBaseURL left this probe
+// dialling https://reporting.api.bingads.microsoft.com on every `make test` and in CI: the
+// assertions still passed, because the probe ignores its error and the token exchange it exists
+// to force had already happened, so the suite was measuring a live network failure rather than
+// the cache. It cost ~2.8s per run here and would fail closed in a sandbox with no egress.
 func microsoftProbe(t *testing.T, c *microsoft.Client) {
 	t.Helper()
 	_, _ = c.GetCampaignMetrics(context.Background(), "12345", model.MetricsWindowLast7Days)
+}
+
+// newMicrosoftCacheDispatcher builds the dispatcher every Microsoft client-cache test uses,
+// pointing ALL THREE of the client's origins at the stub. It exists so the reporting override
+// cannot be forgotten in one test and silently reintroduce the live call: microsoft.Client splits
+// its API across three hosts (Campaign Management, Customer Management and Reporting), and an
+// un-overridden origin falls back to the production default rather than failing loudly.
+func newMicrosoftCacheDispatcher(repo connReader, srv *httptest.Server) *MicrosoftDispatcher {
+	return NewMicrosoftDispatcher(repo, identityEncryptor{},
+		microsoft.WithTokenURL(srv.URL+"/token"),
+		microsoft.WithBaseURL(srv.URL),
+		microsoft.WithCustomerBaseURL(srv.URL),
+		microsoft.WithReportingBaseURL(srv.URL))
+}
+
+// loopbackOnlyClient returns an *http.Client whose dialer REFUSES any address outside loopback,
+// and a counter of the refusals.
+//
+// This is the standing guard for the whole file: every URL these tests drive must point at the
+// httptest stub, and the failure mode when one does not is silent. microsoft.Client splits its API
+// across three hosts and each un-overridden origin falls back to a real Microsoft endpoint, while
+// the probes deliberately discard their API error — so a missed override produced a green test
+// that dialled production on every run. Asserting on elapsed time would be flaky; refusing the
+// dial makes the escape an explicit, deterministic failure at the point it happens.
+func loopbackOnlyClient(t *testing.T) (*http.Client, *atomic.Int64) {
+	t.Helper()
+	var offBox atomic.Int64
+	var d net.Dialer
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					host = addr
+				}
+				if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+					offBox.Add(1)
+					return nil, fmt.Errorf("test dialled non-loopback address %q: a client origin is "+
+						"not pointed at the httptest stub and this call is reaching the real provider", addr)
+				}
+				return d.DialContext(ctx, network, addr)
+			},
+		},
+	}, &offBox
+}
+
+// TestClientCache_MicrosoftProbeStaysOnTheStub pins finding (1): microsoftProbe drives
+// GetCampaignMetrics, which targets the REPORTING origin rather than the Campaign Management one
+// the other overrides cover. With only WithBaseURL+WithTokenURL stubbed this probe dialled
+// https://reporting.api.bingads.microsoft.com on every `make test` and in CI.
+//
+// The test still PASSED in that state — the probe ignores its error, so the cache assertions were
+// resting on a live network failure instead of on the cache. That is why this asserts the DIAL and
+// not the metrics result: the escape is invisible to every other assertion in the file.
+func TestClientCache_MicrosoftProbeStaysOnTheStub(t *testing.T) {
+	srv, _ := tokenCountingServer(t, `{"value":[]}`)
+	hc, offBox := loopbackOnlyClient(t)
+
+	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
+	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
+		microsoft.WithTokenURL(srv.URL+"/token"),
+		microsoft.WithBaseURL(srv.URL),
+		microsoft.WithCustomerBaseURL(srv.URL),
+		microsoft.WithReportingBaseURL(srv.URL),
+		microsoft.WithHTTPClient(hc))
+
+	c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	microsoftProbe(t, c)
+
+	if n := offBox.Load(); n != 0 {
+		t.Errorf("the Microsoft probe dialled a non-loopback address %d time(s): an origin is "+
+			"falling back to a production Microsoft host, so `make test` and CI issue real "+
+			"outbound requests and the cache assertions rest on a network error", n)
+	}
 }
 
 // TestClientCache_RedditReusesClientAndToken pins the reuse this change exists for on the Reddit
@@ -242,15 +330,24 @@ func TestClientCache_RedditColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			c, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
+			// The lock covers ONLY the append to the shared slices. It must NOT span the probe:
+			// holding it across redditProbe serialized all 16 callers, so the "concurrent" traffic
+			// this test exists to generate never overlapped and -race had nothing to observe.
+			// Verified by mutation — with the probe inside the critical section, deleting the
+			// c.mu.Lock()/Unlock() pairs from reddit.Client.refreshToken left this test PASSING
+			// under -race.
 			mu.Lock()
-			defer mu.Unlock()
 			if err != nil {
 				errs = append(errs, err)
+				mu.Unlock()
 				return
 			}
 			got = append(got, c)
-			// Exercise the SHARED instance concurrently so -race sees real traffic through the
-			// client's token mutex, not just construction.
+			mu.Unlock()
+
+			// Exercise the SHARED instance concurrently, OUTSIDE the bookkeeping lock, so -race
+			// sees real overlapping traffic through the client's token mutex rather than
+			// construction alone.
 			redditProbe(t, c)
 		}()
 	}
@@ -285,8 +382,7 @@ func TestClientCache_MicrosoftReusesClientAndToken(t *testing.T) {
 	srv, tokenHits := tokenCountingServer(t, `{"value":[]}`)
 
 	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
-	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
-		microsoft.WithTokenURL(srv.URL+"/token"), microsoft.WithBaseURL(srv.URL))
+	d := newMicrosoftCacheDispatcher(repo, srv)
 
 	var first *microsoft.Client
 	for i := range 5 {
@@ -317,8 +413,7 @@ func TestClientCache_MicrosoftRotationForcesRebuild(t *testing.T) {
 	srv, tokenHits := tokenCountingServer(t, `{"value":[]}`)
 
 	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
-	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
-		microsoft.WithTokenURL(srv.URL+"/token"), microsoft.WithBaseURL(srv.URL))
+	d := newMicrosoftCacheDispatcher(repo, srv)
 
 	c1, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
 	if err != nil {
@@ -374,8 +469,7 @@ func TestClientCache_MicrosoftColdKeyConcurrentBuildsAreCoalesced(t *testing.T) 
 	srv, tokenHits := tokenCountingServer(t, `{"value":[]}`)
 
 	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1), barrier: callers}
-	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
-		microsoft.WithTokenURL(srv.URL+"/token"), microsoft.WithBaseURL(srv.URL))
+	d := newMicrosoftCacheDispatcher(repo, srv)
 
 	var (
 		wg   sync.WaitGroup
@@ -388,13 +482,18 @@ func TestClientCache_MicrosoftColdKeyConcurrentBuildsAreCoalesced(t *testing.T) 
 		go func() {
 			defer wg.Done()
 			c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+			// Lock scope: bookkeeping only, never the probe — see the Reddit counterpart for the
+			// mutation that proved a probe inside the critical section makes this test serial and
+			// therefore blind to a missing production mutex.
 			mu.Lock()
-			defer mu.Unlock()
 			if err != nil {
 				errs = append(errs, err)
+				mu.Unlock()
 				return
 			}
 			got = append(got, c)
+			mu.Unlock()
+
 			microsoftProbe(t, c)
 		}()
 	}
@@ -415,5 +514,69 @@ func TestClientCache_MicrosoftColdKeyConcurrentBuildsAreCoalesced(t *testing.T) 
 	}
 	if n := tokenHits.Load(); n != 1 {
 		t.Errorf("token endpoint hit %d times across %d concurrent cold-start callers, want 1", n, callers)
+	}
+}
+
+// TestClientCache_MicrosoftDispatchUsesTheCachedClient pins the WIRING, which none of the tests
+// above reach: they all drive resolveMicrosoftClient (the toggle/metrics entry point), while
+// Dispatch builds its client on a separate line of its own.
+//
+// Reverting that line to a direct microsoft.NewClient(...) is a COMPILING change that left the
+// entire suite green — the cache was fully tested and simply not used by the create path, which is
+// the path the cache exists for (a dispatch burst re-minting a token per campaign). What binds it
+// is the token COUNT across two dispatches of an unchanged connection: cached construction mints
+// once, direct construction mints per call.
+func TestClientCache_MicrosoftDispatchUsesTheCachedClient(t *testing.T) {
+	var tokenHits atomic.Int64
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+		case strings.HasSuffix(p, "/Ads/QueryByAdGroupId"):
+			_, _ = io.WriteString(w, `{"Ads":[]}`)
+		case strings.HasSuffix(p, "/Campaigns"):
+			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/AdGroups"):
+			_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/Ads"):
+			_, _ = io.WriteString(w, `{"AdIds":[987],"PartialErrors":[]}`)
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	// One dispatcher, one unchanged connection row: the cache key is identical across both calls,
+	// so a cached build is reused and only the FIRST call reaches the token endpoint.
+	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
+	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL),
+		microsoft.WithBaseURL(apiSrv.URL),
+		microsoft.WithCustomerBaseURL(apiSrv.URL),
+		microsoft.WithReportingBaseURL(apiSrv.URL))
+
+	cfg := json.RawMessage(`{"microsoftConfig":{"budget":50}}`)
+	for i := range 2 {
+		if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, cfg); err != nil {
+			t.Fatalf("Dispatch #%d: %v", i, err)
+		}
+	}
+
+	if n := tokenHits.Load(); n != 1 {
+		t.Errorf("token endpoint hit %d times across 2 dispatches of one unchanged connection, want 1 "+
+			"— Dispatch is constructing its client directly instead of going through "+
+			"cachedMicrosoftClient, so the create path re-mints an OAuth token per campaign and the "+
+			"client cache does nothing for the burst it exists to collapse", n)
 	}
 }

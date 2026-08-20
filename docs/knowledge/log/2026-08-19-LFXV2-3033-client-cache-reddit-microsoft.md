@@ -19,10 +19,14 @@ the column DEFAULT of 1, so a disconnect/reconnect produces a DIFFERENT credenti
 and the SAME version — version alone would keep serving the disconnected account's client and its
 live token. Google Ads already got this right, so the wiring replicates it unchanged.
 
-**Concurrency safety was checked per client, not inherited from Google Ads.** Both clients write
-only their token cache and in-flight refresh handle after construction, both exclusively under a
-mutex (`reddit.Client.mu`, `microsoft.Client.tokenMu`), and neither stashes per-call state on the
-receiver. Microsoft was the one worth checking rather than assuming: it is the client with
+**Concurrency safety was checked per client, not inherited from Google Ads.** Everything either
+client writes after construction is mutex-guarded and neither stashes per-call state on the
+receiver. Reddit writes only its token cache and in-flight refresh handle, under
+`reddit.Client.mu`. Microsoft has TWO such locks, not one: the token cache and its refresh handle
+under `tokenMu`, and the parsed geo-locations snapshot plus its in-flight fetch (`geo.snapshot` /
+`geo.inflight`) under the separate `geo.mu` — deliberately separate because a token refresh is a
+small JSON round trip while a locations refresh is a multi-MiB download, and one lock would let a
+slow file fetch stall every token read. Microsoft was the one worth checking rather than assuming: it is the client with
 multi-customer discovery, and a `CustomerID` mutated per call would have made a shared instance
 serve one caller's request against another caller's customer. It does not — the customer id is a
 per-call argument to `doCustomerRequest`/`accountsInfoForCustomer`. Microsoft's `ListAccounts`
