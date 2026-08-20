@@ -370,6 +370,26 @@ func TestReddit_ConfigSnapshotRedactsPostURL(t *testing.T) {
 	}
 }
 
+// The config_snapshot must also strip an ImageURL's query/fragment — a signed
+// image URL can carry a secret there, and the snapshot is persisted unencrypted
+// (same rationale as the PostURL case above).
+func TestReddit_ConfigSnapshotRedactsImageURL(t *testing.T) {
+	camp := campaignFromReddit(context.Background(),
+		&reddit.CampaignResult{CampaignID: "cmp_1", CampaignName: "n"},
+		redditConfig{BudgetUSD: 10, ImageURL: "https://cdn.example.com/banner.jpg?sig=SECRET#f"},
+	)
+	if camp.ConfigSnapshot == nil {
+		t.Fatal("expected a config snapshot")
+	}
+	s := string(camp.ConfigSnapshot)
+	if strings.Contains(s, "SECRET") {
+		t.Errorf("config snapshot must not carry the ImageURL query/fragment secret, got: %s", s)
+	}
+	if !strings.Contains(s, "https://cdn.example.com/banner.jpg") {
+		t.Errorf("config snapshot should retain the sanitized image URL, got: %s", s)
+	}
+}
+
 // toggleCampaign builds a persisted *model.Campaign carrying the child ids in Result, as the
 // reddit create path stores them.
 func toggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {

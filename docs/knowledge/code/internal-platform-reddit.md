@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -97,6 +97,49 @@ as "may exist", so callers require verification before a manual retry. A definit
 4xx is NOT UNCONFIRMED — Reddit
 received and REJECTED the request, so nothing was created and the caller gets a
 clean failure.
+
+## Authoring a promoted post (brief -> servable ad)
+
+`CreateCampaign` can create the ad's creative itself, so a caller can go from a
+brief to a servable ad without first hand-making a post in Reddit Ads Manager —
+the parity path with the Google/Meta clients (which author their own creatives).
+There are two ways an ad gets a creative, and an explicit post always wins:
+
+- **`PostURL` supplied**: the given post is validated (`extractRedditPostID`) and
+  promoted as-is. `ImageURL`/`CallToAction` are ignored.
+- **`ImageURL` supplied, no `PostURL`**: the client AUTHORS a promoted ("dark")
+  IMAGE post via `POST /profiles/{accountID}/posts`, then attaches its `t3_` id
+  as the ad's `post_id`. Reddit's profile id IS the ad-account id (`t2_...`).
+
+Reddit has NO LINK post type and will not auto-fetch an image from the
+destination, so authoring requires an image URL; Reddit INGESTS that image at
+post-create time and re-hosts it to `i.redd.it` (there is no separate
+media-upload step). The dark-post body is
+`{"data":{"type":"IMAGE","headline":..,"allow_comments":false,"content":[{"media_url":..,"call_to_action":..,"destination_url":..}]}}`.
+`allow_comments:false` marks it promoted-only (not distributed to a feed on its
+own). `call_to_action` must be one of Reddit's title-case labels (e.g.
+"Learn More", "Sign Up", "Buy Tickets"); the client accepts a case-insensitive
+value and resolves it to Reddit's exact label against `redditCTAs` (captured live
+from the API; a caller typo fails locally with the accepted set named).
+`destination_url` is the SAME UTM'd click URL the ad's `click_url` uses
+(`buildRedditUTMURL`), so the post and ad agree on the landing URL. The headline
+is the first ad variant's headline, else the event name, capped at
+`maxRedditHeadlineRunes` (300).
+
+The authored post's image URL, CTA, and headline are validated UP FRONT (before
+any mutating call), so a bad value fails fast rather than after paid resources
+exist. The post itself is created BEFORE the paid campaign (`Step 1.5`): a dark
+post is zero-cost and invisible, so a post-authoring FAILURE degrades cleanly to
+a campaign + ad group with NO ad (the same state a missing `PostURL` produces)
+rather than orphaning a paid resource, and a post that succeeds but is never
+attached (a later step fails) is a harmless unbilled orphan. A caller context
+cancellation during authoring is fatal (abort before any paid create). The
+degrade step reports ONLY the HTTP status, never the error body — a reflective
+Reddit validation error can echo the `destination_url` (which carries the
+caller's permitted secret-bearing query params). The dispatch adapter SANITIZES
+both `PostURL` and `ImageURL` (query/fragment stripped) before snapshotting the
+config, since a signed image URL can carry a secret and `config_snapshot` is
+stored unencrypted.
 
 ## Campaign status toggle
 

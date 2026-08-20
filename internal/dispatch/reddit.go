@@ -37,18 +37,24 @@ type redditCreds struct {
 // The brief supplies event identity (name/slug/project/registration URL); this
 // supplies the Reddit-specific campaign shape.
 type redditConfig struct {
-	BudgetUSD         float64            `json:"budgetUsd"`
-	StartDate         string             `json:"startDate"` // YYYY-MM-DD
-	EndDate           string             `json:"endDate"`   // YYYY-MM-DD
-	Objective         string             `json:"objective"` // awareness|traffic|conversions|video_views
-	GeoTargets        []string           `json:"geoTargets"`
-	Subreddits        []string           `json:"subreddits"`
-	Interests         []string           `json:"interests"`
-	Keywords          []string           `json:"keywords"`
-	Variants          []reddit.AdVariant `json:"variants"`
-	PostURL           string             `json:"postUrl"`
-	ConversionPixelID string             `json:"conversionPixelId"`
-	VideoGoal         string             `json:"videoGoal"`
+	BudgetUSD  float64            `json:"budgetUsd"`
+	StartDate  string             `json:"startDate"` // YYYY-MM-DD
+	EndDate    string             `json:"endDate"`   // YYYY-MM-DD
+	Objective  string             `json:"objective"` // awareness|traffic|conversions|video_views
+	GeoTargets []string           `json:"geoTargets"`
+	Subreddits []string           `json:"subreddits"`
+	Interests  []string           `json:"interests"`
+	Keywords   []string           `json:"keywords"`
+	Variants   []reddit.AdVariant `json:"variants"`
+	PostURL    string             `json:"postUrl"`
+	// ImageURL, when set and PostURL is empty, makes the client AUTHOR a promoted
+	// image post itself (brief->servable ad without a hand-made post). CallToAction
+	// is that post's button label (defaults to "Learn More"). Both are ignored when
+	// PostURL is supplied. See reddit.CampaignInput.ImageURL/CallToAction.
+	ImageURL          string `json:"imageUrl"`
+	CallToAction      string `json:"callToAction"`
+	ConversionPixelID string `json:"conversionPixelId"`
+	VideoGoal         string `json:"videoGoal"`
 }
 
 // briefFields is the subset of a brief's JSON blobs the adapters read. The brief
@@ -148,6 +154,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		Keywords:          cfg.Keywords,
 		Variants:          cfg.Variants,
 		PostURL:           cfg.PostURL,
+		ImageURL:          cfg.ImageURL,
+		CallToAction:      cfg.CallToAction,
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,
 	}
@@ -485,12 +493,14 @@ func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg reddi
 	// Persist the budget/schedule/config the caller supplied. The Reddit client always
 	// creates campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a
 	// LIFETIME spend cap, not a daily one — so the persisted budget_type is lifetime.
-	// ConfigSnapshot captures the validated config for reconciliation, but with PostURL
-	// SANITIZED: a post URL may carry secrets in its query/fragment (the client's step
-	// log redacts them via redactURL for exactly this reason), and config_snapshot is
-	// stored UNENCRYPTED in Postgres — so we strip the query/fragment before snapshotting.
+	// ConfigSnapshot captures the validated config for reconciliation, but with the
+	// PostURL and ImageURL SANITIZED: either may carry secrets in its query/fragment
+	// (a post URL, or a signed image URL — the client's step log redacts them via
+	// redactURL for exactly this reason), and config_snapshot is stored UNENCRYPTED
+	// in Postgres — so we strip the query/fragment before snapshotting.
 	snapshot := cfg
 	snapshot.PostURL = sanitizeSnapshotURL(cfg.PostURL)
+	snapshot.ImageURL = sanitizeSnapshotURL(cfg.ImageURL)
 	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw

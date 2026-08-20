@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,6 +93,11 @@ const (
 	// an over-long name fails before the campaign is created, not after (orphan).
 	maxEventNameRunes = 120
 	maxProjectRunes   = 40
+	// maxRedditHeadlineRunes bounds an AUTHORED promoted post's headline. Reddit
+	// caps a post headline at 300 characters; validate before the (pre-campaign)
+	// post create so an over-long headline fails fast with a clear message rather
+	// than after a round trip. Only relevant on the author-a-post path (ImageURL).
+	maxRedditHeadlineRunes = 300
 	// redditMaxNameRunes is Reddit's limit for a campaign/ad-group name. The
 	// per-field caps above keep caller inputs bounded, but the COMPOSED name (with
 	// region/objective segments) is validated against this before any POST.
@@ -117,6 +123,10 @@ const (
 	maxTokenTTLSeconds = int64(24 * 60 * 60)
 	// defaultRedditObjective is used when a campaign input omits an objective.
 	defaultRedditObjective = "conversions"
+	// defaultRedditCTA is the promoted-post call-to-action button label used when
+	// the author-a-post path (ImageURL) is taken and the caller supplies none.
+	// Must be a member of redditCTAs.
+	defaultRedditCTA = "Learn More"
 
 	// retryMax is the number of times an HTTP 429 (rate-limited) request is
 	// retried before giving up. Mirrors the Meta/Twitter clients.
@@ -367,6 +377,22 @@ type CampaignInput struct {
 	Project         string
 	Objective       string // one of: awareness, traffic, conversions, video_views
 	PostURL         string
+	// ImageURL, when set and PostURL is empty, makes CreateCampaign AUTHOR a
+	// promoted ("dark") image post from this URL before creating the campaign and
+	// attach it as the ad's creative — so a caller can go brief->servable ad
+	// without first hand-creating a post in Reddit Ads Manager (parity with the
+	// Google/Meta clients, which author their own creatives). Reddit ingests the
+	// image from this URL at post-create time and re-hosts it to i.redd.it, so it
+	// must be a publicly reachable absolute http(s) image URL. Reddit has NO LINK
+	// post type and will not auto-fetch an image from the destination, so an image
+	// URL is the only way to author a post. Ignored when PostURL is set (an
+	// explicit, already-existing post always wins).
+	ImageURL string
+	// CallToAction is the button label on an AUTHORED post (see ImageURL). It must
+	// be one of Reddit's accepted CTA labels (case-insensitive, e.g. "Learn More",
+	// "Sign Up", "Buy Tickets"); empty defaults to defaultRedditCTA. Ignored when a
+	// PostURL is supplied (the existing post carries its own CTA).
+	CallToAction string
 	// ConversionPixelID is an optional PER-CAMPAIGN override of the connection's pixel.
 	// Empty is the normal case: the pixel is an account-level constant carried on
 	// AccountConfig, and this field exists only so a caller can override it.
@@ -450,6 +476,41 @@ var redditObjectiveParams = map[string]objectiveParams{
 var validVideoGoals = map[string]bool{
 	"VIDEO_VIEW_6S":  true,
 	"VIDEO_VIEW_15S": true,
+}
+
+// redditCTAs is the set of call_to_action button labels Reddit accepts on a
+// promoted post, used only on the author-a-post path (CampaignInput.ImageURL).
+// Keys are the UPPER-CASED form for case-insensitive caller lookup; values are
+// Reddit's exact title-case label, which is what must be sent. Captured live
+// from the Reddit Ads API v3 (POST /profiles/{id}/posts validation) on
+// 2026-08-20 — Reddit rejects any value not in this set. Kept as a fixed set so
+// a caller typo fails locally (before the pre-campaign post create) with a clear
+// message rather than as an opaque 400. defaultRedditCTA must be a value here.
+var redditCTAs = map[string]string{
+	"APPLY NOW":      "Apply Now",
+	"CONTACT US":     "Contact Us",
+	"DOWNLOAD":       "Download",
+	"GET A QUOTE":    "Get a Quote",
+	"GET SHOWTIMES":  "Get Showtimes",
+	"INSTALL":        "Install",
+	"LEARN MORE":     "Learn More",
+	"ORDER NOW":      "Order Now",
+	"PLAY NOW":       "Play Now",
+	"PRE-ORDER NOW":  "Pre-order Now",
+	"SEE MENU":       "See Menu",
+	"SHOP NOW":       "Shop Now",
+	"SIGN UP":        "Sign Up",
+	"VIEW MORE":      "View More",
+	"WATCH NOW":      "Watch Now",
+	"BOOK NOW":       "Book Now",
+	"BUY TICKETS":    "Buy Tickets",
+	"GET DIRECTIONS": "Get Directions",
+	"LISTEN NOW":     "Listen Now",
+	"READ MORE":      "Read More",
+	"SUBSCRIBE":      "Subscribe",
+	"VISIT STORE":    "Visit Store",
+	"DONATE NOW":     "Donate Now",
+	"REMIND ME":      "Remind Me",
 }
 
 var redditObjectiveLabels = map[string]string{
@@ -1189,6 +1250,51 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		validatedPostID = id
 	}
 
+	// Author-a-post path: when NO PostURL was supplied but an ImageURL is, this
+	// client will AUTHOR a promoted (dark) image post itself before creating the
+	// campaign (Step 1.5 below) and attach it as the ad's creative — the parity
+	// path with the Google/Meta clients. Resolve and validate its inputs here,
+	// before any mutating call, so a bad image URL / CTA / headline fails fast
+	// rather than after paid resources exist. An explicit PostURL always wins:
+	// ImageURL/CallToAction are ignored when PostURL is set.
+	//
+	// authorImageURL == "" downstream means "do not author a post".
+	var (
+		authorImageURL string
+		postHeadline   string
+		postCTA        string
+	)
+	if validatedPostID == "" && strings.TrimSpace(in.ImageURL) != "" {
+		imageURL := strings.TrimSpace(in.ImageURL)
+		if err := validateImageURL(imageURL); err != nil {
+			return nil, err
+		}
+		authorImageURL = imageURL
+
+		// Resolve the CTA (case-insensitive) to Reddit's exact title-case label.
+		// Empty defaults to defaultRedditCTA; an unknown value is rejected up front
+		// (before the post create) with the accepted set named.
+		cta := strings.TrimSpace(in.CallToAction)
+		if cta == "" {
+			postCTA = defaultRedditCTA
+		} else if canonical, ok := redditCTAs[strings.ToUpper(cta)]; ok {
+			postCTA = canonical
+		} else {
+			return nil, fmt.Errorf("invalid Reddit call to action %q: must be one of %s", in.CallToAction, redditCTAList())
+		}
+
+		// Headline: prefer the first ad variant's headline (already the operator's
+		// creative copy), else fall back to the event name (always non-empty here).
+		// Reddit requires a non-empty headline and caps it at maxRedditHeadlineRunes.
+		postHeadline = in.EventName
+		if len(in.Variants) > 0 && strings.TrimSpace(in.Variants[0].Headline) != "" {
+			postHeadline = strings.TrimSpace(in.Variants[0].Headline)
+		}
+		if n := utf8.RuneCountInString(postHeadline); n > maxRedditHeadlineRunes {
+			return nil, fmt.Errorf("promoted-post headline is too long: %d characters (max %d)", n, maxRedditHeadlineRunes)
+		}
+	}
+
 	// Validate the account ID before any request path is built. It is
 	// concatenated into request paths ("/ad_accounts/<id>/...") before
 	// sanitizePath splits on "/", so an ID containing a slash would inject extra
@@ -1240,6 +1346,41 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, "Account verification warning: "+err.Error())
 	} else {
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
+	}
+
+	// Step 1.5: Author a promoted (dark) image post when the caller supplied an
+	// ImageURL instead of a PostURL. This runs BEFORE the paid campaign create on
+	// purpose: a dark post is zero-cost and invisible (allow_comments:false, never
+	// distributed to a feed on its own), so authoring it first means a post-create
+	// FAILURE degrades cleanly to a no-ad campaign rather than orphaning a paid
+	// resource — the same "campaign+ad group created, add the ad manually" state a
+	// missing PostURL already produces. Conversely, a post that succeeds but is
+	// never attached (because a later step fails) is a harmless, unbilled orphan.
+	//
+	// A CALLER context cancellation is fatal (abort before any paid create),
+	// mirroring the account-verify guard above. Any other failure is non-fatal:
+	// leave validatedPostID empty so the campaign+ad group are still created and
+	// Step 4 emits the manual-creation guidance. The failure Step reports ONLY the
+	// HTTP status, never the error body — a reflective Reddit validation error can
+	// echo the destination_url (which carries the caller's permitted secret-bearing
+	// query params), and persisting it in Steps would leak those.
+	if authorImageURL != "" {
+		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, authorImageURL)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctxErr)
+			}
+			var postAPIErr *apiError
+			if errors.As(err, &postAPIErr) {
+				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed (HTTP %d) -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager", postAPIErr.StatusCode))
+			} else {
+				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager")
+			}
+			// validatedPostID stays empty -> degraded (no ad), matching no-PostURL.
+		} else {
+			validatedPostID = postID
+			steps = append(steps, fmt.Sprintf("Authored promoted post: %s (CTA: %s)", postID, postCTA))
+		}
 	}
 
 	// Extract the supplied subreddit names (strip an optional "r/" prefix, drop
@@ -1613,9 +1754,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var adID string
 	var adWarning string
 
-	if in.PostURL != "" && validatedPostID != "" {
+	// A post id here came from EITHER a caller-supplied PostURL OR Step 1.5
+	// authoring an image post — both feed the same ad-creation path.
+	if validatedPostID != "" {
 		postID := validatedPostID
-		steps = append(steps, fmt.Sprintf("Extracted post ID: %s from %s", postID, redactURL(in.PostURL)))
+		if in.PostURL != "" {
+			steps = append(steps, fmt.Sprintf("Extracted post ID: %s from %s", postID, redactURL(in.PostURL)))
+		}
 
 		utmURL := buildRedditUTMURL(in, 0)
 		adBody := map[string]any{
@@ -1737,6 +1882,55 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // dispatcher's redditCreationAccountID and the account-provenance guard that uses it.
 // Mirrors microsoft.Client.AccountID.
 func (c *Client) AccountID() string { return c.account.AccountID }
+
+// createPromotedPost authors a promoted ("dark") IMAGE post on the ad account's
+// profile and returns its t3_ post id, for the author-a-post path (see
+// CampaignInput.ImageURL). It POSTs to /profiles/{accountID}/posts — Reddit's
+// profile id IS the ad-account id (t2_...) — with a dark-post body:
+//
+//		{"data":{"type":"IMAGE","headline":..,"allow_comments":false,
+//		         "content":[{"media_url":..,"call_to_action":..,"destination_url":..}]}}
+//
+//	  - allow_comments:false marks it a promoted-only ("dark") post: it is not
+//	    distributed to a feed on its own and only serves as an ad's creative.
+//	  - media_url is ingested and re-hosted by Reddit at create time (there is no
+//	    separate media-upload step and no LINK post type), so it must be a public
+//	    absolute http(s) image URL — validated by validateImageURL before this call.
+//	  - destination_url is the SAME UTM'd click URL the ad's click_url uses
+//	    (buildRedditUTMURL variant 0), so the post and ad agree on the destination.
+//	  - call_to_action is Reddit's exact title-case label (resolved via redditCTAs).
+//
+// The caller runs this BEFORE the paid campaign create, so any error is safe to
+// treat as non-fatal there; this method itself just surfaces the request error
+// (an *apiError for a non-2xx, a transportError for an ambiguous/2xx-unparseable
+// outcome) and does not classify it. A 2xx response missing data.id is reported
+// as an error so the caller degrades rather than attaching an empty post id.
+func (c *Client) createPromotedPost(ctx context.Context, accountID string, in CampaignInput, headline, cta, imageURL string) (string, error) {
+	body := map[string]any{
+		"data": map[string]any{
+			"type":           "IMAGE",
+			"headline":       headline,
+			"allow_comments": false,
+			"content": []map[string]any{{
+				"media_url":       imageURL,
+				"call_to_action":  cta,
+				"destination_url": buildRedditUTMURL(in, 0),
+			}},
+		},
+	}
+	resp, err := c.request(ctx, http.MethodPost, "/profiles/"+accountID+"/posts", body)
+	if err != nil {
+		return "", err
+	}
+	postID := decodeID(resp)
+	if postID == "" {
+		// A 2xx with no id is a malformed success — the post MAY exist. Surface it
+		// as a transportError (ambiguous) so the caller degrades to a no-ad campaign
+		// without claiming the post was created; the orphan (if any) is unbilled.
+		return "", &transportError{Method: http.MethodPost, Path: "/profiles/" + accountID + "/posts", Err: fmt.Errorf("post creation returned no id")}
+	}
+	return postID, nil
+}
 
 // Campaign run states for UpdateCampaignStatus. Reddit's Campaign object uses a
 // `configured_status` field (the advertiser-set state) distinct from the read-only
@@ -2008,6 +2202,47 @@ func validateRegistrationURL(raw string) error {
 	default:
 		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", redactURL(raw), u.Scheme)
 	}
+}
+
+// validateImageURL checks a caller-supplied promoted-post image URL before the
+// (pre-campaign) post create. Reddit ingests the image from this URL, so it must
+// be a well-formed absolute http(s) URL with a host and no embedded credentials.
+// It mirrors validateRegistrationURL's redaction discipline: never echo the raw
+// URL (it could carry a signed-URL secret in its query) — %q arguments are
+// redacted and the url.Parse error (which embeds the raw URL) is not wrapped.
+func validateImageURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("image URL is required to author a promoted post")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("image URL %q is not a valid URL", redactURL(raw))
+	}
+	if !u.IsAbs() || u.Hostname() == "" {
+		return fmt.Errorf("image URL %q must be absolute (include scheme and host)", redactURL(raw))
+	}
+	if u.User != nil {
+		return fmt.Errorf("image URL must not contain embedded credentials (userinfo)")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("image URL %q must use an http or https scheme, got %q", redactURL(raw), u.Scheme)
+	}
+}
+
+// redditCTAList returns the accepted call-to-action labels as a sorted,
+// comma-separated string for error messages. Sorted so the message is stable
+// (Go map iteration order is randomized).
+func redditCTAList() string {
+	labels := make([]string, 0, len(redditCTAs))
+	for _, v := range redditCTAs {
+		labels = append(labels, v)
+	}
+	sort.Strings(labels)
+	return strings.Join(labels, ", ")
 }
 
 // redditUTMParams returns the exact set of utm_* parameters this client
