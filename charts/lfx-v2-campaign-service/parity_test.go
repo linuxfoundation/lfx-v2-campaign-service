@@ -173,26 +173,89 @@ func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	if !strings.Contains(block, "contextualizer: project_slug_resolver_contextualizer") {
 		t.Errorf("%s rule must include project_slug_resolver_contextualizer to resolve project slug to UID:\n%s", projectAPIRuleID, block)
 	}
-	// The slug branch's object must reference the resolved UID from the contextualizer,
-	// not the raw slug. This assertion pins the exact field to prevent accidental
-	// reverts that would leave Captures.projectId lingering in the slug input but
-	// missing from the security-relevant object field.
-	if !strings.Contains(block, "object: \"project:") || !strings.Contains(block, ".Outputs.project_slug_resolver_contextualizer.uid") {
-		t.Errorf("%s rule must scope the object to project:{resolved-uid} via .Outputs.project_slug_resolver_contextualizer.uid:\n%s", projectAPIRuleID, block)
+
+	// Pin PAIRING, not just presence: an inverted-branch edit (resolved-UID object
+	// under the positive/UUID guard, raw-capture object under the negative/slug guard)
+	// is a total lockout, but would still satisfy independent substring checks for
+	// "two openfga_check", "two campaign_manager", both objects, and both guards. Each
+	// openfga_check ENTRY must carry its own matching guard+object pair.
+	entries := openfgaCheckEntries(t, block)
+	if len(entries) != 2 {
+		t.Fatalf("%s rule must have exactly 2 openfga_check entries to pin, got %d:\n%s", projectAPIRuleID, len(entries), block)
 	}
-	// The UUID branch's object must read the raw capture directly, never the resolver's
-	// Outputs (which are undocumented/unsafe when the contextualizer is skipped).
-	if !strings.Contains(block, "object: \"project:{{- .Request.URL.Captures.projectId -}}\"") {
-		t.Errorf("%s rule must have a second openfga_check whose object reads the raw project:{{- .Request.URL.Captures.projectId -}} capture (the UUID branch):\n%s", projectAPIRuleID, block)
+	var sawSlugBranch, sawUUIDBranch bool
+	for _, e := range entries {
+		negative := strings.Contains(e, `if: '!Request.URL.Captures.projectId.matches(`)
+		positive := !negative && strings.Contains(e, `if: 'Request.URL.Captures.projectId.matches(`)
+		resolvedObject := strings.Contains(e, "object: \"project:") && strings.Contains(e, ".Outputs.project_slug_resolver_contextualizer.uid")
+		rawObject := strings.Contains(e, "object: \"project:{{- .Request.URL.Captures.projectId -}}\"")
+		switch {
+		case negative:
+			sawSlugBranch = true
+			if !resolvedObject {
+				t.Errorf("%s rule's negative-guard (slug branch) openfga_check must scope object to the resolved .Outputs.project_slug_resolver_contextualizer.uid, not the raw capture:\n%s", projectAPIRuleID, e)
+			}
+			if rawObject {
+				t.Errorf("%s rule's negative-guard (slug branch) openfga_check must NOT use the raw Captures.projectId object (that belongs to the UUID branch):\n%s", projectAPIRuleID, e)
+			}
+		case positive:
+			sawUUIDBranch = true
+			if !rawObject {
+				t.Errorf("%s rule's positive-guard (UUID branch) openfga_check must scope object to the raw project:{{- .Request.URL.Captures.projectId -}} capture, not the resolver's Outputs:\n%s", projectAPIRuleID, e)
+			}
+			if resolvedObject {
+				t.Errorf("%s rule's positive-guard (UUID branch) openfga_check must NOT reference the resolver's Outputs (undocumented/unsafe when the contextualizer is skipped):\n%s", projectAPIRuleID, e)
+			}
+		default:
+			t.Errorf("%s rule's openfga_check entry must have an if: guard that is either the negative (slug) or positive (UUID) Captures.projectId match:\n%s", projectAPIRuleID, e)
+		}
 	}
-	// Both if: guards must be present and be exact negations of each other so exactly
-	// one branch fires for any given :projectId value.
-	if !strings.Contains(block, `if: '!Request.URL.Captures.projectId.matches(`) {
+	if !sawSlugBranch {
 		t.Errorf("%s rule must have a negative if: guard (slug branch) on Captures.projectId:\n%s", projectAPIRuleID, block)
 	}
-	if !strings.Contains(block, `if: 'Request.URL.Captures.projectId.matches(`) {
+	if !sawUUIDBranch {
 		t.Errorf("%s rule must have a positive if: guard (UUID branch) on Captures.projectId:\n%s", projectAPIRuleID, block)
 	}
+
+	// The resolver contextualizer itself must carry the negative (slug) guard — a
+	// contextualizer left unguarded, or guarded on the wrong condition, would run the
+	// slug-only resolver against a UUID capture (404, fail-closed lockout) or skip
+	// resolution for an actual slug (empty Outputs feeding the slug-branch object).
+	if !strings.Contains(block, `contextualizer: project_slug_resolver_contextualizer`) ||
+		!strings.Contains(block, "contextualizer: project_slug_resolver_contextualizer\n          if: '!Request.URL.Captures.projectId.matches(") {
+		t.Errorf("%s rule's project_slug_resolver_contextualizer must carry the negative (slug) if: guard on Captures.projectId:\n%s", projectAPIRuleID, block)
+	}
+}
+
+// openfgaCheckEntries splits a rule block into its individual `- authorizer:
+// openfga_check` execute-step entries, each running from its `- authorizer:` line up
+// to (but not including) the next execute-step line (`- authorizer:` or
+// `- contextualizer:`) or the end of the block. Scoping assertions to a SINGLE entry
+// (rather than the whole block) is what lets pairing — not just presence — be pinned:
+// each entry's own if: guard must match its own object.
+func openfgaCheckEntries(t *testing.T, block string) []string {
+	t.Helper()
+	lines := strings.Split(block, "\n")
+	var starts []int
+	for i, line := range lines {
+		s := strings.TrimSpace(line)
+		if s == "- authorizer: openfga_check" {
+			starts = append(starts, i)
+		}
+	}
+	var entries []string
+	for _, start := range starts {
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			s := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(s, "- authorizer:") || strings.HasPrefix(s, "- contextualizer:") || strings.HasPrefix(s, "- authenticator:") {
+				end = i
+				break
+			}
+		}
+		entries = append(entries, strings.Join(lines[start:end], "\n"))
+	}
+	return entries
 }
 
 // ruleMatcher compiles a Traefik-style path pattern into a Go regexp. Traefik's
@@ -247,10 +310,11 @@ func anyRuleMatches(matchers []*regexp.Regexp, path string) bool {
 }
 
 // TestProjectAPIRuleEnforcesCampaignManager asserts the project-api rule enforces the
-// exact security invariant the parity tests assume: an openfga_check on relation
-// campaign_manager, object project:{projectId}. Named separately so a downgrade of
-// the rule to allow_all/deny_all — or a re-scope to a different relation/object —
-// fails loudly even if the path lists still line up.
+// exact security invariant the parity tests assume: two openfga_check entries on
+// relation campaign_manager, each paired with the correct object (the resolved UID
+// for the slug branch, the raw capture for the UUID branch). Named separately so a
+// downgrade of the rule to allow_all/deny_all — or a re-scope to a different
+// relation/object — fails loudly even if the path lists still line up.
 func TestProjectAPIRuleEnforcesCampaignManager(t *testing.T) {
 	assertProjectAPIAuthz(t, helmTemplate(t, "templates/ruleset.yaml"))
 }
@@ -262,7 +326,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 	routeRe := extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml"))
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
 	// The paths are only meaningfully "authorized" if the project-api rule still gates
-	// on campaign_manager for project:{projectId}; assert that before trusting parity.
+	// on campaign_manager for the correct object per branch (resolved UID for slug,
+	// raw capture for UUID); assert that before trusting parity.
 	assertProjectAPIAuthz(t, ruleset)
 	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
