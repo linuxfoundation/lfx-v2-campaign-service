@@ -7871,16 +7871,16 @@ definitions:
                     - REMOVE
             ad_group_id:
                 type: string
-                description: The ad group the criterion belongs to. Digits only.
+                description: The ad group the criterion belongs to. Digits only, and the canonical base-10 spelling of a positive int64.
                 example: "176216228"
                 pattern: ^[0-9]+$
-                maxLength: 20
+                maxLength: 19
             criterion_id:
                 type: string
-                description: The keyword's ad-group criterion id, as returned by the keywords read. Digits only.
+                description: The keyword's ad-group criterion id, as returned by the keywords read. Digits only, and the canonical base-10 spelling of a positive int64.
                 example: "305729261"
                 pattern: ^[0-9]+$
-                maxLength: 20
+                maxLength: 19
         example:
             action: REMOVE
             ad_group_id: "176216228"

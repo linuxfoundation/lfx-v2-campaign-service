@@ -40,17 +40,22 @@ const (
 	// is refused by the generated decoder before any handler runs.
 	maxKeywordActions = 60
 
-	// maxKeywordIDLen bounds each id in a keyword action, mirroring the MaxLength(20) the
-	// design declares on keyword-action-input's ad_group_id and criterion_id. Goa enforces
-	// that for HTTP callers; this constant is what makes a DIRECT service caller — which
-	// never passes through the generated decoder — get the same answer.
+	// maxKeywordIDLen mirrors the MaxLength the design declares on keyword-action-input's
+	// ad_group_id and criterion_id, so an over-long id is refused by Goa's decoder before any
+	// handler runs. It is 19 because Google Ads ids are positive int64s and math.MaxInt64
+	// ("9223372036854775807") has nineteen digits: at 20 the design admitted ids that are
+	// guaranteed not to name a criterion.
 	//
-	// Digits-only alone is not enough. A 21+ digit id is syntactically fine and injection-safe,
-	// but it cannot name a real criterion (Google Ads ids are int64), so without a cap it was
-	// interpolated into the type-resolution GAQL request and Google's PERMANENT rejection was
-	// then classified as a retryable upstream 503. Refusing it locally makes it the 400 it is.
-	// 20 is the digit count of math.MaxInt64 (19) plus one, which is the design's bound.
-	maxKeywordIDLen = 20
+	// The cap is the DESIGN's bound, not the client's check. A digit count cannot decide
+	// whether an id names a criterion — "9999999999999999999" is nineteen digits and still
+	// exceeds math.MaxInt64 — so ValidateKeywordActions parses the value through
+	// canonicalCampaignID instead, and this constant exists only to keep the design's declared
+	// bound honest and in one place.
+	//
+	// It is therefore referenced only by the test that pins it to len(math.MaxInt64) and to
+	// design/brief.go's MaxLength. That is deliberate: the value it names lives in the design,
+	// and a constant here is what gives the drift between the two somewhere to be asserted.
+	maxKeywordIDLen = 19
 
 	// KeywordStatusUnknown and MatchTypeUnknown are the contract's escape hatches for an
 	// upstream value this client does not recognise. They are declared here rather than
@@ -635,16 +640,26 @@ func ValidateKeywordActions(actions []KeywordAction) ([]KeywordAction, error) {
 		if !customerIDRE.MatchString(criterionID) {
 			return nil, fmt.Errorf("google-ads: keyword action %d has a criterion id that is not digits only", i)
 		}
-		// Length is checked alongside the character class, mirroring the design's
-		// MaxLength(20), so a direct (non-HTTP) caller cannot get past a bound the generated
-		// decoder enforces. An over-long id is refused HERE as a permanent 400 rather than
-		// being interpolated into the type-resolution query, where Google's permanent
-		// rejection would be mapped onto the retryable 503 path.
-		if len(adGroupID) > maxKeywordIDLen {
-			return nil, fmt.Errorf("google-ads: keyword action %d has an ad group id longer than %d digits", i, maxKeywordIDLen)
+		// Digits-only bounds the CHARACTER CLASS but not the VALUE, and a length cap does not
+		// close the gap either. Google Ads ids are positive int64s — canonicalCampaignID is
+		// what this package already enforces that with — and math.MaxInt64 has nineteen
+		// digits, so "99999999999999999999" is twenty digits, injection-safe, within any
+		// twenty-digit cap, and still cannot name a criterion that exists. So are "0" and the
+		// leading-zero spelling "0305729261", both of which a digit/length pair admits.
+		//
+		// An id that cannot name a criterion is a PERMANENT input fault, but until it is
+		// refused here it is interpolated into the type-resolution GAQL query, and Google's
+		// permanent rejection of it comes back through the read arm that classifies as a
+		// retryable upstream 503 — telling an operator to retry a handle no number of retries
+		// can make valid. Parsing the value is the check; the digit count was only a proxy for
+		// it. canonicalCampaignID is reused rather than reimplemented so the two surfaces
+		// cannot drift, and it collapses every spelling to one, which is also what makes the
+		// adGroupID+"~"+criterionID keys below compare criteria rather than text.
+		if canonicalCampaignID(adGroupID) == "" {
+			return nil, fmt.Errorf("google-ads: keyword action %d has an ad group id that is not the canonical base-10 spelling of a positive int64: %q", i, adGroupID)
 		}
-		if len(criterionID) > maxKeywordIDLen {
-			return nil, fmt.Errorf("google-ads: keyword action %d has a criterion id longer than %d digits", i, maxKeywordIDLen)
+		if canonicalCampaignID(criterionID) == "" {
+			return nil, fmt.Errorf("google-ads: keyword action %d has a criterion id that is not the canonical base-10 spelling of a positive int64: %q", i, criterionID)
 		}
 		action := strings.ToUpper(strings.TrimSpace(a.Action))
 		switch action {

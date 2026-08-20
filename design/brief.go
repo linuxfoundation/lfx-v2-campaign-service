@@ -428,14 +428,26 @@ var KeywordActionInput = Type("keyword-action-input", func() {
 	// same injection reasoning that governs customerIDRE in the platform client applies here.
 	// Declaring it in the design means Goa's request decoder rejects a malformed id before any
 	// handler runs, and the client re-validates for non-HTTP callers.
-	Attribute("ad_group_id", String, "The ad group the criterion belongs to. Digits only.", func() {
+	//
+	// MaxLength is 19, not 20, because Google Ads ids are positive int64s and math.MaxInt64
+	// ("9223372036854775807") has nineteen digits. A twenty-digit id is digits-only and
+	// injection-safe and still cannot name a criterion that exists, so admitting it here only
+	// moved its refusal upstream, where Google's PERMANENT rejection came back through a read
+	// arm that classifies as a retryable 503.
+	//
+	// The cap alone is not the whole check and is not meant to be: a digit count cannot rule
+	// out "9999999999999999999" (nineteen digits, above math.MaxInt64), "0", or the
+	// leading-zero spelling "0305729261". ValidateKeywordActions parses the value instead. This
+	// bound exists so the generated decoder refuses the clearly-impossible ids before a handler
+	// runs, and so the design and the client agree about what a valid request is.
+	Attribute("ad_group_id", String, "The ad group the criterion belongs to. Digits only, and the canonical base-10 spelling of a positive int64.", func() {
 		Pattern(`^[0-9]+$`)
-		MaxLength(20)
+		MaxLength(19)
 		Example("176216228")
 	})
-	Attribute("criterion_id", String, "The keyword's ad-group criterion id, as returned by the keywords read. Digits only.", func() {
+	Attribute("criterion_id", String, "The keyword's ad-group criterion id, as returned by the keywords read. Digits only, and the canonical base-10 spelling of a positive int64.", func() {
 		Pattern(`^[0-9]+$`)
-		MaxLength(20)
+		MaxLength(19)
 		Example("305729261")
 	})
 	Attribute("action", String, "What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion cannot be re-enabled, only re-created with a new id.", keywordActionEnum)

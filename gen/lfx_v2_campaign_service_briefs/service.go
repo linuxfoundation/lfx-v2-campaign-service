@@ -625,10 +625,11 @@ type JobPollResponse struct {
 }
 
 type KeywordActionInput struct {
-	// The ad group the criterion belongs to. Digits only.
+	// The ad group the criterion belongs to. Digits only, and the canonical
+	// base-10 spelling of a positive int64.
 	AdGroupID string
 	// The keyword's ad-group criterion id, as returned by the keywords read.
-	// Digits only.
+	// Digits only, and the canonical base-10 spelling of a positive int64.
 	CriterionID string
 	// What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion
 	// cannot be re-enabled, only re-created with a new id.

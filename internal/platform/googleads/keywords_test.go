@@ -9,7 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -409,35 +414,93 @@ func TestValidateKeywordActions_RejectsNonNumericIDs(t *testing.T) {
 // caller never passes through the generated decoder, so without this check the two entry
 // points disagreed about what a valid request is.
 //
-// Digits-only alone admits a 21-digit id: syntactically fine, injection-safe, and incapable
-// of naming a real criterion (Google Ads ids are int64). Left unchecked it reached the
-// type-resolution GAQL request, where Google's PERMANENT rejection was classified onto the
-// retryable 503 path — telling the caller to retry a request that can never succeed. The
-// boundary is asserted on BOTH sides: 20 digits must still be accepted, or the check would
-// be refusing ids the design declares valid.
-func TestValidateKeywordActions_RejectsOverLongIDs(t *testing.T) {
-	at := strings.Repeat("1", maxKeywordIDLen)
-	over := strings.Repeat("1", maxKeywordIDLen+1)
+// Digits-only alone bounds the CHARACTER CLASS, not the VALUE, and neither does a digit
+// count. Google Ads ids are positive int64s, and math.MaxInt64 has nineteen digits, so a
+// twenty-digit id — and "9999999999999999999", which is nineteen — is injection-safe and
+// still incapable of naming a real criterion. Left unchecked it reached the type-resolution
+// GAQL request, where Google's PERMANENT rejection was classified onto the retryable 503 path
+// — telling the caller to retry a request that can never succeed.
+//
+// The boundary is asserted on BOTH sides: math.MaxInt64 itself must still be ACCEPTED, or the
+// check would be refusing ids that name real criteria. The rejected cases are chosen so a
+// length-only check cannot pass this test: "0" and "0305729261" are both well within any
+// twenty-digit cap.
+// designKeywordIDMaxLength reads the MaxLength the design declares on keyword-action-input's
+// two id attributes, so the client's maxKeywordIDLen can be pinned to it mechanically rather
+// than by a comment that a later edit to design/brief.go would silently falsify. Both
+// attributes must agree; an id is an id whichever field carries it.
+func designKeywordIDMaxLength(t *testing.T) int {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "design", "brief.go"))
+	if err != nil {
+		t.Fatalf("read design/brief.go: %v", err)
+	}
+	block := regexp.MustCompile(`(?s)var KeywordActionInput = Type\(.*?\n\}\)`).Find(src)
+	if block == nil {
+		t.Fatal("could not locate KeywordActionInput in design/brief.go; this test pins the " +
+			"design's cap to the client's and cannot do so if the type was renamed")
+	}
+	found := regexp.MustCompile(`MaxLength\((\d+)\)`).FindAllSubmatch(block, -1)
+	if len(found) != 2 {
+		t.Fatalf("expected a MaxLength on both keyword-action id attributes, found %d", len(found))
+	}
+	first, err := strconv.Atoi(string(found[0][1]))
+	if err != nil {
+		t.Fatalf("parse MaxLength: %v", err)
+	}
+	second, err := strconv.Atoi(string(found[1][1]))
+	if err != nil {
+		t.Fatalf("parse MaxLength: %v", err)
+	}
+	if first != second {
+		t.Fatalf("ad_group_id and criterion_id declare different MaxLengths (%d and %d); an id "+
+			"is an id whichever field carries it", first, second)
+	}
+	return first
+}
+
+func TestValidateKeywordActions_RejectsIDsThatCannotNameACriterion(t *testing.T) {
+	maxInt64 := strconv.FormatInt(math.MaxInt64, 10) // 19 digits, the largest valid id
+	overflow19 := "9999999999999999999"              // 19 digits, but > math.MaxInt64
+	twentyDigits := "99999999999999999999"           // 20 digits: within the OLD cap of 20
+
+	if len(maxInt64) != maxKeywordIDLen {
+		t.Fatalf("math.MaxInt64 has %d digits but maxKeywordIDLen is %d — the design's cap no "+
+			"longer matches the widest id Google can issue", len(maxInt64), maxKeywordIDLen)
+	}
+	// maxKeywordIDLen is the client's copy of design/brief.go's MaxLength on
+	// keyword-action-input. Nothing in the source reads it, so if the two drift apart only this
+	// assertion notices: a design raised back to 20 would let Goa's decoder admit, for HTTP
+	// callers, exactly the ids the cases below prove cannot name a criterion.
+	if got := designKeywordIDMaxLength(t); got != maxKeywordIDLen {
+		t.Fatalf("design/brief.go declares MaxLength(%d) on the keyword-action ids but "+
+			"maxKeywordIDLen is %d — the design and the client disagree about what a valid "+
+			"request is, and the generated decoder follows the design", got, maxKeywordIDLen)
+	}
 
 	for _, tc := range []struct {
 		name    string
 		action  KeywordAction
 		wantErr bool
 	}{
-		{"ad group over the cap", KeywordAction{AdGroupID: over, CriterionID: "305729261", Action: "PAUSE"}, true},
-		{"criterion over the cap", KeywordAction{AdGroupID: "176216228", CriterionID: over, Action: "PAUSE"}, true},
-		{"both exactly at the cap", KeywordAction{AdGroupID: at, CriterionID: at, Action: "PAUSE"}, false},
+		{"criterion of 20 digits", KeywordAction{AdGroupID: "176216228", CriterionID: twentyDigits, Action: "PAUSE"}, true},
+		{"ad group of 20 digits", KeywordAction{AdGroupID: twentyDigits, CriterionID: "305729261", Action: "PAUSE"}, true},
+		{"criterion overflowing int64 at 19 digits", KeywordAction{AdGroupID: "176216228", CriterionID: overflow19, Action: "PAUSE"}, true},
+		{"criterion of zero", KeywordAction{AdGroupID: "176216228", CriterionID: "0", Action: "PAUSE"}, true},
+		{"ad group of zero", KeywordAction{AdGroupID: "0", CriterionID: "305729261", Action: "PAUSE"}, true},
+		{"criterion in a leading-zero spelling", KeywordAction{AdGroupID: "176216228", CriterionID: "0305729261", Action: "PAUSE"}, true},
+		{"both at math.MaxInt64", KeywordAction{AdGroupID: maxInt64, CriterionID: maxInt64, Action: "PAUSE"}, false},
+		{"an ordinary pair", KeywordAction{AdGroupID: "176216228", CriterionID: "305729261", Action: "PAUSE"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ValidateKeywordActions([]KeywordAction{tc.action})
 			if tc.wantErr && err == nil {
-				t.Fatalf("expected a local rejection for an id longer than the design's MaxLength(%d); "+
-					"admitting it sends a GAQL request whose permanent rejection is mapped onto the "+
-					"retryable 503 path", maxKeywordIDLen)
+				t.Fatalf("expected a local rejection for an id that cannot name a positive int64 " +
+					"criterion; admitting it sends a GAQL request whose permanent rejection is " +
+					"mapped onto the retryable 503 path")
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("an id of exactly %d digits is within the design's cap and must be accepted, got: %v",
-					maxKeywordIDLen, err)
+				t.Fatalf("an id that names a real criterion must be accepted, got: %v", err)
 			}
 		})
 	}

@@ -985,17 +985,28 @@ is mutated. Enumerating the live states rather than excluding `REMOVED` also def
 pin this: a predicate-free query satisfies that assertion, which is the trap the settings
 readback's REMOVED test fell into.
 
-**Both ids are length-capped at runtime, mirroring the design's `MaxLength(20)`**
-(`maxKeywordIDLen`). Goa enforces the bound for HTTP callers, but a direct service caller
-never passes through the generated decoder, so digits-only alone admitted a 21+ digit id:
-syntactically fine and injection-safe, yet incapable of naming a real criterion (Google Ads
-ids are `int64`). Left unchecked it was interpolated into the type-resolution request and
-Google's permanent rejection was again mapped onto the retryable 503 path. Refusing it in
-`ValidateKeywordActions` makes it the local 400 it always was. The general rule this and the
-status predicate share: **a non-HTTP validation backstop must mirror every design constraint,
-not only the character class — whatever it lets through becomes an upstream error this code
-then has to classify, and a permanent upstream fault reached by a request we should have
-refused reads as transient.**
+**Both ids are PARSED as positive `int64`s, not merely length-capped**
+(`ValidateKeywordActions` calls `canonicalCampaignID`). Digits-only bounds the character
+class; it does not bound the VALUE, and neither does a digit count. `math.MaxInt64` has
+NINETEEN digits, so a twenty-digit id is digits-only, injection-safe, within a
+twenty-digit cap, and still incapable of naming a criterion that exists — and so are
+`"9999999999999999999"` (nineteen digits, above `math.MaxInt64`), `"0"`, and the
+leading-zero spelling `"0305729261"`. A cap of 20 was the first attempt here and it
+admitted every one of those. Left unrefused they were interpolated into the
+type-resolution request, and Google's PERMANENT rejection came back through the read arm
+that classifies as a RETRYABLE 503 — a handle no number of retries can make valid,
+advertised as "try again". `canonicalCampaignID` is REUSED rather than reimplemented, so
+the two surfaces cannot drift, and its round-trip through `ParseInt`/`FormatInt` collapses
+every spelling to one — which is also what makes the `adGroupID+"~"+criterionID` keys
+compare criteria rather than text. `maxKeywordIDLen` is now 19 and exists only to keep the
+design's `MaxLength` honest so Goa refuses the clearly-impossible ids before a handler
+runs; the design was corrected from 20 in the same change. Two general rules meet here:
+**a non-HTTP validation backstop must mirror every design constraint, not only the
+character class** — whatever it lets through becomes an upstream error this code then has
+to classify, and a permanent upstream fault reached by a request we should have refused
+reads as transient — and **a proxy for a constraint is not the constraint: if the real
+rule is "names a positive int64", check that, because a digit count only approximates it
+and the gap is where the invalid ids live.**
 
 **Ambiguous outcomes are marked STRUCTURALLY, not just in prose.** `unconfirmedKeywordError`
 implements `Unconfirmed() bool`, the behavioural interface `IsOutcomeUnconfirmed` and the

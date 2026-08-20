@@ -1847,10 +1847,11 @@ type CampaignUpdateInputRequestBody struct {
 
 // KeywordActionInputRequestBody is used to define fields on request body types.
 type KeywordActionInputRequestBody struct {
-	// The ad group the criterion belongs to. Digits only.
+	// The ad group the criterion belongs to. Digits only, and the canonical
+	// base-10 spelling of a positive int64.
 	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
 	// The keyword's ad-group criterion id, as returned by the keywords read.
-	// Digits only.
+	// Digits only, and the canonical base-10 spelling of a positive int64.
 	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
 	// What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion
 	// cannot be re-enabled, only re-created with a new id.
@@ -3929,16 +3930,16 @@ func ValidateKeywordActionInputRequestBody(body *KeywordActionInputRequestBody) 
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.ad_group_id", *body.AdGroupID, "^[0-9]+$"))
 	}
 	if body.AdGroupID != nil {
-		if utf8.RuneCountInString(*body.AdGroupID) > 20 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.ad_group_id", *body.AdGroupID, utf8.RuneCountInString(*body.AdGroupID), 20, false))
+		if utf8.RuneCountInString(*body.AdGroupID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.ad_group_id", *body.AdGroupID, utf8.RuneCountInString(*body.AdGroupID), 19, false))
 		}
 	}
 	if body.CriterionID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.criterion_id", *body.CriterionID, "^[0-9]+$"))
 	}
 	if body.CriterionID != nil {
-		if utf8.RuneCountInString(*body.CriterionID) > 20 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.criterion_id", *body.CriterionID, utf8.RuneCountInString(*body.CriterionID), 20, false))
+		if utf8.RuneCountInString(*body.CriterionID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.criterion_id", *body.CriterionID, utf8.RuneCountInString(*body.CriterionID), 19, false))
 		}
 	}
 	if body.Action != nil {
