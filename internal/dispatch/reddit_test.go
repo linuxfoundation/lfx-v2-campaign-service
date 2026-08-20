@@ -1082,3 +1082,60 @@ func TestReddit_NoAccountSelectedIsRefusedBeforeTheProvenanceGuard(t *testing.T)
 		})
 	}
 }
+
+// TestReddit_AuthorPostFailurePersistsCreatedDegraded is the operator-visible
+// form of the defect: a brief that supplies an imageUrl asks this service to
+// author a promoted post and attach it as the ad's creative. When the authoring
+// POST fails, no post id exists, the ad step is skipped, and the campaign owns
+// NO ad — yet the row previously persisted as a clean `created`.
+//
+// That is the expensive shape: `created` is terminal, so the orchestrator's
+// idempotency check reuses the row and REFUSES to re-dispatch. The campaign is
+// permanently ad-less while every status an operator can see says it succeeded.
+//
+// This asserts the PERSISTED STATUS an operator reads, not an internal flag: the
+// row must say `created_degraded`, which is what surfaces the campaign for
+// reconciliation.
+func TestReddit_AuthorPostFailurePersistsCreatedDegraded(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/posts"):
+			// Reddit rejects the promoted-post authoring: no post id comes back, so
+			// the ad step below is never reached and the campaign gets no ad.
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "rejected"})
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "cmp_123"}})
+		case strings.Contains(r.URL.Path, "ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			t.Error("no ad POST may be attempted: authoring produced no post id to promote")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ad_1"}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	// imageUrl WITHOUT a postUrl drives the author-a-post path.
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"],"imageUrl":"https://events.linuxfoundation.org/banner.jpg","variants":[{"headline":"Join us"}]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
+	if err != nil {
+		t.Fatalf("the paid campaign WAS created, so this must not fail the job: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "cmp_123" {
+		t.Fatalf("the created campaign must still be mapped, got %+v", camp)
+	}
+	if camp.Status != campaignStatusCreatedDegraded {
+		t.Errorf("persisted status = %q, want %q: the campaign owns no ad, so a clean status would let idempotency freeze an ad-less campaign as a success", camp.Status, campaignStatusCreatedDegraded)
+	}
+}

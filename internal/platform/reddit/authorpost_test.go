@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -166,9 +167,17 @@ func TestCreateCampaign_AuthorsPostFromImageURL(t *testing.T) {
 // TestCreateCampaign_AuthorPostFailureDegrades verifies that a FAILED post
 // authoring is non-fatal: because the (zero-cost) post is created before the
 // paid campaign, a post failure degrades to a campaign + ad group with NO ad
-// (the same state a missing PostURL produces) rather than orphaning a paid
-// resource or failing the whole create. The failure step reports only the HTTP
-// status, never the error body (which could echo the destination_url secret).
+// rather than orphaning a paid resource or failing the whole create. The failure
+// step reports only the HTTP status, never the error body (which could echo the
+// destination_url secret).
+//
+// It also asserts the outcome is DEGRADED, not clean: this test previously
+// checked only the Steps string, so it passed while AdWarning stayed empty and
+// the dispatcher persisted a clean `created` for a campaign with no ad. Steps is
+// a human-readable blob; AdWarning is the structural signal the adapter reads,
+// so the degradation must be asserted there. Note this is NOT the same state a
+// missing PostURL produces: there, no ad was ever requested (AdWarning empty);
+// here one was requested via ImageURL and does not exist.
 func TestCreateCampaign_AuthorPostFailureDegrades(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
@@ -227,6 +236,23 @@ func TestCreateCampaign_AuthorPostFailureDegrades(t *testing.T) {
 	}
 	if res.AdCount != 0 || res.AdID != "" {
 		t.Errorf("expected no ad on degraded create, got AdCount=%d AdID=%q", res.AdCount, res.AdID)
+	}
+	// The load-bearing assertion: an ad was requested (ImageURL) and none exists,
+	// so the result must be structurally degraded. An empty AdWarning here is what
+	// let the dispatcher persist a clean `created`.
+	if res.AdWarning == "" {
+		t.Error("AdWarning must be set when post authoring fails: an ad was requested via ImageURL and none exists, so this is a DEGRADED success, not a clean one")
+	}
+	// A definite 4xx rejection means the post was NOT created -- the operator can
+	// remediate directly and must not be told to verify first.
+	if !strings.Contains(res.AdWarning, "FAILED") {
+		t.Errorf("a 4xx post rejection must read as FAILED, got %q", res.AdWarning)
+	}
+	if strings.Contains(res.AdWarning, "UNCONFIRMED") {
+		t.Errorf("a 4xx post rejection is definite, not UNCONFIRMED; got %q", res.AdWarning)
+	}
+	if strings.Contains(res.AdWarning, "9f8a7b") {
+		t.Errorf("AdWarning leaked the destination secret: %q", res.AdWarning)
 	}
 
 	var haveFailStep bool
@@ -394,4 +420,250 @@ func TestCreateCampaign_AuthorPostPreMutationValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCreateCampaign_AuthorPostAmbiguousIsUnconfirmed pins the three-way
+// classification on the post-authoring path (Step 1.5) against the repo's own
+// rule: apiError = definite non-2xx, transportError = AMBIGUOUS (may have
+// landed), proven pre-send = definitely not sent.
+//
+// Both subtests drive a NON-apiError failure, which the code previously reported
+// as "failed before the request reached Reddit". That tells an operator the post
+// definitely does not exist and to author it manually — which duplicates a post
+// Reddit may already hold. Each case must instead read as UNCONFIRMED and
+// instruct the operator to VERIFY first.
+//
+//   - "2xx with no id": createPromotedPost wraps a malformed success as a
+//     transportError precisely because Reddit may have created the post.
+//   - "in-flight transport failure": the server hangs up mid-response, so the
+//     POST reached Reddit but the outcome is unreadable.
+func TestCreateCampaign_AuthorPostAmbiguousIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name      string
+		postReply func(w http.ResponseWriter)
+	}{
+		{
+			name: "2xx with no id",
+			postReply: func(w http.ResponseWriter) {
+				// A 2xx whose data carries no id: the post MAY exist.
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+			},
+		},
+		{
+			name: "in-flight transport failure",
+			postReply: func(w http.ResponseWriter) {
+				// Send a 200 + a truncated body, then kill the connection so the
+				// response read fails after the POST was received.
+				w.Header().Set("Content-Length", "512")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":`))
+				if hj, ok := w.(http.Hijacker); ok {
+					conn, _, err := hj.Hijack()
+					if err == nil {
+						_ = conn.Close()
+					}
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tokenSrv.Close()
+
+			handler := http.NewServeMux()
+			handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+				path := r.URL.Path
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/profiles/t2_test/posts"):
+					tc.postReply(w)
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+				default:
+					http.Error(w, "unexpected", http.StatusNotFound)
+				}
+			})
+			apiSrv := httptest.NewServer(handler)
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:         "Open Source Summit",
+				Project:           "tlf",
+				EventSlug:         "oss-2026",
+				RegistrationURL:   "https://events.linuxfoundation.org/oss/",
+				BudgetUSD:         500,
+				StartDate:         "2026-08-01",
+				EndDate:           "2026-08-31",
+				GeoTargets:        []string{"us"},
+				Objective:         "conversions",
+				ConversionPixelID: "pixel_abc",
+				ImageURL:          "https://events.linuxfoundation.org/banner.jpg",
+			})
+			if err != nil {
+				t.Fatalf("an authoring failure is non-fatal; CreateCampaign returned: %v", err)
+			}
+			if res.CampaignID != "camp_1" || res.AdGroupID != "ag_1" {
+				t.Fatalf("campaign/ad group not created: %q/%q", res.CampaignID, res.AdGroupID)
+			}
+			if res.AdCount != 0 || res.AdID != "" {
+				t.Errorf("no ad can exist without a post id, got AdCount=%d AdID=%q", res.AdCount, res.AdID)
+			}
+			// Finding 1: the shortfall must be structurally visible.
+			if res.AdWarning == "" {
+				t.Fatal("AdWarning must be set: an ad was requested via ImageURL and none exists")
+			}
+			// Finding 2: an ambiguous outcome must read as ambiguous.
+			if !strings.Contains(res.AdWarning, "UNCONFIRMED") {
+				t.Errorf("an ambiguous authoring failure must read as UNCONFIRMED, got %q", res.AdWarning)
+			}
+			if strings.Contains(res.AdWarning, "before it reached Reddit") {
+				t.Errorf("an ambiguous authoring failure must NOT be labelled pre-send: %q", res.AdWarning)
+			}
+			var haveStep bool
+			for _, s := range res.Steps {
+				if strings.Contains(s, "Promoted-post authoring") {
+					haveStep = true
+					if strings.Contains(s, "before the request reached Reddit") {
+						t.Errorf("step mislabels an ambiguous outcome as pre-send: %q", s)
+					}
+					if !strings.Contains(s, "UNCONFIRMED") {
+						t.Errorf("step must mark the outcome UNCONFIRMED, got %q", s)
+					}
+				}
+			}
+			if !haveStep {
+				t.Errorf("expected a promoted-post authoring step, steps = %v", res.Steps)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_AuthorPostPreSendIsDefinite pins the THIRD arm of the
+// classification: a proven pre-send failure. The posts endpoint is pointed at a
+// closed port, so the dial is refused — isPreSendDialError proves no request
+// bytes reached Reddit, request() returns the error PLAIN (not wrapped as a
+// transportError), and createOutcomeAmbiguous is false.
+//
+// This arm must stay DEFINITE. Telling the operator to "verify before recreating"
+// here would send them hunting for a post that provably does not exist, and it is
+// the mutation that keeps the ambiguous arm honest: without this test, replacing
+// createOutcomeAmbiguous(err) with a blanket err != nil survives, because nothing
+// would distinguish an ambiguous outcome from a pre-send one.
+func TestCreateCampaign_AuthorPostPreSendIsDefinite(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	// A server started and immediately closed leaves a port nothing listens on, so
+	// the POST /profiles/.../posts dial is REFUSED (a proven pre-send failure).
+	deadSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := deadSrv.URL
+	deadSrv.Close()
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL+"/api/v3"),
+		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
+		WithHTTPClient(&http.Client{Transport: &postsToDeadPortTransport{
+			base:    http.DefaultTransport,
+			deadURL: deadURL,
+		}}),
+	)
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:         "Open Source Summit",
+		Project:           "tlf",
+		EventSlug:         "oss-2026",
+		RegistrationURL:   "https://events.linuxfoundation.org/oss/",
+		BudgetUSD:         500,
+		StartDate:         "2026-08-01",
+		EndDate:           "2026-08-31",
+		GeoTargets:        []string{"us"},
+		Objective:         "conversions",
+		ConversionPixelID: "pixel_abc",
+		ImageURL:          "https://events.linuxfoundation.org/banner.jpg",
+	})
+	if err != nil {
+		t.Fatalf("an authoring failure is non-fatal; CreateCampaign returned: %v", err)
+	}
+	if res.CampaignID != "camp_1" || res.AdGroupID != "ag_1" {
+		t.Fatalf("campaign/ad group not created: %q/%q", res.CampaignID, res.AdGroupID)
+	}
+	// Finding 1 still applies: an ad was requested and none exists.
+	if res.AdWarning == "" {
+		t.Fatal("AdWarning must be set: an ad was requested via ImageURL and none exists")
+	}
+	// Finding 2's converse: a PROVEN pre-send failure must NOT be softened into
+	// "verify first" -- the post definitively does not exist.
+	if strings.Contains(res.AdWarning, "UNCONFIRMED") {
+		t.Errorf("a proven pre-send dial failure is DEFINITE, not UNCONFIRMED; got %q", res.AdWarning)
+	}
+	if !strings.Contains(res.AdWarning, "FAILED before it reached Reddit") {
+		t.Errorf("a pre-send failure must say so plainly, got %q", res.AdWarning)
+	}
+	var haveStep bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Promoted-post authoring") {
+			haveStep = true
+			if !strings.Contains(s, "before the request reached Reddit") {
+				t.Errorf("step must report the pre-send outcome, got %q", s)
+			}
+			if strings.Contains(s, "UNCONFIRMED") {
+				t.Errorf("step must not mark a proven pre-send failure UNCONFIRMED: %q", s)
+			}
+		}
+	}
+	if !haveStep {
+		t.Errorf("expected a promoted-post authoring step, steps = %v", res.Steps)
+	}
+}
+
+// postsToDeadPortTransport redirects ONLY the promoted-post authoring request
+// (POST /profiles/.../posts) to a port nothing listens on, so its dial is
+// refused — a proven pre-send failure. Every other request is passed through
+// untouched so the campaign and ad group still get created normally.
+type postsToDeadPortTransport struct {
+	base    http.RoundTripper
+	deadURL string
+}
+
+func (t *postsToDeadPortTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/profiles/") && strings.HasSuffix(r.URL.Path, "/posts") {
+		dead, err := url.Parse(t.deadURL)
+		if err != nil {
+			return nil, err
+		}
+		clone := r.Clone(r.Context())
+		clone.URL.Scheme = dead.Scheme
+		clone.URL.Host = dead.Host
+		return t.base.RoundTrip(clone)
+	}
+	return t.base.RoundTrip(r)
 }

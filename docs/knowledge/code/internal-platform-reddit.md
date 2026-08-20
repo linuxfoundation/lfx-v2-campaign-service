@@ -129,14 +129,37 @@ is the first ad variant's headline, else the event name, capped at
 The authored post's image URL, CTA, and headline are validated UP FRONT (before
 any mutating call), so a bad value fails fast rather than after paid resources
 exist. The post itself is created BEFORE the paid campaign (`Step 1.5`): a dark
-post is zero-cost and invisible, so a post-authoring FAILURE degrades cleanly to
-a campaign + ad group with NO ad (the same state a missing `PostURL` produces)
-rather than orphaning a paid resource, and a post that succeeds but is never
-attached (a later step fails) is a harmless unbilled orphan. A caller context
-cancellation during authoring is fatal (abort before any paid create). The
-degrade step reports ONLY the HTTP status, never the error body — a reflective
-Reddit validation error can echo the `destination_url` (which carries the
-caller's permitted secret-bearing query params). The dispatch adapter SANITIZES
+post is zero-cost and invisible, so a post-authoring FAILURE degrades to a
+campaign + ad group with NO ad rather than orphaning a paid resource, and a post
+that succeeds but is never attached (a later step fails) is a harmless unbilled
+orphan. A caller context cancellation during authoring is fatal (abort before any
+paid create). The degrade step reports ONLY the HTTP status, never the error body
+— a reflective Reddit validation error can echo the `destination_url` (which
+carries the caller's permitted secret-bearing query params).
+
+That degraded outcome is NOT the same as the missing-`PostURL` state, and must not
+be recorded as one. With no `PostURL` and no `ImageURL` the caller never asked for
+an ad, so `AdWarning` stays empty and the campaign is a clean `created`. When
+`ImageURL` WAS supplied, an ad was requested and does not exist, so authoring sets
+`AdWarning` (seeding the same field the ad-create path uses) and the dispatch
+adapter persists `created_degraded`. Leaving it empty made a no-ad campaign
+persist as a clean success, and because `created` is terminal the orchestrator's
+idempotency check then refused to re-dispatch it — the campaign was permanently
+ad-less while every status an operator could see said it had succeeded.
+
+Authoring classifies its failure with the SAME three-way rule as the ad-create
+path, so an operator is never told to take a manual action that could duplicate a
+post Reddit already holds: an `*apiError` is a definite rejection (FAILED, no post
+exists); anything `createOutcomeAmbiguous` accepts — a `transportError` from an
+in-flight failure, or a 2xx whose body carried no `data.id`, which
+`createPromotedPost` wraps as one precisely because the post may exist — is
+UNCONFIRMED (verify BEFORE authoring again); and only a proven pre-send failure
+(token refresh, body encode, request build, a refused/unresolvable dial) is
+reported as never having reached Reddit. The `default` arm is the pre-send arm, so
+a new non-`apiError` error shape must be checked against `createOutcomeAmbiguous`
+before it lands there.
+
+The dispatch adapter SANITIZES
 both `PostURL` and `ImageURL` (query/fragment stripped) before snapshotting the
 config, since a signed image URL can carry a secret and `config_snapshot` is
 stored unencrypted.

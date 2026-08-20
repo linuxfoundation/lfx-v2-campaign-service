@@ -427,13 +427,20 @@ type CampaignResult struct {
 	AdGroupID   string `json:"adGroupId"`
 	AdCount     int    `json:"adCount"`
 	AdID        string `json:"adId,omitempty"`
-	// AdWarning is set (non-empty) when a promoted-post ad was attempted but not
-	// confirmed — the ad POST failed, or returned a 2xx with no ad id. Ad creation
-	// is intentionally non-fatal (the campaign + ad group already succeeded), so
-	// the overall error stays nil; this field lets a caller detect the degraded
-	// outcome structurally instead of parsing Steps or inferring it from
-	// AdCount == 0 (which also covers the valid no-PostURL path). Mirrors the
-	// twitter client's promoted-tweet warning.
+	// AdWarning is set (non-empty) whenever an ad was REQUESTED and the result does
+	// not carry a confirmed one. That covers three shortfalls:
+	//   - the ad POST failed, or returned a 2xx with no ad id;
+	//   - the promoted post this client AUTHORS from ImageURL (Step 1.5) failed or
+	//     was unconfirmed, so no post id existed to promote and the ad step was
+	//     never reached.
+	// Ad creation is intentionally non-fatal (the campaign + ad group already
+	// succeeded), so the overall error stays nil; this field lets a caller detect
+	// the degraded outcome structurally instead of parsing Steps or inferring it
+	// from AdCount == 0 (which also covers the valid no-PostURL/no-ImageURL path,
+	// where nothing was requested and this stays empty). The dispatch adapter maps
+	// a non-empty value to the `created_degraded` status, so a campaign that owns
+	// no ad is never persisted as a clean success. Mirrors the twitter client's
+	// promoted-tweet warning.
 	AdWarning string   `json:"adWarning,omitempty"`
 	RedditURL string   `json:"redditUrl"`
 	Steps     []string `json:"steps"`
@@ -1263,6 +1270,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		authorImageURL string
 		postHeadline   string
 		postCTA        string
+		// postWarning records a post-AUTHORING shortfall (Step 1.5). It seeds
+		// adWarning below so a "the caller asked for an ad and there is none"
+		// outcome is a DEGRADED success, not a clean one.
+		postWarning string
 	)
 	if validatedPostID == "" && strings.TrimSpace(in.ImageURL) != "" {
 		imageURL := strings.TrimSpace(in.ImageURL)
@@ -1352,10 +1363,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// ImageURL instead of a PostURL. This runs BEFORE the paid campaign create on
 	// purpose: a dark post is zero-cost and invisible (allow_comments:false, never
 	// distributed to a feed on its own), so authoring it first means a post-create
-	// FAILURE degrades cleanly to a no-ad campaign rather than orphaning a paid
-	// resource — the same "campaign+ad group created, add the ad manually" state a
-	// missing PostURL already produces. Conversely, a post that succeeds but is
-	// never attached (because a later step fails) is a harmless, unbilled orphan.
+	// FAILURE degrades to a no-ad campaign rather than orphaning a paid resource.
+	// Conversely, a post that succeeds but is never attached (because a later step
+	// fails) is a harmless, unbilled orphan.
+	//
+	// That degraded outcome RESEMBLES the missing-PostURL state (both end with
+	// AdCount == 0) but is NOT the same and must not be recorded as one: there the
+	// caller never requested an ad, whereas here one WAS requested and does not
+	// exist. So a failure sets postWarning, which seeds adWarning in Step 4 and
+	// makes the dispatch adapter persist `created_degraded`. Treating the two as
+	// equivalent is what previously persisted an ad-less campaign as a clean
+	// `created` — a terminal status, so idempotency then refused to re-dispatch it.
 	//
 	// A CALLER context cancellation is fatal (abort before any paid create),
 	// mirroring the account-verify guard above. Any other failure is non-fatal:
@@ -1370,13 +1388,36 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctxErr)
 			}
+			// Classify with the SAME three-way rule the ad-create path uses, so the
+			// operator is never told to take a manual action that could duplicate a
+			// post Reddit already holds:
+			//   - apiError (definite non-2xx): Reddit received and REJECTED it — no
+			//     post exists, remediate directly;
+			//   - ambiguous (transportError — an in-flight timeout/TLS error, or a
+			//     2xx whose body carried no data.id, which createPromotedPost wraps
+			//     as transportError): the post MAY exist — verify BEFORE recreating;
+			//   - anything else (token refresh, body encode, request build, a
+			//     pre-connect dial failure): proven pre-send, nothing was created.
+			// Collapsing the ambiguous arm into "before the request reached Reddit"
+			// (as this previously did for every non-apiError) mislabels a possibly-
+			// landed post as definitely absent.
 			var postAPIErr *apiError
-			if errors.As(err, &postAPIErr) {
-				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed (HTTP %d) -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager", postAPIErr.StatusCode))
-			} else {
+			switch {
+			case errors.As(err, &postAPIErr):
+				postWarning = "promoted-post authoring FAILED (Reddit rejected the post); no ad was created — author the post and add the ad manually in Reddit Ads Manager"
+				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager", postAPIErr.StatusCode))
+			case createOutcomeAmbiguous(err):
+				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit); no ad was created and the post MAY exist — verify in Reddit Ads Manager BEFORE authoring it again to avoid a duplicate"
+				steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- creating campaign + ad group without an ad; verify whether the post exists before authoring it again")
+			default:
+				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post and no ad were created -- author the post and add the ad manually in Reddit Ads Manager"
 				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager")
 			}
-			// validatedPostID stays empty -> degraded (no ad), matching no-PostURL.
+			// validatedPostID stays empty -> no ad. Unlike the no-PostURL path (where
+			// the caller never asked for an ad), an ad WAS intended here and does not
+			// exist, so postWarning above carries the shortfall into CampaignResult.
+			// AdWarning; without it the campaign persists as a clean `created` and
+			// idempotency makes that permanent.
 		} else {
 			validatedPostID = postID
 			steps = append(steps, fmt.Sprintf("Authored promoted post: %s (CTA: %s)", postID, postCTA))
@@ -1752,7 +1793,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Step 4: Create ad from post URL if provided, otherwise emit instructions.
 	adCount := 0
 	var adID string
-	var adWarning string
+	// Seed adWarning with any Step 1.5 authoring shortfall. When authoring failed,
+	// validatedPostID is empty, so the ad branch below is skipped entirely and this
+	// is the ONLY thing that can mark the result degraded — an ad was requested
+	// (ImageURL was supplied) and none exists. Leaving it empty here is what made a
+	// no-ad campaign persist as a clean `created`, which idempotency then froze.
+	// The no-PostURL/no-ImageURL path never sets postWarning, so it still yields an
+	// empty AdWarning and a clean `created`, as its contract requires.
+	adWarning := postWarning
 
 	// A post id here came from EITHER a caller-supplied PostURL OR Step 1.5
 	// authoring an image post — both feed the same ad-creation path.
