@@ -208,9 +208,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 // the error to the LF system row; systemScoped is a no-op for project-owned rows and
 // idempotent, so a caller that also tags costs nothing.
 //
-// resolveCreds selects the credential entry point (see credsResolver): Dispatch creates and
-// is governed by the forced-system flag; the toggle and metrics paths operate on an existing
-// campaign and are never forced.
+// resolveCreds selects the credential entry point (see credsResolver): Dispatch creates and is
+// governed by the forced-system flag; the toggle and metrics paths operate on an existing
+// campaign and resolve the account it was CREATED under (redditCreationAccountID), which is
+// the LF system account for a campaign created while the flag was on.
 func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (c *reddit.Client, err error) {
 	res, err := resolveCreds(ctx, projectID, platform)
 	if err != nil {
@@ -271,7 +272,7 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err != nil {
 		return err
 	}
-	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.resolveExisting)
+	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.existingResolver(redditCreationAccountID(campaign)))
 	if err != nil {
 		return err
 	}
@@ -354,7 +355,7 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 	if werr := reddit.ValidateMetricsWindow(window); werr != nil {
 		return nil, fmt.Errorf("get campaign metrics from reddit: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
-	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.resolveExisting)
+	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.existingResolver(redditCreationAccountID(campaign)))
 	if err != nil {
 		return nil, err
 	}

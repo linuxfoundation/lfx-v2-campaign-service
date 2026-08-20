@@ -490,7 +490,7 @@ func TestSystemScopedCoversEveryCallerNotJustDiscovery(t *testing.T) {
 			return err
 		},
 		"toggle+metrics/resolveGoogleAdsClient": func(d *GoogleAdsDispatcher) error {
-			_, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+			_, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 			return err
 		},
 		"discovery/resolveGoogleAdsDiscoveryClient": func(d *GoogleAdsDispatcher) error {

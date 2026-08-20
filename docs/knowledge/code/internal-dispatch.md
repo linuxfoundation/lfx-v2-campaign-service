@@ -1071,33 +1071,54 @@ flag — rather than threaded through the seven `New*Dispatcher` constructors (1
 overlay flip like the cutover flags; the branch stays dormant until an operator opts in. See
 [specs/006-force-system-ads-account](../../../specs/006-force-system-ads-account/spec.md).
 
-### The flag governs CREATION only
+### The flag governs CREATION; an existing campaign follows its CREATION ACCOUNT
 
-`credsSource` has two entry points, and which one a caller uses decides whether the flag applies:
+`credsSource` has three entry points, and which one a caller uses decides which account answers:
 
-| Entry point | Callers | Forced? |
+| Entry point | Callers | Account resolved |
 | --- | --- | --- |
-| `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | **yes** |
-| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **no** |
-| `resolveOwned` | adoption | no (never forced, never fell back) |
+| `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
+| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
+| `resolveOwned` | adoption | project only (never forced, never fell back) |
 
-Both share `resolveWithFallback`, the project-then-system resolution that predates the flag; only
-`resolve` can bypass it.
+The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
+account", and the difference is the whole point: those two agree for a campaign created before the
+cutover and disagree for every campaign the cutover itself creates.
 
-The split is not stylistic — conflating the two makes a live campaign impossible to stop. Campaign
-ids on every platform here are scoped to an ad ACCOUNT, which is why each adapter carries a
-provenance guard (`verifyMetaAccountMatch` and its four siblings) refusing to address a stored
-campaign id under an account it was not created in. A campaign created BEFORE the cutover recorded
-the project's account; resolving the system account for its pause makes the two differ, the guard
-fires, and the service returns 409 to the one operation that must never be unavailable. The
-campaign keeps serving and keeps spending, and no fix-forward reaches it — the flag would have to
-be turned back off, which is the opposite of what a cutover flag is for.
+Campaign ids on every platform here are scoped to an ad ACCOUNT, which is why each adapter carries
+a provenance guard (`verifyMetaAccountMatch` and its four siblings) refusing to address a stored
+campaign id under an account it was not created in. Resolve the wrong account for a pause and the
+guard fires, the service returns 409 to the one operation that must never be unavailable, and the
+campaign keeps serving and keeps spending. **Both directions of that failure are real**, and
+neither has a fix-forward:
 
-The account a campaign was created under is a HISTORICAL FACT, so it is read from the campaign's
-persisted result rather than recomputed from current config — the same model the provenance guards
-already encode. `credsResolver` is the function type adapters whose credential helper serves BOTH
-kinds of caller (`resolveMetaCredentials`, `resolveLinkedInCredentials`, `resolveRedditClient`)
-accept, so the choice is made by the caller that knows which it is.
+- a PRE-cutover campaign (created on the project's account) resolved to the SYSTEM account — the
+  original bug, from sharing one resolver between creation and everything else.
+- a POST-cutover campaign (created on the SYSTEM account, because creation is forced) resolved to
+  the PROJECT's account whenever the project has a connection of its own — the mirror-image bug,
+  which plain project-then-fallback resolution reintroduces. It is the worse of the two, because it
+  strands exactly the campaigns the flag just created.
+
+The account a campaign was created under is a HISTORICAL FACT read from the campaign's persisted
+result (`metaCreationAccountID` and its four siblings) — the same model the provenance guards
+already encode. `resolveExisting` therefore takes that recorded id as a PARAMETER and does not
+consult the flag at all: it resolves the project scope, and when that is not the creating account
+it tries the system row before giving up. Keying on the row rather than on flag state is what keeps
+a cutover-created campaign stoppable **after the flag is turned back off** — a flag-conditional
+rule would strand those campaigns at the moment an operator retired the flag, which is precisely
+when it will be retired.
+
+An EMPTY recorded id means the row predates the explicit account field ("unknown, proceed", as
+every `*CreationAccountID` sibling documents) and falls back to ordinary project-then-system
+resolution — the behaviour those rows had before the flag existed.
+
+Passing the id as a parameter is deliberate: it makes the omission a COMPILE ERROR. The bug being
+fixed here was a `resolveExisting` that took only `(ctx, projectID, provider)` and so could not
+consult the campaign even though every caller already held one. `credsResolver` remains the
+function type for adapters whose credential helper serves BOTH kinds of caller
+(`resolveMetaCredentials`, `resolveLinkedInCredentials`, `resolveRedditClient`); those call sites
+bind the recorded id with `existingResolver(<platform>CreationAccountID(campaign))`, so the
+creation-path signature stays free of a campaign argument it has no value for.
 
 ### The forced path itself
 

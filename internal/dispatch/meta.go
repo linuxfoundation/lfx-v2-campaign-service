@@ -88,10 +88,12 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 // there would refuse a perfectly servable pause/metrics-read on a connection whose account
 // selection was later cleared via PUT.
 //
-// resolveCreds selects the credential entry point: d.creds.resolve for creation and
-// discovery (both governed by the forced-system flag) and d.creds.resolveExisting for an
-// operation on an already-created campaign (never forced — see resolveExisting).
-// Passed in rather than inferred, because only the caller knows whether it holds a campaign.
+// resolveCreds selects the credential entry point: d.creds.resolve for creation and discovery
+// (both governed by the forced-system flag) and d.creds.existingResolver(...) for an operation
+// on an already-created campaign, which resolves the account that campaign was CREATED under
+// — the project's, or the LF system one when the flag governed its creation (see
+// resolveExisting). Passed in rather than inferred, because only the caller knows whether it
+// holds a campaign, and only it can read that campaign's recorded creation account.
 func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (res *resolved, creds metaCreds, err error) {
 	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
@@ -284,7 +286,7 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if err != nil {
 		return err
 	}
-	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveExisting)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.existingResolver(metaCreationAccountID(campaign)))
 	if err != nil {
 		return err
 	}
@@ -365,7 +367,7 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 // platform-agnostic window to Meta's own vocabulary via metaMetricsWindow before calling
 // the client.
 func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveExisting)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.existingResolver(metaCreationAccountID(campaign)))
 	if err != nil {
 		return nil, err
 	}

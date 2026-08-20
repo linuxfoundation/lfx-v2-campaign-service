@@ -218,7 +218,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	if err != nil {
 		return err
 	}
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolveExisting)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInCreationAccountID(campaign)))
 	if err != nil {
 		return err
 	}
@@ -287,8 +287,10 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 // returning a classified error to a synchronous handler, and folding the two would mean this
 // helper had to know which caller it had.
 //
-// resolveCreds selects the credential entry point (see credsResolver): discovery is governed
-// by the forced-system flag, an operation on an existing campaign never is.
+// resolveCreds selects the credential entry point (see credsResolver): discovery is governed by
+// the forced-system flag; an operation on an existing campaign resolves the account that
+// campaign was CREATED under (linkedInCreationAccountID), which is the LF system account for a
+// campaign created while the flag was on.
 func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (res *resolved, creds linkedinCreds, err error) {
 	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
@@ -493,7 +495,7 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
 
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolveExisting)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInCreationAccountID(campaign)))
 	if err != nil {
 		return nil, err
 	}

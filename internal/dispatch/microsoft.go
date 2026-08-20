@@ -417,11 +417,12 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client
 // for the TOGGLE and METRICS paths (see validateMicrosoftConnection for the shared rules).
 //
-// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting and
-// is never redirected by the forced-system flag: the campaign lives in the account it was
-// created under, and verifyMicrosoftAccountMatch below would refuse any other one.
-func (d *MicrosoftDispatcher) resolveMicrosoftClient(ctx context.Context, projectID string, platform model.Provider) (*microsoft.Client, error) {
-	res, err := d.creds.resolveExisting(ctx, projectID, platform)
+// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting,
+// which follows the account the campaign was CREATED under (microsoftCreationAccountID): the
+// campaign lives in that account whether it was the project's or — with the forced-system flag
+// on at creation — the LF system one, and verifyMicrosoftAccountMatch below refuses any other.
+func (d *MicrosoftDispatcher) resolveMicrosoftClient(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*microsoft.Client, error) {
+	res, err := d.creds.resolveExisting(ctx, projectID, platform, microsoftCreationAccountID(campaign))
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +579,7 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if adID != "" && adGroupID == "" {
 		return fmt.Errorf("%w: microsoft campaign %s records ad %s but no ad group id, so the orphaned ad cannot be addressed in a status update", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, adID)
 	}
-	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
+	client, err := d.resolveMicrosoftClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return err
 	}
@@ -642,7 +643,7 @@ func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string,
 	if campaign == nil || campaign.PlatformCampaignID == "" {
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
 	}
-	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
+	client, err := d.resolveMicrosoftClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return nil, err
 	}

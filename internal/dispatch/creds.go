@@ -223,41 +223,120 @@ func (r *resolved) systemScoped(err error) error {
 }
 
 // credsResolver is one of credsSource.resolve (creation and discovery — forced-system
-// applies) or credsSource.resolveExisting (an operation on an already-created campaign —
-// forced-system never applies). Adapters whose credential helper serves BOTH kinds of caller
-// take one of these rather than reaching for a fixed method, so the choice is made by the
-// caller that knows which it is, and reading the call site tells you which account a given
-// operation authenticates as.
+// applies) or a closure over credsSource.resolveExisting (an operation on an already-created
+// campaign — resolution follows the account the campaign was CREATED under). Adapters whose
+// credential helper serves BOTH kinds of caller take one of these rather than reaching for a
+// fixed method, so the choice is made by the caller that knows which it is, and reading the
+// call site tells you which account a given operation authenticates as.
 type credsResolver func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error)
+
+// existingResolver adapts resolveExisting to the credsResolver shape by binding the account
+// the campaign was CREATED under, which the caller reads with its own platform's
+// *CreationAccountID reader.
+//
+// It exists so the adapters whose credential helper serves both creation and existing-campaign
+// callers (meta, linkedin, reddit) can pass an existing-campaign resolver without the
+// credsResolver signature growing a campaign argument that the CREATION callers have no value
+// for. Binding it here — at the call site that holds the campaign — keeps "which account does
+// this operation authenticate as" answerable by reading that one line.
+func (s *credsSource) existingResolver(creationAccountID string) credsResolver {
+	return func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+		return s.resolveExisting(ctx, projectID, provider, creationAccountID)
+	}
+}
 
 // resolveExisting resolves credentials for an operation on an ALREADY-CREATED campaign —
 // toggle-status, read-metrics, and the campaign lookups that address a stored upstream id.
-// It is `resolve` WITHOUT the forced-system override: the LFX_FORCE_SYSTEM_ADS_ACCOUNT flag
-// governs which account new campaigns are CREATED in, and says nothing about campaigns that
-// already exist.
 //
-// The distinction is not stylistic; conflating the two makes a live campaign impossible to
-// stop. Every ad platform here scopes campaign ids to an ad ACCOUNT, which is why each
-// adapter carries a provenance guard (verifyMetaAccountMatch and its four siblings) that
-// refuses to address a stored campaign id against an account it was not created under. A
-// campaign created BEFORE the cutover recorded the project's account; resolving the system
-// account for its pause makes those two differ, the guard fires, and the service returns 409
-// to the one operation that must never be unavailable. The campaign keeps serving and keeps
-// spending, and no fix-forward reaches it — the flag would have to be turned back off, which
-// is the opposite of what a cutover flag is for.
+// It resolves the account the campaign was ACTUALLY CREATED UNDER, which the caller passes as
+// creationAccountID, having read it from the campaign's own persisted result (
+// metaCreationAccountID and its four siblings). That recorded id is the invariant. It is NOT
+// "was this campaign created before or after the cutover": a date or a flag reading is an
+// approximation of the same fact, and the fact itself is already persisted on every row.
 //
-// The account a campaign was created under is a HISTORICAL FACT, not a policy input, which is
-// why it is read from the campaign's own persisted result rather than recomputed from current
-// config. Keeping existing-campaign operations on their creation account is the same model the
-// provenance guards already encode, so this narrows the flag to the case it was written for
-// rather than adding a second, parallel notion of "which account".
+// The distinction is not stylistic; getting it wrong either way makes a live campaign
+// impossible to stop. Every ad platform here scopes campaign ids to an ad ACCOUNT, which is
+// why each adapter carries a provenance guard (verifyMetaAccountMatch and its four siblings)
+// that refuses to address a stored campaign id against an account it was not created under.
+// Resolve the wrong account for a pause and the guard fires, the service returns 409 to the
+// one operation that must never be unavailable, and the campaign keeps serving and keeps
+// spending. Both directions of that failure are real and neither has a fix-forward:
 //
-// It is deliberately a separate ENTRY POINT rather than a flag threaded through `resolve`:
-// the caller knows whether it holds a campaign, and the resolver cannot infer it. A dispatch
-// (creation) calls `resolve` and is forced; everything holding a *model.Campaign calls this
-// and is not.
-func (s *credsSource) resolveExisting(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
-	return s.resolveWithFallback(ctx, projectID, provider)
+//   - a campaign created on the PROJECT's account (before the cutover) resolved to the system
+//     account: the original bug, fixed by not forcing this path.
+//   - a campaign created on the SYSTEM account (after the cutover, because creation is forced)
+//     resolved to the project's account whenever the project has a connection of its own:
+//     the mirror-image bug, which project-then-fallback resolution reintroduces. It is the
+//     worse of the two, because it strands exactly the campaigns the flag just created.
+//
+// Reading the recorded account handles both without a flag test, which is why this does not
+// consult forceSystemPaidAds at all. It also keeps a system-created campaign stoppable AFTER
+// the flag is turned back OFF — the row still records the system account, so resolution still
+// follows it. A flag-conditional rule would strand those campaigns the moment the cutover
+// flag was retired, which is precisely when it will be.
+//
+// An EMPTY creationAccountID means the row records no provenance — the pre-existing-row case
+// every *CreationAccountID sibling documents by returning "". There is nothing to match on, so
+// it falls back to ordinary project-then-system resolution, which is the behaviour those rows
+// had before the flag existed and the same "unknown, proceed" the provenance guards apply.
+func (s *credsSource) resolveExisting(ctx context.Context, projectID string, provider model.Provider, creationAccountID string) (*resolved, error) {
+	res, err := s.resolveWithFallback(ctx, projectID, provider)
+	if err != nil {
+		return nil, err
+	}
+	if matchesAccount(res.accountID, creationAccountID) {
+		return res, nil
+	}
+	// The project scope resolved a DIFFERENT account than the one that created this campaign.
+	// The system row is the only other account this service ever creates campaigns under, so
+	// try it before giving up; if it is the creating account, this is a post-cutover campaign
+	// and the system credentials are the ones that can address it.
+	sysRes, sysErr := s.resolveForcedSystem(ctx, provider)
+	if sysErr != nil {
+		// The system row is missing or unusable. Return the PROJECT's resolution rather than
+		// the system error: the caller's provenance guard will refuse with the actionable
+		// account-mismatch message, and reporting a system-row fault here would aim the
+		// remedy at the wrong operator for a project that simply re-pointed its connection.
+		return res, nil
+	}
+	if matchesAccount(sysRes.accountID, creationAccountID) {
+		return sysRes, nil
+	}
+	// Neither account created this campaign — the project re-pointed its connection, which is
+	// exactly what the provenance guards exist to catch. Return the project resolution so the
+	// guard renders its mismatch against the account the project currently points at.
+	return res, nil
+}
+
+// matchesAccount reports whether a resolved account id is the one a campaign was created
+// under. An empty creation id means the row records no provenance ("unknown, proceed", as
+// every *CreationAccountID sibling documents), so it matches anything and keeps ordinary
+// project-then-system resolution.
+//
+// That empty-id arm is a SHORT-CIRCUIT, not a behavioural branch: with it removed, an
+// unrecorded account simply fails to match either candidate and resolveExisting returns the
+// project resolution anyway, which is the same answer. It is kept because it says the rule
+// out loud and skips a system lookup that cannot change the outcome — but a mutation that
+// inverts it is an EQUIVALENT MUTANT and no test can kill it. TestLegacyRowWithoutProvenance-
+// ResolvesTheProjectAccount pins the OUTCOME for such rows, which is the part that matters.
+//
+// Comparison is trimmed and case-insensitive, and tolerates Meta's optional "act_" prefix, so
+// the five platforms' differing account-id vocabularies all compare correctly here. The
+// per-platform provenance guards remain the authority on a genuine mismatch; this only steers
+// WHICH connection is resolved, and a wrong answer here is caught there rather than acted on.
+func matchesAccount(resolvedID, creationAccountID string) bool {
+	created := strings.TrimSpace(creationAccountID)
+	if created == "" {
+		return true
+	}
+	return strings.EqualFold(trimAccountPrefix(resolvedID), trimAccountPrefix(created))
+}
+
+// trimAccountPrefix normalises a Meta-style "act_<digits>" id to its bare digits so a
+// connection row and a persisted result blob compare equal regardless of which form each
+// stored. Every other platform's ids are unaffected.
+func trimAccountPrefix(id string) string {
+	return strings.TrimPrefix(strings.TrimSpace(id), "act_")
 }
 
 // resolve fetches the project's connection for the provider and decrypts its
