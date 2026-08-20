@@ -42,9 +42,17 @@ func newAESGCM(t *testing.T) *crypto.AESGCM {
 //
 // The bound is what keeps a precondition from becoming a hang. A single seal is already
 // overwhelmingly likely to qualify — measured over 200,000 seals of this file's plaintext,
-// 0 were text-safe and 80.8% carried a NUL byte outright — so 64 attempts is not a budget
-// this is expected to spend. It exists so that an Encrypt which somehow stopped producing
-// binary output fails the test with a message, instead of spinning forever in CI.
+// 0 were text-safe and 100% were invalid UTF-8, while only 19.0% carried a NUL byte
+// outright — so 64 attempts is not a budget this is expected to spend. It exists so that
+// an Encrypt which somehow stopped producing binary output fails the test with a message,
+// instead of spinning forever in CI.
+//
+// The 19% figure is why the disqualifying test below is an OR and not an AND. A sealed
+// blob here is 54 bytes (12-byte nonce + 26 ciphertext + 16 tag), so P(no NUL) =
+// (255/256)^54 ≈ 0.8095 and P(NUL) ≈ 0.1905 — the measurement and the arithmetic agree.
+// Demanding a NUL *and* invalid UTF-8 would put the per-attempt hit rate at that 19%, and
+// 64 independent misses at ≈ 1.4e-6 — rare, but a t.Fatalf on CORRECT code, which is a
+// red build nothing can act on. Under the OR the per-attempt rate is the measured 100%.
 const textHostileSeals = 64
 
 // sealTextHostile returns Encrypt output that a TEXT column provably cannot store
@@ -65,12 +73,18 @@ const textHostileSeals = 64
 // no-longer-binary Encrypt, the second converts it into a hung job — so the search is
 // bounded and its exhaustion is a Fatal.
 //
-// Both disqualifying conditions are checked, because they are refused for different
-// reasons and either one alone is sufficient: PostgreSQL rejects a NUL byte in a text
-// value ("invalid byte sequence for encoding UTF8: 0x00") and rejects invalid UTF-8 the
-// same way. Requiring only ONE of them would still be a real precondition, but requiring
-// the pair costs nothing at this hit rate and keeps the guarantee independent of which
-// check a given server encoding applies first.
+// EITHER disqualifying condition suffices, so the test is an OR. The two are refused for
+// the same reason and independently: on a UTF8 server PostgreSQL rejects a NUL byte in a
+// text value ("invalid byte sequence for encoding UTF8: 0x00") and rejects invalid UTF-8
+// the same way ("...: 0xff"). Verified against PG16 rather than assumed — a NUL is in fact
+// a well-formed UTF-8 encoding of U+0000, so "contains a NUL" is not a special case of
+// "invalid UTF-8" and the server's refusal of it is a separate rule.
+//
+// Requiring the PAIR was the earlier form and it was a defect: it dropped the per-attempt
+// hit rate from 100% to 19%, which made exhausting all 64 attempts a ~1.4e-6 red build on
+// a correct implementation. Since either condition alone already makes the blob
+// unstorable as text, the conjunction bought no strength for that risk. See
+// textHostileSeals.
 func sealTextHostile(t *testing.T, enc *crypto.AESGCM, plaintext []byte) []byte {
 	t.Helper()
 
@@ -79,14 +93,14 @@ func sealTextHostile(t *testing.T, enc *crypto.AESGCM, plaintext []byte) []byte 
 		if err != nil {
 			t.Fatalf("Encrypt: %v", err)
 		}
-		if bytes.IndexByte(sealed, 0) >= 0 && !utf8.Valid(sealed) {
+		if bytes.IndexByte(sealed, 0) >= 0 || !utf8.Valid(sealed) {
 			return sealed
 		}
 	}
 	// Report by SHAPE, never by value — this function handles sealed credential bytes,
 	// and the message renders into CI job output. See the equivalent note on the
 	// decrypted-blob assertions below.
-	t.Fatalf("no ciphertext in %d Encrypt calls contained both a NUL byte and invalid "+
+	t.Fatalf("no ciphertext in %d Encrypt calls contained either a NUL byte or invalid "+
 		"UTF-8, so the round-trip below could not distinguish a BYTEA column from a TEXT "+
 		"one; either Encrypt stopped producing binary output or it is no longer randomised",
 		textHostileSeals)
@@ -101,10 +115,12 @@ func sealTextHostile(t *testing.T, enc *crypto.AESGCM, plaintext []byte) []byte 
 // Every other credential test in this package writes a literal like []byte("ciphertext-v1"),
 // which is valid ASCII and therefore survives anything — including a column typed as
 // text, a driver that re-encodes on the wire, or an encryptor that never ran. GCM output
-// is none of those things: it is a random nonce followed by ciphertext and a tag, so it
-// ordinarily carries NUL bytes, invalid UTF-8, and every byte value. That is exactly the
-// input that distinguishes a column which stores bytes from one that stores a string, and
-// it is why the plaintext here is deliberately non-ASCII too.
+// is none of those things: it is a random nonce followed by ciphertext and a tag, so its
+// bytes are drawn from the full 0x00–0xff range rather than from printable ASCII. A single
+// 54-byte sample obviously cannot contain every byte value, and it carries a NUL only
+// ~19% of the time; what it is essentially always is invalid UTF-8 (measured: 200,000 of
+// 200,000). That is exactly the input that distinguishes a column which stores bytes from
+// one that stores a string, and it is why the plaintext here is deliberately non-ASCII too.
 //
 // "Ordinarily" is doing real work in that sentence, which is why the ciphertext comes from
 // sealTextHostile rather than a bare Encrypt. The nonce is random, so whether a given
@@ -208,11 +224,14 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 // and Delete, and SetCredential is the one write the credential-rotation path actually
 // calls.
 //
-// It is also the only connection write that is NOT version-gated, which is why the
-// version bump is asserted rather than assumed. The handler publishes the returned row's
-// version as the caller's ETag; if the UPDATE did not bump it, the next If-Match would
-// succeed against a version whose row no longer exists in that form, and every assertion
-// about the credential itself would still pass.
+// Like createConn and deleteConn, it is not version-gated — updateConn is the only
+// connection write that parses an If-Match — which is why the version bump is asserted
+// rather than assumed. The bump is what INVALIDATES ETags issued before the rotation: a
+// caller still holding the pre-rotation version must not be able to satisfy a later
+// If-Match against a row this write has already replaced. (The set-credential handler
+// discards the returned row and answers 204, so it does not itself publish the new
+// version as an ETag; the row is still the repo's contract, and every assertion about the
+// credential bytes below would pass whether or not the version moved.)
 func TestLiveSetCredentialRotatesTheBlobAndBumpsVersion(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -251,10 +270,14 @@ func TestLiveSetCredentialRotatesTheBlobAndBumpsVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetCredential: %v", err)
 	}
-	if updated.Version <= created.Version {
-		t.Fatalf("SetCredential returned version %d, want greater than the created %d; "+
-			"the row it hands back becomes the caller's ETag, so an unbumped version "+
-			"lets the NEXT If-Match succeed against a state this write replaced",
+	// The EXACT increment, not merely "greater": `<=` passes for a version+2 as readily
+	// as version+1, and a double bump means a second write ran. connection_live_test.go
+	// pins `!= stale+1` for the same reason.
+	if updated.Version != created.Version+1 {
+		t.Fatalf("SetCredential returned version %d, want exactly the created %d + 1; "+
+			"the bump is what invalidates ETags issued before the rotation, so an "+
+			"unbumped version lets a stale If-Match succeed against a state this write "+
+			"replaced, and a double bump means a second write ran",
 			updated.Version, created.Version)
 	}
 

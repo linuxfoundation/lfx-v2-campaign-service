@@ -84,14 +84,21 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 	}
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
+		// Errorf, not Logf. This test provisions a database per migration version, so a
+		// silently-skipped drop does not cost one stray database, it accumulates a whole
+		// run's worth against the persistent local harness — and a Logf leaves that
+		// invisible in a green run. The contract is that a green run leaves nothing
+		// behind, so failing to drop is a test failure, not a note.
 		conn, err := pgx.Connect(cleanupCtx, dbtest.DSN())
 		if err != nil {
-			t.Logf("cleanup: reconnect to drop %s: %v", name, err)
+			t.Errorf("cleanup: reconnect to drop %s: %v; the scratch database is still "+
+				"present and this run did not leave the server as it found it", name, err)
 			return
 		}
 		defer func() { _ = conn.Close(cleanupCtx) }()
 		if _, err := conn.Exec(cleanupCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE)", name)); err != nil {
-			t.Logf("cleanup: drop %s: %v", name, err)
+			t.Errorf("cleanup: drop %s: %v; the scratch database is still present and this "+
+				"run did not leave the server as it found it", name, err)
 		}
 	})
 
@@ -280,15 +287,38 @@ func schemaObjects(ctx context.Context, t *testing.T, dsn string) []string {
 	// name and changes the definition (000009 and 000014 both drop-and-recreate), and a
 	// name-only compare would call that a no-op. Columns carry type and nullability for
 	// the same reason: a down that restores a column as the wrong type has not restored it.
+	//
+	// The column arm reads pg_attribute rather than information_schema.columns, because
+	// the latter cannot express the type it reports. Its `data_type` is the SQL-standard
+	// type NAME with the modifier stripped: `NUMERIC(14,2)` and `NUMERIC(14,3)` both render
+	// as the bare string `numeric`, and `VARCHAR(50)` and `VARCHAR(200)` both as `character
+	// varying`. Measured on PG16. So the sentence above -- "a down that restores a column as
+	// the wrong type has not restored it" -- was the one thing the old query could not
+	// detect: campaigns.budget_amount is NUMERIC(14,2) (000002), and a down file restoring
+	// it at NUMERIC(14,3) produced a snapshot BYTE-IDENTICAL to the reference.
+	//
+	// format_type(atttypid, atttypmod) is the modifier-carrying rendering, and the default
+	// expression is joined in from pg_attrdef: a down that drops a DEFAULT changes what the
+	// column does on every subsequent INSERT, and the old snapshot selected no default at
+	// all, so that was invisible too.
 	rows, err := conn.Query(ctx, `
 		SELECT 'table:' || tablename
 		FROM pg_tables
 		WHERE schemaname = 'public' AND tablename <> 'schema_migrations'
 		UNION ALL
-		SELECT 'column:' || table_name || '.' || column_name || ' ' || data_type ||
-		       CASE WHEN is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END
-		FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name <> 'schema_migrations'
+		SELECT 'column:' || a.attrelid::regclass::text || '.' || a.attname || ' ' ||
+		       format_type(a.atttypid, a.atttypmod) ||
+		       CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END ||
+		       COALESCE(' DEFAULT ' || pg_get_expr(d.adbin, d.adrelid), '')
+		FROM pg_attribute a
+		JOIN pg_class cl ON cl.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = cl.relnamespace
+		LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+		WHERE n.nspname = 'public'
+		  AND cl.relkind IN ('r', 'p')
+		  AND cl.relname <> 'schema_migrations'
+		  AND a.attnum > 0
+		  AND NOT a.attisdropped
 		UNION ALL
 		SELECT 'index:' || indexname || ' = ' || indexdef
 		FROM pg_indexes

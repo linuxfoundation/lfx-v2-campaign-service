@@ -57,9 +57,19 @@ one byte, GCM authentication would fail and the failure would be read as
 "decryption is broken" when the defect is in storage.
 
 `SetCredential` had no live coverage at all, though it is the write the
-credential-rotation path actually calls. It is also the only connection write
-that is not version-gated, so the version bump is asserted rather than assumed:
-the handler publishes the returned row's version as the caller's ETag.
+credential-rotation path actually calls. Like `createConn` and `deleteConn` it
+is not version-gated — `updateConn` is the only connection write that parses an
+`If-Match` — so the version bump is asserted rather than assumed: the bump is
+what INVALIDATES ETags issued before the rotation.
+
+*(Corrected 2026-08-20.* This entry originally said "it is also the only
+connection write that is not version-gated" and "the handler publishes the
+returned row's version as the caller's ETag". Both are false. `createConn` and
+`deleteConn` are ungated too, and `setCredential` in
+`internal/service/connection_handler.go` discards the returned row into `_` and
+answers 204 — its own comment says the new ETag "is not emitted here". The
+version bump is still worth asserting, but for ETag INVALIDATION, not
+publication.*)
 
 **Follow-up — the BYTEA-vs-TEXT premise was nondeterministic.** The round-trip
 test exists to catch the `credentials` column being typed TEXT, and it can only
@@ -71,11 +81,20 @@ PASSES, missing the exact regression it was written for, with nothing to signal
 the near miss.
 
 Measured, the odds were reassuring and beside the point: over 200,000 seals of
-this file's plaintext, 0 were text-safe and 80.8% carried a NUL byte outright.
-A property that holds 99.99…% of the time is still not the property the test
-claimed to rest on. `sealTextHostile` now ASSERTS it — a bounded 64-attempt
-search (bounded so a no-longer-binary `Encrypt` fails loudly instead of
-hanging), with exhaustion as a `t.Fatal`.
+this file's plaintext, 0 were text-safe and 100% were invalid UTF-8, while
+19.0% carried a NUL byte outright. A property that holds 99.99…% of the time is
+still not the property the test claimed to rest on. `sealTextHostile` now
+ASSERTS it — a bounded 64-attempt search (bounded so a no-longer-binary
+`Encrypt` fails loudly instead of hanging), with exhaustion as a `t.Fatal`.
+
+*(Corrected 2026-08-20.* This entry originally read "0 were text-safe and 80.8%
+carried a NUL byte outright". 80.8% is P(NO NUL), not P(NUL): a seal here is 54
+bytes, so `(255/256)^54 ≈ 0.8095` is the probability of NO NUL and the true NUL
+rate is ≈19.0%, which re-measurement confirms. The inverted figure also
+under-stated a real defect — the original `sealTextHostile` required a NUL
+**and** invalid UTF-8, so its true per-attempt hit rate was that 19%, not 80.8%,
+putting 64 consecutive misses at ≈1.4e-6: a `t.Fatalf` on correct code. The
+condition is now an OR, whose measured per-attempt rate is 100%.*)
 
 The proof is an A/B against a scratch migration that retypes the column to
 TEXT, with `Encrypt` mutated to hex-encode its output — genuine encryption,
