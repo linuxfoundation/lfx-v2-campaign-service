@@ -802,3 +802,74 @@ func fmtInt64Ptr(v *int64) string {
 	}
 	return strconv.FormatInt(*v, 10)
 }
+
+// TestGetCampaignSettings_PaddedPeriodWithContradictingAmountRefused pins the cross-check
+// against a PADDED period.
+//
+// The refusal above compares the period with exact equality against DAILY/CUSTOM_PERIOD,
+// while blankToNil carries a non-blank value through VERBATIM — padding and all. So a row
+// reporting " DAILY " alongside total_amount_micros matched NEITHER arm and decoded cleanly,
+// which is precisely the pair the cross-check exists to refuse: googleAdsUpstreamBudgetAmount
+// then reads the total without consulting the period and compares a whole-flight cap against
+// a daily recorded budget, sending an operator after a phantom budget divergence.
+//
+// The period is normalised for the COMPARISON ONLY. It is an ENUM from a closed set, so
+// recognising " DAILY " as DAILY discovers what the value already is; it does not invent a
+// value. That is why identity fields are deliberately left untrimmed — trimming an opaque
+// identifier would manufacture a well-formed id the platform never reported.
+func TestGetCampaignSettings_PaddedPeriodWithContradictingAmountRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		budgetJSON string
+		wantField  string
+		wantPeriod string
+	}{
+		{"padded DAILY carrying a total amount", `{"totalAmountMicros":"9000000000","period":" DAILY "}`, "total_amount_micros", "DAILY"},
+		{"padded CUSTOM_PERIOD carrying a daily amount", `{"amountMicros":"500000000","period":" CUSTOM_PERIOD "}`, "amount_micros", "CUSTOM_PERIOD"},
+		{"tab/newline padded DAILY carrying a total amount", `{"totalAmountMicros":"9000000000","period":"\tDAILY\n"}`, "total_amount_micros", "DAILY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+				`"campaignBudget":` + tc.budgetJSON + `}`)
+			srv, _, _ := settingsServer(t, []json.RawMessage{row})
+			client := newAccountsTestClient(t, srv)
+
+			got, err := client.GetCampaignSettings(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("expected an error for a padded %s period carrying the contradicting amount, got: %+v", tc.wantPeriod, got)
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Errorf("error should name the offending field, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantPeriod) {
+				t.Errorf("error should name the contradicting period, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestGetCampaignSettings_PaddedPeriodIsNotTrimmedInTheReadValue is the narrowing half, and
+// it is what keeps the fix from becoming the very defect blankToNil documents.
+//
+// Normalisation is applied to the COMPARISON only. The period that reaches the caller must
+// still be the bytes Google sent, so a consumer that has to judge the value sees it as it
+// arrived rather than as a well-formed enum this decoder manufactured.
+func TestGetCampaignSettings_PaddedPeriodIsNotTrimmedInTheReadValue(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
+		`"campaignBudget":{"amountMicros":"500000000","period":" DAILY "}}`)
+	srv, _, _ := settingsServer(t, []json.RawMessage{row})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.GetCampaignSettings(context.Background(), "555")
+	if err != nil {
+		t.Fatalf("a padded period with the CONSISTENT amount field is not a contradiction and must decode: %v", err)
+	}
+	if got.BudgetPeriod == nil {
+		t.Fatal("BudgetPeriod is nil: a present, non-blank period must survive the read")
+	}
+	if *got.BudgetPeriod != " DAILY " {
+		t.Errorf("BudgetPeriod = %q, want the verbatim %q: trimming the value the caller receives would "+
+			"normalise a malformed field into a well-formed one behind the consumers that validate it",
+			*got.BudgetPeriod, " DAILY ")
+	}
+}

@@ -370,8 +370,23 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	// settings.BudgetPeriod is used rather than the raw row field because blankToNil has
 	// already applied this file's normalisation: a whitespace-only period collapses to nil and
 	// is therefore treated as absent here too, exactly as it is for every other optional string.
+	//
+	// The period is TrimSpace'd for this COMPARISON ONLY — the value blankToNil carries through
+	// stays verbatim for the caller. Without this, a padded " DAILY " matched neither arm of the
+	// switch below and slipped past BOTH refusals, which is precisely the pair this check exists
+	// to catch: googleAdsUpstreamBudgetAmount then reads whichever amount is present without
+	// consulting the period, comparing a whole-flight cap against a daily recorded budget and
+	// sending an operator after a budget divergence that does not exist.
+	//
+	// Trimming is safe HERE and wrong elsewhere, and the distinction is the value's KIND rather
+	// than the operation. This is a closed-set ENUM: recognising " DAILY " as DAILY discovers
+	// what the value already unambiguously is, and the trimmed form is used only to CHOOSE A
+	// REFUSAL, never to populate a compared field. blankToNil's warning is about the opposite
+	// case — trimming an opaque IDENTIFIER or a strictly-parsed date invents a well-formed value
+	// the platform never reported, manufacturing an agreement rather than detecting one. That is
+	// why the trimmed string is confined to this switch and never written back onto settings.
 	if settings.BudgetPeriod != nil {
-		switch period := *settings.BudgetPeriod; {
+		switch period := strings.TrimSpace(*settings.BudgetPeriod); {
 		case period == budgetPeriodDaily && row.CampaignBudget.TotalAmountMicros != nil:
 			return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned with campaign_budget.period %s but a campaign_budget.total_amount_micros, which belongs to a %s budget; the row contradicts itself and reading its budget would compare a whole-flight cap against a daily amount", campaignID, budgetPeriodDaily, budgetPeriodCustom)
 		case period == budgetPeriodCustom && row.CampaignBudget.AmountMicros != nil:

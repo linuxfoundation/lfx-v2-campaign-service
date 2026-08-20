@@ -54,6 +54,13 @@ func settingsDispatcher(t *testing.T, searchJSON string) (*GoogleAdsDispatcher, 
 	}
 }
 
+// settingsProvenance is the Result blob recording that the campaign was created under the
+// customer activeGoogleAdsConn resolves to. ReadSettings fails CLOSED on absent provenance
+// (a row naming no creating customer cannot be read safely under the project's current one),
+// so every fixture exercising a DIFFERENT concern has to record it — otherwise the test would
+// be asserting its subject through a refusal that never reaches the code under test.
+func settingsProvenance() []byte { return []byte(`{"customerId":"1234567890"}`) }
+
 // settingsField finds one field in a readback by name.
 func settingsField(t *testing.T, rb *model.CampaignSettingsReadback, name string) model.CampaignSettingsField {
 	t.Helper()
@@ -82,6 +89,7 @@ func TestGoogleAds_ReadSettings_SubCentBudgetIsNotRoundedIntoAMatch(t *testing.T
 	recorded := 10.00
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		BudgetAmount: &recorded,
 	}
 
@@ -111,6 +119,7 @@ func TestGoogleAds_ReadSettings_WholeCentBudgetStillMatches(t *testing.T) {
 	recorded := 500.50
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		BudgetAmount: &recorded,
 	}
 
@@ -142,6 +151,7 @@ func TestGoogleAds_ReadSettings_ReportsBudgetDivergence(t *testing.T) {
 		ID:                 "camp-1",
 		Platform:           model.ProviderGoogleAds,
 		PlatformCampaignID: "777",
+		Result:             settingsProvenance(),
 		CampaignName:       "recorded name",
 		BudgetAmount:       &recorded,
 		BudgetType:         &bt,
@@ -195,6 +205,7 @@ func TestGoogleAds_ReadSettings_MatchWhenBothAgree(t *testing.T) {
 	bt := model.BudgetDaily
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		CampaignName: "same name", BudgetAmount: &recorded, BudgetType: &bt,
 	}
 
@@ -248,6 +259,7 @@ func TestGoogleAds_ReadSettings_PaddedRecordedNameDoesNotFabricateAMatch(t *test
 
 			camp := &model.Campaign{
 				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				Result:       settingsProvenance(),
 				CampaignName: recordedName,
 			}
 			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -296,6 +308,7 @@ func TestGoogleAds_ReadSettings_BlankRecordedNameIsUnknownNotDiverged(t *testing
 
 			camp := &model.Campaign{
 				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				Result:       settingsProvenance(),
 				CampaignName: recordedName,
 			}
 			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -320,7 +333,8 @@ func TestGoogleAds_ReadSettings_IssuesNoMutatingCall(t *testing.T) {
 	d, requests := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"750000000","period":"DAILY"}}]}`)
 
 	recorded := 500.0
-	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777", BudgetAmount: &recorded}
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result: settingsProvenance(), BudgetAmount: &recorded}
 
 	if _, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp); err != nil {
 		t.Fatalf("ReadSettings: %v", err)
@@ -359,6 +373,7 @@ func TestGoogleAds_ReadSettings_DoesNotWriteBackOntoTheRow(t *testing.T) {
 	bt := model.BudgetDaily
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		CampaignName: "recorded name", BudgetAmount: &recorded, BudgetType: &bt,
 		Status: model.CampaignStatusCreated,
 	}
@@ -394,6 +409,7 @@ func TestGoogleAds_ReadSettings_UnreadUpstreamIsUnknownNotMatch(t *testing.T) {
 	bt := model.BudgetDaily
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		BudgetAmount: &recorded, BudgetType: &bt,
 	}
 
@@ -432,6 +448,7 @@ func TestGoogleAds_ReadSettings_UnknownPeriodIsNotMappedToABudgetType(t *testing
 	bt := model.BudgetDaily
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		BudgetAmount: &recorded, BudgetType: &bt,
 	}
 
@@ -468,6 +485,7 @@ func TestGoogleAds_ReadSettings_PaddedPeriodIsNotMappedToABudgetType(t *testing.
 	bt := model.BudgetDaily
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		BudgetAmount: &recorded, BudgetType: &bt,
 	}
 
@@ -498,6 +516,7 @@ func TestGoogleAds_ReadSettings_CustomPeriodMapsToLifetime(t *testing.T) {
 	recorded := 9000.0
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
 		BudgetAmount: &recorded, BudgetType: &bt,
 	}
 
@@ -530,6 +549,7 @@ func TestGoogleAds_ReadSettings_StatusIsReportedButNotCompared(t *testing.T) {
 
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result: settingsProvenance(),
 		Status: model.CampaignStatusCreated,
 	}
 	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -555,7 +575,7 @@ func TestGoogleAds_ReadSettings_StatusIsReportedButNotCompared(t *testing.T) {
 func TestGoogleAds_ReadSettings_AbsentUpstreamCampaignIsReportedAsAbsent(t *testing.T) {
 	d, _ := settingsDispatcher(t, `{"results":[]}`)
 
-	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777", Result: settingsProvenance()}
 	_, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
 	if !errors.Is(err, domain.ErrPlatformCampaignAbsent) {
 		t.Fatalf("err = %v, want ErrPlatformCampaignAbsent", err)
@@ -589,7 +609,7 @@ func TestGoogleAds_ReadSettings_AccountMismatchIsRefusedBeforeContact(t *testing
 // as a plain error, not wrapped with notCreated — a read has no create-claim to protect.
 func TestGoogleAds_ReadSettings_ConnectionUnresolvedPropagates(t *testing.T) {
 	d := NewGoogleAdsDispatcher(fakeConnReader{err: errors.New("no connection")}, identityEncryptor{})
-	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777", Result: settingsProvenance()}
 	if _, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp); err == nil {
 		t.Fatal("expected an error when the connection cannot be resolved")
 	}
@@ -612,7 +632,7 @@ func TestGoogleAds_ReadSettings_ConnectionUnresolvedPropagates(t *testing.T) {
 func TestGoogleAds_ReadSettings_ReportsUpstreamOnlyObservations(t *testing.T) {
 	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","advertisingChannelType":"DEMAND_GEN","biddingStrategyType":"MANUAL_CPC"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY","deliveryMethod":"ACCELERATED","explicitlyShared":true}}]}`)
 
-	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777", Result: settingsProvenance()}
 	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
 	if err != nil {
 		t.Fatalf("ReadSettings: %v", err)
@@ -644,6 +664,7 @@ func TestGoogleAds_ReadSettings_RecordedChannelTypeDiverges(t *testing.T) {
 
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:         settingsProvenance(),
 		ConfigSnapshot: []byte(`{"channel":"demand-gen"}`),
 	}
 	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -694,6 +715,7 @@ func TestGoogleAds_ReadSettings_RecordedChannelTypeMatches(t *testing.T) {
 
 			camp := &model.Campaign{
 				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				Result:         settingsProvenance(),
 				ConfigSnapshot: []byte(snapshot),
 			}
 			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -745,6 +767,7 @@ func TestGoogleAds_ReadSettings_UninterpretableChannelIsUnknown(t *testing.T) {
 
 			camp := &model.Campaign{
 				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				Result:         settingsProvenance(),
 				ConfigSnapshot: []byte(snapshot),
 			}
 			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -773,6 +796,7 @@ func TestGoogleAds_ReadSettings_FlightDatesCompareAsDatesNotTimestamps(t *testin
 	end := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
 	camp := &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:    settingsProvenance(),
 		StartDate: &start, EndDate: &end,
 	}
 	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
@@ -802,7 +826,7 @@ func TestGoogleAds_ReadSettings_FlightDatesCompareAsDatesNotTimestamps(t *testin
 func TestGoogleAds_ReadSettings_AbsentFlightDateIsUnknownNotFalselyDiverged(t *testing.T) {
 	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","startDateTime":"2026-08-01 00:00:00"}}]}`)
 
-	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777", Result: settingsProvenance()}
 	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
 	if err != nil {
 		t.Fatalf("ReadSettings: %v", err)
@@ -826,7 +850,7 @@ func TestGoogleAds_ReadSettings_AbsentFlightDateIsUnknownNotFalselyDiverged(t *t
 func TestGoogleAds_ReadSettings_AbsentSharedFlagIsNotFalse(t *testing.T) {
 	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`)
 
-	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777", Result: settingsProvenance()}
 	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
 	if err != nil {
 		t.Fatalf("ReadSettings: %v", err)
@@ -897,5 +921,73 @@ func TestBoolToStrPtr(t *testing.T) {
 	}
 	if got := boolToStrPtr(&fa); got == nil || *got != "false" {
 		t.Errorf("false rendered as %v, want \"false\"", got)
+	}
+}
+
+// TestGoogleAds_ReadSettings_AbsentProvenanceIsRefusedBeforeContact is the ABSENCE half of
+// the identity invariant, and the arm the mismatch test above cannot reach.
+//
+// A row that records NO creating customer is not a row that matches the current connection —
+// it is a row nothing has established anything about. Waving it through queried the stored
+// PlatformCampaignID under whatever account the project currently resolves to, and that id is
+// unique only WITHIN a customer: on a collision the search returns ANOTHER account's campaign
+// and this endpoint reports a divergence between this campaign's recorded budget and a
+// different campaign's actual one. That is the precise false finding the readback exists to
+// make impossible, so absence must fail CLOSED exactly as HubSpot's metrics read already does.
+//
+// The refusal is asserted BEFORE contact for the same reason the mismatch one is: absent
+// provenance is a purely LOCAL fact, and no answer Google could give would change it.
+func TestGoogleAds_ReadSettings_AbsentProvenanceIsRefusedBeforeContact(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result []byte
+	}{
+		{"no result blob at all", nil},
+		{"empty result blob", []byte(`{}`)},
+		{"blob recording an empty customer id", []byte(`{"customerId":""}`)},
+		{"unparseable blob", []byte(`not json`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, requests := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`)
+
+			camp := &model.Campaign{
+				ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+				Result: tc.result,
+			}
+			_, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+			if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+				t.Fatalf("err = %v, want ErrCampaignProvenanceUnknown — a row naming no creating customer "+
+					"must not be read under the project's current one", err)
+			}
+			// Joined, never returned alone, so existing ErrCampaignAccountMismatch callers keep matching.
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Errorf("err = %v, want it to ALSO wrap ErrCampaignAccountMismatch so existing callers keep matching", err)
+			}
+			for _, r := range requests() {
+				if strings.Contains(r, "googleAds:search") {
+					t.Errorf("absent provenance is a purely local fact and must be refused BEFORE the "+
+						"campaign is queried, but a search was issued: %v", requests())
+				}
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ReadSettings_RecordedProvenanceStillReads is the other arm, and it must
+// survive the fix above: adding the absence refusal must not turn a row that DOES record
+// the current customer into a refusal. Both arms are load-bearing.
+func TestGoogleAds_ReadSettings_RecordedProvenanceStillReads(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`)
+
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result: []byte(`{"customerId":"1234567890"}`),
+	}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings with matching recorded provenance: %v", err)
+	}
+	if rb == nil {
+		t.Fatal("readback is nil for a row whose recorded customer matches the connection")
 	}
 }

@@ -669,6 +669,19 @@ consulting the period, so an inconsistent pair would have a whole-flight cap com
 against a daily recorded budget and be reported as a BUDGET DIVERGENCE that is really a
 field-selection bug — the false finding this readback exists to prevent.
 
+The period is `strings.TrimSpace`d for THIS COMPARISON ONLY (LFXV2-3067). `blankToNil` keeps
+a non-blank value VERBATIM, so a padded `" DAILY "` matched neither arm of the exact-equality
+switch and slipped past BOTH refusals — the precise pair the second guard exists to catch,
+leaving an operator chasing a phantom budget divergence. Trimming is correct HERE and wrong
+elsewhere, and the distinction is the value's KIND, not the operation: `period` is a
+closed-set ENUM, so recognising `" DAILY "` as `DAILY` DISCOVERS what the value already
+unambiguously is, and the trimmed string only CHOOSES A REFUSAL — it is never written back
+onto `settings` and never populates a compared field. `blankToNil`'s warning is about the
+opposite case, where trimming an opaque IDENTIFIER or a strictly-parsed date INVENTS a
+well-formed value the platform never sent, manufacturing agreement instead of detecting
+contradiction. That is also why `googleAdsBudgetTypeFromPeriod` still does NOT trim: it
+produces a COMPARED value, so a padded period must keep yielding an `unknown` verdict.
+
 An ABSENT period PASSES both guards, and so do `UNKNOWN`/`UNSPECIFIED`. Absence already
 means "Google did not report this field" on every `CampaignSettings` pointer — a partial
 read is the ordinary case — so it cannot also start meaning "inconsistent pair" without

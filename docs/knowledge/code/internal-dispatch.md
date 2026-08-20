@@ -407,12 +407,31 @@ lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different 
 divergence on every campaign. The upstream value is carried with no recorded counterpart, so
 an operator can still SEE that a campaign is paused upstream.
 
-It enforces the same account-identity invariant `ReadMetrics` does, and it matters more
+It enforces the account-identity invariant `ReadMetrics` does, and it matters more
 here: reading the stored id under a re-pointed connection could return ANOTHER campaign's
 configuration, which this endpoint would then report as a divergence of THIS campaign. An
 upstream campaign that no longer exists surfaces as `domain.ErrPlatformCampaignAbsent` (404)
 rather than an all-`unknown` readback, which would say "we could not read these" when the
 truth is far more specific.
+
+It enforces that invariant in TWO arms, and STRICTER than `ReadMetrics`/`ToggleStatus` do
+(LFXV2-3067). Absent provenance FAILS CLOSED rather than being waved through: a row recording
+no creating customer is not a row that MATCHES the current connection, it is a row nothing has
+established anything about, and `created != "" && created != current` read that absence as a
+match. Because Google Ads is the ONLY `SettingsReader`, that fallthrough also made the
+handler's documented `ErrCampaignProvenanceUnknown` 409 arm unreachable — a documented error
+nothing could produce. The empty case now returns
+`errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch)`, joined
+so existing `errors.Is(err, ErrCampaignAccountMismatch)` callers keep matching, and the
+RECORDED-but-different arm is retained unchanged beside it: the two have different remedies
+(re-dispatch versus reconnect the original account), and both are load-bearing. Checked BEFORE
+the client is consulted, for the reason `hubSpotCreationPortalID` records — absent provenance
+is a purely LOCAL fact, and no answer the platform could give would change it.
+
+The stricter posture is deliberate rather than an inconsistency: this endpoint's whole purpose
+is to report a comparison, so a confidently wrong report about another account's campaign is
+the precise outcome it exists to prevent, whereas the toggle and metrics paths weigh that risk
+against serving legacy rows at all.
 
 ## Metrics read (optional capability)
 
