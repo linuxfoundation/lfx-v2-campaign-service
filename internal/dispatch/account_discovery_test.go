@@ -21,12 +21,17 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
-// Both dispatchers must SATISFY the AccountLister interface, or Orchestrator.ReadAccounts
+// These dispatchers must SATISFY the AccountLister interface, or Orchestrator.ReadAccounts
 // type-asserts, misses, and answers ErrAccountsUnsupported — the endpoint would exist and
 // always fail. A compile-time assertion catches that at build rather than at runtime.
+//
+// Every provider claiming discovery belongs in THIS block, including ones whose behavioural
+// tests live in another file, so the set is readable in one place and gaining a provider does
+// not also require editing a count in this comment.
 var (
 	_ service.AccountLister = (*LinkedInDispatcher)(nil)
 	_ service.AccountLister = (*MicrosoftDispatcher)(nil)
+	_ service.AccountLister = (*TwitterDispatcher)(nil)
 )
 
 // requestRecorder captures what the dispatcher actually put on the wire. Asserting on the
@@ -487,12 +492,6 @@ func TestListAccountsReturnsEmptyNotNilWhenUpstreamHasNone(t *testing.T) {
 	})
 }
 
-// TwitterDispatcher must satisfy AccountLister too, or Orchestrator.ReadAccounts
-// type-asserts, misses, and answers ErrAccountsUnsupported — the route would exist and
-// always fail. Kept beside the other two rather than in twitter_test.go so the set of
-// providers claiming discovery is readable in one place.
-var _ service.AccountLister = (*TwitterDispatcher)(nil)
-
 // twitterAccountsServer answers GET /{version}/accounts with a fixed element set. The
 // `next_cursor` key is REQUIRED in the body: the client refuses a response without it
 // rather than reading the zero value as an exhausted cursor, because that would return a
@@ -662,6 +661,23 @@ func TestTwitterAccountLabelSurfacesWhyAnAccountCannotBeUsed(t *testing.T) {
 		// X publishes no complete approval_status enum, so an UNRECOGNISED value must not
 		// be rendered as a defect — the label says nothing rather than guessing.
 		{"an unrecognised status is not labelled a defect", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "SOMETHING_NEW"}, "LF Events"},
+		// The timezone is a PROPERTY, not a defect, so it joins the NAME rather than the
+		// notes — the same shape linkedInAccountLabel gives Currency. X reports campaign
+		// schedules and daily budget resets against it, so without this term two accounts
+		// differing only by timezone render identically and the picker cannot tell them
+		// apart. Asserting the full string is what makes that binding: a label that dropped
+		// the timezone would still contain the name.
+		{"the timezone is rendered into the name", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED", Timezone: "America/Los_Angeles"}, "LF Events [America/Los_Angeles]"},
+		{"two accounts differing only by timezone are distinguishable", twitter.AdAccount{ID: "a2", Name: "LF Events", Status: "ACCEPTED", Timezone: "Europe/Berlin"}, "LF Events [Europe/Berlin]"},
+		// The timezone precedes the notes: it qualifies WHICH account this is, while the
+		// notes say why that account may not be usable.
+		{"timezone and a defect note coexist in that order", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "REJECTED", Timezone: "Europe/Berlin"}, "LF Events [Europe/Berlin] — rejected"},
+		// An absent timezone must add no empty brackets.
+		{"an absent timezone adds nothing", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED"}, "LF Events"},
+		{"a whitespace-only timezone adds nothing", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED", Timezone: "   "}, "LF Events"},
+		// The id fallback happens BEFORE the timezone is appended, so a nameless account
+		// still renders its id rather than a bare bracketed timezone.
+		{"a nameless account keeps its id in front of the timezone", twitter.AdAccount{ID: "18ce54d4x5t", Timezone: "Asia/Tokyo"}, "18ce54d4x5t [Asia/Tokyo]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

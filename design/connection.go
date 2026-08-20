@@ -476,14 +476,15 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
-// paragraph below MetaAdsConnectionConfig's own godoc. Of the remaining four, only Microsoft
-// has BOTH, as of LFXV2-3064: Reddit and X still lack discovery, while LinkedIn gained a
-// discovery endpoint in that ticket and is missing the OTHER half. resolveLinkedInCredentials
+// paragraph below MetaAdsConnectionConfig's own godoc. Of the remaining four, Microsoft (as of
+// LFXV2-3064) and X (as of LFXV2-3319) have BOTH: Reddit still lacks discovery, while LinkedIn
+// gained a discovery endpoint in the former ticket and is missing the OTHER half.
+// resolveLinkedInCredentials
 // does tag domain.ErrAccountNotSelected, but LinkedInDispatcher.Dispatch never calls it — the
 // create path resolves inline and answers a missing account id with a bare notCreated, so the
 // missing choice is never named. Microsoft, Reddit and X tag it on a path create reaches
 // (validateMicrosoftConnection, resolveRedditClient, validateTwitterConnection). Naming the
-// halves separately matters because the bar is the conjunction — Reddit or X becomes eligible
+// halves separately matters because the bar is the conjunction — Reddit becomes eligible
 // the day it gains discovery, while LinkedIn needs its create path routed through the resolver.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
@@ -514,23 +515,25 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 //
 // LinkedIn, Microsoft, Reddit and X keep Required("account_id"), but no longer all for the
 // same reason, and the difference is what tells you how far each is from being relaxed.
-// Reddit and X still have NO list to choose from, so relaxing the requirement would create a
+// Reddit still has NO list to choose from, so relaxing the requirement would create a
 // connection that can never be finished from inside this API: the operator has to obtain the
 // id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
-// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists. What blocks each
-// differs, and two independent gates are easy to conflate here:
+// Microsoft DO have a discovery endpoint as of LFXV2-3064, and X as of LFXV2-3319 — the list
+// exists. What blocks each differs, and two independent gates are easy to conflate here:
 //
 //   - THIS Required("account_id") gates the PUBLIC connection APIs. LinkedIn stays required
 //     because it lacks the second half — its create path resolves inline and answers a missing
 //     account id with a bare notCreated, so the choice is never named (paragraph above).
-//     Microsoft has both halves and is therefore behaviourally eligible to have it relaxed.
+//     Microsoft and X have both halves and are therefore behaviourally eligible to have it
+//     relaxed.
 //   - accountDiscoveryProviders (internal/bootstrap/sysacct.go) gates only whether an
-//     account-less SYSTEM row is installable by the bootstrap CLI. Microsoft is deliberately
-//     not in it yet — that is a change to what the CLI accepts and belongs in its own commit.
+//     account-less SYSTEM row is installable by the bootstrap CLI. Neither Microsoft nor X is
+//     in it yet — that is a change to what the CLI accepts and belongs in its own commit.
 //
-// So Microsoft's exclusion here is a sequencing decision, not a missing capability; an earlier
-// version of this comment named the bootstrap map as its "other half", which contradicted the
-// paragraph above. Relaxing either gate without both halves is what the next rule forbids.
+// So the Microsoft and X exclusions here are a sequencing decision, not a missing capability; an
+// earlier version of this comment named the bootstrap map as its "other half", which
+// contradicted the paragraph above. Relaxing either gate without both halves is what the next
+// rule forbids.
 //
 // Add the requirement back for Google Ads or Meta, or drop it for another provider, only
 // together with that provider's discovery endpoint AND its account_not_selected tagging.

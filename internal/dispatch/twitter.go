@@ -548,10 +548,28 @@ func (d *TwitterDispatcher) ListAccounts(ctx context.Context, projectID string, 
 // absent or unrecognised one, so an unexpected value is never labelled as a defect — X
 // publishes no complete enum for the field. The `deleted` flag is labelled separately
 // because it is a different question that X answers with its own field.
+//
+// The timezone is rendered into the name the way linkedInAccountLabel renders Currency, and
+// for the same reason: X reports campaign schedules and daily budget resets against the
+// account's timezone, so two otherwise identically-named accounts differing only by timezone
+// are genuinely different choices and a picker that hides it makes them indistinguishable. It
+// is a PROPERTY of the account, not a defect, so it joins the name rather than the notes —
+// notes are reserved for reasons an account may not be usable.
+//
+// The TrimSpace calls are defence-in-depth, not the only trim: ListAdAccounts already trims
+// both Name and Timezone as it decodes, so no value arriving from the client can be untrimmed
+// and neither call here is independently revert-binding. They guard hand-constructed
+// AdAccount values — this function takes the struct, not a response body, so a caller can
+// build one directly — and keep the empty-name fallback keyed on the same notion of "empty"
+// the client uses. Do not read a test that exercises whitespace here as covering the client's
+// trim; that path is pinned in internal/platform/twitter/accounts_test.go.
 func twitterAccountLabel(a twitter.AdAccount) string {
 	name := strings.TrimSpace(a.Name)
 	if name == "" {
 		name = a.ID
+	}
+	if tz := strings.TrimSpace(a.Timezone); tz != "" {
+		name += " [" + tz + "]"
 	}
 	var notes []string
 	if s := a.ApprovalLabel(); s != "" {

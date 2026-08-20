@@ -527,11 +527,13 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
 		// because the capabilities are independent — HubSpot searches emails and has no ad
 		// accounts, while the AccountLister-capable platforms are the reverse — they enumerate
-		// accounts and search no emails. Not "the ad platforms": Reddit and X are ad platforms
-		// and implement neither capability, which is the membership distinction below. Stated as the SHAPE rather than by naming which providers
-		// implement AccountLister: that membership grows (LinkedIn and Microsoft joined
-		// Google Ads and Meta), and an enumerating comment is falsified by the next one
-		// added without anything failing.
+		// accounts and search no emails. Not "the ad platforms": Reddit is an ad platform
+		// and implements neither capability, which is the membership distinction below. Stated
+		// as the SHAPE rather than by naming which providers implement AccountLister: that
+		// membership only grows, and an enumerating comment is falsified by the next provider
+		// added without anything failing — which is why no roster is written here. The
+		// compile-time assertions in internal/dispatch/account_discovery_test.go are the
+		// authoritative, self-updating list.
 		if errors.Is(serr, ErrEmailSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}

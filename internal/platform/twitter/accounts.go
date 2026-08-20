@@ -74,10 +74,6 @@ type AdAccount struct {
 	Timezone string
 }
 
-// Approved reports whether X's approval_status is exactly ACCEPTED. It is deliberately
-// NOT used to filter ListAdAccounts — see that function.
-func (a AdAccount) Approved() bool { return a.Status == "ACCEPTED" }
-
 // ApprovalLabel returns a human-readable reason for a KNOWN-BAD approval_status, and ""
 // for ACCEPTED, absent, or unrecognized ones. An empty label is not a claim the account
 // is fine — only that this package has nothing to say about its status. See

@@ -232,12 +232,12 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
 // internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
-// every dispatch. What differs is whether the operator can RECOVER. Reddit and X have no
-// discovery endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
+// every dispatch. What differs is whether the operator can RECOVER. Reddit has no discovery
+// endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
 // does have one — call discovery, rerun bootstrap with the chosen id — so its row is
 // recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
-// the operator with no reason to go looking. Microsoft is excluded by neither: it has both
-// halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
+// the operator with no reason to go looking. Microsoft and X are excluded by neither: each has
+// both halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The

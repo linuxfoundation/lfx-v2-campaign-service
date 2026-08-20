@@ -82,35 +82,45 @@ func TestListAdAccounts_RequestsTheCollectionNotTheConfiguredAccount(t *testing.
 		t.Fatalf("ListAdAccounts: %v", err)
 	}
 
-	if len(paths) != 1 {
-		t.Fatalf("expected exactly 1 request, got %d: %v", len(paths), paths)
+	// Snapshot every recorded slice under the handler's own mutex before asserting. Same
+	// reasoning as the cursor tests: one sequential client separates the accesses in real
+	// time, so the edge has to be taken deliberately rather than inherited from the timing.
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	gotQueries := append([]string(nil), queries...)
+	gotMethods := append([]string(nil), methods...)
+	gotAuths := append([]string(nil), auths...)
+	mu.Unlock()
+
+	if len(gotPaths) != 1 {
+		t.Fatalf("expected exactly 1 request, got %d: %v", len(gotPaths), gotPaths)
 	}
-	if paths[0] != "/12/accounts" {
-		t.Errorf("path = %q, want /12/accounts (the COLLECTION; a trailing id would scope the answer to one account)", paths[0])
+	if gotPaths[0] != "/12/accounts" {
+		t.Errorf("path = %q, want /12/accounts (the COLLECTION; a trailing id would scope the answer to one account)", gotPaths[0])
 	}
-	if methods[0] != http.MethodGet {
-		t.Errorf("method = %q, want GET", methods[0])
+	if gotMethods[0] != http.MethodGet {
+		t.Errorf("method = %q, want GET", gotMethods[0])
 	}
 	// The account id must not reach the query either — `account_ids` is the parameter that
 	// would scope it there, and the path assertion above cannot see it.
-	if strings.Contains(queries[0], "18ce54d4x5t") {
-		t.Errorf("query %q must not carry the configured account id; discovery asks what the CREDENTIAL reaches", queries[0])
+	if strings.Contains(gotQueries[0], "18ce54d4x5t") {
+		t.Errorf("query %q must not carry the configured account id; discovery asks what the CREDENTIAL reaches", gotQueries[0])
 	}
-	if strings.Contains(queries[0], "account_ids") {
-		t.Errorf("query %q must not send account_ids; it scopes the answer to a caller-supplied subset", queries[0])
+	if strings.Contains(gotQueries[0], "account_ids") {
+		t.Errorf("query %q must not send account_ids; it scopes the answer to a caller-supplied subset", gotQueries[0])
 	}
 	// `q` prefix-matches on name and `with_deleted` changes the set; neither is ours to guess.
-	if strings.Contains(queries[0], "q=") || strings.Contains(queries[0], "with_deleted") || strings.Contains(queries[0], "sort_by") {
-		t.Errorf("query %q must not narrow or reorder the picker", queries[0])
+	if strings.Contains(gotQueries[0], "q=") || strings.Contains(gotQueries[0], "with_deleted") || strings.Contains(gotQueries[0], "sort_by") {
+		t.Errorf("query %q must not narrow or reorder the picker", gotQueries[0])
 	}
-	if !strings.Contains(queries[0], "count=1000") {
-		t.Errorf("query %q must request count=1000, X's documented maximum page size", queries[0])
+	if !strings.Contains(gotQueries[0], "count=1000") {
+		t.Errorf("query %q must request count=1000, X's documented maximum page size", gotQueries[0])
 	}
 	// The call is still OAuth1-signed: doRequestAbs applies the same signing as every
 	// other call, and an unsigned discovery request would 401 in production while every
 	// httptest-based assertion above still passed.
-	if !strings.HasPrefix(auths[0], "OAuth ") {
-		t.Errorf("Authorization = %q, want an OAuth 1.0a signature", auths[0])
+	if !strings.HasPrefix(gotAuths[0], "OAuth ") {
+		t.Errorf("Authorization = %q, want an OAuth 1.0a signature", gotAuths[0])
 	}
 
 	if len(accounts) != 1 {
@@ -122,9 +132,6 @@ func TestListAdAccounts_RequestsTheCollectionNotTheConfiguredAccount(t *testing.
 	}
 	if got.Deleted {
 		t.Errorf("Deleted = true for a row with no deleted flag")
-	}
-	if !got.Approved() {
-		t.Errorf("Approved() = false for approval_status ACCEPTED")
 	}
 	if l := got.ApprovalLabel(); l != "" {
 		t.Errorf("ApprovalLabel() = %q for an ACCEPTED account, want \"\"", l)
@@ -293,11 +300,18 @@ func TestListAdAccounts_FollowsTheCursorAcrossPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
 	}
-	if len(queries) != 2 {
-		t.Fatalf("expected 2 requests, got %d: %v", len(queries), queries)
+	// Snapshot under the same mutex the handler takes before asserting on it. The walk is
+	// sequential so no race is observable today; taking the lock is what establishes the
+	// happens-before edge rather than relying on that timing.
+	mu.Lock()
+	gotQueries := append([]string(nil), queries...)
+	mu.Unlock()
+
+	if len(gotQueries) != 2 {
+		t.Fatalf("expected 2 requests, got %d: %v", len(gotQueries), gotQueries)
 	}
-	if strings.Contains(queries[0], "cursor=") {
-		t.Errorf("first request must send no cursor, got %q", queries[0])
+	if strings.Contains(gotQueries[0], "cursor=") {
+		t.Errorf("first request must send no cursor, got %q", gotQueries[0])
 	}
 	// The cursor is an opaque server token: it must be sent back EXACTLY, url-escaped but
 	// not trimmed or otherwise rewritten. The fixture uses a value containing a space so a
@@ -305,8 +319,8 @@ func TestListAdAccounts_FollowsTheCursorAcrossPages(t *testing.T) {
 	// url.QueryEscape renders a space as '+', so the verbatim " c1 c2 " becomes
 	// "+c1+c2+". A trimmed send would produce "c1+c2" and fail here — which is the whole
 	// point of the surrounding whitespace in the fixture.
-	if !strings.Contains(queries[1], "cursor=+c1+c2+") && !strings.Contains(queries[1], "cursor=%20c1%20c2%20") {
-		t.Errorf("second request query = %q, want the cursor echoed VERBATIM including its surrounding whitespace (escaped, never trimmed)", queries[1])
+	if !strings.Contains(gotQueries[1], "cursor=+c1+c2+") && !strings.Contains(gotQueries[1], "cursor=%20c1%20c2%20") {
+		t.Errorf("second request query = %q, want the cursor echoed VERBATIM including its surrounding whitespace (escaped, never trimmed)", gotQueries[1])
 	}
 	if len(accounts) != 2 || accounts[0].ID != "acct1" || accounts[1].ID != "acct2" {
 		t.Fatalf("accounts = %+v, want both pages merged in order", accounts)
@@ -317,9 +331,14 @@ func TestListAdAccounts_FollowsTheCursorAcrossPages(t *testing.T) {
 // keeps handing back the same cursor would otherwise spin to the page cap and return a
 // duplicate-laden list.
 func TestListAdAccounts_RepeatedCursorIsAnError(t *testing.T) {
-	var calls int
+	var (
+		mu    sync.Mutex
+		calls int
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		calls++
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":[{"id":"acct1"}],"next_cursor":"same"}`))
 	}))
@@ -335,9 +354,14 @@ func TestListAdAccounts_RepeatedCursorIsAnError(t *testing.T) {
 	if !strings.Contains(err.Error(), "did not terminate") {
 		t.Errorf("error %q should name the repeated cursor", err)
 	}
-	// It must stop at the repeat, not grind through the whole page cap.
-	if calls != 2 {
-		t.Errorf("expected the walk to stop on the 2nd page (repeat detected), got %d calls", calls)
+	// It must stop at the repeat, not grind through the whole page cap. Read under the same
+	// mutex the handler takes: the walk is sequential so no race is observable today, but the
+	// happens-before edge is what makes that a property of the test rather than of the timing.
+	mu.Lock()
+	gotCalls := calls
+	mu.Unlock()
+	if gotCalls != 2 {
+		t.Errorf("expected the walk to stop on the 2nd page (repeat detected), got %d calls", gotCalls)
 	}
 }
 
@@ -405,9 +429,8 @@ func TestListAdAccounts_UnusableAccountsAreReturnedNotFiltered(t *testing.T) {
 	if l := accounts[3].ApprovalLabel(); l != "" {
 		t.Errorf("unrecognised status label = %q, want \"\" (not a claim either way)", l)
 	}
-	if accounts[3].Approved() {
-		t.Errorf("Approved() must be false for an unrecognised approval_status")
-	}
+	// The raw status travels to the caller untouched, which is also what shows it was not
+	// silently normalised to an approved-looking value.
 	if accounts[3].Status != "SOMETHING_NEW" {
 		t.Errorf("the raw status must travel to the caller untouched, got %q", accounts[3].Status)
 	}
@@ -475,8 +498,13 @@ func TestListAdAccounts_PageCapIsAnErrorNotATruncatedList(t *testing.T) {
 	if !strings.Contains(err.Error(), "exceeded") {
 		t.Errorf("error %q should name the page cap", err)
 	}
-	if calls != adAccountMaxPages {
-		t.Errorf("expected exactly %d requests before the cap fired, got %d", adAccountMaxPages, calls)
+	// Read under the same mutex the handler takes, for the reason given on the repeated-cursor
+	// test: the sequential walk hides the missing edge rather than supplying one.
+	mu.Lock()
+	gotCalls := calls
+	mu.Unlock()
+	if gotCalls != adAccountMaxPages {
+		t.Errorf("expected exactly %d requests before the cap fired, got %d", adAccountMaxPages, gotCalls)
 	}
 }
 
