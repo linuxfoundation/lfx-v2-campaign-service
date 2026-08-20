@@ -227,12 +227,28 @@ Two absence guards implement that, and both are subtler than they look:
   gained a `NextCursorPresent` bit populated by a custom `UnmarshalJSON`. `findByName`
   deliberately does not consult it — its walk already errors rather than reporting "not found"
   when it runs out of pages.
+* **An EMPTY `next_cursor` is not exhaustion either.** Presence alone does not settle it: a
+  `"next_cursor":""` is present and still not the documented null, so the presence bit passed
+  it straight through to a `== ""` check that read it as the end of the walk and returned the
+  accounts gathered so far as a COMPLETE list. `apiResponse` therefore also carries
+  `NextCursorNull`, set from the RAW bytes (`string(raw) == "null"`) because decoding is
+  exactly what erases the null/empty distinction. Only the documented null terminates; an
+  empty cursor is an error. This is the same sibling relationship the `data` guard has —
+  absent vs explicit null vs `[]` — arriving through the pagination door.
 
 A walk that cannot be completed is an ERROR, never a short list: a repeated cursor, the
-`adAccountMaxPages` (20) cap, a `data` that is not an array, and a row whose id fails
-`accountIDRe` all return nil rather than what was collected. The id check reuses the SAME
-regexp every account-scoped path validates a configured id against, so an account this walk
-offers must be one the client will later accept. A bad row fails the WHOLE walk rather than
+`adAccountMaxPages` (20) cap, a `data` that is not an array, an empty `next_cursor`, and a row
+whose id fails `accountIDRe` **or exceeds `maxAccountIDLen` (64)** all return nil rather than
+what was collected. The id check reuses the SAME regexp every account-scoped path validates a
+configured id against, so an account this walk offers must be one the client will later accept
+— and the LENGTH bound is the other half of that same contract:
+`design/connection.go` caps `twitter-ads-connection-config.account_id` at `MaxLength(64)` as
+well as `Pattern(^[A-Za-z0-9]+$)`, and Goa enforces both at bind time. Checking only the
+charset advertised a 65+ character alphanumeric id as ready to store that would then be
+rejected as a 422 every time it was selected — a permanently dead entry in the picker,
+indistinguishable from a live one. The bound is applied at the discovery site rather than by
+tightening `accountIDRe`, which also guards the create/metrics/toggle paths where an already
+stored id's length is not theirs to re-litigate. A bad row fails the WHOLE walk rather than
 being skipped, because a response shape that far from the documented one means the rest of it
 is not trustworthy either — and a partial list looks complete.
 

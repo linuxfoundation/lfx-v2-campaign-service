@@ -422,6 +422,25 @@ type apiResponse struct {
 	// cursor there costs at most a missed match on a malformed body, which its own page
 	// cap already answers with an error.
 	NextCursorPresent bool `json:"-"`
+	// NextCursorNull reports whether the `next_cursor` key held a literal JSON `null`, as
+	// distinct from an empty string. NextCursor alone cannot express the difference —
+	// `null` and `""` both decode to "" — and NextCursorPresent cannot either, since both
+	// are present.
+	//
+	// The distinction is the one X's contract actually draws. Termination is documented as
+	// an explicit null ("If less than count entities are returned in the current page of
+	// the result set, the next_cursor value will be null"); `""` is not a value the
+	// documentation ever ascribes a meaning to. Treating it as exhaustion means a
+	// malformed body ends the walk and returns the accounts gathered so far AS A COMPLETE
+	// LIST — the same false-absence defect the `data` guard prevents, arriving through the
+	// pagination door, and invisible to the user because a truncated account picker looks
+	// exactly like a full one.
+	//
+	// Consulted only by ListAdAccounts, for the same reason NextCursorPresent is: its
+	// contract is that it returns EVERY account or an error. findByName is bounded by the
+	// match it is searching for and already errors when it runs out of pages, so an empty
+	// cursor there costs at most a missed match its page cap already answers.
+	NextCursorNull bool `json:"-"`
 }
 
 // UnmarshalJSON decodes the envelope and additionally records whether `next_cursor` was
@@ -445,7 +464,12 @@ func (r *apiResponse) UnmarshalJSON(b []byte) error {
 	// present" is the correct answer for the one body that does reach it.
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(b, &keys); err == nil {
-		_, e.NextCursorPresent = keys["next_cursor"]
+		var raw json.RawMessage
+		raw, e.NextCursorPresent = keys["next_cursor"]
+		// The raw bytes are the only place the null/empty-string difference survives:
+		// both decode to "" in the struct pass above. Compared against the literal
+		// rather than decoded, because decoding is exactly what erases the distinction.
+		e.NextCursorNull = e.NextCursorPresent && string(raw) == "null"
 	}
 	*r = apiResponse(e)
 	return nil

@@ -248,23 +248,96 @@ func TestListAdAccounts_AbsentCursorIsNotExhaustion(t *testing.T) {
 // null cursor is X's documented exhaustion signal and must terminate cleanly. Without this
 // test, making the guard reject every falsy cursor would pass every other test here while
 // failing every real single-page response.
+//
+// It covers the NULL body only. An empty-string cursor used to be asserted here as an
+// equivalent exhaustion signal, and that assertion was wrong — see
+// TestListAdAccounts_EmptyCursorIsNotExhaustion, which now pins the opposite.
 func TestListAdAccounts_ExplicitNullCursorTerminates(t *testing.T) {
-	for _, body := range []string{
-		`{"data":[{"id":"abc123"}],"next_cursor":null}`,
-		`{"data":[{"id":"abc123"}],"next_cursor":""}`,
-	} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(body))
-		}))
-		accounts, err := discoveryClient(t, srv.URL, "abc123").ListAdAccounts(context.Background())
-		srv.Close()
-		if err != nil {
-			t.Fatalf("body %s: a present null/empty cursor is exhaustion, got error: %v", body, err)
-		}
-		if len(accounts) != 1 || accounts[0].ID != "abc123" {
-			t.Errorf("body %s: accounts = %+v, want the single row", body, accounts)
-		}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"abc123"}],"next_cursor":null}`))
+	}))
+	defer srv.Close()
+	accounts, err := discoveryClient(t, srv.URL, "abc123").ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("a present null cursor is exhaustion, got error: %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ID != "abc123" {
+		t.Errorf("accounts = %+v, want the single row", accounts)
+	}
+}
+
+// TestListAdAccounts_EmptyCursorIsNotExhaustion is the sibling of the absent-cursor guard.
+//
+// X documents termination as an explicit null. `""` is a value its contract never gives a
+// meaning to, so a body carrying one has not said the walk is finished — but the walk used
+// to stop on it anyway and return the accounts gathered so far AS A COMPLETE LIST. That is
+// the same false absence the `data` guard prevents, arriving through the pagination door,
+// and it is worse than a visible failure: the user picks an account from a truncated list
+// that looks exactly like a full one.
+//
+// The fixture serves a FIRST page whose cursor is empty while a second page exists, so a
+// walk that terminates early returns a plausible one-element list rather than an obvious
+// empty one.
+func TestListAdAccounts_EmptyCursorIsNotExhaustion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"acct1","name":"One"}],"next_cursor":""}`))
+	}))
+	defer srv.Close()
+	accounts, err := discoveryClient(t, srv.URL, "acct1").ListAdAccounts(context.Background())
+	if err == nil {
+		t.Fatalf("expected an error for an empty next_cursor, got accounts=%+v (a truncated picker is indistinguishable from a full one)", accounts)
+	}
+	if accounts != nil {
+		t.Errorf("accounts must be nil, got %+v: a partial list must never be returned as complete", accounts)
+	}
+	if !strings.Contains(err.Error(), "next_cursor") {
+		t.Errorf("error %q should name the empty next_cursor", err)
+	}
+}
+
+// TestListAdAccounts_OverlongIDFailsTheWholeWalk pins the LENGTH half of the id contract.
+//
+// design/connection.go caps twitter-ads-connection-config.account_id at MaxLength(64) as
+// well as Pattern(^[A-Za-z0-9]+$), and Goa enforces both at bind time. Validating only the
+// charset meant a 65-character alphanumeric id passed discovery and was advertised as ready
+// to store, then rejected as a 422 EVERY time the user selected it — a permanently dead
+// entry in the picker that looks identical to a live one.
+//
+// The 64-character case is here to stop the bound being written as a strict `<`: an id at
+// exactly the design's limit is acceptable and must still be offered.
+func TestListAdAccounts_OverlongIDFailsTheWholeWalk(t *testing.T) {
+	atLimit := strings.Repeat("a", 64)
+	overLimit := strings.Repeat("a", 65)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"good1"},{"id":"` + overLimit + `"}],"next_cursor":null}`))
+	}))
+	accounts, err := discoveryClient(t, srv.URL, "18ce54d4x5t").ListAdAccounts(context.Background())
+	srv.Close()
+	if err == nil {
+		t.Fatalf("a 65-char id exceeds the design's MaxLength(64) and can never bind; expected an error, got accounts=%+v", accounts)
+	}
+	if accounts != nil {
+		t.Errorf("accounts must be nil, got %+v (a partial list looks complete)", accounts)
+	}
+	if !strings.Contains(err.Error(), "unusable id") {
+		t.Errorf("error %q should name the unusable id", err)
+	}
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"` + atLimit + `"}],"next_cursor":null}`))
+	}))
+	defer srv2.Close()
+	got, err := discoveryClient(t, srv2.URL, "18ce54d4x5t").ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("an id at exactly MaxLength(64) is bindable and must be offered, got error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != atLimit {
+		t.Errorf("accounts = %+v, want the single 64-char row", got)
 	}
 }
 
@@ -544,13 +617,18 @@ func TestNextCursorPresentDoesNotChangeFindByName(t *testing.T) {
 		body        string
 		wantCursor  string
 		wantPresent bool
+		wantNull    bool
 		wantData    bool
 	}{
-		{`{"data":[{"id":"x"}],"next_cursor":"c1"}`, "c1", true, true},
-		{`{"data":[{"id":"x"}],"next_cursor":null}`, "", true, true},
-		{`{"data":[{"id":"x"}]}`, "", false, true},
-		{`{"next_cursor":"c1"}`, "c1", true, false},
-		{`{}`, "", false, false},
+		{`{"data":[{"id":"x"}],"next_cursor":"c1"}`, "c1", true, false, true},
+		{`{"data":[{"id":"x"}],"next_cursor":null}`, "", true, true, true},
+		// The pair the presence bit alone cannot tell apart: both are PRESENT and both
+		// decode to "". Only the raw bytes distinguish X's documented termination signal
+		// from a value its contract never defines.
+		{`{"data":[{"id":"x"}],"next_cursor":""}`, "", true, false, true},
+		{`{"data":[{"id":"x"}]}`, "", false, false, true},
+		{`{"next_cursor":"c1"}`, "c1", true, false, false},
+		{`{}`, "", false, false, false},
 	}
 	for _, tc := range cases {
 		var r apiResponse
@@ -562,6 +640,9 @@ func TestNextCursorPresentDoesNotChangeFindByName(t *testing.T) {
 		}
 		if r.NextCursorPresent != tc.wantPresent {
 			t.Errorf("body %s: NextCursorPresent = %v, want %v", tc.body, r.NextCursorPresent, tc.wantPresent)
+		}
+		if r.NextCursorNull != tc.wantNull {
+			t.Errorf("body %s: NextCursorNull = %v, want %v", tc.body, r.NextCursorNull, tc.wantNull)
 		}
 		if (r.Data != nil) != tc.wantData {
 			t.Errorf("body %s: Data non-nil = %v, want %v", tc.body, r.Data != nil, tc.wantData)

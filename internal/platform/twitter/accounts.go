@@ -31,6 +31,14 @@ const (
 	// collection is genuinely large. A single user reaching 20,000 ad accounts is not a
 	// state this endpoint should silently truncate for.
 	adAccountMaxPages = 20
+	// maxAccountIDLen mirrors MaxLength(64) on twitter-ads-connection-config.account_id in
+	// design/connection.go, which Goa enforces at bind time. It is duplicated here rather
+	// than imported because design/ is the DSL, not a runtime package — so the two must be
+	// changed together, and the comment at the discovery check names the design attribute
+	// so a reader can find its counterpart. Real X account ids are far shorter (e.g.
+	// "8r7gb"); the bound exists so discovery never offers an id the connection cannot
+	// store, not because a legitimate id approaches it.
+	maxAccountIDLen = 64
 )
 
 // approvalStatusLabels maps a KNOWN-BAD X ad-account `approval_status` to a short reason.
@@ -211,7 +219,22 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 			// that fail at bind time. It is also the charset the connection's account_id
 			// is pattern-checked against in design/connection.go. It is anchored and
 			// admits no whitespace, so it rejects a padded id on its own.
-			if !accountIDRe.MatchString(id) {
+			// The LENGTH bound is checked alongside the charset because the charset is only
+			// half of what the connection will accept. design/connection.go caps
+			// twitter-ads-connection-config.account_id at MaxLength(64) as well as
+			// Pattern(^[A-Za-z0-9]+$), and Goa enforces BOTH at bind time. Validating only
+			// the charset here meant a 65+ character alphanumeric id was advertised by
+			// discovery as ready to store and then rejected as a 422 every single time the
+			// user selected it — a dead entry in the picker with no way to tell from the
+			// live ones. Discovery must not offer what bind will always refuse; the two
+			// checks are one contract and drift the moment only one of them is stated.
+			//
+			// The bound is applied HERE rather than by tightening accountIDRe, which is the
+			// shared path-injection guard on the campaign-create, metrics and toggle paths
+			// too. Those validate an id already stored on a connection, where a length the
+			// design admitted is not theirs to re-litigate; this walk is the one deciding
+			// what to OFFER.
+			if !accountIDRe.MatchString(id) || len(id) > maxAccountIDLen {
 				// A response shape this far from the documented one means it is not the
 				// response we think it is, so the rest of it is not trustworthy either —
 				// fail the whole walk rather than skipping the row. Skipping would hand
@@ -236,8 +259,18 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		if !resp.NextCursorPresent {
 			return nil, fmt.Errorf("x ad-account discovery returned a response with no next_cursor field; cannot confirm the credential's accounts were enumerated")
 		}
-		// Present and null/empty is X's documented exhaustion signal: fully enumerated.
-		if resp.NextCursor == "" {
+		// A present but EMPTY next_cursor is not exhaustion either. X documents
+		// termination as an explicit null, and `""` is a value its contract never gives a
+		// meaning to — so accepting it repeats the absent-cursor defect above one step
+		// further in: the walk stops on a body that never said it was finished, and the
+		// accounts gathered so far are returned AS A COMPLETE LIST. The user then picks
+		// from a truncated account picker that is indistinguishable from a full one. Only
+		// the documented null terminates.
+		if !resp.NextCursorNull && resp.NextCursor == "" {
+			return nil, fmt.Errorf("x ad-account discovery returned an empty next_cursor; X signals exhaustion with an explicit null, so the credential's accounts cannot be confirmed as fully enumerated")
+		}
+		// Present and null is X's documented exhaustion signal: fully enumerated.
+		if resp.NextCursorNull {
 			return accounts, nil
 		}
 		if _, dup := seen[resp.NextCursor]; dup {
