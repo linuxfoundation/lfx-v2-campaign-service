@@ -323,10 +323,18 @@ Content-Type: application/json
 
 ## Authorization (RuleSet)
 
-Every path in this service — reads and writes — is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path. (There is no read-only campaigns audience; `marketing_auditor` applies to the separate Snowflake-backed Marketing Insights dashboard, not this service.) This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates). Example rule for creating a connection:
+Every path in this service — reads and writes — is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path. (There is no read-only campaigns audience; `marketing_auditor` applies to the separate Snowflake-backed Marketing Insights dashboard, not this service.) This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates).
+
+`:projectId` may be a project UUID or a slug (self-serve sends slugs), so the real
+`project-api` rule (which covers all connection routes, including
+`connection-linkedin-ads`) has two mutually exclusive `openfga_check` branches: a
+slug branch that resolves the capture to a UID via `project_slug_resolver_contextualizer`
+before the check, and a UUID branch that uses the raw capture directly. Simplified
+illustration of the create-connection path (see `templates/ruleset.yaml` for the
+actual two-branch rule):
 
 ```yaml
-- id: "rule:lfx:lfx-v2-campaign-service:connection-linkedin-ads:create"
+- id: "rule:lfx:lfx-v2-campaign-service:project-api"
   match:
     methods: [POST]
     routes:
@@ -334,7 +342,19 @@ Every path in this service — reads and writes — is gated at the gateway by a
   execute:
     - authenticator: oidc
     {{- if .Values.openfga.enabled }}
-    - authorizer: openfga_check
+    - contextualizer: project_slug_resolver_contextualizer
+      if: '!Request.URL.Captures.projectId.matches("<uuid-regex>")'
+      config:
+        values:
+          slug: "{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+    - authorizer: openfga_check   # slug branch
+      if: '!Request.URL.Captures.projectId.matches("<uuid-regex>")'
+      config:
+        values:
+          relation: campaign_manager
+          object: "project:{{ "{{- .Outputs.project_slug_resolver_contextualizer.uid -}}" }}"
+    - authorizer: openfga_check   # UUID branch
+      if: 'Request.URL.Captures.projectId.matches("<uuid-regex>")'
       config:
         values:
           relation: campaign_manager
