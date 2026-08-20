@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -37,6 +38,61 @@ func newAESGCM(t *testing.T) *crypto.AESGCM {
 	return enc
 }
 
+// textHostileSeals is how many Encrypt attempts sealTextHostile makes before giving up.
+//
+// The bound is what keeps a precondition from becoming a hang. A single seal is already
+// overwhelmingly likely to qualify — measured over 200,000 seals of this file's plaintext,
+// 0 were text-safe and 80.8% carried a NUL byte outright — so 64 attempts is not a budget
+// this is expected to spend. It exists so that an Encrypt which somehow stopped producing
+// binary output fails the test with a message, instead of spinning forever in CI.
+const textHostileSeals = 64
+
+// sealTextHostile returns Encrypt output that a TEXT column provably cannot store
+// unchanged, and FAILS the test if it cannot obtain one.
+//
+// This exists because the premise of TestLiveCredentialSurvivesTheRealByteaColumn is not
+// self-evidently true. That test's job is to catch the credentials column being typed TEXT
+// instead of BYTEA, and it can only do that if the bytes it writes are bytes TEXT refuses.
+// GCM output is a RANDOM nonce followed by ciphertext and a tag, so which byte values
+// appear is drawn fresh on every run — "contains a NUL byte and invalid UTF-8" is a
+// probabilistic property of the sample, not a guarantee of the algorithm. On a run whose
+// ciphertext happened to be text-safe, a TEXT column would round-trip it unchanged and the
+// test would pass while missing the exact regression it was written for, with nothing to
+// signal the near miss: the test is green either way.
+//
+// So the property is ASSERTED rather than assumed. A silent retry or an unbounded loop
+// would reintroduce the same class of defect in a new place — the first hides a
+// no-longer-binary Encrypt, the second converts it into a hung job — so the search is
+// bounded and its exhaustion is a Fatal.
+//
+// Both disqualifying conditions are checked, because they are refused for different
+// reasons and either one alone is sufficient: PostgreSQL rejects a NUL byte in a text
+// value ("invalid byte sequence for encoding UTF8: 0x00") and rejects invalid UTF-8 the
+// same way. Requiring only ONE of them would still be a real precondition, but requiring
+// the pair costs nothing at this hit rate and keeps the guarantee independent of which
+// check a given server encoding applies first.
+func sealTextHostile(t *testing.T, enc *crypto.AESGCM, plaintext []byte) []byte {
+	t.Helper()
+
+	for range textHostileSeals {
+		sealed, err := enc.Encrypt(plaintext)
+		if err != nil {
+			t.Fatalf("Encrypt: %v", err)
+		}
+		if bytes.IndexByte(sealed, 0) >= 0 && !utf8.Valid(sealed) {
+			return sealed
+		}
+	}
+	// Report by SHAPE, never by value — this function handles sealed credential bytes,
+	// and the message renders into CI job output. See the equivalent note on the
+	// decrypted-blob assertions below.
+	t.Fatalf("no ciphertext in %d Encrypt calls contained both a NUL byte and invalid "+
+		"UTF-8, so the round-trip below could not distinguish a BYTEA column from a TEXT "+
+		"one; either Encrypt stopped producing binary output or it is no longer randomised",
+		textHostileSeals)
+	return nil
+}
+
 // TestLiveCredentialSurvivesTheRealByteaColumn is the property the credential path
 // rests on and the one no existing test reaches: that AES-256-GCM output written to
 // the real `credentials` BYTEA column comes back byte-identical and decrypts to the
@@ -46,9 +102,15 @@ func newAESGCM(t *testing.T) *crypto.AESGCM {
 // which is valid ASCII and therefore survives anything — including a column typed as
 // text, a driver that re-encodes on the wire, or an encryptor that never ran. GCM output
 // is none of those things: it is a random nonce followed by ciphertext and a tag, so it
-// contains NUL bytes, invalid UTF-8, and every byte value. That is exactly the input that
-// distinguishes a column which stores bytes from one that stores a string, and it is why
-// the plaintext here is deliberately non-ASCII too.
+// ordinarily carries NUL bytes, invalid UTF-8, and every byte value. That is exactly the
+// input that distinguishes a column which stores bytes from one that stores a string, and
+// it is why the plaintext here is deliberately non-ASCII too.
+//
+// "Ordinarily" is doing real work in that sentence, which is why the ciphertext comes from
+// sealTextHostile rather than a bare Encrypt. The nonce is random, so whether a given
+// sample is text-hostile is a property of THAT sample; a run that drew text-safe bytes
+// would pass against a TEXT column and silently miss the regression. sealTextHostile
+// asserts the precondition instead of trusting it.
 //
 // The assertions are in three parts, and dropping any one of them makes the test
 // vacuous:
@@ -73,13 +135,16 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 	// that is already safe ASCII cannot detect a column that silently transcodes.
 	plaintext := []byte("refresh-token\x00\xff\xfe-Ω-secret")
 
-	sealed, err := enc.Encrypt(plaintext)
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
+	// Not a bare Encrypt: the round-trip's whole premise is that these bytes are bytes a
+	// TEXT column cannot hold. See sealTextHostile.
+	sealed := sealTextHostile(t, enc, plaintext)
 	if bytes.Equal(sealed, plaintext) {
-		// Guards the guard: if Encrypt is a passthrough, every assertion below still
-		// passes on a working database, so the round-trip would certify a no-op.
+		// An EARLY DIAGNOSTIC, not the guarantee. If Encrypt is a passthrough this names
+		// it here, at the seal, instead of leaving it to be inferred from a failure after
+		// a database round-trip. It is not what CATCHES a passthrough: the negative
+		// column assertion below does that on its own, and the knowledge log records
+		// exactly that — with this check disabled (`if false &&`), a passthrough
+		// encryptor still fails on "the credentials column holds the PLAINTEXT".
 		t.Fatal("Encrypt returned its input unchanged; the encryptor is a passthrough " +
 			"and the round-trip below would prove nothing")
 	}
@@ -171,8 +236,12 @@ func TestLiveSetCredentialRotatesTheBlobAndBumpsVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt second: %v", err)
 	}
-	// Two seals of two different plaintexts must differ; if they did not, the
-	// "the blob changed" assertion below would be untestable.
+	// An EARLY DIAGNOSTIC, on the same footing as the passthrough check in
+	// TestLiveCredentialSurvivesTheRealByteaColumn: it names a degenerate encryptor at
+	// the seal rather than letting it surface as a confusing rotation failure. It is not
+	// what proves the rotation reached the column — the `got != first` assertion below
+	// does that on its own, and it fails whether or not the two seals are distinguishable
+	// here.
 	if bytes.Equal(first, second) {
 		t.Fatal("two Encrypt calls produced identical blobs")
 	}

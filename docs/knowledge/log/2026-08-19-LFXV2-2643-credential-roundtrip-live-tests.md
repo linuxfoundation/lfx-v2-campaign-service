@@ -15,10 +15,22 @@ files. Nothing here was blocked.
 The gap that WAS real is narrower than the audit claimed, and worth stating
 precisely because two of the five bullets were already covered:
 
-- **Migrations down** is not reachable through this package's public surface.
-  `postgres.Migrate` (pool.go) only ever calls `m.Up()`; there is no exported
-  down path to drive. Testing it would mean widening the production API purely
-  for a test, so it is deliberately not covered here.
+- **Migrations down** is now covered, by
+  `TestLiveMigrationsGoDownAndUpAgain` in `migrate_down_live_test.go`. An
+  earlier revision of this entry recorded the case as unreachable — "testing it
+  would mean widening the production API purely for a test" — and that was
+  simply false. `migrations.FS` is already exported
+  (`internal/infrastructure/postgres/migrations/migrations.go:13`), and
+  `postgres.Migrate` does nothing with it a test cannot do: build an `iofs`
+  source, point a migrator at a DSN, call a direction. Driving `Down` needs no
+  new production API and no change to `Migrate`. The true statement is much
+  narrower and is only about the startup path: `postgres.Migrate` calls `Up`,
+  never `Down`.
+
+  The claim is corrected here rather than deleted because of what it cost. It
+  did not merely fail to describe the code — it presented a gap as CLOSED BY
+  NECESSITY, which is the form of a wrong claim that stops anyone re-examining
+  it. Everything it ruled out turned out to be a single test file.
 - **Brief-repo version gating** is already covered, live, by
   `TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal` in
   `audience_lease_live_test.go` — which does the harder thing, asserting the
@@ -49,7 +61,49 @@ credential-rotation path actually calls. It is also the only connection write
 that is not version-gated, so the version bump is asserted rather than assumed:
 the handler publishes the returned row's version as the caller's ETag.
 
-**Mutations** — four, each compiling, each reverted:
+**Follow-up — the BYTEA-vs-TEXT premise was nondeterministic.** The round-trip
+test exists to catch the `credentials` column being typed TEXT, and it can only
+do that if the bytes it writes are bytes TEXT refuses. It wrote a bare
+`Encrypt` output — but GCM prefixes a RANDOM nonce, so "contains a NUL byte and
+invalid UTF-8" was a property of each sample, not a guarantee. On a run that
+drew text-safe ciphertext, a TEXT column round-trips it unchanged and the test
+PASSES, missing the exact regression it was written for, with nothing to signal
+the near miss.
+
+Measured, the odds were reassuring and beside the point: over 200,000 seals of
+this file's plaintext, 0 were text-safe and 80.8% carried a NUL byte outright.
+A property that holds 99.99…% of the time is still not the property the test
+claimed to rest on. `sealTextHostile` now ASSERTS it — a bounded 64-attempt
+search (bounded so a no-longer-binary `Encrypt` fails loudly instead of
+hanging), with exhaustion as a `t.Fatal`.
+
+The proof is an A/B against a scratch migration that retypes the column to
+TEXT, with `Encrypt` mutated to hex-encode its output — genuine encryption,
+deterministically text-safe, i.e. the lucky-nonce run made reproducible. The
+ORIGINAL assertion set PASSES against the TEXT column; the fixed test FAILS on
+its precondition. That difference is the whole finding.
+
+**Mutations** — the down-migration test needed three rounds, and the two
+SURVIVORS are the useful part of the record:
+
+- Emptying an index-only down file (000026's `DROP INDEX
+  idx_campaign_jobs_retention`) SURVIVED a single `Down()`-to-zero: the end
+  state drops every table, and a dropped table takes its indexes with it, so
+  the mutation was invisible. Fixed by stepping down one version at a time and
+  comparing the schema after each step.
+- With stepping in place, emptying 000013's and 000021's down files STILL
+  survived — because the reference schema was produced by walking a SECOND
+  database down through the same mutated files, so both sides acquired the
+  identical defect and the comparison always matched. A reference must be built
+  by migrating a fresh database UP; that is the one construction that cannot
+  inherit the fault it is meant to detect.
+
+Each of the five emptied-down-file mutations now fails, as do the opposite
+class (a down that drops a sibling table) and a wrong-type restore (re-adding
+`variant` as INTEGER) — the last of which is why the schema snapshot compares
+column types and constraint definitions, not just object names.
+
+The four original mutations, each compiling, each reverted:
 
 - Making `Encrypt`/`Decrypt` a passthrough fails the round-trip test. Checked
   twice: with the early passthrough guard disabled (`if false &&`) the negative
