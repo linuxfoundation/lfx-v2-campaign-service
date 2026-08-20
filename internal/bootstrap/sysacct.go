@@ -37,6 +37,59 @@ var requiredCredentialKeys = map[model.Provider][]string{
 	model.ProviderHubSpot:      {"private_app_token"},
 }
 
+// optionalCredentialKeys are the keys a provider accepts BEYOND its required set, mirroring
+// the non-Required Attribute()s in design/connection.go. Only LinkedIn has any: the
+// all-or-none refresh trio, which validateConditionalGroups then checks as a group.
+var optionalCredentialKeys = map[model.Provider][]string{
+	model.ProviderLinkedInAds: {"refresh_token", "client_id", "client_secret"},
+}
+
+// requireKnownCredentialKeys refuses a credential key the provider's contract does not define.
+//
+// It exists because an unknown key is NOT inert. canonicalCredentials folds every supplied key
+// (credentialKey) and re-marshals the whole map, so the key survives into the encrypted blob
+// under its folded spelling — and the dispatch structs are untagged, so encoding/json matches
+// them case-insensitively. A key that folds onto a real struct field is therefore SILENTLY
+// ADOPTED by the reader.
+//
+// The reachable instance that motivated this check: `access_token_expires_at` folds to
+// `accesstokenexpiresat`, which decodes into internal/dispatch/linkedin.go's
+// linkedinCreds.AccessTokenExpiresAt. Nothing in the service ever WRITES that value —
+// design/connection.go's linkedin-ads-credentials declares no expiry attribute — so the
+// refresh path's injected-token branch is written on the premise that it is always the zero
+// time. An operator-supplied expiry makes that branch live: after LinkedIn 401s a revoked
+// token, invalidateAccessToken clears only the CACHE, so every newly constructed client
+// re-serves the same rejected token straight from c.creds until the operator's timestamp
+// passes, and the system connection — the fallback for every project without one of its own —
+// stays broken with no refresh attempted.
+//
+// Refused at the door rather than filtered out of the blob: a key an operator deliberately
+// typed and this command silently dropped is the same exit-0-and-fail-later shape that
+// requireKnownConfigKeys exists to prevent. Naming it tells them the field is not supported.
+func requireKnownCredentialKeys(provider model.Provider, folded map[string]json.RawMessage) error {
+	known := make(map[string]bool, 8)
+	for _, k := range requiredCredentialKeys[provider] {
+		known[credentialKey(k)] = true
+	}
+	for _, k := range optionalCredentialKeys[provider] {
+		known[credentialKey(k)] = true
+	}
+	unknown := make([]string, 0, len(folded))
+	for k := range folded {
+		if !known[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	allowed := append(append([]string{}, requiredCredentialKeys[provider]...), optionalCredentialKeys[provider]...)
+	sort.Strings(allowed)
+	return fmt.Errorf("bootstrap: %s does not accept credential %s; it accepts %s",
+		provider, strings.Join(unknown, ", "), strings.Join(allowed, ", "))
+}
+
 // credentialKey folds a field name to the form the READERS match on. Stored blobs and dispatch
 // structs are both untagged, so encoding/json falls back to a case-insensitive match: `clientId`
 // works, `client_id` cannot — and snake_case is what the API documents, so such a body encrypted
@@ -63,6 +116,11 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 			return nil, fmt.Errorf("bootstrap: credentials contain two spellings of %q", credentialKey(k))
 		}
 		folded[credentialKey(k)] = v
+	}
+	// Before any value check: an unsupported key is refused on its NAME, because the fault is
+	// that the reader adopts it at all, independent of what it holds.
+	if err := requireKnownCredentialKeys(provider, folded); err != nil {
+		return nil, err
 	}
 	var missing, mistyped, padded []string
 	for _, want := range requiredCredentialKeys[provider] {

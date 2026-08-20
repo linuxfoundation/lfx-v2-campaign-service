@@ -223,14 +223,20 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 
 	// Refresh is possible. Reuse the injected access token while it is known-good.
 	//
-	// UNREACHABLE IN PRODUCTION TODAY — kept deliberately, and NOT a cache that exists.
-	// Nothing persists an access-token expiry: design/connection.go's
-	// linkedin-ads-credentials type declares access_token, refresh_token, client_id and
-	// client_secret and NO expiry attribute, so the encrypted blob never carries one.
-	// internal/dispatch/linkedin.go's linkedinCreds does declare AccessTokenExpiresAt and
-	// copies it into Credentials, but the JSON it decodes can never contain the key, so
-	// the value is always the zero time and this guard's !IsZero() test always fails.
-	// The bootstrap installer (internal/bootstrap/sysacct.go) writes no expiry either.
+	// NOT REACHED BY ANY SUPPORTED WRITE, and NOT a cache that exists. No supported path
+	// persists an access-token expiry: design/connection.go's linkedin-ads-credentials type
+	// declares access_token, refresh_token, client_id and client_secret and NO expiry
+	// attribute, so an API-written blob never carries one. internal/dispatch/linkedin.go's
+	// linkedinCreds does declare AccessTokenExpiresAt and copies it into Credentials, so the
+	// value is the zero time and this guard's !IsZero() test fails.
+	//
+	// "No supported write" is the precise claim, and it is enforced rather than assumed. The
+	// bootstrap installer folds every supplied credential key and re-marshals it, and the
+	// dispatch structs are untagged, so `access_token_expires_at` would fold to
+	// `accesstokenexpiresat` and decode straight into that field — an operator-reachable way
+	// to make this branch live. internal/bootstrap/sysacct.go's requireKnownCredentialKeys
+	// refuses unsupported credential keys for exactly that reason; the coupling noted at the
+	// end of this comment is why it must keep doing so.
 	//
 	// The consequence is real and worth stating: EVERY refresh-capable client performs a
 	// token exchange on its first request, because this is the only branch that could
@@ -572,9 +578,14 @@ const (
 	oauthErrorInvalidScope       = "invalid_scope"
 )
 
-// oauthAppFaultCodes are the RFC 6749 §5.2 codes that describe the CLIENT or the REQUEST
-// rather than a dead grant. Every one of them is permanent until an operator changes the
-// connection or this client's request, and none is repaired by a member re-authorization.
+// oauthAppFaultCodes are the RFC 6749 §5.2 codes that describe the CLIENT APPLICATION —
+// the stored client_id/client_secret registration — rather than a dead grant or the shape
+// of the request. Each is permanent until an OPERATOR corrects the connection's application
+// credentials, and none is repaired by a member re-authorization.
+//
+// The REQUEST/PROTOCOL codes are deliberately NOT here: they live in oauthRequestFaultCodes
+// below, which records why folding them in was wrong. This map's membership is exactly the
+// set whose remedy is "edit the connection".
 var oauthAppFaultCodes = map[string]struct{}{
 	oauthErrorInvalidClient:      {},
 	oauthErrorUnauthorizedClient: {},

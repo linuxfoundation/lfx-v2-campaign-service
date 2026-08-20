@@ -467,10 +467,19 @@ func TestPaddedCredentialValuesAreRefusedRatherThanStored(t *testing.T) {
 		})
 	}
 
-	// The narrowing half. Neither of these is padding this command can act on.
+	// The narrowing half: padding this command must NOT act on.
+	//
+	// The "padding on an unrequired key" case previously lived here, asserting that
+	// `{"access_token":"tok","note":"  ignore me  "}` INSTALLED — it was written to pin that
+	// the padding rule only reaches keys the provider defines. But it also asserted, as a side
+	// effect, that an undefined key is harmless, and that is false: canonicalCredentials folds
+	// and re-marshals every supplied key into the encrypted blob, and the untagged dispatch
+	// structs match case-insensitively, so an undefined key can be ADOPTED by a reader
+	// (`access_token_expires_at` -> linkedinCreds.AccessTokenExpiresAt). The case now lives in
+	// TestUnsupportedExpiryCredentialKeyIsRefused with the opposite expectation. What remains
+	// here is the claim this test is actually about: padding INSIDE a value is not padding.
 	for name, creds := range map[string]string{
-		"whitespace inside a value":    `{"access_token":"to ken"}`,
-		"padding on an unrequired key": `{"access_token":"tok","note":"  ignore me  "}`,
+		"whitespace inside a value": `{"access_token":"to ken"}`,
 	} {
 		t.Run(name+" installs", func(t *testing.T) {
 			repo := &stubRepo{getErr: domain.ErrNotFound}
@@ -1084,5 +1093,92 @@ func TestMistypedRequiredKeyIsNotReportedAsMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not as a non-empty string") || !strings.Contains(err.Error(), "client_id") {
 		t.Errorf("err = %v, want the type-fault refusal naming client_id", err)
+	}
+}
+
+// TestUnsupportedExpiryCredentialKeyIsRefused pins the finding this check exists for.
+//
+// canonicalCredentials folds every supplied key and re-marshals the whole map, and the
+// dispatch structs are UNTAGGED, so encoding/json matches them case-insensitively. That makes
+// an unknown key reachable rather than inert: `access_token_expires_at` folds to
+// `accesstokenexpiresat` and decodes into linkedinCreds.AccessTokenExpiresAt, a field no
+// supported write can otherwise set. A non-zero value there activates token.go's injected-token
+// branch, whose own comment is written on the premise that the field is always zero — after
+// LinkedIn 401s a revoked token, invalidateAccessToken clears only the cache, so every newly
+// constructed client re-serves the SAME rejected token from c.creds until the operator's
+// timestamp passes. On the system row that disables LinkedIn for every project without a
+// connection of its own.
+//
+// The assertion is on the REFUSAL, not merely on the absence of the key from the blob: this
+// command must not exit 0 having dropped a field the operator deliberately supplied.
+func TestUnsupportedExpiryCredentialKeyIsRefused(t *testing.T) {
+	for name, creds := range map[string]string{
+		"snake_case access token expiry": `{"access_token":"tok","access_token_expires_at":"2099-01-02T15:04:05Z"}`,
+		"snake_case refresh expiry":      `{"access_token":"tok","refresh_token_expires_at":"2099-01-02T15:04:05Z"}`,
+		// The folding is what makes this reachable, so the spellings that FOLD onto the
+		// same field must be refused too — otherwise the check is a spelling blocklist.
+		"camelCase access token expiry":  `{"access_token":"tok","accessTokenExpiresAt":"2099-01-02T15:04:05Z"}`,
+		"kebab-case access token expiry": `{"access_token":"tok","access-token-expires-at":"2099-01-02T15:04:05Z"}`,
+		// A key that folds onto NO struct field is still refused: the operator believes a
+		// setting is installed when nothing holds it.
+		"a key no reader has at all": `{"access_token":"tok","totally_made_up":"x"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderLinkedInAds, "509123456", false,
+				map[string]string{"org_id": "123"}, []byte(creds))
+			if err == nil || repo.created != nil {
+				t.Fatalf("err = %v, created = %+v; want a refusal: an unsupported credential key "+
+					"survives the fold into the encrypted blob and is adopted case-insensitively by "+
+					"the untagged dispatch struct", err, repo.created)
+			}
+			if !strings.Contains(err.Error(), "does not accept credential") {
+				t.Errorf("err = %v, want the unsupported-key refusal naming the field", err)
+			}
+		})
+	}
+}
+
+// TestSupportedCredentialKeysStillInstall is the counterweight. A key check that refused
+// anything beyond the REQUIRED set would satisfy every assertion above while making the
+// optional LinkedIn refresh trio — the whole subject of this PR — uninstallable, and would
+// break every other provider's ordinary credential body.
+func TestSupportedCredentialKeysStillInstall(t *testing.T) {
+	for name, tc := range map[string]struct {
+		provider  model.Provider
+		accountID string
+		cfg       map[string]string
+		creds     string
+	}{
+		"linkedin bearer only": {model.ProviderLinkedInAds, "509123456", map[string]string{"org_id": "123"},
+			`{"access_token":"tok"}`},
+		"linkedin with the full refresh trio": {model.ProviderLinkedInAds, "509123456", map[string]string{"org_id": "123"},
+			`{"access_token":"tok","refresh_token":"rt","client_id":"ci","client_secret":"cs"}`},
+		"google ads": {model.ProviderGoogleAds, "5091234567", nil,
+			`{"refresh_token":"rt","client_id":"ci","client_secret":"cs","developer_token":"dt"}`},
+		"microsoft ads": {model.ProviderMicrosoftAds, "509123456", nil,
+			`{"client_id":"ci","client_secret":"cs","refresh_token":"rt","developer_token":"dt"}`},
+		"twitter ads": {model.ProviderTwitterAds, "18ce54d4x5t", map[string]string{"funding_instrument_id": "fi"},
+			`{"consumer_key":"ck","consumer_secret":"cs","access_token":"at","access_token_secret":"ats"}`},
+		"meta ads": {model.ProviderMetaAds, "act_509123456", map[string]string{"page_id": "42"},
+			`{"access_token":"at","app_secret":"as"}`},
+		"reddit ads": {model.ProviderRedditAds, "t2_abc123", map[string]string{"conversion_pixel_id": "px"},
+			`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`},
+		// The reader-side spelling must keep working: credentialKey folds both forms to the
+		// same key, and the allowlist is built through the same fold.
+		"camelCase spelling of a supported key": {model.ProviderGoogleAds, "5091234567", nil,
+			`{"refreshToken":"rt","clientId":"ci","clientSecret":"cs","developerToken":"dt"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				tc.provider, tc.accountID, false, tc.cfg, []byte(tc.creds)); err != nil {
+				t.Fatalf("a supported credential body was refused: %v", err)
+			}
+			if repo.created == nil {
+				t.Fatal("no row was written for a supported credential body")
+			}
+		})
 	}
 }

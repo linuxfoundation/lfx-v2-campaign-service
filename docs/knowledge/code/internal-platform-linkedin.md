@@ -54,6 +54,25 @@ token expires, coalescing concurrent callers single-flight (`tokenMu` is never
 held across the network call) so N callers produce ONE exchange — the same
 discipline as the google-ads and microsoft clients.
 
+**No supported write persists an access-token expiry, and that is ENFORCED rather
+than assumed.** `Credentials.AccessTokenExpiresAt` gates a branch in `token.go`
+that reuses an injected access token instead of exchanging — dead while the field
+is always the zero time, which it is for every API-written row, because
+`design/connection.go`'s `linkedin-ads-credentials` declares no expiry attribute.
+The bootstrap installer is the path that could falsify that: it folds every
+supplied credential key and re-marshals it, and `linkedinCreds` is untagged, so
+`access_token_expires_at` folds to `accesstokenexpiresat` and decodes straight
+into the field. That matters because `invalidateAccessToken` clears only the
+CACHE, never `c.creds` — sound only while the branch is dead. With an
+operator-supplied expiry, a 401 on a revoked token invalidates the cache and the
+next client re-serves the SAME rejected token from `c.creds`, attempting no
+refresh until the timestamp passes; on the system row that disables LinkedIn for
+every project without its own connection. `requireKnownCredentialKeys`
+(`internal/bootstrap/sysacct.go`) refuses unsupported credential keys for exactly
+this reason, so the branch's dead-ness is a checked property. Making the expiry
+live is a schema and behaviour change, and it requires teaching
+`invalidateAccessToken` to suppress the injected token too.
+
 Because LinkedIn does NOT reset a refresh token's TTL when it is used, refresh
 defers the 60-day access-token expiry but cannot remove the ~365-day deadline on
 the connection itself; the client logs a warning inside the final 30 days. A

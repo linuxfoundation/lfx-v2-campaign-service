@@ -41,6 +41,27 @@ enforced on the system row:
   than canonicalized: a credential is opaque here, and silently rewriting one would hide a
   truncated paste. Padding INSIDE a value, and padding on a key the provider does not require, are
   left alone — a secret's interior is not this command's business.
+- **Unknown credential keys are REFUSED** (`requireKnownCredentialKeys`, checked on the folded
+  document before any value rule). An unsupported key is not inert here. `canonicalCredentials`
+  folds EVERY supplied key and re-marshals the whole map, so the key survives into the encrypted
+  blob under its folded spelling — and the dispatch structs are untagged, so `encoding/json`
+  matches them case-insensitively. A key that folds onto a real struct field is therefore
+  silently ADOPTED by the reader. The reachable instance: `access_token_expires_at` folds to
+  `accesstokenexpiresat` and decodes into `internal/dispatch/linkedin.go`'s
+  `linkedinCreds.AccessTokenExpiresAt`, a field NO supported write can set —
+  `design/connection.go`'s `linkedin-ads-credentials` declares no expiry attribute. The refresh
+  path's injected-token branch (`internal/platform/linkedin/token.go`) is written on the premise
+  that this field is always the zero time; a non-zero value makes that branch live, and since
+  `invalidateAccessToken` clears only the CACHE, every newly constructed client re-serves the
+  same 401-rejected token from `c.creds` until the operator's timestamp passes. On the system
+  row that disables LinkedIn for every project without a connection of its own. The allowlist is
+  built through `credentialKey`, so it is a contract check and not a spelling blocklist —
+  `accessTokenExpiresAt` and `access-token-expires-at` fold onto the same key and are refused
+  alike, while `refreshToken` remains an accepted spelling of a supported key. It is per-provider
+  and covers required plus `optionalCredentialKeys` (today only LinkedIn's refresh trio), the
+  same shape as `requireKnownConfigKeys`. Refused rather than filtered out of the blob: a key an
+  operator deliberately typed and this command silently dropped is the same exit-0-and-fail-later
+  failure the whole validation exists to prevent.
 - **All-or-none credential groups** (`conditionalCredentialGroups`, checked by
   `validateConditionalGroups`) cover a set whose members are each individually optional but which
   is invalid when only SOME are supplied — a shape `requiredCredentialKeys` cannot express. Today
