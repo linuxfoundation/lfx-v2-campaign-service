@@ -523,6 +523,17 @@ An account-less row was reachable all along as an unintended, undocumented state
 did was turn it into a supported, omission-based lifecycle state — and, in doing so, make the
 mis-classified 503 the common case rather than a latent one.
 
+`createConn` and `updateConn` also carry the force-system reversibility guard,
+`rejectForcedSystemAccountWrite(c.Provider, c.AccountID)`. It takes the PROVIDER as a parameter
+rather than reading `c.AccountID` alone, and that is a correctness requirement rather than tidiness:
+`model.Connection.AccountID` is SHARED by every provider, and `CreateHubspot`/`UpdateHubspot` copy
+HubSpot's Required `account_id` — a list/audience id — into the same field. A provider-blind guard
+therefore rejected every HubSpot create and update with 400 while the flag was on, blocking CRM
+connection setup entirely, over an id no ad-account discovery ever produced and that turning the
+flag off could not strand. The guard asks `IsPaidAds()` rather than naming HubSpot, per `Kind()`'s
+own guidance: a provider added later answers false and is left alone instead of inheriting a
+paid-ads policy. See internal-dispatch's Reversibility section for what the guard protects.
+
 Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
 **`active` says the connection is ENABLED for credential-based operations — it does not say the
 credentials were verified.** Nothing verifies them: `createConn` serializes, encrypts and

@@ -240,6 +240,14 @@ func postCutoverMetaCampaign(t *testing.T, systemAccount string) *model.Campaign
 // halves differ ONLY in the flag, rather than in two hand-copied servers that could drift.
 func metaPauseHarness(t *testing.T, campaign *model.Campaign) (token string, paused []string, err error) {
 	t.Helper()
+	return metaPauseHarnessWith(t, campaign, nil)
+}
+
+// metaPauseHarnessWith is metaPauseHarness with a hook to perturb the connection repo before
+// the pause runs, so the project-scope FAILURE arms can be exercised against the identical
+// stub platform and the identical dispatcher wiring. Passing nil is the ordinary two-row case.
+func metaPauseHarnessWith(t *testing.T, campaign *model.Campaign, mutate func(*scopedConnReader)) (token string, paused []string, err error) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// The cascade's ad-discovery step must answer with a present `data` field; the client
@@ -270,6 +278,9 @@ func metaPauseHarness(t *testing.T, campaign *model.Campaign) (token string, pau
 	// pause rather than only which account id was compared.
 	repo.rows["cncf"].EncryptedCredentials = []byte(`{"accessToken":"project-token"}`)
 	repo.rows[model.SystemProjectID].EncryptedCredentials = []byte(`{"accessToken":"system-token"}`)
+	if mutate != nil {
+		mutate(repo)
+	}
 
 	d := NewMetaDispatcher(repo, identityEncryptor{}, meta.WithBaseURL(srv.URL))
 	err = d.ToggleStatus(context.Background(), "cncf", model.ProviderMetaAds, campaign, model.CampaignRunPaused)
@@ -378,5 +389,207 @@ func TestLegacyRowWithoutProvenanceResolvesTheProjectAccount(t *testing.T) {
 	}
 	if len(paused) == 0 {
 		t.Error("no status update reached the platform; the pause never happened")
+	}
+}
+
+// TestPostCutoverCampaignStaysPausableAfterTheProjectDisconnects covers the FAILURE arm of
+// resolveExisting, and it is the same never-fix-forward failure as its two siblings above
+// arriving by a different route.
+//
+// Scoping resolution to the recorded creation account fixed the SUCCESS path: when the project
+// resolves to a different account, the system row is tried and matched. But project resolution
+// can also FAIL outright, and a campaign created on the system account is no less addressable
+// for that.
+//
+// A project that DISCONNECTS its own connection produces exactly this. systemConn refuses the
+// ordinary fallback for a disconnected project by design — a disconnect is a statement, not an
+// absence — so resolveWithFallback returns ErrNotFound and the valid system row that OWNS this
+// campaign is never consulted. Pause and read-metrics then fail on a campaign that keeps
+// serving and keeps spending, and the operator's remedy (reconnect the project) is both wrong
+// and something they deliberately undid.
+//
+// The recorded creation account is the invariant on this arm too: the row already says the
+// system account owns the live campaign, so the credentials that can address it exist.
+func TestPostCutoverCampaignStaysPausableAfterTheProjectDisconnects(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	gotToken, paused, err := metaPauseHarnessWith(t, postCutoverMetaCampaign(t, "act_999"),
+		func(r *scopedConnReader) {
+			// Delete soft-deletes, and Get filters the row out: an explicit disconnect reaches
+			// the resolver as the same ErrNotFound as never having connected, with Disconnected
+			// reporting true so the ordinary system fallback is (correctly) refused.
+			delete(r.rows, "cncf")
+			r.tombstoned = map[string]bool{"cncf": true}
+		})
+	if err != nil {
+		t.Fatalf("a system-created campaign became unpausable after the project disconnected its own "+
+			"connection: %v\nthe row records the SYSTEM account as its creating account, so the "+
+			"credentials that can stop it exist; the campaign keeps spending with no way to stop it", err)
+	}
+	if gotToken != "system-token" {
+		t.Errorf("pause authenticated with %q, want the SYSTEM credentials: the campaign was created "+
+			"in the LF system ad account and only that row's token can address its campaign id", gotToken)
+	}
+	if len(paused) == 0 {
+		t.Error("no status update reached the platform; the pause never happened")
+	}
+}
+
+// TestPostCutoverCampaignStaysPausableWhenTheProjectRowIsUnusable is the second failure arm.
+//
+// The project row is PRESENT but cannot be resolved — its stored credential blob does not
+// decrypt or validate — so resolveWithFallback returns a resolve error rather than ErrNotFound,
+// and the fallback never runs at all. As with the disconnect case, that error says nothing
+// about the system account the campaign actually records.
+//
+// It is pinned separately from the disconnect because the two reach the early return through
+// DIFFERENT branches of resolveWithFallback (the non-ErrNotFound arm at the top versus the
+// ErrNotFound/systemConn arm), and a fix that handled only the absence would leave this one
+// stranded with the disconnect test still green.
+func TestPostCutoverCampaignStaysPausableWhenTheProjectRowIsUnusable(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	gotToken, paused, err := metaPauseHarnessWith(t, postCutoverMetaCampaign(t, "act_999"),
+		func(r *scopedConnReader) {
+			r.errs = map[string]error{"cncf": errors.New("connection row is corrupt")}
+		})
+	if err != nil {
+		t.Fatalf("a system-created campaign became unpausable because the PROJECT's row is unusable: %v\n"+
+			"the campaign lives in the system account and the project's row is irrelevant to stopping it", err)
+	}
+	if gotToken != "system-token" {
+		t.Errorf("pause authenticated with %q, want the SYSTEM credentials", gotToken)
+	}
+	if len(paused) == 0 {
+		t.Error("no status update reached the platform; the pause never happened")
+	}
+}
+
+// TestProjectResolutionErrorSurvivesForALegacyRow is the guard against the fix above widening
+// into "always try the system account on failure".
+//
+// A row with NO recorded provenance has no system claim to honour. Reaching for the system row
+// on its behalf would silently run a legacy campaign's pause against an account whose namespace
+// its campaign id does not belong to — a pause that reports success against a campaign it never
+// touched. The project's error is the honest answer, and it names the connection an operator
+// can actually act on.
+//
+// Without this, "consult the system row when provenance says so" and "consult it whenever the
+// project fails" are indistinguishable to the suite.
+func TestProjectResolutionErrorSurvivesForALegacyRow(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		model.SystemProjectID: metaConnFor("act_999"),
+	}}
+	repo.tombstoned = map[string]bool{"cncf": true}
+
+	// creationAccountID "" is the legacy row: metaCreationAccountID returns "" for it.
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolveExisting(context.Background(), "cncf", model.ProviderMetaAds, "")
+	if err == nil {
+		t.Fatal("a legacy row with no recorded provenance must surface the PROJECT's resolution error; " +
+			"reaching for the system account on its behalf would address its campaign id in a namespace " +
+			"it does not belong to")
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want the project's own ErrNotFound preserved", err)
+	}
+}
+
+// TestProjectResolutionErrorSurvivesWhenTheSystemRowDidNotCreateIt is the third arm: the system
+// row EXISTS and resolves, but is not the account recorded on the campaign either. Nothing
+// reachable can address the campaign, so the project's error must stand rather than be replaced
+// by a system resolution that would fail the provenance guard downstream with a message aimed
+// at the wrong operator.
+func TestProjectResolutionErrorSurvivesWhenTheSystemRowDidNotCreateIt(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		model.SystemProjectID: metaConnFor("act_999"),
+	}}
+	repo.tombstoned = map[string]bool{"cncf": true}
+
+	// Created under act_777 — neither the disconnected project nor the system row.
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolveExisting(context.Background(), "cncf", model.ProviderMetaAds, "act_777")
+	if err == nil {
+		t.Fatal("no reachable account created this campaign; the PROJECT's resolution error must stand")
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want the project's own ErrNotFound preserved", err)
+	}
+}
+
+// TestSystemRowFaultIsNotReportedAsTheProjectsError pins WHICH error the failure arm returns
+// when BOTH scopes fail, and it is an operator-routing question rather than a cosmetic one.
+//
+// The added system lookup on the failure arm can itself fail (no system row installed, or an
+// unusable one). Returning THAT error would re-attribute a project's own connection problem to
+// the LF row: internal/service/brief.go and internal/service/connection.go both branch on
+// domain.ErrSystemConnectionOrigin to decide whether the remedy belongs to the project or to
+// whoever installed the LF credential. A project that simply disconnected its connection would
+// page the platform operator, and the project would never be told to reconnect.
+//
+// The caller asked about the PROJECT's operation, so the project's error is the answer. This
+// test is here because a mutation that substituted the system error survived the whole suite:
+// every other test on this arm asserts a SUCCESS, so nothing observed which of two failures
+// came back.
+func TestSystemRowFaultIsNotReportedAsTheProjectsError(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	// The project disconnected (so project resolution fails), and NO system row is installed
+	// (so the added system lookup fails too, with a system-origin error).
+	repo := &scopedConnReader{rows: map[string]*model.Connection{}}
+	repo.tombstoned = map[string]bool{"cncf": true}
+
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolveExisting(context.Background(), "cncf", model.ProviderMetaAds, "act_999")
+	if err == nil {
+		t.Fatal("both scopes failed; resolveExisting must return an error")
+	}
+	if errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		t.Errorf("err = %v, want the PROJECT's error: tagging this system-origin routes the remedy "+
+			"to whoever installs the LF credential, when the project is the one that disconnected", err)
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want the project's own ErrNotFound preserved", err)
+	}
+}
+
+// TestExistingResolutionNeverReachesForTheSystemRowForHubSpot pins the paid-ads precondition
+// on the failure arm's system lookup.
+//
+// resolveForcedSystem is the LF-system redirect, and resolve() gates it on IsPaidAds()
+// precisely so HubSpot/email is never pointed at the LF portal — routing one tenant's contact
+// data through another's is not the trade the paid-ads fallback makes (FR-003). The failure
+// arm added to resolveExisting performs that same lookup, so it must carry the same gate.
+//
+// Every caller of resolveExisting today happens to be a paid-ads dispatcher, so a
+// call-site-only convention would test green while leaving the function itself willing to
+// redirect email. This asserts the property of the FUNCTION: with a HubSpot provider the
+// system row is never consulted, even though one is installed and the recorded creation
+// account would match it.
+func TestExistingResolutionNeverReachesForTheSystemRowForHubSpot(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	sysRow := usableConn(`{"privateAppToken":"tok"}`, "act_999")
+	sysRow.Provider = model.ProviderHubSpot
+	repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: sysRow}}
+	// The project disconnected, so project resolution fails and the failure arm is entered.
+	repo.tombstoned = map[string]bool{"cncf": true}
+
+	// "act_999" is exactly the system row's account: if the gate were missing, this would
+	// resolve successfully against the LF row.
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolveExisting(context.Background(), "cncf", model.ProviderHubSpot, "act_999")
+	if err == nil {
+		t.Fatal("HubSpot resolution fell back to the LF SYSTEM row: forcing is scoped to paid ads " +
+			"(FR-003), and redirecting email would route one tenant's contact data through another's")
+	}
+	for _, got := range repo.gets {
+		if got == model.SystemProjectID {
+			t.Errorf("the LF system %s row was consulted for HubSpot; gets = %v", model.ProviderHubSpot, repo.gets)
+		}
 	}
 }

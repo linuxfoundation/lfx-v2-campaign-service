@@ -152,3 +152,71 @@ func TestForceSystem_AGenuineProjectAbsenceIsStill404(t *testing.T) {
 		t.Fatalf("a project with no connection of its own must still get 404 'connect it', got %T (%v)", err, err)
 	}
 }
+
+// TestForceSystem_HubspotCreateAndUpdateStayAllowed is the provider-scoping regression.
+//
+// model.Connection.AccountID is SHARED across every provider, and HubSpot's account_id is
+// Required (design/connection.go) — CreateHubspot and UpdateHubspot copy it into that same
+// field. A forced-system guard reading the field without asking which provider owns it
+// therefore rejected EVERY HubSpot create and update while the flag is on, blocking CRM
+// connection setup outright.
+//
+// It is not merely over-broad, it is unfollowable: the id being refused is a HubSpot
+// list/audience id, not an ad account id. No ad-account discovery ever produced it, turning
+// the flag off would not strand it, and the forced dispatch path gates on IsPaidAds()
+// specifically so HubSpot/email is never redirected (FR-003). There is nothing for the
+// operator to do differently.
+//
+// Both verbs are asserted because both call sites pass through the same shared helper; a fix
+// applied to one would leave the other rejecting.
+func TestForceSystem_HubspotCreateAndUpdateStayAllowed(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	s := newTestService(t, repo)
+
+	if _, err := s.CreateHubspot(context.Background(), &conn.CreateHubspotPayload{
+		ProjectID: "cncf",
+		// HubSpot's account_id is required and names a LIST, not an ad account.
+		Config:      &conn.HubspotConnectionConfig{AccountID: "12345678"},
+		Credentials: &conn.HubspotCredentials{PrivateAppToken: "pat-na1-token"},
+	}); err != nil {
+		t.Fatalf("HubSpot create must stay allowed while force-system mode is on: %v\n"+
+			"forcing is scoped to paid ads (FR-003); rejecting here blocks CRM connection setup", err)
+	}
+
+	repo.store[repoKey("cncf", model.ProviderHubSpot)] = &model.Connection{Version: 1}
+	ifMatch := "1"
+	if _, err := s.UpdateHubspot(context.Background(), &conn.UpdateHubspotPayload{
+		ProjectID: "cncf",
+		Config:    &conn.HubspotConnectionConfig{AccountID: "12345678"},
+		IfMatch:   &ifMatch,
+	}); err != nil {
+		t.Fatalf("HubSpot update must stay allowed while force-system mode is on: %v", err)
+	}
+}
+
+// TestForceSystem_EveryPaidAdsProviderIsStillGuarded is the other half of the scoping, and
+// the reason the guard asks IsPaidAds() rather than naming HubSpot.
+//
+// Without it, "exempt HubSpot" and "exempt everything" are indistinguishable to the suite:
+// the original guard tests all use Google Ads, so a fix that widened the exemption past the
+// email channel would leave five paid providers unprotected and no test would notice. This
+// walks model.AllProviders() so a provider added later must classify itself into one arm or
+// the other.
+func TestForceSystem_EveryPaidAdsProviderIsStillGuarded(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	for _, p := range model.AllProviders() {
+		err := rejectForcedSystemAccountWrite(p, "8666746580")
+		if p.IsPaidAds() {
+			if err == nil {
+				t.Errorf("%s is a paid-ads provider: persisting an account id while forced mode "+
+					"is on must be refused, or the flag stops being reversible", p)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s is not a paid-ads provider: forcing never redirects it, so its "+
+				"account id must persist normally, got %v", p, err)
+		}
+	}
+}

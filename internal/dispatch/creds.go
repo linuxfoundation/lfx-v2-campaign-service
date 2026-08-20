@@ -282,6 +282,55 @@ func (s *credsSource) existingResolver(creationAccountID string) credsResolver {
 func (s *credsSource) resolveExisting(ctx context.Context, projectID string, provider model.Provider, creationAccountID string) (*resolved, error) {
 	res, err := s.resolveWithFallback(ctx, projectID, provider)
 	if err != nil {
+		// Project resolution FAILED, but that is not the end of the question. The recorded
+		// creation account is the invariant, and it is just as authoritative on this arm as on
+		// the success arm below — a system-created campaign is addressable by the system row
+		// whether or not the project's own resolution happens to work today.
+		//
+		// Two ordinary states reach here and both would otherwise STRAND a live campaign:
+		//
+		//   - the project DISCONNECTED its own connection after the campaign was created.
+		//     systemConn refuses the fallback for a disconnected project by design (a
+		//     disconnect is a statement, not an absence), so resolveWithFallback returns
+		//     noOwnConnection/ErrNotFound.
+		//   - the project's row is present but UNUSABLE (validation or decrypt failure), so
+		//     resolveConn returns an error.
+		//
+		// In both, creationAccountID already records that the SYSTEM account owns the live
+		// campaign, so the credentials that can address it exist and are reachable. Returning
+		// early here makes pause and read-metrics fail on a campaign that keeps spending —
+		// the same no-fix-forward failure this function exists to prevent, arriving through
+		// the error path instead of the success path.
+		//
+		// Only a recorded provenance justifies the extra lookup: an EMPTY creationAccountID
+		// says the row records nothing, there is no system claim to honour, and the project's
+		// error is the honest answer.
+		// Two preconditions, and both are structural rather than conventional.
+		//
+		// A non-paid provider must never reach resolveForcedSystem: it is the same
+		// LF-system redirect that resolve() gates on IsPaidAds() so HubSpot/email is never
+		// pointed at the LF portal (FR-003, and the tenant-mixing trade systemConn refuses).
+		// Every caller of resolveExisting today is one of the five paid-ads dispatchers, but
+		// that is a fact about call sites; asking here makes it a property of the function.
+		//
+		// An EMPTY creationAccountID says the row records nothing, so there is no system
+		// claim to honour and the project's error is the honest answer.
+		if !provider.IsPaidAds() || strings.TrimSpace(creationAccountID) == "" {
+			return nil, err
+		}
+		sysRes, sysErr := s.resolveForcedSystem(ctx, provider)
+		if sysErr != nil {
+			// The system row is missing or unusable too. Report the PROJECT's error, which is
+			// the one the caller asked about; a system-row fault raised here would aim the
+			// remedy at the wrong operator.
+			return nil, err
+		}
+		if matchesAccount(sysRes.accountID, creationAccountID) {
+			return sysRes, nil
+		}
+		// The system row exists but did NOT create this campaign, and the project scope could
+		// not be resolved. Nothing here can address the campaign, so the project's error
+		// stands — it names the connection an operator can actually act on.
 		return nil, err
 	}
 	if matchesAccount(res.accountID, creationAccountID) {

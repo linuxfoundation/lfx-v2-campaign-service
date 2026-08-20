@@ -201,8 +201,24 @@ func forcedSystemAdsAccount() bool {
 // connection in whatever state the flag found it in — the opposite of reversible. The other
 // fields on the row (label, provider config, credentials) are untouched by this guard; only the
 // account selection is affected by which account discovery could see.
-func rejectForcedSystemAccountWrite(accountID string) error {
-	if strings.TrimSpace(accountID) == "" || !forcedSystemAdsAccount() {
+//
+// It is scoped to PAID-ADS providers, and the scoping is load-bearing rather than tidy.
+// model.Connection.AccountID is a SHARED field: HubSpot's required account_id (its list/audience
+// id) is copied into the very same struct field by CreateHubspot and UpdateHubspot. A guard
+// reading that field without asking which provider owns it rejects every HubSpot create and
+// update while the flag is on, blocking CRM connection setup entirely — and the id it would be
+// refusing is a HubSpot list id, which no ad-account discovery ever produced and which the flag
+// cannot strand. The forced path itself gates on Provider.IsPaidAds() (internal/dispatch/
+// creds.go's resolve) precisely so HubSpot/email is never redirected, so rejecting HubSpot here
+// would contradict FR-003.
+//
+// The provider is taken as a PARAMETER rather than checked at the two call sites, so the
+// compiler enforces the pairing: a future provider cannot reach this guard without its own
+// classification travelling with the account id. Asking IsPaidAds() rather than
+// `provider != ProviderHubSpot` follows Kind()'s own guidance — an unclassified provider added
+// later answers false and is left alone, rather than inheriting a paid-ads policy by default.
+func rejectForcedSystemAccountWrite(provider model.Provider, accountID string) error {
+	if !provider.IsPaidAds() || strings.TrimSpace(accountID) == "" || !forcedSystemAdsAccount() {
 		return nil
 	}
 	return &conn.BadRequestError{
@@ -223,7 +239,7 @@ func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection,
 	// Create is guarded as well as update: a connection can be created WITH an account id in
 	// one call, so guarding only the PUT would leave the same LF id persistable by a different
 	// verb. Create declares BadRequest too, so the status maps identically.
-	if err := rejectForcedSystemAccountWrite(c.AccountID); err != nil {
+	if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID); err != nil {
 		return nil, err
 	}
 	repo, enc, err := s.resolveBackend()
@@ -261,7 +277,7 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 	if err := rejectSystemScope(c.ProjectID); err != nil {
 		return nil, err
 	}
-	if err := rejectForcedSystemAccountWrite(c.AccountID); err != nil {
+	if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID); err != nil {
 		return nil, err
 	}
 	repo, _, err := s.resolveBackend()

@@ -1112,6 +1112,29 @@ An EMPTY recorded id means the row predates the explicit account field ("unknown
 every `*CreationAccountID` sibling documents) and falls back to ordinary project-then-system
 resolution — the behaviour those rows had before the flag existed.
 
+The recorded account governs the **failure** arm too, not only the success arm. Project-scope
+resolution can fail outright — the project DISCONNECTED its own connection (a disconnect is a
+statement, so `systemConn` refuses the ordinary fallback and `resolveWithFallback` returns
+`ErrNotFound`), or its row is present but unusable. Neither says anything about the system
+account the campaign records. Returning the project's error immediately therefore strands a
+system-created campaign exactly as the mirror-image bug above did: pause and metrics fail while
+the campaign keeps spending. `resolveExisting` consequently attempts the system resolution and
+matches it against the recorded id on that arm as well, and returns the project's error only when
+the system row is unavailable or is not the creating account.
+
+Two preconditions gate that extra lookup, both structural rather than conventional:
+
+- `IsPaidAds()` — `resolveForcedSystem` is the LF-system redirect, so email must never reach it
+  (FR-003). Every caller of `resolveExisting` today is a paid-ads dispatcher, but asking here
+  makes it a property of the function rather than a fact about its call sites.
+- a NON-EMPTY recorded id — a legacy row makes no system claim, so reaching for the system row on
+  its behalf would address its campaign id in a namespace it does not belong to.
+
+When both scopes fail the **project's** error is returned, never the system one:
+`internal/service/brief.go` and `internal/service/connection.go` branch on
+`domain.ErrSystemConnectionOrigin` to decide whose repair it is, so substituting the system error
+would page the platform operator for a project that simply disconnected.
+
 Passing the id as a parameter is deliberate: it makes the omission a COMPILE ERROR. The bug being
 fixed here was a `resolveExisting` that took only `(ctx, projectID, provider)` and so could not
 consult the campaign even though every caller already held one. `credsResolver` remains the
@@ -1159,8 +1182,14 @@ differs: install a row, versus fix the row that is there.
 
 ### Reversibility
 
-While the flag is on, no ad account id may be **persisted onto a project's connection row**
-(`rejectForcedSystemAccountWrite`, guarding both `createConn` and `updateConn`). Discovery resolves
+While the flag is on, no **paid-ads** account id may be **persisted onto a project's connection
+row** (`rejectForcedSystemAccountWrite`, guarding both `createConn` and `updateConn`). The
+provider is a PARAMETER, and that is load-bearing: `model.Connection.AccountID` is shared by every
+provider, and HubSpot's Required `account_id` (a list/audience id) is copied into the same field,
+so a provider-blind guard rejected every HubSpot create and update while the flag was on —
+blocking CRM connection setup over an id no ad-account discovery ever produced, and contradicting
+FR-003. Taking the provider as an argument makes the compiler enforce the pairing at both call
+sites. Discovery resolves
 the system credential while forcing is active, so every id the picker can offer names an LF-owned
 account; storing one outlives the flag, leaving the project's row pointing at an LF account it has
 no credentials for once the flag is off. The guard rejects the WRITE rather than filtering the
