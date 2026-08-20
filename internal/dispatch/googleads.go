@@ -1299,7 +1299,9 @@ const (
 // that, turning a " DAILY " Google never sent into a well-formed DAILY and reporting
 // `match` against a recorded daily budget. A padded value is not a value this function can
 // name, so it takes the same fail-closed path as UNKNOWN: an absent upstream side and an
-// `unknown` verdict. googleAdsDateOnly's strict parse is the same discipline for dates.
+// `unknown` verdict. googleAdsDateOnly does exactly the same for dates: a value that does
+// not parse against the documented layout yields an absent upstream side rather than a raw
+// string that could compare equal to the recorded date.
 func googleAdsBudgetTypeFromPeriod(period string) model.BudgetType {
 	switch period {
 	case "DAILY":
@@ -1401,24 +1403,37 @@ func formatBudgetUnits(v float64) string {
 // Google returns it in the ad ACCOUNT's timezone, which this client does not know — any
 // instant it computed would be a guess.
 //
-// A value that is not in the expected shape is returned unchanged rather than discarded: it
-// is still what the platform said, and showing it beside a differing recorded date is more
-// use to an operator than an unexplained absence.
-//
 // The time component is stripped ONLY when the whole value parses as Google's documented
 // 'yyyy-MM-dd HH:mm:ss'. Splitting on the first space unconditionally would turn
 // "2026-08-01 garbage" into "2026-08-01" and let it compare EQUAL to a recorded 2026-08-01 —
 // a fabricated agreement manufactured out of a malformed response, which is the one outcome
-// this readback exists to make impossible. An unparseable value is passed through whole, so
-// it can only ever read as a divergence, never as a match.
+// this readback exists to make impossible.
+//
+// A value that does NOT parse yields an ABSENT upstream side, exactly as
+// googleAdsBudgetTypeFromPeriod does for a period it cannot name. Returning the raw string
+// instead — which this helper used to do — was the same defect wearing the opposite
+// disguise. The reasoning behind that passthrough was that an unparseable value "can only
+// read as a divergence, never as a match", and for "2026-08-01 garbage" that is true. But
+// it is FALSE for the one malformed shape Google is most likely to send: a date-only
+// "2026-08-01" with the required time component missing fails this strict parse and was
+// then returned VERBATIM — byte-equal to the recorded side, which this readback formats to
+// exactly that YYYY-MM-DD layout. The comparison then reported `match` for a value this
+// code could not validate at all. A passthrough is only safe where the two sides cannot
+// share a spelling, and here they share it precisely.
+//
+// So an unparseable value is withheld rather than shown: `unknown` says "this was not
+// comparable", which is the honest reading, whereas `match` would be a claim of agreement
+// derived from a value that never parsed. The strict layout is what makes the distinction
+// meaningful, and dropping the raw string is the cost of not being able to fabricate one.
 func googleAdsDateOnly(s *string) *string {
 	if s == nil {
 		return nil
 	}
-	if t, err := time.Parse(googleAdsDateTimeLayout, *s); err == nil {
-		return strPtr(t.Format(campaignDateLayout))
+	t, err := time.Parse(googleAdsDateTimeLayout, *s)
+	if err != nil {
+		return nil
 	}
-	return s
+	return strPtr(t.Format(campaignDateLayout))
 }
 
 // boolToStrPtr renders an optional bool for the readback, preserving absence: a nil stays

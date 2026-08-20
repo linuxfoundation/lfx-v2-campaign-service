@@ -441,10 +441,11 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 // NOT trimming the surviving value is equally deliberate, and it is the half that is easy
 // to get wrong: this function runs BEFORE any of the consumers that validate these strings,
 // so trimming here normalises a malformed value into a well-formed one behind their backs.
-// googleAdsDateOnly parses with a strict layout and, on failure, passes the value through
-// WHOLE — so an upstream "2026-08-01 " trimmed to "2026-08-01" is byte-equal to a recorded
-// YYYY-MM-DD date and reports `match` for a value that never parsed. googleAdsBudgetTypeFromPeriod
-// has the same shape with " DAILY ". Both would be agreement manufactured by normalisation
+// googleAdsDateOnly parses with a strict layout and, on failure, withholds the value — so an
+// upstream "2026-08-01 " trimmed here to "2026-08-01" would parse-fail either way, but
+// trimming still matters: it decides WHICH malformed values reach the consumer, and a
+// consumer that judges a value it never received cannot judge it correctly.
+// googleAdsBudgetTypeFromPeriod has the same shape with " DAILY ". Both would be agreement manufactured by normalisation
 // rather than observed on the platform, which is the exact failure this readback's
 // absent-is-not-a-value discipline exists to prevent. Leaving the value verbatim keeps a
 // malformed field malformed all the way to the consumer that has to judge it.

@@ -861,15 +861,57 @@ func TestGoogleAds_ReadSettings_AbsentSharedFlagIsNotFalse(t *testing.T) {
 	}
 }
 
-// TestGoogleAdsDateOnly covers the helper's branches directly, including the passthrough
-// that the readback tests cannot reach through a well-formed response.
+// TestGoogleAds_ReadSettings_DateOnlyUpstreamIsNotReportedAsAMatch is the readback-level
+// proof for the defect the old passthrough carried, and it is deliberately at THIS layer
+// rather than on the helper: the fabricated `match` was only ever visible in the verdict.
 //
-// The passthrough is the interesting one: a value in an unexpected shape is returned
-// UNCHANGED rather than discarded, because it is still what the platform said, and showing
-// it beside a differing recorded date tells an operator more than an unexplained absence.
-// The cost is that such a value compares raw against the row's YYYY-MM-DD and so reads as a
-// divergence — which is the honest outcome, since the two genuinely do not agree in any
-// form this code can establish.
+// Google documents start_date_time/end_date_time as 'yyyy-MM-dd HH:mm:ss'. A response that
+// carries a bare "2026-08-01" — the required time component missing — fails the strict
+// parse. While that failure returned the raw string, the value handed to the comparison was
+// byte-identical to the recorded side, which this readback formats to exactly YYYY-MM-DD,
+// and the field reported `match` for a date the code could not validate at all. The other
+// malformed shapes ("2026-08-01 garbage") could not do this because they cannot collide
+// with the recorded spelling; the date-only shape is the one that can, and it is also the
+// most plausible thing a real API sends.
+func TestGoogleAds_ReadSettings_DateOnlyUpstreamIsNotReportedAsAMatch(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED","startDateTime":"2026-08-01","endDateTime":"2026-08-31"}}]}`)
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:    settingsProvenance(),
+		StartDate: &start, EndDate: &end,
+	}
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	for _, field := range []string{settingsFieldStartDate, settingsFieldEndDate} {
+		f := settingsField(t, rb, field)
+		if f.Comparison == model.SettingsMatch {
+			t.Errorf("%s comparison = match for an upstream value that never parsed; a date "+
+				"missing its documented time component must not be reportable as agreement", field)
+		}
+		if f.Comparison != model.SettingsUnknown {
+			t.Errorf("%s comparison = %q, want unknown: an unparseable upstream value is not comparable", field, f.Comparison)
+		}
+		if f.Upstream != nil {
+			t.Errorf("%s Upstream = %q, want nil: a value that failed the strict parse must be "+
+				"withheld, not carried into the comparison", field, *f.Upstream)
+		}
+	}
+}
+
+// TestGoogleAdsDateOnly covers the helper's branches directly, including the failure path
+// that the readback tests reach only through a malformed response.
+//
+// The failure path is the interesting one: a value in an unexpected shape yields ABSENCE
+// rather than the raw string, because the raw string is not inert. It is compared, and the
+// recorded side it is compared against is rendered in exactly the YYYY-MM-DD spelling that
+// the most likely malformed value — a date with no time component — already has. Returning
+// it therefore manufactured a `match`. Withholding it reports `unknown`, which is what a
+// value this code could not validate actually warrants.
 func TestGoogleAdsDateOnly(t *testing.T) {
 	dt := "2026-08-01 00:00:00"
 	dateOnly := "2026-08-01"
@@ -881,16 +923,21 @@ func TestGoogleAdsDateOnly(t *testing.T) {
 	}{
 		{"nil stays nil", nil, nil},
 		{"timestamp is reduced to its date", &dt, &dateOnly},
-		{"a value with no time is unchanged", &dateOnly, &dateOnly},
-		{"an unexpected shape passes through rather than vanishing", &weird, &weird},
+		// THE case. A bare date fails the strict parse, and while the helper returned the
+		// raw string on failure this came back as "2026-08-01" — byte-equal to the recorded
+		// side and therefore reported as `match` for a value that never parsed. It must be
+		// withheld, and it is the one failing value whose raw form can collide with the
+		// recorded spelling at all.
+		{"a value with no time component is WITHHELD, not returned verbatim", &dateOnly, nil},
+		{"an unexpected shape yields absence rather than a comparable string", &weird, nil},
 		// The rest are the fabricated-agreement cases. Splitting on the first space would
 		// reduce each of these to "2026-08-01" and let it compare EQUAL to a recorded
 		// 2026-08-01 — manufacturing an agreement out of a response this code cannot parse.
-		// They must pass through whole, so they can only read as a divergence.
-		{"garbage after the date is NOT truncated into a match", strPtr("2026-08-01 garbage"), strPtr("2026-08-01 garbage")},
-		{"a malformed time is NOT truncated into a match", strPtr("2026-08-01 25:99:99"), strPtr("2026-08-01 25:99:99")},
-		{"a trailing space is NOT truncated into a match", strPtr("2026-08-01 "), strPtr("2026-08-01 ")},
-		{"a second space-separated field is NOT truncated into a match", strPtr("2026-08-01 00:00:00 EXTRA"), strPtr("2026-08-01 00:00:00 EXTRA")},
+		// Failing the parse withholds them instead, which cannot compare equal to anything.
+		{"garbage after the date is NOT truncated into a match", strPtr("2026-08-01 garbage"), nil},
+		{"a malformed time is NOT truncated into a match", strPtr("2026-08-01 25:99:99"), nil},
+		{"a trailing space is NOT truncated into a match", strPtr("2026-08-01 "), nil},
+		{"a second space-separated field is NOT truncated into a match", strPtr("2026-08-01 00:00:00 EXTRA"), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := googleAdsDateOnly(tc.in)

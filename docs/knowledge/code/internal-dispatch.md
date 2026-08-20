@@ -297,7 +297,11 @@ snapshot records a channel, seven on a legacy row without one — precisely beca
 recorded side depends on the snapshot; any prose stating one number is wrong for the other row. Flight dates
 are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
 returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings
-would report a divergence for every campaign that actually agrees. The recorded side of both
+would report a divergence for every campaign that actually agrees. The parse is STRICT and a
+value that fails it yields an ABSENT upstream side rather than the raw string: a bare
+`2026-08-01` with the documented time component missing is byte-identical to the recorded
+side's own `YYYY-MM-DD` rendering, so passing it through reported `match` for a value the
+code could not validate. The recorded side of both
 dates is always NULL for Google Ads today — its config carries no dates — so they read
 `unknown` rather than diverged; they are wired through the comparison anyway so a future
 config that populates them starts diverging without anyone having to remember. It also
@@ -349,8 +353,10 @@ before matching, which reconstructed the well-formed `DAILY` the platform never 
 reported `match` against a recorded daily budget — reintroducing, one layer down, the exact
 fabrication the client-side change had just removed. It now matches the EXACT `DAILY` /
 `CUSTOM_PERIOD` spellings, so a padded value takes the same fail-closed path as `UNKNOWN`:
-absent upstream side, `unknown` verdict. `googleAdsDateOnly`'s strict parse is the same
-discipline for dates. The general rule: when a decode step stops normalising so that
+absent upstream side, `unknown` verdict. `googleAdsDateOnly` now enforces the same
+discipline for dates, returning nil rather than the unparsed string — a passthrough is only
+safe where the raw value cannot share a spelling with the side it is compared against, and a
+date-only value shares it exactly. The general rule: when a decode step stops normalising so that
 malformed input stays malformed, every consumer downstream of it must be checked for a trim
 of its own — a single one is enough to undo the guarantee for its field.
 
