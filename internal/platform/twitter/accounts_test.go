@@ -370,8 +370,14 @@ func TestListAdAccounts_RepeatedCursorIsAnError(t *testing.T) {
 // hand back a list short by an unknown amount that looks complete, and offering the row
 // would hand the user a choice that fails at bind time — accountIDRe is the SAME regexp
 // every account-scoped path validates the stored id against.
+//
+// The whitespace-padded cases are here because an account id is an OPAQUE upstream
+// token: trimming one does not clean it up, it INVENTS a different id than the one the
+// row carried and offers it as though X had sent it. The file's stated policy is that a
+// row whose id is not alphanumeric fails the walk, and padding is not alphanumeric, so a
+// padded row must fail exactly like "acct id" does rather than being silently repaired.
 func TestListAdAccounts_UnusableIDFailsTheWholeWalk(t *testing.T) {
-	for _, id := range []string{"", "acct/../other", "acct?x=1", "acct id"} {
+	for _, id := range []string{"", "acct/../other", "acct?x=1", "acct id", " acct1 ", "acct1\t", "\nacct1"} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			// A GOOD row precedes the bad one, so a "skip the row" implementation would

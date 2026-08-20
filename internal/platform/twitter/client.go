@@ -395,9 +395,14 @@ func defaultNonce() string {
 
 // apiResponse is the loose envelope returned by X Ads endpoints.
 type apiResponse struct {
-	// Data is the raw `data` value. It is nil when the field was ABSENT or null and
-	// non-nil (e.g. []byte("[]")) when it was present, which is what lets a caller
-	// distinguish an intentionally empty result set from a body that carries none.
+	// Data is the raw `data` value. It is nil ONLY when the field was ABSENT: an
+	// explicit `"data":null` decodes to the four literal bytes `null` (non-nil,
+	// len 4), so a nil or length check CANNOT distinguish absent from null from an
+	// empty `[]`. A caller that must tell "no result set" from "an intentionally
+	// empty one" therefore decodes first and inspects the DECODED value — both
+	// absent and null leave a slice nil, while a present `[]` yields a non-nil
+	// empty slice. ListAdAccounts (accounts.go) is the caller that needs that
+	// distinction and makes it that way.
 	Data json.RawMessage `json:"data"`
 	// NextCursor is set on cursor-paginated list endpoints (campaigns,
 	// line_items). Empty when there are no further pages.

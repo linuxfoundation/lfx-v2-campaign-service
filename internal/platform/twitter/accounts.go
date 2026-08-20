@@ -195,13 +195,22 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 			return nil, fmt.Errorf("x ad-account discovery returned a 2xx response with no data field; cannot confirm the credential's accounts were enumerated")
 		}
 		for _, el := range elements {
-			id := strings.TrimSpace(el.ID)
+			// Validated RAW, deliberately NOT trimmed. An account id is an opaque
+			// upstream token: trimming " acct1 " does not clean up the row, it invents
+			// the DIFFERENT id `acct1` and offers it as one X sent, so we would bind a
+			// connection to an id we never actually saw. Padding is malformed data from
+			// upstream and this walk's stated policy is that a row whose id is not
+			// alphanumeric fails it — repairing the value silently would exempt the one
+			// malformation that happens to be easy to repair. The page cursor a few
+			// lines above is left untrimmed for the same reason.
+			id := el.ID
 			// accountIDRe is the SAME regexp this client validates a CONFIGURED account
 			// id against before every account-scoped call (client.go). Reused rather
 			// than restated: an account this walk offers must be one the client will
 			// later accept, and two copies of that contract can drift into offering ids
 			// that fail at bind time. It is also the charset the connection's account_id
-			// is pattern-checked against in design/connection.go.
+			// is pattern-checked against in design/connection.go. It is anchored and
+			// admits no whitespace, so it rejects a padded id on its own.
 			if !accountIDRe.MatchString(id) {
 				// A response shape this far from the documented one means it is not the
 				// response we think it is, so the rest of it is not trustworthy either —

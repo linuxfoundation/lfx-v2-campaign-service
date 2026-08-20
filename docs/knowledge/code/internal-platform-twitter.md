@@ -236,6 +236,15 @@ offers must be one the client will later accept. A bad row fails the WHOLE walk 
 being skipped, because a response shape that far from the documented one means the rest of it
 is not trustworthy either — and a partial list looks complete.
 
+The row's id is validated **RAW — it is deliberately not trimmed** (LFXV2-3319 follow-up). An
+account id is an opaque upstream token, so trimming `" acct1 "` does not clean the row up, it
+INVENTS the different id `acct1` and offers it as one X sent — binding a connection to an id
+we never saw. `accountIDRe` is anchored and admits no whitespace, so a padded id fails the walk
+on its own, exactly as the enumerated policy above says a non-alphanumeric id must; repairing
+it silently would exempt the one malformation that happens to be easy to repair. The page
+cursor is left untrimmed for the same reason. `Name` and `Timezone` ARE trimmed — they are
+display labels, not identifiers, and nothing binds to them.
+
 **Unusable accounts are RETURNED, labelled, never filtered.** Accounts under review, rejected,
 or flagged deleted all come back carrying their reason; dropping them would answer "your
 credential reaches no ad accounts" about an account sitting right there. `approvalStatusLabels`
