@@ -98,8 +98,8 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 	// Swap ONLY the database name, by editing the parsed URL's path. Rebuilding the DSN
 	// from individual fields silently drops everything not named -- the password above
 	// all, plus sslmode and any other query parameter. That is invisible locally, where
-	// peer/trust auth needs no password, and fails in CI, which connects over TCP as
-	// postgres://postgres:postgres@... So: parse, edit one field, re-render.
+	// peer/trust auth needs no password, and fails in CI, which authenticates with a
+	// user:password pair over TCP. So: parse, edit one field, re-render.
 	u, err := url.Parse(dbtest.DSN())
 	if err != nil {
 		t.Fatalf("parse %s: %v", dbtest.EnvDatabaseURL, err)
