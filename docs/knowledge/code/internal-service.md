@@ -280,6 +280,13 @@ and this fires precisely when the project has NO connection of its own to reconn
 back to the shared LF row. It logs at ERROR alongside the decrypt case, since a broken LF
 system row fails every project depending on it.
 
+`domain.ErrSystemConnectionMissing` needs an arm above **`ErrNotFound`** specifically, which is
+the one ordering constraint the others do not have: it is wrapped ALONGSIDE `ErrNotFound` (the
+absence is real), so the broad arm wins if placed first and answers "connect your project" for a
+deployment-wide, operator-owned fault — force-system mode is on and nobody installed the LF row,
+which is precisely the connection a project cannot create. 500 + ERROR log, like the
+not-usable case; the repair differs (install a row, not fix one).
+
 **A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
 measurement; substituting one for a campaign that could not be read is indistinguishable from
 a campaign that genuinely served nothing, and that substitution is what turns an outage into
@@ -437,6 +444,10 @@ per provider, read via `GET .../connection-{provider}`.
 Five outcomes are distinguished deliberately, because collapsing them misdirects the caller.
 
 - `ErrAccountsUnsupported` → **400** — the platform has no discovery capability.
+- `domain.ErrSystemConnectionMissing` → **500** — force-system mode is on and the LF system row
+  is not installed for this provider. It must sit ABOVE the `ErrNotFound` arm below, which it is
+  wrapped alongside: the broad arm would otherwise answer 404 "connect your project" for a fault
+  the project cannot fix, since forced mode ignores its connection by construction.
 - `domain.ErrNotFound` → **404** — the project has no stored connection. A setup state; a 503
   here would tell the caller to retry something that cannot succeed until a connection exists.
 - `domain.ErrCredentialDecryptionFailed` → **500** — a well-formed credential blob failed

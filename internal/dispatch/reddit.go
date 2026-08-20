@@ -94,7 +94,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// connections; here its (bare) error is wrapped as notCreated for the claim contract.
 	// The credsSource.resolve error is already a preCreateError, so it is passed through
 	// untouched; the post-resolve validation errors are wrapped.
-	client, err := d.resolveRedditClient(ctx, brief.ProjectID, platform)
+	client, err := d.resolveRedditClient(ctx, brief.ProjectID, platform, d.creds.resolve)
 	if err != nil {
 		// resolve() already returns a preCreateError (NoUpstreamCreate); the post-resolve
 		// validation errors are bare and must be wrapped so the orchestrator still releases
@@ -207,8 +207,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 // The named return plus defer means a return site added later cannot forget to re-attribute
 // the error to the LF system row; systemScoped is a no-op for project-owned rows and
 // idempotent, so a caller that also tags costs nothing.
-func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider) (c *reddit.Client, err error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+//
+// resolveCreds selects the credential entry point (see credsResolver): Dispatch creates and
+// is governed by the forced-system flag; the toggle and metrics paths operate on an existing
+// campaign and are never forced.
+func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (c *reddit.Client, err error) {
+	res, err := resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +271,7 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err != nil {
 		return err
 	}
-	client, err := d.resolveRedditClient(ctx, projectID, platform)
+	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.resolveExisting)
 	if err != nil {
 		return err
 	}
@@ -350,7 +354,7 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 	if werr := reddit.ValidateMetricsWindow(window); werr != nil {
 		return nil, fmt.Errorf("get campaign metrics from reddit: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
-	client, err := d.resolveRedditClient(ctx, projectID, platform)
+	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.resolveExisting)
 	if err != nil {
 		return nil, err
 	}

@@ -229,9 +229,13 @@ func validateTwitterConnection(projectID string, res *resolved) (creds twitterCr
 }
 
 // resolveTwitterClient resolves + validates the project's connection and builds an X Ads
-// client for the TOGGLE path (see validateTwitterConnection for the shared rules).
+// client for the TOGGLE and METRICS paths (see validateTwitterConnection for the shared rules).
+//
+// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting and
+// is never redirected by the forced-system flag; verifyTwitterAccountMatch would refuse a
+// campaign addressed under an account it was not created in.
 func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID string, platform model.Provider) (*twitter.Client, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, err := d.creds.resolveExisting(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}

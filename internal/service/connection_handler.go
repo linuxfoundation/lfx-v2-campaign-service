@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"goa.design/goa/v3/security"
@@ -15,6 +17,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // JWTAuth verifies the bearer token and records the authenticated actor in the
@@ -161,11 +164,66 @@ func rejectSystemScope(projectID string) error {
 	return nil
 }
 
+// forcedSystemAdsAccount reports whether LFX_FORCE_SYSTEM_ADS_ACCOUNT is on, using the same
+// exact-match parse as internal/dispatch/creds.go: only the literal "true" enables it. Read per
+// call rather than cached at construction because this guard is about what the environment is
+// doing RIGHT NOW — a deployment that turns the flag off should stop rejecting writes without a
+// restart, which is the opposite of the dispatch-side field, where a value changing mid-process
+// would make two campaigns in one job resolve different accounts.
+func forcedSystemAdsAccount() bool {
+	return os.Getenv(constants.EnvForceSystemAdsAccount) == "true"
+}
+
+// rejectForcedSystemAccountWrite refuses to persist an ad account id onto a PROJECT's connection
+// row while forced-system mode is on, which is what makes the rollout reversible.
+//
+// While the flag is on, account discovery resolves the LF system credential, so every id the
+// picker can offer names an LF-owned ad account (see internal/dispatch/creds.go's
+// resolveForcedSystem). Storing one of those onto the project's own row outlives the flag: after
+// it is turned off, dispatch resolves the PROJECT's credential again but the row still points at
+// the LF account id — credentials from one account, target from another. Nothing upstream
+// reconciles that, so the connection is silently broken by an operation the operator believed was
+// a rollback, and the spec's promise that the flag is "reversible without a code change" would be
+// false.
+//
+// It rejects the WRITE rather than filtering the discovery response, because the id is not the
+// only way one arrives: the PUT body is caller-supplied and nothing obliges it to have come from
+// the picker. Closing the persistence boundary covers every route to the same row.
+//
+// 400 rather than 409, and the choice is forced rather than stylistic: the update endpoints
+// declare BadRequest but NOT Conflict (design/connection.go's "update-" method block), and Goa
+// maps an undeclared error type to a 500. A 409 here would therefore have reported an operator
+// policy as a server fault. The rejected value is a field in the request body, which is what
+// BadRequest describes anyway.
+//
+// Clearing the account id (the empty string) is deliberately still allowed. PUT is a full
+// replace, so un-selecting is expressed as an absent account_id, and refusing that would trap a
+// connection in whatever state the flag found it in — the opposite of reversible. The other
+// fields on the row (label, provider config, credentials) are untouched by this guard; only the
+// account selection is affected by which account discovery could see.
+func rejectForcedSystemAccountWrite(accountID string) error {
+	if strings.TrimSpace(accountID) == "" || !forcedSystemAdsAccount() {
+		return nil
+	}
+	return &conn.BadRequestError{
+		Code: "400",
+		Message: "ad account selection is temporarily disabled: this deployment runs paid-ads campaigns " +
+			"on the shared LF ad account, so the accounts visible to this project are not its own and " +
+			"must not be saved onto its connection",
+	}
+}
+
 // createConn encrypts credentials, persists a new connection, and returns the
 // generic domain result. Adapters build the *model.Connection (minus
 // credentials) and pass the plaintext credential JSON separately.
 func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection, creds any) (*model.Connection, error) {
 	if err := rejectSystemScope(c.ProjectID); err != nil {
+		return nil, err
+	}
+	// Create is guarded as well as update: a connection can be created WITH an account id in
+	// one call, so guarding only the PUT would leave the same LF id persistable by a different
+	// verb. Create declares BadRequest too, so the status maps identically.
+	if err := rejectForcedSystemAccountWrite(c.AccountID); err != nil {
 		return nil, err
 	}
 	repo, enc, err := s.resolveBackend()
@@ -201,6 +259,9 @@ func (s *ConnectionService) getConn(ctx context.Context, projectID string, p mod
 // updateConn replaces config, gated on the If-Match version.
 func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection, ifMatch *string) (*model.Connection, error) {
 	if err := rejectSystemScope(c.ProjectID); err != nil {
+		return nil, err
+	}
+	if err := rejectForcedSystemAccountWrite(c.AccountID); err != nil {
 		return nil, err
 	}
 	repo, _, err := s.resolveBackend()

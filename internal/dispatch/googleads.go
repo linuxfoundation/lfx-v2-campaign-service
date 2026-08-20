@@ -613,9 +613,13 @@ func validatedLoginCustomerID(res *resolved) (string, error) {
 }
 
 // resolveGoogleAdsClient resolves + validates the project's connection and builds a client
-// for the TOGGLE path (see validateGoogleAdsConnection for the shared rules).
+// for the TOGGLE and METRICS paths (see validateGoogleAdsConnection for the shared rules).
+//
+// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting and
+// is never redirected by the forced-system flag — the campaign's customer id is fixed at
+// creation and the provenance guard refuses to address it under any other account.
 func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, err := d.creds.resolveExisting(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}

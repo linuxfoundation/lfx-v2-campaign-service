@@ -1071,6 +1071,36 @@ flag — rather than threaded through the seven `New*Dispatcher` constructors (1
 overlay flip like the cutover flags; the branch stays dormant until an operator opts in. See
 [specs/006-force-system-ads-account](../../../specs/006-force-system-ads-account/spec.md).
 
+### The flag governs CREATION only
+
+`credsSource` has two entry points, and which one a caller uses decides whether the flag applies:
+
+| Entry point | Callers | Forced? |
+| --- | --- | --- |
+| `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | **yes** |
+| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **no** |
+| `resolveOwned` | adoption | no (never forced, never fell back) |
+
+Both share `resolveWithFallback`, the project-then-system resolution that predates the flag; only
+`resolve` can bypass it.
+
+The split is not stylistic — conflating the two makes a live campaign impossible to stop. Campaign
+ids on every platform here are scoped to an ad ACCOUNT, which is why each adapter carries a
+provenance guard (`verifyMetaAccountMatch` and its four siblings) refusing to address a stored
+campaign id under an account it was not created in. A campaign created BEFORE the cutover recorded
+the project's account; resolving the system account for its pause makes the two differ, the guard
+fires, and the service returns 409 to the one operation that must never be unavailable. The
+campaign keeps serving and keeps spending, and no fix-forward reaches it — the flag would have to
+be turned back off, which is the opposite of what a cutover flag is for.
+
+The account a campaign was created under is a HISTORICAL FACT, so it is read from the campaign's
+persisted result rather than recomputed from current config — the same model the provenance guards
+already encode. `credsResolver` is the function type adapters whose credential helper serves BOTH
+kinds of caller (`resolveMetaCredentials`, `resolveLinkedInCredentials`, `resolveRedditClient`)
+accept, so the choice is made by the caller that knows which it is.
+
+### The forced path itself
+
 A guard at the top of `credsSource.resolve` routes to `resolveForcedSystem` when the flag is on,
 the provider `IsPaidAds()`, and the request is not already at `model.SystemProjectID`. All three
 matter:
@@ -1093,6 +1123,31 @@ and `systemOrigin`-tags every failure — so a system row that is missing or unu
 closed** with a not-created, system-origin error rather than falling through to the project
 connection the flag means to ignore. `resolveOwned` (adoption) is untouched: it never forced and
 never fell back.
+
+A MISSING system row additionally carries `domain.ErrSystemConnectionMissing`, wrapped
+**alongside** `ErrNotFound` rather than instead of it. Every consumer that classifies a credential
+error checks `ErrNotFound` first — it is the ordinary "this project has no connection" case — so
+without a distinct marker a deployment that enabled the flag WITHOUT installing the system row
+answers every caller "no connection configured for this project; connect it". That advice cannot
+work: the project's own connection is exactly what forced mode ignores, and the operator who must
+install the LF row is never paged. The sentinel is ordered ABOVE the `ErrNotFound` arm at
+`classifyDiscoveryError`, both `brief.go` credential switches, `classifyBriefMetricsErr`, and the
+async dispatch log in `orchestrator.go`; each answers 500 + an ERROR log, matching the treatment
+`ErrSystemConnectionNotUsable` already gets. It is distinct from that sentinel because the repair
+differs: install a row, versus fix the row that is there.
+
+### Reversibility
+
+While the flag is on, no ad account id may be **persisted onto a project's connection row**
+(`rejectForcedSystemAccountWrite`, guarding both `createConn` and `updateConn`). Discovery resolves
+the system credential while forcing is active, so every id the picker can offer names an LF-owned
+account; storing one outlives the flag, leaving the project's row pointing at an LF account it has
+no credentials for once the flag is off. The guard rejects the WRITE rather than filtering the
+discovery response, because the id is caller-supplied and need not have come from the picker.
+CLEARING a selection stays allowed — PUT is a full replace and un-selecting is an absent
+`account_id`, so refusing it would trap a connection in whatever state the flag found it in. It
+answers **400, not 409**: the update endpoints declare `BadRequest` but not `Conflict`
+(`design/connection.go`), and Goa renders an undeclared error type as a 500.
 
 ## `CampaignAdopter` (optional capability)
 

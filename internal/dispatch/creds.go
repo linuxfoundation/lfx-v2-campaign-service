@@ -222,11 +222,53 @@ func (r *resolved) systemScoped(err error) error {
 	return fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, err)
 }
 
+// credsResolver is one of credsSource.resolve (creation and discovery — forced-system
+// applies) or credsSource.resolveExisting (an operation on an already-created campaign —
+// forced-system never applies). Adapters whose credential helper serves BOTH kinds of caller
+// take one of these rather than reaching for a fixed method, so the choice is made by the
+// caller that knows which it is, and reading the call site tells you which account a given
+// operation authenticates as.
+type credsResolver func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error)
+
+// resolveExisting resolves credentials for an operation on an ALREADY-CREATED campaign —
+// toggle-status, read-metrics, and the campaign lookups that address a stored upstream id.
+// It is `resolve` WITHOUT the forced-system override: the LFX_FORCE_SYSTEM_ADS_ACCOUNT flag
+// governs which account new campaigns are CREATED in, and says nothing about campaigns that
+// already exist.
+//
+// The distinction is not stylistic; conflating the two makes a live campaign impossible to
+// stop. Every ad platform here scopes campaign ids to an ad ACCOUNT, which is why each
+// adapter carries a provenance guard (verifyMetaAccountMatch and its four siblings) that
+// refuses to address a stored campaign id against an account it was not created under. A
+// campaign created BEFORE the cutover recorded the project's account; resolving the system
+// account for its pause makes those two differ, the guard fires, and the service returns 409
+// to the one operation that must never be unavailable. The campaign keeps serving and keeps
+// spending, and no fix-forward reaches it — the flag would have to be turned back off, which
+// is the opposite of what a cutover flag is for.
+//
+// The account a campaign was created under is a HISTORICAL FACT, not a policy input, which is
+// why it is read from the campaign's own persisted result rather than recomputed from current
+// config. Keeping existing-campaign operations on their creation account is the same model the
+// provenance guards already encode, so this narrows the flag to the case it was written for
+// rather than adding a second, parallel notion of "which account".
+//
+// It is deliberately a separate ENTRY POINT rather than a flag threaded through `resolve`:
+// the caller knows whether it holds a campaign, and the resolver cannot infer it. A dispatch
+// (creation) calls `resolve` and is forced; everything holding a *model.Campaign calls this
+// and is not.
+func (s *credsSource) resolveExisting(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+	return s.resolveWithFallback(ctx, projectID, provider)
+}
+
 // resolve fetches the project's connection for the provider and decrypts its
 // credentials, falling back to the reserved system scope (model.SystemProjectID) when
 // the project has no connection of its own. It returns a NOT-created error (so the
 // orchestrator releases the dispatch claim) when neither scope yields a usable
 // connection — none of those states could have created an upstream campaign.
+//
+// This is the CREATION entry point, and the only one the forced-system flag governs. An
+// operation on an existing campaign must use resolveExisting instead; see the reasoning
+// there for why forcing one of those is unrecoverable.
 func (s *credsSource) resolve(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
 	// Forced-primary mode: every PAID-ADS campaign authenticates as the LF-owned system
 	// account, so the project's own connection is not consulted at all. Gated on
@@ -237,6 +279,14 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	if s.forceSystemPaidAds && provider.IsPaidAds() && projectID != model.SystemProjectID {
 		return s.resolveForcedSystem(ctx, provider)
 	}
+	return s.resolveWithFallback(ctx, projectID, provider)
+}
+
+// resolveWithFallback is the project-scope-then-system-fallback resolution shared by the
+// creation path (`resolve`, once forcing has declined) and every existing-campaign path
+// (`resolveExisting`). It is the behaviour BOTH had before the forced-system flag existed,
+// lifted into one function so the flag has exactly one place that can bypass it.
+func (s *credsSource) resolveWithFallback(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -289,9 +339,14 @@ func (s *credsSource) resolveForcedSystem(ctx context.Context, provider model.Pr
 			// The flag is on but no system row is installed for this provider. Fail closed
 			// with a not-created, system-origin error rather than resolving nothing and
 			// letting a caller retry against a project scope forced mode exists to ignore.
+			// ErrSystemConnectionMissing rides ALONGSIDE ErrNotFound. The absence is real and
+			// callers that only ask "was anything found?" must keep seeing it, but every
+			// classifier checks ErrNotFound first and would otherwise answer "connect your
+			// project" for a fault only an operator can fix — the project's own connection is
+			// precisely what forced mode ignores.
 			return nil, systemOrigin(notCreated(fmt.Errorf(
-				"force-system-account is enabled but no system %s connection is installed: %w",
-				provider, domain.ErrNotFound)))
+				"force-system-account is enabled but no system %s connection is installed: %w: %w",
+				provider, domain.ErrSystemConnectionMissing, domain.ErrNotFound)))
 		}
 		return nil, systemOrigin(connLoadFailed(provider, err))
 	}

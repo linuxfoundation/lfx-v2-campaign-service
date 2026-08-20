@@ -87,8 +87,13 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 // /{campaignID}/insights) and never read AccountConfig.AccountID at all, so requiring one
 // there would refuse a perfectly servable pause/metrics-read on a connection whose account
 // selection was later cleared via PUT.
-func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds metaCreds, err error) {
-	res, err = d.creds.resolve(ctx, projectID, platform)
+//
+// resolveCreds selects the credential entry point: d.creds.resolve for creation and
+// discovery (both governed by the forced-system flag) and d.creds.resolveExisting for an
+// operation on an already-created campaign (never forced — see resolveExisting).
+// Passed in rather than inferred, because only the caller knows whether it holds a campaign.
+func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (res *resolved, creds metaCreds, err error) {
+	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, metaCreds{}, err
 	}
@@ -164,7 +169,7 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 
 // Dispatch implements service.PlatformDispatcher for Meta.
 func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
-	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform, d.creds.resolve)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -279,7 +284,7 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if err != nil {
 		return err
 	}
-	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveExisting)
 	if err != nil {
 		return err
 	}
@@ -360,7 +365,7 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 // platform-agnostic window to Meta's own vocabulary via metaMetricsWindow before calling
 // the client.
 func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveExisting)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +602,7 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 // it asks what the TOKEN reaches, so scoping the client to one of the answers would narrow
 // the response to a subset of the question.
 func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
-	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
+	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolve)
 	if err != nil {
 		return nil, err
 	}

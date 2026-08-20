@@ -238,15 +238,31 @@ openssl rand -base64 32
 
 - `LFX_FORCE_SYSTEM_ADS_ACCOUNT` (default unset, i.e. OFF) — makes the
   LF-owned system account (`system:linuxfoundation`) the PRIMARY
-  credential source for every paid-ads dispatch, so every campaign
-  authenticates as the marketing-ops account regardless of any
+  credential source when a paid-ads campaign is CREATED, so every new
+  campaign authenticates as the marketing-ops account regardless of any
   per-project connection (the system row is otherwise only a fallback
   for projects that have connected no account of their own). Only the
   exact value `true` enables it; unset or any other value (including
-  `TRUE` or a typo) leaves the default resolution. HubSpot/email is
-  never forced (the path gates on the paid-ads channel kind), and a
-  missing or unusable system row fails the dispatch closed rather than
-  falling through to the project connection. It shares the exact-match
+  `TRUE` or a typo) leaves the default resolution.
+
+  It governs **creation and account discovery only**. Pausing, resuming
+  and reading metrics for a campaign that ALREADY EXISTS keep using the
+  account it was created under, so campaigns created before the flag was
+  turned on stay controllable while it is on — forcing them onto the
+  system account would trip each adapter's account-provenance guard and
+  leave a live, spending campaign the service cannot pause.
+
+  While it is on, an ad account id cannot be SAVED onto a project's
+  connection (400); discovery is resolving the LF credential, so the ids
+  it returns are LF-owned and persisting one would outlive the flag.
+  Clearing a selection stays allowed. This is what keeps the rollout
+  reversible by flipping the flag back.
+
+  HubSpot/email is never forced (the path gates on the paid-ads channel
+  kind). A missing or unusable system row fails the dispatch closed
+  rather than falling through to the project connection; a MISSING one is
+  reported as an operator-owned configuration fault (500), not as "connect
+  your project" (404). It shares the exact-match
   `true` parse with `REDDIT_METRICS_ENABLED` but not its lifecycle: this
   flag is read ONCE, when the credentials source is constructed, so
   changing it requires a restart, whereas `REDDIT_METRICS_ENABLED` is

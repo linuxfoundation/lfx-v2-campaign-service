@@ -415,9 +415,13 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 }
 
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client
-// for the TOGGLE path (see validateMicrosoftConnection for the shared rules).
+// for the TOGGLE and METRICS paths (see validateMicrosoftConnection for the shared rules).
+//
+// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting and
+// is never redirected by the forced-system flag: the campaign lives in the account it was
+// created under, and verifyMicrosoftAccountMatch below would refuse any other one.
 func (d *MicrosoftDispatcher) resolveMicrosoftClient(ctx context.Context, projectID string, platform model.Provider) (*microsoft.Client, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, err := d.creds.resolveExisting(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}

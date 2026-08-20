@@ -32,6 +32,21 @@ discovery). It is gated by a single config flag, **off by default**, enabled
 per-environment (the ArgoCD overlay pattern used by the cutover flags), so the
 behavior change is opt-in and reversible without a code change.
 
+Two properties are what make "reversible" true rather than aspirational, and both
+are enforced in code rather than left to operator discipline:
+
+- The flag governs **creation only**. Toggle-status and read-metrics resolve the
+  account the campaign was actually created under (`credsSource.resolveExisting`),
+  so campaigns that pre-date the cutover stay pausable and readable while it is on.
+  Forcing them onto the system account would trip each adapter's account-provenance
+  guard and leave a live campaign that the service cannot stop — a state no later
+  rollback repairs, because the spend has already happened.
+- While the flag is on, **no ad account id can be persisted onto a project's
+  connection row** (`rejectForcedSystemAccountWrite`). Discovery resolves the system
+  credential while forcing is active, so every id it can offer names an LF-owned
+  account; storing one would outlive the flag and leave the project's row pointing at
+  an LF account it has no credentials for. Clearing a selection stays allowed.
+
 ## Requirements *(mandatory)*
 
 - **FR-001**: Add a boolean env flag `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
