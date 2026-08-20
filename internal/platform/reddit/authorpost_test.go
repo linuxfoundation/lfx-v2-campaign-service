@@ -6,6 +6,7 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -244,9 +245,14 @@ func TestCreateCampaign_AuthorPostFailureDegrades(t *testing.T) {
 		t.Error("AdWarning must be set when post authoring fails: an ad was requested via ImageURL and none exists, so this is a DEGRADED success, not a clean one")
 	}
 	// A definite 4xx rejection means the post was NOT created -- the operator can
-	// remediate directly and must not be told to verify first.
-	if !strings.Contains(res.AdWarning, "FAILED") {
-		t.Errorf("a 4xx post rejection must read as FAILED, got %q", res.AdWarning)
+	// remediate directly and must not be told to verify first. Assert the
+	// DISCRIMINATING token: bare "FAILED" is shared with the pre-send arm
+	// ("FAILED before it reached Reddit"), so it would pass on the wrong branch.
+	if !strings.Contains(res.AdWarning, "FAILED (Reddit rejected the post)") {
+		t.Errorf("a 4xx post rejection must be attributed to Reddit rejecting it, got %q", res.AdWarning)
+	}
+	if strings.Contains(res.AdWarning, "before it reached Reddit") {
+		t.Errorf("a 4xx REACHED Reddit; it must not be reported as pre-send: %q", res.AdWarning)
 	}
 	if strings.Contains(res.AdWarning, "UNCONFIRMED") {
 		t.Errorf("a 4xx post rejection is definite, not UNCONFIRMED; got %q", res.AdWarning)
@@ -666,4 +672,121 @@ func (t *postsToDeadPortTransport) RoundTrip(r *http.Request) (*http.Response, e
 		return t.base.RoundTrip(clone)
 	}
 	return t.base.RoundTrip(r)
+}
+
+// TestCreateCampaign_AuthorPostAmbiguousAPIErrorIsUnconfirmed covers the shapes
+// that are BOTH an *apiError and ambiguous, which is where arm ORDER decides the
+// operator's instruction. createOutcomeAmbiguous returns true for an *apiError
+// carrying a 5xx (Reddit received the POST and may have committed it before
+// erroring) or a 3xx on a mutating method (redirects are disabled, so it reached
+// a responder that may have committed before redirecting).
+//
+// The first version of this fix tested errors.As BEFORE createOutcomeAmbiguous,
+// so both shapes fell into the "Reddit rejected the post -- author it manually"
+// arm. That instruction can duplicate a post Reddit already holds: precisely the
+// harm the ambiguous classification exists to prevent, re-entering through arm
+// order rather than through the original else-branch.
+//
+// Assertions target the DISCRIMINATING wording, not a token both arms share:
+// "FAILED" alone appears in the 4xx and the pre-send arms too, so it cannot tell
+// the branches apart.
+func TestCreateCampaign_AuthorPostAmbiguousAPIErrorIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		// Reddit received the POST and may have committed the post before erroring.
+		{name: "5xx server error", status: http.StatusServiceUnavailable},
+		// Redirects are force-disabled, so a 3xx on this POST surfaces as an
+		// apiError; it reached a responder that may have committed first.
+		{name: "mutating 3xx redirect", status: http.StatusFound},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tokenSrv.Close()
+
+			handler := http.NewServeMux()
+			handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+				path := r.URL.Path
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/profiles/t2_test/posts"):
+					if tc.status >= 300 && tc.status < 400 {
+						// A redirect the client must NOT follow, so it surfaces as an apiError.
+						w.Header().Set("Location", "https://example.com/elsewhere")
+					}
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(`{"error":"upstream"}`))
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+				default:
+					http.Error(w, "unexpected", http.StatusNotFound)
+				}
+			})
+			apiSrv := httptest.NewServer(handler)
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:         "Open Source Summit",
+				Project:           "tlf",
+				EventSlug:         "oss-2026",
+				RegistrationURL:   "https://events.linuxfoundation.org/oss/",
+				BudgetUSD:         500,
+				StartDate:         "2026-08-01",
+				EndDate:           "2026-08-31",
+				GeoTargets:        []string{"us"},
+				Objective:         "conversions",
+				ConversionPixelID: "pixel_abc",
+				ImageURL:          "https://events.linuxfoundation.org/banner.jpg",
+			})
+			if err != nil {
+				t.Fatalf("an authoring failure is non-fatal; CreateCampaign returned: %v", err)
+			}
+			if res.CampaignID != "camp_1" || res.AdGroupID != "ag_1" {
+				t.Fatalf("campaign/ad group not created: %q/%q", res.CampaignID, res.AdGroupID)
+			}
+			if res.AdWarning == "" {
+				t.Fatal("AdWarning must be set: an ad was requested via ImageURL and none exists")
+			}
+			// The operator-facing instruction is where the harm lands: VERIFY first,
+			// never "author it manually".
+			if !strings.Contains(res.AdWarning, "UNCONFIRMED") {
+				t.Errorf("an apiError that createOutcomeAmbiguous accepts must read UNCONFIRMED, got %q", res.AdWarning)
+			}
+			if strings.Contains(res.AdWarning, "FAILED (Reddit rejected the post)") {
+				t.Errorf("HTTP %d may have committed the post; telling the operator Reddit REJECTED it invites a duplicate: %q", tc.status, res.AdWarning)
+			}
+			if !strings.Contains(res.AdWarning, "verify") && !strings.Contains(res.AdWarning, "BEFORE authoring it again") {
+				t.Errorf("an ambiguous outcome must instruct the operator to verify first, got %q", res.AdWarning)
+			}
+			var haveStep bool
+			for _, s := range res.Steps {
+				if strings.Contains(s, "Promoted-post authoring") {
+					haveStep = true
+					if !strings.Contains(s, "UNCONFIRMED") {
+						t.Errorf("step must mark the outcome UNCONFIRMED, got %q", s)
+					}
+					if strings.Contains(s, "Reddit rejected the post") {
+						t.Errorf("step must not claim a definite rejection for HTTP %d: %q", tc.status, s)
+					}
+					// The status is still useful diagnostics on the ambiguous arm.
+					if !strings.Contains(s, fmt.Sprintf("HTTP %d", tc.status)) {
+						t.Errorf("step should carry the status for diagnosis, got %q", s)
+					}
+				}
+			}
+			if !haveStep {
+				t.Errorf("expected a promoted-post authoring step, steps = %v", res.Steps)
+			}
+		})
+	}
 }

@@ -1388,27 +1388,38 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctxErr)
 			}
-			// Classify with the SAME three-way rule the ad-create path uses, so the
-			// operator is never told to take a manual action that could duplicate a
-			// post Reddit already holds:
-			//   - apiError (definite non-2xx): Reddit received and REJECTED it — no
-			//     post exists, remediate directly;
-			//   - ambiguous (transportError — an in-flight timeout/TLS error, or a
-			//     2xx whose body carried no data.id, which createPromotedPost wraps
-			//     as transportError): the post MAY exist — verify BEFORE recreating;
+			// Classify with the SAME rule AND THE SAME ORDER as the ad-create path, so
+			// the operator is never told to take a manual action that could duplicate
+			// a post Reddit already holds. Order is load-bearing: createOutcomeAmbiguous
+			// is asked FIRST, because "is this an *apiError" and "is this ambiguous" are
+			// NOT mutually exclusive — createOutcomeAmbiguous returns true for an
+			// *apiError carrying a 5xx or a mutating 3xx (Reddit received the POST and
+			// MAY have committed the post before erroring/redirecting). Testing
+			// errors.As first would swallow both into the "Reddit rejected it" arm and
+			// tell the operator to author the post again — the exact duplicate this
+			// classification exists to prevent. errors.As is therefore used only to
+			// EXTRACT the status for the message, never to select the arm.
+			//   - ambiguous (transportError from an in-flight timeout/TLS error, a 2xx
+			//     whose body carried no data.id which createPromotedPost wraps as one,
+			//     OR an apiError with a 5xx / mutating 3xx): the post MAY exist —
+			//     verify BEFORE authoring it again;
+			//   - apiError otherwise (a definite 4xx): Reddit received and REJECTED it,
+			//     so no post exists and the operator can remediate directly;
 			//   - anything else (token refresh, body encode, request build, a
 			//     pre-connect dial failure): proven pre-send, nothing was created.
-			// Collapsing the ambiguous arm into "before the request reached Reddit"
-			// (as this previously did for every non-apiError) mislabels a possibly-
-			// landed post as definitely absent.
 			var postAPIErr *apiError
+			gotStatus := errors.As(err, &postAPIErr)
 			switch {
-			case errors.As(err, &postAPIErr):
-				postWarning = "promoted-post authoring FAILED (Reddit rejected the post); no ad was created — author the post and add the ad manually in Reddit Ads Manager"
-				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager", postAPIErr.StatusCode))
 			case createOutcomeAmbiguous(err):
 				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit); no ad was created and the post MAY exist — verify in Reddit Ads Manager BEFORE authoring it again to avoid a duplicate"
-				steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- creating campaign + ad group without an ad; verify whether the post exists before authoring it again")
+				if gotStatus {
+					steps = append(steps, fmt.Sprintf("Promoted-post authoring UNCONFIRMED (HTTP %d) -- creating campaign + ad group without an ad; verify whether the post exists before authoring it again", postAPIErr.StatusCode))
+				} else {
+					steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- creating campaign + ad group without an ad; verify whether the post exists before authoring it again")
+				}
+			case gotStatus:
+				postWarning = "promoted-post authoring FAILED (Reddit rejected the post); no ad was created — author the post and add the ad manually in Reddit Ads Manager"
+				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager", postAPIErr.StatusCode))
 			default:
 				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post and no ad were created -- author the post and add the ad manually in Reddit Ads Manager"
 				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager")

@@ -147,17 +147,25 @@ persist as a clean success, and because `created` is terminal the orchestrator's
 idempotency check then refused to re-dispatch it — the campaign was permanently
 ad-less while every status an operator could see said it had succeeded.
 
-Authoring classifies its failure with the SAME three-way rule as the ad-create
-path, so an operator is never told to take a manual action that could duplicate a
-post Reddit already holds: an `*apiError` is a definite rejection (FAILED, no post
-exists); anything `createOutcomeAmbiguous` accepts — a `transportError` from an
-in-flight failure, or a 2xx whose body carried no `data.id`, which
-`createPromotedPost` wraps as one precisely because the post may exist — is
-UNCONFIRMED (verify BEFORE authoring again); and only a proven pre-send failure
-(token refresh, body encode, request build, a refused/unresolvable dial) is
-reported as never having reached Reddit. The `default` arm is the pre-send arm, so
-a new non-`apiError` error shape must be checked against `createOutcomeAmbiguous`
-before it lands there.
+Authoring classifies its failure with the SAME three-way rule **and the same arm
+order** as the ad-create path, so an operator is never told to take a manual action
+that could duplicate a post Reddit already holds. `createOutcomeAmbiguous(err)` is
+asked FIRST; `errors.As(err, &apiErr)` is used only to EXTRACT the status for the
+message, never to select the arm. The order is load-bearing because the two are not
+disjoint: `createOutcomeAmbiguous` returns true for an `*apiError` carrying a 5xx or
+a mutating 3xx, so testing the type first swallows both into the "Reddit rejected
+it" arm and tells the operator to author a post that may already exist.
+
+  - **UNCONFIRMED** — anything `createOutcomeAmbiguous` accepts: a `transportError`
+    from an in-flight failure, a 2xx whose body carried no `data.id` (which
+    `createPromotedPost` wraps as one precisely because the post may exist), or an
+    `*apiError` with a 5xx / mutating 3xx. Verify BEFORE authoring again.
+  - **FAILED** — an `*apiError` that is not ambiguous, i.e. a definite 4xx. Reddit
+    received and rejected it, so no post exists and the operator can remediate
+    directly.
+  - **Pre-send** — the `default` arm (token refresh, body encode, request build, a
+    refused/unresolvable dial). A new non-`apiError` shape must be checked against
+    `createOutcomeAmbiguous` before it lands here.
 
 The dispatch adapter SANITIZES
 both `PostURL` and `ImageURL` (query/fragment stripped) before snapshotting the

@@ -48,6 +48,39 @@ first), `default` → pre-send. The `default` arm is the pre-send arm, so any ne
 non-`apiError` shape must be checked against `createOutcomeAmbiguous` before it
 lands there.
 
+**The first version of that second fix ordered the arms wrongly, and reintroduced
+the very harm it removed.** It read `case errors.As(err, &postAPIErr)` FIRST and
+`case createOutcomeAmbiguous(err)` second. But the two predicates are NOT mutually
+exclusive: `createOutcomeAmbiguous` returns true for an `*apiError` carrying a
+**5xx** (Reddit received the POST and may have committed it before erroring) or a
+**mutating 3xx** (redirects are force-disabled, so it reached a responder that may
+have committed before redirecting). Both are `*apiError`s, so both matched the
+first arm and were reported as *"Reddit rejected the post — author the post and add
+the ad manually"*. That is the duplicate-post instruction the ambiguous
+classification exists to prevent, arriving through arm ORDER instead of through the
+original `else`.
+
+`createOutcomeAmbiguous(err)` must therefore be evaluated **before** the
+`*apiError` arm, and `errors.As` used only to EXTRACT the status for the message —
+never to select the arm. The ad-create path already did exactly this
+(`gotStatus := errors.As(...)` then `if createOutcomeAmbiguous(err)`), which is why
+"match the existing path's ordering" was the right instruction and inventing a
+switch-shaped variant of it was not. The `*apiError` arm now means what its message
+claims: a definite rejection, i.e. a 4xx that is not a mutating 3xx.
+
+The generalisable lesson: when two `case` predicates in a `switch` can both be true
+for the same value, the arm order IS the classification. A reviewer reading the
+arms in isolation sees three correct-looking branches; only asking "can predicate 2
+be true when predicate 1 is?" exposes it. `errors.As` is a TYPE test and
+`createOutcomeAmbiguous` is a SEMANTIC test over that same type — they were never
+disjoint.
+
+A wording assertion has the same trap as the prose assertion below: the 4xx arm and
+the pre-send arm SHARE the token `FAILED`, so `Contains(res.AdWarning, "FAILED")`
+passes on either branch and cannot discriminate. The 4xx test now asserts
+`"FAILED (Reddit rejected the post)"` and that the text does NOT say "before it
+reached Reddit".
+
 **A test named for the behaviour asserted the bug.**
 `TestCreateCampaign_AuthorPostFailureDegrades` passed identically before and after
 the fix: it checked a `Steps` substring and `AdCount == 0`, never `AdWarning`. The
@@ -57,8 +90,11 @@ that must be asserted. It now asserts `AdWarning` and its FAILED/UNCONFIRMED
 wording.
 
 Tests: `authorpost_test.go` gains `..._AuthorPostAmbiguousIsUnconfirmed` (2xx with
-no id; an in-flight hangup) and `..._AuthorPostPreSendIsDefinite` (a refused dial
-via a transport that reroutes only `POST /profiles/.../posts` to a dead port).
+no id; an in-flight hangup), `..._AuthorPostPreSendIsDefinite` (a refused dial via
+a transport that reroutes only `POST /profiles/.../posts` to a dead port), and
+`..._AuthorPostAmbiguousAPIErrorIsUnconfirmed` (a 503 and a 302 — the two shapes
+that are BOTH an `*apiError` and ambiguous, so they only classify correctly when
+the ambiguous arm is tested first).
 `internal/dispatch/reddit_test.go` gains
 `TestReddit_AuthorPostFailurePersistsCreatedDegraded`, which asserts the PERSISTED
 STATUS an operator reads (`created` before, `created_degraded` after) rather than
