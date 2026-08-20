@@ -353,7 +353,7 @@ func TestCreateCampaign_AuthorPostPreMutationValidation(t *testing.T) {
 			in.ImageURL = "ftp://example.com/x.jpg"
 		},
 		"image with userinfo": func(in *CampaignInput) {
-			in.ImageURL = "https://user:pass@example.com/x.jpg"
+			in.ImageURL = "https://user:pass@example.com/x.jpg" // secretlint-disable-line -- fixture asserting a userinfo URL is REFUSED; the credential is the thing under test
 		},
 		"unknown CTA": func(in *CampaignInput) {
 			in.ImageURL = "https://example.com/x.jpg"
