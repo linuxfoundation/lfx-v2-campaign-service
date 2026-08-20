@@ -6,6 +6,7 @@ package dbtest_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -94,13 +95,17 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 		}
 	})
 
-	// Swap the database name in the DSN for the one just created.
-	cfg, err := pgx.ParseConfig(dbtest.DSN())
+	// Swap ONLY the database name, by editing the parsed URL's path. Rebuilding the DSN
+	// from individual fields silently drops everything not named -- the password above
+	// all, plus sslmode and any other query parameter. That is invisible locally, where
+	// peer/trust auth needs no password, and fails in CI, which connects over TCP as
+	// postgres://postgres:postgres@... So: parse, edit one field, re-render.
+	u, err := url.Parse(dbtest.DSN())
 	if err != nil {
 		t.Fatalf("parse %s: %v", dbtest.EnvDatabaseURL, err)
 	}
-	return fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable",
-		cfg.User, cfg.Host, cfg.Port, name)
+	u.Path = "/" + name
+	return u.String()
 }
 
 // TestLiveMigrationsGoDownAndUpAgain drives the embedded migration set to its top
