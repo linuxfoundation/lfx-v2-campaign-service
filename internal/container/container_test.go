@@ -255,7 +255,7 @@ var registeredProviders = []model.Provider{
 // wiring line (or adding an unlisted one) fails this test, not just a missing-key check.
 // registerDispatchers only stores its args, so nil repo/encryptor build the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
-	m := registerDispatchers(nil, nil, nil)
+	m := registerDispatchers(nil, nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
@@ -281,7 +281,7 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	// Feed a map with one provider deliberately REMOVED rather than relying on a real gap:
 	// adapters keep landing, so a test that asserts "provider X is still unregistered" rots
 	// the moment X ships. A synthetic gap keeps proving the function is not a no-op forever.
-	full := registerDispatchers(nil, nil, nil)
+	full := registerDispatchers(nil, nil, nil, nil)
 	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
 	for p, d := range full {
 		if p == model.ProviderRedditAds {

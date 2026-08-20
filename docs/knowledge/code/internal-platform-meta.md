@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached by URL as `link_data.picture`, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -43,10 +43,21 @@ with the TS contract is deferred (LFXV2-2665).
 
 Ad creatives are website-click ads built from `object_story_spec.link_data`
 (page id, the UTM click URL, primary text, headline, optional description). A
-variant may additionally carry an OPTIONAL `AdVariant.ImageURL`, which turns the
-ad into a SINGLE-IMAGE ad: the URL is attached to that variant's creative as
-`link_data.picture`. The field is additive — a variant with no `ImageURL`
-produces exactly the previous bare-link creative.
+variant may additionally carry an image, which turns the ad into a SINGLE-IMAGE
+ad. There are TWO ways to supply one and they COEXIST, because Meta documents two
+different creative fields for them:
+
+- `AdVariant.ImageURL` — attached to that variant's creative as
+  `link_data.picture`. No upload; Meta fetches the URL server-side.
+- `AdVariant.ImageAssetID` — a creative asset previously uploaded against the
+  brief. The dispatcher resolves it to `ImageBytes`, the client POSTs those bytes
+  to `/act_<id>/adimages`, and the returned account-scoped hash is attached as
+  `link_data.image_hash`.
+
+Both are additive — a variant with neither produces exactly the previous bare-link
+creative. They are MUTUALLY EXCLUSIVE per variant (see below), which is a
+restriction on one creative, not on the codebase: each variant independently
+chooses a route, and a campaign may mix by-URL and by-bytes variants.
 
 `picture` is the DOCUMENTED by-URL field on `AdCreativeLinkData`: "URL of a
 picture to use in the post. Specify this field or `image_hash` but not both. ...
@@ -54,23 +65,37 @@ The image specified at the URL will be saved into the ad accounts image library.
 META fetches the image server-side, so the client never dereferences the caller's
 URL and acquires no outbound-fetch (or SSRF) surface, and the whole creative stays
 one JSON create inside the ordinary hardened request path — no second transport.
-Because the reference makes `picture` and `image_hash` mutually exclusive, only
-`picture` is ever sent.
+Because the reference makes `picture` and `image_hash` mutually exclusive, a
+single creative carries exactly one of them. `validateVariantImage` REFUSES a
+variant supplying both, locally and before any upstream call, rather than letting
+Meta reject it after the campaign and ad set already exist. `objectStorySpec`
+then encodes the same exclusivity structurally: `picture` is set only when no hash
+was uploaded.
 
-An earlier revision instead uploaded to `POST /act_<id>/adimages` with a `url`
-field and attached the returned hash as `link_data.image_hash`. That was wrong:
-the adimages edge documents only `bytes` (base64) and `copy_from` as CREATE
-parameters — `url` is a field on the RETURNED image object, not an accepted
-input — so the call would have been rejected against a live account, after the
-campaign and ad set already existed. `picture` reaches the same by-URL outcome
-with one fewer round-trip and no undocumented parameter. Nothing in the repo
-calls `/adimages` any more.
+`image_hash` comes from `POST /act_<id>/adimages` with the image as a multipart
+`bytes` part. That edge documents exactly two CREATE parameters — `bytes` and
+`copy_from` — so this transport is the documented one.
+
+CORRECTING AN EARLIER OVER-GENERALISATION: an earlier revision called the same
+edge with a `url` field, which is NOT an accepted input (`url` is a field on the
+RETURNED image object), so it would have been rejected against a live account
+after the campaign and ad set already existed. That verdict is about the `url`
+PARAMETER and was recorded as if it disqualified the ENDPOINT — the note read
+"nothing in the repo calls `/adimages` any more", which is no longer true and was
+never the necessary conclusion. Sending `bytes` is the only documented way to
+attach an image the service holds as stored bytes rather than as a URL, so
+`/adimages` is called again — with the correct parameter.
 
 The URL is validated up front alongside the copy-limit checks (absolute, https,
 no embedded userinfo) so a malformed URL is rejected BEFORE any paid resource
 exists, rather than at the per-variant creative step where the campaign and ad
 set are already created. Meta fetches the URL, so userinfo is rejected
-specifically to avoid handing a basic-auth secret to Meta.
+specifically to avoid handing a basic-auth secret to Meta. The both-supplied
+refusal runs in the same pre-spend pass.
+
+Neither path logs caller bytes, a byte count, or a checksum: an upload failure
+names only which variant failed, so the by-bytes path needs no analogue of
+`scrubURLFromErr` — there is no caller-supplied value in its error text to scrub.
 
 A creative rejected over its picture URL is non-fatal per-variant and is reported
 in `Steps` like any other per-variant failure. Because the URL now travels as a

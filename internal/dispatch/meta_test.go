@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1809,5 +1810,416 @@ func TestMeta_ConfigSnapshotSanitizeDoesNotMutateCallerConfig(t *testing.T) {
 
 	if got := variants[0].ImageURL; got != full {
 		t.Errorf("the caller's variant ImageURL was mutated to %q; Meta must still receive the full signed URL %q", got, full)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Creative-asset resolution AT THE DISPATCH LEVEL (LFXV2-3295)
+// ---------------------------------------------------------------------------
+
+// fakeCreativeAssets is a creativeAssetReader that records what was asked for and
+// answers with a fixed asset or error. calls is read by the tests to prove a lookup
+// was SCOPED to the dispatching brief, not merely that one happened.
+type fakeCreativeAssets struct {
+	asset *model.CreativeAsset
+	err   error
+
+	mu    sync.Mutex
+	calls []string // "projectID/briefID/assetID" per call
+}
+
+func (f *fakeCreativeAssets) GetAsset(_ context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, projectID+"/"+briefID+"/"+assetID)
+	f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.asset, nil
+}
+
+func (f *fakeCreativeAssets) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// metaConfigWithVariant builds a dispatch config whose single variant carries the
+// supplied raw JSON fields, so a test can send `imageAssetId`, `imageUrl`, or both
+// exactly as a caller would over the wire.
+func metaConfigWithVariant(variantFields string) json.RawMessage {
+	// Empty fields must not leave a dangling comma, so the separator is added here
+	// rather than baked into each caller's literal.
+	variantSuffix := ""
+	if strings.TrimSpace(variantFields) != "" {
+		variantSuffix = "," + variantFields
+	}
+	return json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"objective":"traffic","geoTargets":["US"],"currencyOffset":100,
+		"variants":[{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native"` + variantSuffix + `}]
+	}}`)
+}
+
+// countingMetaServer is a Meta stub that answers the read-only preflight but FAILS
+// the test on any mutating call. It is how these tests prove "no upstream create was
+// attempted" as an observation of the wire rather than as an inference from an error
+// value: a guard that fails to bind reaches one of these arms and the count is
+// non-zero, whatever the returned error happens to say.
+func countingMetaServer(t *testing.T, mutations *int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		default:
+			// Any POST — /adimages, /campaigns, /adsets, /adcreatives, /ads — is money or
+			// a durable object. Reaching here at all is the failure.
+			atomic.AddInt32(mutations, 1)
+			t.Errorf("upstream create attempted before the pre-spend guard: %s %s", r.Method, r.URL.Path)
+			_, _ = io.WriteString(w, `{"id":"SHOULD_NOT_EXIST"}`)
+		}
+	}))
+}
+
+// assertPreSpendRefusal is the shared assertion for every bad-asset dispatch: the
+// dispatch failed, NOTHING was created upstream, and the error carries
+// NoUpstreamCreate() so the orchestrator RELEASES the (brief, platform) claim
+// instead of stranding it.
+//
+// The NoUpstreamCreate check goes through errors.As on the same anonymous interface
+// the orchestrator uses, not through a *preCreateError type assertion, so the test
+// binds the CONTRACT the orchestrator actually consults rather than the concrete
+// type that happens to satisfy it today.
+func assertPreSpendRefusal(t *testing.T, camp *model.Campaign, err error, mutations int32, wantMsg string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Dispatch returned nil error; a bad creative asset must fail the dispatch")
+	}
+	// (a) no upstream create was attempted.
+	if mutations != 0 {
+		t.Errorf("%d upstream create call(s) were made; the guard must refuse BEFORE any spend", mutations)
+	}
+	// A non-nil campaign would tell the orchestrator a paid resource may exist.
+	if camp != nil {
+		t.Errorf("Dispatch returned a non-nil campaign %+v; nothing was created", camp)
+	}
+	// (b) the error satisfies NoUpstreamCreate() — (c) which is what releases the claim.
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) {
+		t.Fatalf("error does not expose NoUpstreamCreate(); the orchestrator would STRAND the claim: %v", err)
+	}
+	if !nuc.NoUpstreamCreate() {
+		t.Errorf("NoUpstreamCreate() = false; the orchestrator would STRAND the claim: %v", err)
+	}
+	if wantMsg != "" && !strings.Contains(err.Error(), wantMsg) {
+		t.Errorf("error %q does not explain the failure (want it to mention %q)", err.Error(), wantMsg)
+	}
+}
+
+// TestMeta_DispatchBadAssetRefusesBeforeAnySpend drives a BAD creative-asset
+// reference through the REAL Dispatch path — not resolveVariantAssets in isolation —
+// and pins the three properties that make the guard worth having: no upstream create
+// was attempted, the error is NoUpstreamCreate, and the claim is therefore released.
+//
+// This test exists because the helper-level tests could not see any of that. They
+// call resolveVariantAssets directly, so they pass identically whether or not its
+// error is wrapped in notCreated at the call site and whether or not the call site
+// sits before the client is built. Both of those mutations SURVIVED against the
+// helper-level tests alone: dropping notCreated strands the (brief, platform) claim,
+// and letting a bad asset fall through builds a link-only ad and spends money. Each
+// is now killed here.
+func TestMeta_DispatchBadAssetRefusesBeforeAnySpend(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+
+	cases := []struct {
+		name     string
+		assets   creativeAssetReader // nil → the store is not configured
+		bindRepo bool
+		variant  string
+		wantMsg  string
+	}{
+		{
+			name:     "asset absent for this brief",
+			assets:   &fakeCreativeAssets{err: domain.ErrNotFound},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "does not exist for this brief",
+		},
+		{
+			name:     "malformed asset id",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("x"), MimeType: model.MimeTypePNG}},
+			bindRepo: true,
+			variant:  `"imageAssetId":"not-a-uuid"`,
+			wantMsg:  "not a valid asset id",
+		},
+		{
+			name:     "store not configured but a variant references an asset",
+			bindRepo: false,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "creative-asset store is not configured",
+		},
+		{
+			name:     "asset resolves with no stored bytes",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{MimeType: model.MimeTypePNG}},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "no stored image bytes",
+		},
+		{
+			name:     "repository error other than not-found",
+			assets:   &fakeCreativeAssets{err: errors.New("connection refused")},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "load creative asset",
+		},
+		{
+			// Meta forbids picture and image_hash on ONE creative. Supplying both has no
+			// correct interpretation, so it is refused locally, pre-spend — never sent
+			// upstream to be rejected after the campaign and ad set already exist.
+			name:     "variant supplies BOTH an image url and an image asset id",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("\x89PNG"), MimeType: model.MimeTypePNG}},
+			bindRepo: true,
+			variant:  `"imageUrl":"https://cdn.example.org/hero.png","imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "mutually exclusive",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mutations int32
+			srv := countingMetaServer(t, &mutations)
+			defer srv.Close()
+
+			clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+			)
+			if tc.bindRepo {
+				d.SetCreativeAssetRepo(tc.assets)
+			}
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, metaConfigWithVariant(tc.variant))
+			assertPreSpendRefusal(t, camp, err, atomic.LoadInt32(&mutations), tc.wantMsg)
+		})
+	}
+}
+
+// TestMeta_DispatchResolvesAssetToImageHash is the by-STORED-BYTES happy path, end to
+// end through Dispatch: an imageAssetId is resolved to bytes, uploaded to /adimages,
+// and the returned hash lands on the creative as link_data.image_hash — with NO
+// picture field, since the two are mutually exclusive.
+//
+// It also pins the lookup SCOPE: the asset is fetched for the dispatching brief's
+// project and id, which is what stops one brief's campaign referencing another's
+// asset.
+func TestMeta_DispatchResolvesAssetToImageHash(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+	imageBytes := []byte("\x89PNG\r\n\x1a\nFAKEPIXELS")
+
+	var (
+		mu           sync.Mutex
+		creativeBody string
+		uploadBody   []byte
+		uploadType   string
+		uploadCalls  int32
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/adimages"):
+			atomic.AddInt32(&uploadCalls, 1)
+			mu.Lock()
+			uploadType = r.Header.Get("Content-Type")
+			uploadBody, _ = io.ReadAll(r.Body)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"images":{"source":{"hash":"HASH_FROM_UPLOAD","url":"https://scontent.example/x.png"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			creativeBody = string(b)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	assets := &fakeCreativeAssets{asset: &model.CreativeAsset{
+		ID: validUUID, ProjectID: "cncf", BriefID: "brief-1",
+		Bytes: imageBytes, MimeType: model.MimeTypeJPEG,
+	}}
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	d.SetCreativeAssetRepo(assets)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds,
+		metaConfigWithVariant(`"imageAssetId":"`+validUUID+`"`))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
+		t.Fatalf("campaign not mapped: %+v", camp)
+	}
+	// A degraded status would mean the ad was never created.
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("campaign status = %q, want %q — the asset-backed ad did not get created", camp.Status, campaignStatusCreated)
+	}
+
+	// The asset was looked up SCOPED to the dispatching brief.
+	if got, want := assets.calls, []string{"cncf/brief-1/" + validUUID}; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("asset lookup scope = %v, want %v", got, want)
+	}
+	if n := atomic.LoadInt32(&uploadCalls); n != 1 {
+		t.Errorf("/adimages called %d times, want exactly 1", n)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// The upload carried the asset's BYTES as a multipart file part — the documented
+	// `bytes` create parameter — not a url field.
+	if !strings.HasPrefix(uploadType, "multipart/form-data") {
+		t.Errorf("upload Content-Type = %q, want multipart/form-data", uploadType)
+	}
+	if !bytes.Contains(uploadBody, imageBytes) {
+		t.Error("upload body does not carry the asset's bytes")
+	}
+	if !bytes.Contains(uploadBody, []byte(model.MimeTypeJPEG)) {
+		t.Errorf("upload body does not label the part with the asset's verified MIME type %q", model.MimeTypeJPEG)
+	}
+
+	// The hash from the upload landed on the creative...
+	if !strings.Contains(creativeBody, `"image_hash":"HASH_FROM_UPLOAD"`) {
+		t.Errorf("creative body missing link_data.image_hash from the upload: %s", creativeBody)
+	}
+	// ...and no picture accompanies it (Meta forbids both on one creative).
+	if strings.Contains(creativeBody, "picture") {
+		t.Errorf("creative body sent picture alongside image_hash: %s", creativeBody)
+	}
+	// The image bytes must never appear in the creative body.
+	if strings.Contains(creativeBody, "FAKEPIXELS") {
+		t.Errorf("creative body embedded the raw image bytes: %s", creativeBody)
+	}
+
+	// The per-variant image_hash is persisted in the campaign result for reconciliation.
+	var res meta.CampaignResult
+	if uerr := json.Unmarshal(camp.Result, &res); uerr != nil {
+		t.Fatalf("unmarshal persisted result: %v", uerr)
+	}
+	if len(res.Ads) != 1 {
+		t.Fatalf("persisted result has %d ads, want 1: %s", len(res.Ads), string(camp.Result))
+	}
+	if res.Ads[0].ImageHash != "HASH_FROM_UPLOAD" {
+		t.Errorf("persisted ad ImageHash = %q, want %q", res.Ads[0].ImageHash, "HASH_FROM_UPLOAD")
+	}
+	if res.Ads[0].Variant != 1 || res.Ads[0].AdID != "ad_1" || res.Ads[0].CreativeID != "creative_1" {
+		t.Errorf("persisted ad identifiers wrong: %+v", res.Ads[0])
+	}
+}
+
+// TestMeta_DispatchNoAssetMakesNoUploadCall pins that the by-URL and link-only paths
+// are UNAFFECTED by the asset machinery: neither consults the creative-asset store
+// nor calls /adimages. A variant with no imageAssetId must not acquire an upload
+// round-trip just because the capability now exists.
+func TestMeta_DispatchNoAssetMakesNoUploadCall(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		variant string
+	}{
+		{"link-only variant", ``},
+		{"by-url variant", `"imageUrl":"https://cdn.example.org/hero.png"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var uploadCalls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					_, _ = io.WriteString(w, `{"data":[]}`)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+					_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+				case strings.HasSuffix(r.URL.Path, "/adimages"):
+					atomic.AddInt32(&uploadCalls, 1)
+					_, _ = io.WriteString(w, `{"images":{"x":{"hash":"SHOULD_NOT_BE_USED"}}}`)
+				case strings.HasSuffix(r.URL.Path, "/campaigns"):
+					_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+				case strings.HasSuffix(r.URL.Path, "/adsets"):
+					_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/ads"):
+					_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+				default:
+					http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			// The store is bound and would answer, so a zero call count proves the
+			// by-URL/link-only paths never consult it — not that nothing was wired.
+			assets := &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("x"), MimeType: model.MimeTypePNG}}
+			clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+			)
+			d.SetCreativeAssetRepo(assets)
+
+			if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, metaConfigWithVariant(tc.variant)); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if n := atomic.LoadInt32(&uploadCalls); n != 0 {
+				t.Errorf("/adimages was called %d times for a variant with no imageAssetId", n)
+			}
+			if n := assets.callCount(); n != 0 {
+				t.Errorf("the creative-asset store was consulted %d times for a variant with no imageAssetId", n)
+			}
+		})
+	}
+}
+
+// TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig proves resolution returns a
+// COPY. cfg.Variants is reused after resolution — by campaignFromMeta for the config
+// snapshot and by Dispatch for the degraded-ad count — and the variants slice shares
+// its backing array with the decoded config, so an in-place write would put
+// multi-megabyte image bytes into the persisted config_snapshot.
+func TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(&fakeCreativeAssets{asset: &model.CreativeAsset{
+		Bytes: []byte("SECRETPIXELS"), MimeType: model.MimeTypePNG,
+	}})
+
+	original := []meta.AdVariant{{Headline: "h1", ImageAssetID: validUUID}}
+	resolved, err := d.resolveVariantAssets(context.Background(), testBrief(), original)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets: %v", err)
+	}
+	if len(resolved[0].ImageBytes) == 0 {
+		t.Fatal("resolved variant carries no image bytes")
+	}
+	if original[0].ImageBytes != nil {
+		t.Errorf("the caller's variant was mutated in place; image bytes would reach the persisted config snapshot")
 	}
 }
