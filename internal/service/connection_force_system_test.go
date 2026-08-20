@@ -206,7 +206,10 @@ func TestForceSystem_HubspotCreateAndUpdateStayAllowed(t *testing.T) {
 func TestForceSystem_EveryPaidAdsProviderIsStillGuarded(t *testing.T) {
 	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
 	for _, p := range model.AllProviders() {
-		err := rejectForcedSystemAccountWrite(p, "8666746580")
+		// Current value "" — the newly-set direction, which stays refused for every paid-ads
+		// provider. The guard now takes the stored selection so it can tell a CHANGED id from
+		// a resent one; passing "" here keeps this walking the case it has always covered.
+		err := rejectForcedSystemAccountWrite(p, "8666746580", "")
 		if p.IsPaidAds() {
 			if err == nil {
 				t.Errorf("%s is a paid-ads provider: persisting an account id while forced mode "+
@@ -218,5 +221,332 @@ func TestForceSystem_EveryPaidAdsProviderIsStillGuarded(t *testing.T) {
 			t.Errorf("%s is not a paid-ads provider: forcing never redirects it, so its "+
 				"account id must persist normally, got %v", p, err)
 		}
+	}
+
+	// The other half, and the reason the loop above is not sufficient on its own: with the id
+	// UNCHANGED, every provider — paid-ads included — must be let through. Without this, a fix
+	// that widened the exemption and a fix that narrowed it are indistinguishable to the suite.
+	for _, p := range model.AllProviders() {
+		if err := rejectForcedSystemAccountWrite(p, "8666746580", "8666746580"); err != nil {
+			t.Errorf("%s: resending the id already stored on the row persists nothing, so it "+
+				"must be allowed while the flag is on, got %v", p, err)
+		}
+	}
+}
+
+// TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider is the regression for
+// the fifth variant of this PR's recurring defect: a guard that fixes one path and breaks an
+// adjacent one.
+//
+// account_id is Required on LinkedIn, Reddit, X and Microsoft (design/connection.go's
+// Required("account_id") on each config type, generated as a NON-POINTER string). PUT is a full
+// replace on every provider in this API, so a caller renaming a connection has no way to omit
+// the id — the schema will not decode a body without it. A guard that fired on the id being
+// PRESENT therefore returned 400 for every update those four providers can express, which is
+// the whole update endpoint, not an edge of it.
+//
+// Each provider is asserted separately rather than through the shared helper because the bug
+// lived in what the ADAPTERS are obliged to send: reading Required("account_id") off the design
+// is the step that was skipped, and only a payload-level test re-reads it.
+func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	ifMatch := "1"
+
+	// seed installs a row that ALREADY stores the account id, which is the state a project that
+	// connected before the cutover is in — and the selection the flag must leave intact for a
+	// rollback to have anything to roll back to.
+	seed := func(p model.Provider, accountID string) (*ConnectionService, *fakeRepo) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", p)] = &model.Connection{Version: 1, AccountID: accountID}
+		return newTestService(t, repo), repo
+	}
+
+	t.Run("linkedin", func(t *testing.T) {
+		s, _ := seed(model.ProviderLinkedInAds, "538170226")
+		if _, err := s.UpdateLinkedinAds(context.Background(), &conn.UpdateLinkedinAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.LinkedinAdsConnectionConfig{
+				Label: strPtr("CNCF paid social"), AccountID: "538170226", OrgID: "208777",
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("renaming a LinkedIn connection must stay possible while the flag is on: %v\n"+
+				"account_id is Required on this provider, so the caller cannot omit it", err)
+		}
+	})
+
+	t.Run("reddit", func(t *testing.T) {
+		s, _ := seed(model.ProviderRedditAds, "t2_gv9wtbfa")
+		if _, err := s.UpdateRedditAds(context.Background(), &conn.UpdateRedditAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.RedditAdsConnectionConfig{
+				Label: strPtr("CNCF reddit"), AccountID: "t2_gv9wtbfa",
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("renaming a Reddit connection must stay possible while the flag is on: %v", err)
+		}
+	})
+
+	t.Run("twitter", func(t *testing.T) {
+		s, _ := seed(model.ProviderTwitterAds, "8r7gb")
+		if _, err := s.UpdateTwitterAds(context.Background(), &conn.UpdateTwitterAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.TwitterAdsConnectionConfig{
+				Label: strPtr("CNCF X"), AccountID: "8r7gb", FundingInstrumentID: "lygyi",
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("renaming an X connection must stay possible while the flag is on: %v", err)
+		}
+	})
+
+	t.Run("microsoft", func(t *testing.T) {
+		s, _ := seed(model.ProviderMicrosoftAds, "1234567")
+		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.MicrosoftAdsConnectionConfig{
+				Label: strPtr("CNCF bing"), AccountID: "1234567", CustomerID: strPtr("7654321"),
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("renaming a Microsoft connection must stay possible while the flag is on: %v", err)
+		}
+	})
+}
+
+// TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate covers the other half of the same
+// defect, on the two providers whose account_id is OPTIONAL (Google Ads, Meta —
+// design/connection.go leaves both out of Required, generated as *string).
+//
+// These two could technically satisfy a presence check, but only by sending account_id absent —
+// and because PUT is a full replace, absent CLEARS the column. So the presence check did not
+// merely inconvenience them: the single way to rename a Google or Meta connection while the flag
+// was on was to DESTROY its account selection. That is the exact loss the guard exists to
+// prevent, reached by obeying the guard.
+func TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	ifMatch := "1"
+
+	t.Run("google-ads", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: "8666746580"}
+		s := newTestService(t, repo)
+
+		res, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.GoogleAdsConnectionConfig{
+				Label: strPtr("CNCF search"), AccountID: strPtr("8666746580"),
+			},
+			IfMatch: &ifMatch,
+		})
+		if err != nil {
+			t.Fatalf("a Google Ads label edit must not require clearing the account id: %v", err)
+		}
+		// Assert the VALUE that reached the row, not just that no error came back: the point of
+		// allowing this write is that the selection SURVIVES it. A fix that let the call through
+		// while dropping the id would satisfy an error-only assertion and still lose the thing
+		// the rollback needs.
+		if got := repo.store[repoKey("cncf", model.ProviderGoogleAds)].AccountID; got != "8666746580" {
+			t.Fatalf("account id on the row after a label-only update = %q, want %q — the "+
+				"pre-flag selection a rollback depends on was not preserved", got, "8666746580")
+		}
+		if res == nil {
+			t.Fatal("expected the updated connection back")
+		}
+	})
+
+	t.Run("meta-ads", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderMetaAds)] = &model.Connection{Version: 1, AccountID: "act_8666746580"}
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.MetaAdsConnectionConfig{
+				Label: strPtr("CNCF meta"), AccountID: strPtr("act_8666746580"), PageID: "123456",
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("a Meta label edit must not require clearing the account id: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderMetaAds)].AccountID; got != "act_8666746580" {
+			t.Fatalf("account id on the row after a label-only update = %q, want %q", got, "act_8666746580")
+		}
+	})
+}
+
+// TestForceSystem_AChangedAccountIDIsStillRefused is the half that must NOT relax, and it is
+// asserted on both routes to a change so that "allow unchanged" cannot quietly become "allow
+// anything":
+//
+//   - NEWLY SET: the row has no selection and the body supplies one. This is the discovery
+//     picker's output landing on a project row for the first time.
+//   - CHANGED: the row already stores one and the body supplies a DIFFERENT one. This is the
+//     case a naive "is it already set?" check would wave through, and it is the worse of the
+//     two — it overwrites the project's own pre-flag selection with an LF-owned id.
+func TestForceSystem_AChangedAccountIDIsStillRefused(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	ifMatch := "1"
+
+	cases := []struct {
+		name    string
+		stored  string
+		sending string
+	}{
+		{"newly set on a row with no selection", "", "8666746580"},
+		{"changed away from the project's own id", "1111111111", "8666746580"},
+		// Case-only and whitespace-only differences are NOT a change: the trim makes the second
+		// a no-op, and an exact match is required beyond it. These pin that the comparison is on
+		// the stored bytes, so a differently-cased id counts as changed and is refused.
+		{"changed by case alone", "abc123", "ABC123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: tc.stored}
+			s := newTestService(t, repo)
+
+			_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+				ProjectID: "cncf",
+				Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr(tc.sending)},
+				IfMatch:   &ifMatch,
+			})
+			if err == nil {
+				t.Fatalf("stored %q, sent %q: this write MOVES the row's account selection while "+
+					"forced mode is on, so it must be refused — after the flag is turned off the "+
+					"project's row points at an LF account it has no credentials for", tc.stored, tc.sending)
+			}
+			if _, ok := err.(*conn.BadRequestError); !ok {
+				t.Fatalf("expected *conn.BadRequestError, got %T (%v)", err, err)
+			}
+			// The row must be untouched: a guard that rejects AFTER writing protects nothing.
+			if got := repo.store[repoKey("cncf", model.ProviderGoogleAds)].AccountID; got != tc.stored {
+				t.Fatalf("the rejected write still reached the row: account id = %q, want %q", got, tc.stored)
+			}
+		})
+	}
+}
+
+// TestForceSystem_CreatePathIsUnchanged pins that relaxing UPDATE did not relax CREATE.
+//
+// The two are genuinely different and the difference is the whole basis of the fix: update
+// compares against a stored selection, create has none to compare against, so every non-empty id
+// on a create is NEWLY set by definition. If the fix had been implemented by loading the current
+// row in a shared helper, create would have found no row, and a sloppy "not found → treat as
+// unchanged" would have opened create wide while every update test still passed.
+func TestForceSystem_CreatePathIsUnchanged(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	t.Run("create with an account id is still refused", func(t *testing.T) {
+		s := newTestService(t, newFakeRepo())
+		_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+			ProjectID: "cncf",
+			Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+			Credentials: &conn.GoogleAdsCredentials{
+				RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+			},
+		})
+		if err == nil {
+			t.Fatal("create has no prior selection, so a non-empty account id is newly set by " +
+				"definition and must stay refused while the flag is on")
+		}
+		if _, ok := err.(*conn.BadRequestError); !ok {
+			t.Fatalf("expected *conn.BadRequestError, got %T (%v)", err, err)
+		}
+	})
+
+	t.Run("create without an account id still succeeds", func(t *testing.T) {
+		s := newTestService(t, newFakeRepo())
+		if _, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+			ProjectID: "cncf",
+			Config:    &conn.GoogleAdsConnectionConfig{Label: strPtr("CNCF search")},
+			Credentials: &conn.GoogleAdsCredentials{
+				RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+			},
+		}); err != nil {
+			t.Fatalf("creating a connection with credentials only (account selection deferred) is "+
+				"the documented bootstrap and must stay allowed: %v", err)
+		}
+	})
+}
+
+// TestForceSystem_UpdateReadFailureIsNotReportedAsABadRequest pins the error arm of the new read.
+//
+// updateConn now loads the current row to answer "did this change?". A read that FAILS must not
+// be collapsed into "there is no current selection" — that would make every incoming id look
+// newly set and turn a transient database fault into a 400 blaming the caller's body, which is
+// the inverse of fail-closed and unfollowable besides (there is nothing wrong with the request).
+func TestForceSystem_UpdateReadFailureIsNotReportedAsABadRequest(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: "8666746580"}
+	repo.getErr = errors.New("connection reset by peer")
+	s := newTestService(t, repo)
+	ifMatch := "1"
+
+	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   &ifMatch,
+	})
+	if err == nil {
+		t.Fatal("an unreadable current row cannot be treated as a successful comparison")
+	}
+	if _, ok := err.(*conn.BadRequestError); ok {
+		t.Fatalf("a database read failure was reported as a 400 about the caller's account id: %v\n"+
+			"nothing in the request is wrong; defaulting the current value to \"\" on a read error "+
+			"would make every resubmission look newly set", err)
+	}
+	if _, ok := err.(*conn.InternalServerError); !ok {
+		t.Fatalf("expected *conn.InternalServerError, got %T (%v)", err, err)
+	}
+}
+
+// TestForceSystem_UpdateStillRequiresIfMatchBeforeReadingTheRow pins the ORDER of the new read
+// against the precondition check.
+//
+// The current-row read was placed after parseIfMatch so a caller who omitted If-Match still gets
+// 428 rather than a 404/500 produced by a read they should never have paid for. Order is
+// invisible to an outcome-only test on the happy path, so it is asserted here directly.
+func TestForceSystem_UpdateStillRequiresIfMatchBeforeReadingTheRow(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	// No row at all, and a read error on top: if the read ran first, this surfaces as something
+	// other than 428.
+	repo.getErr = errors.New("connection reset by peer")
+	s := newTestService(t, repo)
+
+	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   nil,
+	})
+	if _, ok := err.(*conn.PreconditionRequiredError); !ok {
+		t.Fatalf("expected *conn.PreconditionRequiredError (428) for a missing If-Match, got %T (%v)\n"+
+			"the current-row read must not run before the precondition is checked", err, err)
+	}
+}
+
+// TestForceSystem_FlagOffLeavesEveryUpdatePathAlone is the scoping half for the NEW code, not
+// just the old guard. The current-row read is unconditional, so this pins that adding it did not
+// change what an ordinary deployment does: with the flag off, changing an account id — the
+// ordinary bootstrap — still succeeds and still lands on the row.
+func TestForceSystem_FlagOffLeavesEveryUpdatePathAlone(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "")
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: "1111111111"}
+	s := newTestService(t, repo)
+	ifMatch := "1"
+
+	if _, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   &ifMatch,
+	}); err != nil {
+		t.Fatalf("with the flag off, switching the selected account is the ordinary bootstrap: %v", err)
+	}
+	if got := repo.store[repoKey("cncf", model.ProviderGoogleAds)].AccountID; got != "8666746580" {
+		t.Fatalf("account id on the row = %q, want the newly chosen %q", got, "8666746580")
 	}
 }

@@ -524,8 +524,9 @@ did was turn it into a supported, omission-based lifecycle state — and, in doi
 mis-classified 503 the common case rather than a latent one.
 
 `createConn` and `updateConn` also carry the force-system reversibility guard,
-`rejectForcedSystemAccountWrite(c.Provider, c.AccountID)`. It takes the PROVIDER as a parameter
-rather than reading `c.AccountID` alone, and that is a correctness requirement rather than tidiness:
+`rejectForcedSystemAccountWrite(c.Provider, c.AccountID, currentAccountID)`. It takes the PROVIDER
+as a parameter rather than reading `c.AccountID` alone, and that is a correctness requirement
+rather than tidiness:
 `model.Connection.AccountID` is SHARED by every provider, and `CreateHubspot`/`UpdateHubspot` copy
 HubSpot's Required `account_id` — a list/audience id — into the same field. A provider-blind guard
 therefore rejected every HubSpot create and update with 400 while the flag was on, blocking CRM
@@ -533,6 +534,58 @@ connection setup entirely, over an id no ad-account discovery ever produced and 
 flag off could not strand. The guard asks `IsPaidAds()` rather than naming HubSpot, per `Kind()`'s
 own guidance: a provider added later answers false and is left alone instead of inheriting a
 paid-ads policy. See internal-dispatch's Reversibility section for what the guard protects.
+
+**The third parameter is the row's CURRENT `account_id`, and the guard fires on a CHANGE rather
+than on presence.** The distinction is the whole endpoint, not an edge of it. `account_id` is
+`Required` on LinkedIn, Reddit, X and Microsoft (`design/connection.go`, generated as a
+non-pointer `string`), and PUT is a full replace, so a caller editing only the label MUST resend
+the id already stored — the schema will not decode a body without it. A presence check therefore
+returned 400 for **every update those four providers can express**. Google Ads and Meta, whose
+`account_id` is optional, could satisfy it only by omitting the field — which, PUT being a full
+replace, CLEARS the column. So the presence check's single permitted way to rename a Google or
+Meta connection was to destroy the account selection a rollback depends on: the guard, obeyed,
+caused the loss it exists to prevent.
+
+Re-sending the stored value persists nothing, so allowing it cannot violate the invariant. What
+the invariant forbids is a system-discovered id ARRIVING on a project row, and every route to that
+is a change — newly set, or different from what is stored.
+
+Two sub-decisions are load-bearing:
+
+- **"Unchanged" compares against the STORED VALUE, not recorded provenance.** `model.Connection`
+  has no provenance for the account selection and no column records which credential discovered
+  it, so there is nothing else to compare against. The stored value answers the only question the
+  guard asks: does this write move the row?
+- **The comparison is exact past a trim — deliberately NOT `internal/dispatch`'s
+  `matchesAccount`.** That helper is permissive by design in two ways this guard must not be: an
+  empty creation id returns `true` (here, empty→non-empty is precisely the newly-set case), and it
+  folds Meta's `act_` prefix, so `act_123` and `123` compare equal. Meta's `account_id` is pinned
+  to canonical `act_<digits>` by `Pattern`, so accepting the bare-digit form as "unchanged" would
+  wave through a write that changes the column into a schema-invalid shape.
+
+`createConn` passes `""`, and that is the accurate answer rather than a placeholder: create has no
+prior row by construction, so every non-empty id on a create is newly set and stays refused. The
+consequence is deliberate — while the flag is on those four `Required("account_id")` providers
+cannot be CONNECTED at all. That is the invariant working, not a second instance of the update
+defect: the id would be landing fresh on a project row, which is exactly the write that outlives
+the flag.
+
+`updateConn` reads the current row between `parseIfMatch` and `repo.Update`. Both boundaries are
+chosen: AFTER the precondition parse, so a caller who omitted `If-Match` still gets 428 without
+paying for a read; BEFORE the write, because a rejected update must not reach the database. A read
+FAILURE is returned as-is rather than defaulting the current value to `""` — that default would be
+the reverse of fail-closed, making every resubmission look newly set and reporting a transient
+database fault as a 400 about the caller's body.
+
+The read is gated on **`forcedSystemGuardApplies`**, the guard's own scope predicate
+(`IsPaidAds() && forcedSystemAdsAccount()`), extracted into a named function precisely so the gate
+and the guard cannot be one expression written twice. The gate matters because the flag is
+default-off: without it every connection update on every deployment would pay a round-trip for a
+policy that is not running, and a missing row would start surfacing through the new read rather
+than through `repo.Update`'s error, moving the 404 ahead of the version check. Naming the
+predicate matters because the duplicated form is behaviour-preserving when it drifts — one copy
+losing `IsPaidAds()` only buys a useless read on HubSpot updates, which no outcome-based test can
+see — so the drift would have been invisible rather than caught.
 
 Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
 **`active` says the connection is ENABLED for credential-based operations — it does not say the
