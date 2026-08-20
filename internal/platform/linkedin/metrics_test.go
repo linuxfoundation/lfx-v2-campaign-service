@@ -1574,6 +1574,41 @@ func TestGetCampaignMetrics_ConversionsAggregateAcrossElements(t *testing.T) {
 	}
 }
 
+// Above 2^53, float64 can no longer represent every consecutive integer, so an int64
+// count that survives a round trip through float64 is not guaranteed to come back
+// unchanged. The aggregation must therefore hold its running total in an int64 for the
+// WHOLE loop and widen once at the end, the way CostMicros already does — not convert to
+// float64 and back on every element.
+//
+// The fixture is three elements: 2^53, then 1, then 1. The exact total, 2^53+2, IS
+// representable as a float64, so a correct implementation reports it exactly and the
+// single final widen loses nothing. Only the per-iteration round trip corrupts it: after
+// the first element the running total is 2^53, and 2^53+1 is the first integer float64
+// cannot represent, so element two rounds back down to 2^53 and element three does the
+// same. Both increments are swallowed and the result is 2^53 — short by exactly the two
+// conversions the campaign actually recorded.
+func TestGetCampaignMetrics_ConversionsAggregateAboveFloat64IntegerPrecision(t *testing.T) {
+	// 2^53 = 9007199254740992; the exact total below is 9007199254740994.
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30,"externalWebsiteConversions":9007199254740992},
+		{"impressions":400,"clicks":20,"externalWebsiteConversions":1},
+		{"impressions":200,"clicks":10,"externalWebsiteConversions":1}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil across three elements that all carried the metric")
+	}
+	const want = float64(1<<53) + 2
+	if *m.Conversions != want {
+		t.Errorf("Conversions = %.0f, want %.0f: the running total round-tripped through "+
+			"float64 mid-loop and lost %.0f conversions above 2^53",
+			*m.Conversions, want, want-*m.Conversions)
+	}
+}
+
 // A negative count is malformed upstream data, not a small number. The sibling counters
 // reject it for the same reason and this one must too, or it lands in the response as a
 // figure that reads as authoritative.

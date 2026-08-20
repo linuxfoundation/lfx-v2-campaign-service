@@ -225,6 +225,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// Aggregate metrics from all elements. In practice there should be one element
 	// for a single campaign over a single (non-daily) date range.
 	var metrics model.CampaignMetrics
+	// Conversions accumulate in an int64 for the whole loop and are widened to the
+	// response's float64 exactly once, after aggregation — the same shape CostMicros uses
+	// above. Carrying the running total in the float64 field itself would convert it back
+	// and forth on every element, and above 2^53 float64 cannot represent every consecutive
+	// integer, so each round trip can silently drop increments (and feed the overflow check
+	// below a value that is no longer the true sum).
+	var conversions int64
+	var conversionsMeasured bool
 	for _, elem := range *resp.Elements {
 		// Reject negative counts and check the running sum before adding, the same
 		// guard costInUsd's aggregation applies below: two individually valid int64
@@ -269,19 +277,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 			if conv < 0 {
 				return nil, fmt.Errorf("get campaign metrics: negative externalWebsiteConversions in response element")
 			}
-			// The running total is accumulated as an int64 and only widened at the end.
 			// externalWebsiteConversions is typed `long` in LinkedIn's Ads Reporting schema —
 			// unlike Google's and Microsoft's doubles, it carries no fraction — so the exact
-			// integer overflow guard is kept rather than being lost to float arithmetic.
-			var running int64
-			if metrics.Conversions != nil {
-				running = int64(*metrics.Conversions)
-			}
-			if conv > math.MaxInt64-running {
+			// integer overflow guard runs against the int64 accumulator, where it stays exact.
+			if conv > math.MaxInt64-conversions {
 				return nil, fmt.Errorf("get campaign metrics: aggregate externalWebsiteConversions overflows int64")
 			}
-			total := float64(running + conv)
-			metrics.Conversions = &total
+			conversions += conv
+			conversionsMeasured = true
 		}
 		if elem.CostInUsd != nil {
 			// LinkedIn's Ad Analytics API returns costInUsd as a BigDecimal serialized as a
@@ -306,6 +309,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 			}
 			metrics.CostMicros += micros
 		}
+	}
+
+	// Widen the aggregated count once, and only if at least one element carried the metric:
+	// a nil Conversions means LinkedIn never reported it, which stays distinct from a
+	// measured zero.
+	if conversionsMeasured {
+		total := float64(conversions)
+		metrics.Conversions = &total
 	}
 
 	// Calculate Ctr: clicks / impressions. If impressions is 0, Ctr stays 0.

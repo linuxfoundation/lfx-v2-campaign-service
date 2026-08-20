@@ -834,51 +834,55 @@ paths:
                                 $ref: '#/components/schemas/ListAudiencesResponseBody'
                             example:
                                 audiences:
-                                    - brief_id: Atque dolor odio labore pariatur.
+                                    - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                                       etag: Aperiam eos et architecto voluptas.
-                                      id: Ut ut nisi fuga nostrum velit hic.
+                                      id: Enim quis sed rerum dicta.
                                       inclusion_summary: Est officia et.
                                       platform: hubspot
-                                      platform_master_list_id: In recusandae maiores et voluptatem.
-                                      project_id: Omnis reprehenderit distinctio quos ut unde.
+                                      platform_master_list_id: Unde et atque dolor odio labore.
+                                      project_id: Voluptas ut ut nisi.
                                       status: built
                                       suppression_list_ids:
+                                        - Velit in recusandae maiores et voluptatem voluptatem.
                                         - Mollitia omnis doloribus qui consequatur et.
                                         - Ex quo praesentium voluptas.
                                       version: 6699083784823708514
-                                    - brief_id: Atque dolor odio labore pariatur.
+                                    - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                                       etag: Aperiam eos et architecto voluptas.
-                                      id: Ut ut nisi fuga nostrum velit hic.
+                                      id: Enim quis sed rerum dicta.
                                       inclusion_summary: Est officia et.
                                       platform: hubspot
-                                      platform_master_list_id: In recusandae maiores et voluptatem.
-                                      project_id: Omnis reprehenderit distinctio quos ut unde.
+                                      platform_master_list_id: Unde et atque dolor odio labore.
+                                      project_id: Voluptas ut ut nisi.
                                       status: built
                                       suppression_list_ids:
+                                        - Velit in recusandae maiores et voluptatem voluptatem.
                                         - Mollitia omnis doloribus qui consequatur et.
                                         - Ex quo praesentium voluptas.
                                       version: 6699083784823708514
-                                    - brief_id: Atque dolor odio labore pariatur.
+                                    - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                                       etag: Aperiam eos et architecto voluptas.
-                                      id: Ut ut nisi fuga nostrum velit hic.
+                                      id: Enim quis sed rerum dicta.
                                       inclusion_summary: Est officia et.
                                       platform: hubspot
-                                      platform_master_list_id: In recusandae maiores et voluptatem.
-                                      project_id: Omnis reprehenderit distinctio quos ut unde.
+                                      platform_master_list_id: Unde et atque dolor odio labore.
+                                      project_id: Voluptas ut ut nisi.
                                       status: built
                                       suppression_list_ids:
+                                        - Velit in recusandae maiores et voluptatem voluptatem.
                                         - Mollitia omnis doloribus qui consequatur et.
                                         - Ex quo praesentium voluptas.
                                       version: 6699083784823708514
-                                    - brief_id: Atque dolor odio labore pariatur.
+                                    - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                                       etag: Aperiam eos et architecto voluptas.
-                                      id: Ut ut nisi fuga nostrum velit hic.
+                                      id: Enim quis sed rerum dicta.
                                       inclusion_summary: Est officia et.
                                       platform: hubspot
-                                      platform_master_list_id: In recusandae maiores et voluptatem.
-                                      project_id: Omnis reprehenderit distinctio quos ut unde.
+                                      platform_master_list_id: Unde et atque dolor odio labore.
+                                      project_id: Voluptas ut ut nisi.
                                       status: built
                                       suppression_list_ids:
+                                        - Velit in recusandae maiores et voluptatem voluptatem.
                                         - Mollitia omnis doloribus qui consequatur et.
                                         - Ex quo praesentium voluptas.
                                       version: 6699083784823708514
@@ -981,15 +985,15 @@ paths:
                             $ref: '#/components/schemas/CreateAudienceRequestBody'
                         example:
                             audience:
-                                inclusion_summary: Modi reiciendis aliquam.
+                                inclusion_summary: Odit necessitatibus veritatis amet ut rerum quidem.
                                 platform: hubspot
-                                platform_master_list_id: Quidem non qui voluptates natus cum asperiores.
-                                status: building
+                                platform_master_list_id: Ex delectus.
+                                status: built
                                 suppression_list_ids:
-                                    - Totam quo rerum.
-                                    - Sint odit necessitatibus.
-                                    - Amet ut rerum quidem ut.
-                                    - Velit quo.
+                                    - Ullam dolores rem.
+                                    - Officia quidem non qui voluptates natus cum.
+                                    - Autem recusandae totam.
+                                    - Rerum nisi.
             responses:
                 "201":
                     description: Created response.
@@ -1006,19 +1010,17 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience2'
                             example:
-                                brief_id: Ea quibusdam tempore maxime maxime.
-                                id: Odio ea eos nesciunt.
-                                inclusion_summary: Recusandae aut perferendis.
+                                brief_id: Ipsum et delectus dolorum eveniet.
+                                id: Non adipisci rerum.
+                                inclusion_summary: Cum ipsum recusandae est adipisci ullam.
                                 platform: hubspot
-                                platform_master_list_id: Dolorum nobis itaque est enim magnam.
-                                project_id: Et delectus dolorum eveniet qui.
-                                status: built
+                                platform_master_list_id: Ea quibusdam tempore maxime maxime.
+                                project_id: Placeat ea odio ea eos.
+                                status: building
                                 suppression_list_ids:
-                                    - Est totam qui praesentium ipsam officiis cum.
-                                    - Recusandae est adipisci ullam pariatur.
-                                    - Voluptas aspernatur aperiam.
-                                    - Aliquam vero ducimus.
-                                version: 5990047400823984841
+                                    - Dolorum nobis itaque est enim magnam.
+                                    - Explicabo est totam qui praesentium ipsam.
+                                version: 8260045357090731784
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1137,18 +1139,18 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience3'
                             example:
-                                brief_id: Quisquam perferendis autem ut alias.
-                                id: Voluptatibus aut.
-                                inclusion_summary: Neque ut rerum facilis quia molestiae ratione.
+                                brief_id: Impedit at perspiciatis quisquam perferendis.
+                                id: Sunt id ipsa perspiciatis sunt.
+                                inclusion_summary: Et aut consequatur inventore enim reiciendis.
                                 platform: hubspot
-                                platform_master_list_id: Dolore suscipit reprehenderit.
-                                project_id: Aut molestiae exercitationem et impedit at.
-                                status: failed
+                                platform_master_list_id: Alias quis nihil dolore.
+                                project_id: Velit voluptatibus aut mollitia aut molestiae exercitationem.
+                                status: building
                                 suppression_list_ids:
-                                    - Animi laudantium ullam omnis autem et id.
-                                    - Nihil ea quod et aut.
-                                    - Inventore enim reiciendis.
-                                version: 156529711848515595
+                                    - Et aut animi.
+                                    - Ullam omnis autem.
+                                    - Id laboriosam nihil ea.
+                                version: 6689273694622708787
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2657,25 +2659,13 @@ paths:
                                       issue: No impressions or spend recorded
                                       platform: reddit-ads
                                       priority: HIGH
-                                      rule: budget_constrained
+                                      rule: zero_delivery
                                     - action: Check targeting and creative approval status
                                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                       issue: No impressions or spend recorded
                                       platform: reddit-ads
                                       priority: HIGH
-                                      rule: budget_constrained
-                                    - action: Check targeting and creative approval status
-                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                                      issue: No impressions or spend recorded
-                                      platform: reddit-ads
-                                      priority: HIGH
-                                      rule: budget_constrained
-                                    - action: Check targeting and creative approval status
-                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                                      issue: No impressions or spend recorded
-                                      platform: reddit-ads
-                                      priority: HIGH
-                                      rule: budget_constrained
+                                      rule: zero_delivery
                                 brief_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 ok_count: 2
                                 rows:
@@ -2723,7 +2713,7 @@ paths:
                                       platform: linkedin-ads
                                       reason: this window is not supported for the campaign's platform
                                       status: connection_problem
-                                window: last_30_days
+                                window: last_7_days
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -8702,14 +8692,14 @@ components:
                           campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                           issue: No impressions or spend recorded
                           platform: reddit-ads
-                          priority: MED
-                          rule: budget_constrained
+                          priority: HIGH
+                          rule: zero_delivery
                         - action: Check targeting and creative approval status
                           campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                           issue: No impressions or spend recorded
                           platform: reddit-ads
-                          priority: MED
-                          rule: budget_constrained
+                          priority: HIGH
+                          rule: zero_delivery
                 brief_id:
                     type: string
                     description: Brief UUID
@@ -8772,7 +8762,7 @@ components:
                 window:
                     type: string
                     description: The window REQUESTED for this read. Per-platform defaults still apply when it is omitted, so an individual row may have been read over a narrower window than this — X Ads caps queryable ranges at 7 days. Each row's own metrics.window is what that row actually covers.
-                    example: today
+                    example: this_month
                     enum:
                         - today
                         - yesterday
@@ -8787,61 +8777,17 @@ components:
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
-                      priority: MED
-                      rule: budget_constrained
+                      priority: HIGH
+                      rule: zero_delivery
                     - action: Check targeting and creative approval status
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
                       platform: reddit-ads
-                      priority: MED
-                      rule: budget_constrained
+                      priority: HIGH
+                      rule: zero_delivery
                 brief_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 ok_count: 2
                 rows:
-                    - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                      metrics:
-                        campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                        clicks: 212
-                        cost_micros: 0
-                        ctr: 0.1152
-                        email:
-                            bounces: 95
-                            clicks: 212
-                            delivered: 9268
-                            opens: 1840
-                            sent: 9400
-                            unsubscribes: 17
-                        impressions: 1840
-                        platform_campaign_id: "104670127234"
-                        window: last_30_days
-                      pacing:
-                        label: normal
-                        pct: 94.2
-                      platform: linkedin-ads
-                      reason: this window is not supported for the campaign's platform
-                      status: unsupported
-                    - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                      metrics:
-                        campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                        clicks: 212
-                        cost_micros: 0
-                        ctr: 0.1152
-                        email:
-                            bounces: 95
-                            clicks: 212
-                            delivered: 9268
-                            opens: 1840
-                            sent: 9400
-                            unsubscribes: 17
-                        impressions: 1840
-                        platform_campaign_id: "104670127234"
-                        window: last_30_days
-                      pacing:
-                        label: normal
-                        pct: 94.2
-                      platform: linkedin-ads
-                      reason: this window is not supported for the campaign's platform
-                      status: unsupported
                     - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -8915,7 +8861,7 @@ components:
                 status:
                     type: string
                     description: Whether this row carries a measurement. ONLY `ok` does.
-                    example: ok
+                    example: not_ready
                     enum:
                         - ok
                         - unsupported
@@ -8944,7 +8890,7 @@ components:
                     pct: 94.2
                 platform: linkedin-ads
                 reason: this window is not supported for the campaign's platform
-                status: not_ready
+                status: connection_problem
             required:
                 - campaign_id
                 - platform
@@ -9241,14 +9187,14 @@ components:
                 priority:
                     type: string
                     description: How urgently this wants attention.
-                    example: MED
+                    example: HIGH
                     enum:
                         - HIGH
                         - MED
                 rule:
                     type: string
                     description: Which rule fired, as a stable token.
-                    example: budget_constrained
+                    example: zero_delivery
                     enum:
                         - zero_delivery
                         - underspending
@@ -9261,7 +9207,7 @@ components:
                 issue: No impressions or spend recorded
                 platform: reddit-ads
                 priority: HIGH
-                rule: budget_constrained
+                rule: zero_delivery
             required:
                 - rule
                 - priority
@@ -9525,15 +9471,15 @@ components:
                     $ref: '#/components/schemas/AudienceInput'
             example:
                 audience:
-                    inclusion_summary: Modi reiciendis aliquam.
+                    inclusion_summary: Odit necessitatibus veritatis amet ut rerum quidem.
                     platform: hubspot
-                    platform_master_list_id: Quidem non qui voluptates natus cum asperiores.
-                    status: building
+                    platform_master_list_id: Ex delectus.
+                    status: built
                     suppression_list_ids:
-                        - Totam quo rerum.
-                        - Sint odit necessitatibus.
-                        - Amet ut rerum quidem ut.
-                        - Velit quo.
+                        - Ullam dolores rem.
+                        - Officia quidem non qui voluptates natus cum.
+                        - Autem recusandae totam.
+                        - Rerum nisi.
             required:
                 - audience
         CreateBriefRequestBody:
@@ -9812,11 +9758,11 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Quia provident nam delectus debitis quis.
+                    example: Corporis mollitia quia provident nam delectus.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
-                    example: Voluptatem labore excepturi quibusdam iure.
+                    example: Labore excepturi quibusdam.
                 event_name:
                     type: string
                     description: Event name
@@ -9824,7 +9770,7 @@ components:
                 extracted_from:
                     type: string
                     description: Which strategy produced this record — the whole record came from exactly one of them
-                    example: fallback
+                    example: opengraph
                     enum:
                         - jsonld
                         - opengraph
@@ -9832,26 +9778,26 @@ components:
                 image:
                     type: string
                     description: Event image URL
-                    example: Qui ab.
+                    example: Accusamus qui ab dolor consequuntur.
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Quam corrupti qui distinctio.
+                    example: Quis quidem quam corrupti qui distinctio vero.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                    example: Est illo.
+                    example: Illo aut.
                 url:
                     type: string
                     description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                    example: Consequuntur ea saepe optio.
+                    example: Saepe optio quas qui consequatur cumque.
             example:
-                description: Consequatur cumque reiciendis et et.
+                description: Et nihil.
                 end_date: Rerum autem ipsum.
                 event_name: KubeCon + CloudNativeCon Europe 2026
                 extracted_from: fallback
                 image: Molestias aut molestiae ipsam quas odio nihil.
-                location: Blanditiis ut quas laboriosam culpa.
+                location: Ut quas laboriosam culpa.
                 start_date: Fugit tempora at quod maiores quis.
                 url: Reprehenderit ipsa occaecati perferendis asperiores aliquam.
             required:
@@ -10559,22 +10505,22 @@ components:
                         $ref: '#/components/schemas/PlatformResult'
                     description: Per-platform results, written once when the job reaches a terminal state
                     example:
-                        - campaign_id: Ipsa soluta consectetur porro quo quia.
-                          error: Aut aperiam et ipsam vitae.
+                        - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                          error: Amet et eaque.
                           ok: true
-                          platform: Iste sed illo.
-                        - campaign_id: Ipsa soluta consectetur porro quo quia.
-                          error: Aut aperiam et ipsam vitae.
+                          platform: Cumque repellendus.
+                        - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                          error: Amet et eaque.
                           ok: true
-                          platform: Iste sed illo.
-                        - campaign_id: Ipsa soluta consectetur porro quo quia.
-                          error: Aut aperiam et ipsam vitae.
+                          platform: Cumque repellendus.
+                        - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                          error: Amet et eaque.
                           ok: true
-                          platform: Iste sed illo.
-                        - campaign_id: Ipsa soluta consectetur porro quo quia.
-                          error: Aut aperiam et ipsam vitae.
+                          platform: Cumque repellendus.
+                        - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                          error: Amet et eaque.
                           ok: true
-                          platform: Iste sed illo.
+                          platform: Cumque repellendus.
                 status:
                     type: string
                     description: Job status
@@ -10589,22 +10535,22 @@ components:
                 error: Distinctio animi cumque.
                 job_id: Quas facere est repudiandae a.
                 result:
-                    - campaign_id: Ipsa soluta consectetur porro quo quia.
-                      error: Aut aperiam et ipsam vitae.
+                    - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                      error: Amet et eaque.
                       ok: true
-                      platform: Iste sed illo.
-                    - campaign_id: Ipsa soluta consectetur porro quo quia.
-                      error: Aut aperiam et ipsam vitae.
+                      platform: Cumque repellendus.
+                    - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                      error: Amet et eaque.
                       ok: true
-                      platform: Iste sed illo.
-                    - campaign_id: Ipsa soluta consectetur porro quo quia.
-                      error: Aut aperiam et ipsam vitae.
+                      platform: Cumque repellendus.
+                    - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                      error: Amet et eaque.
                       ok: true
-                      platform: Iste sed illo.
-                    - campaign_id: Ipsa soluta consectetur porro quo quia.
-                      error: Aut aperiam et ipsam vitae.
+                      platform: Cumque repellendus.
+                    - campaign_id: Aut sed quibusdam reiciendis qui vel.
+                      error: Amet et eaque.
                       ok: true
-                      platform: Iste sed illo.
+                      platform: Cumque repellendus.
                 status: failed
             required:
                 - job_id
@@ -10889,65 +10835,70 @@ components:
                     items:
                         $ref: '#/components/schemas/Audience'
                     example:
-                        - brief_id: Atque dolor odio labore pariatur.
+                        - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                           etag: Aperiam eos et architecto voluptas.
-                          id: Ut ut nisi fuga nostrum velit hic.
+                          id: Enim quis sed rerum dicta.
                           inclusion_summary: Est officia et.
                           platform: hubspot
-                          platform_master_list_id: In recusandae maiores et voluptatem.
-                          project_id: Omnis reprehenderit distinctio quos ut unde.
+                          platform_master_list_id: Unde et atque dolor odio labore.
+                          project_id: Voluptas ut ut nisi.
                           status: built
                           suppression_list_ids:
+                            - Velit in recusandae maiores et voluptatem voluptatem.
                             - Mollitia omnis doloribus qui consequatur et.
                             - Ex quo praesentium voluptas.
                           version: 6699083784823708514
-                        - brief_id: Atque dolor odio labore pariatur.
+                        - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                           etag: Aperiam eos et architecto voluptas.
-                          id: Ut ut nisi fuga nostrum velit hic.
+                          id: Enim quis sed rerum dicta.
                           inclusion_summary: Est officia et.
                           platform: hubspot
-                          platform_master_list_id: In recusandae maiores et voluptatem.
-                          project_id: Omnis reprehenderit distinctio quos ut unde.
+                          platform_master_list_id: Unde et atque dolor odio labore.
+                          project_id: Voluptas ut ut nisi.
                           status: built
                           suppression_list_ids:
+                            - Velit in recusandae maiores et voluptatem voluptatem.
                             - Mollitia omnis doloribus qui consequatur et.
                             - Ex quo praesentium voluptas.
                           version: 6699083784823708514
-                        - brief_id: Atque dolor odio labore pariatur.
+                        - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                           etag: Aperiam eos et architecto voluptas.
-                          id: Ut ut nisi fuga nostrum velit hic.
+                          id: Enim quis sed rerum dicta.
                           inclusion_summary: Est officia et.
                           platform: hubspot
-                          platform_master_list_id: In recusandae maiores et voluptatem.
-                          project_id: Omnis reprehenderit distinctio quos ut unde.
+                          platform_master_list_id: Unde et atque dolor odio labore.
+                          project_id: Voluptas ut ut nisi.
                           status: built
                           suppression_list_ids:
+                            - Velit in recusandae maiores et voluptatem voluptatem.
                             - Mollitia omnis doloribus qui consequatur et.
                             - Ex quo praesentium voluptas.
                           version: 6699083784823708514
             example:
                 audiences:
-                    - brief_id: Atque dolor odio labore pariatur.
+                    - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                       etag: Aperiam eos et architecto voluptas.
-                      id: Ut ut nisi fuga nostrum velit hic.
+                      id: Enim quis sed rerum dicta.
                       inclusion_summary: Est officia et.
                       platform: hubspot
-                      platform_master_list_id: In recusandae maiores et voluptatem.
-                      project_id: Omnis reprehenderit distinctio quos ut unde.
+                      platform_master_list_id: Unde et atque dolor odio labore.
+                      project_id: Voluptas ut ut nisi.
                       status: built
                       suppression_list_ids:
+                        - Velit in recusandae maiores et voluptatem voluptatem.
                         - Mollitia omnis doloribus qui consequatur et.
                         - Ex quo praesentium voluptas.
                       version: 6699083784823708514
-                    - brief_id: Atque dolor odio labore pariatur.
+                    - brief_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
                       etag: Aperiam eos et architecto voluptas.
-                      id: Ut ut nisi fuga nostrum velit hic.
+                      id: Enim quis sed rerum dicta.
                       inclusion_summary: Est officia et.
                       platform: hubspot
-                      platform_master_list_id: In recusandae maiores et voluptatem.
-                      project_id: Omnis reprehenderit distinctio quos ut unde.
+                      platform_master_list_id: Unde et atque dolor odio labore.
+                      project_id: Voluptas ut ut nisi.
                       status: built
                       suppression_list_ids:
+                        - Velit in recusandae maiores et voluptatem voluptatem.
                         - Mollitia omnis doloribus qui consequatur et.
                         - Ex quo praesentium voluptas.
                       version: 6699083784823708514

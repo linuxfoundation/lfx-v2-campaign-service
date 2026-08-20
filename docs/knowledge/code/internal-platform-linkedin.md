@@ -109,8 +109,14 @@ Conversions come from `externalWebsiteConversions`, which must be NAMED in the r
 `fields` list: LinkedIn returns only impressions and clicks by default, so an unrequested
 metric comes back absent rather than zero. Unlike Google's and Microsoft's, the field is typed
 `long` in the Ads Reporting schema and carries no fraction, so the running total is accumulated
-as an int64 (keeping the exact overflow guard) and widened to the float64 the domain model uses
-only at the end. The metric is aggregated ONLY across response elements that actually carried
+in a local int64 for the WHOLE loop (keeping the exact overflow guard) and widened to the float64
+the domain model uses exactly once, after aggregation — the same shape `CostMicros` uses. The
+accumulator is deliberately NOT the `*float64` domain field itself: reading the running total back
+out of it converts int64 to float64 and back on every element, and above 2^53 float64 cannot
+represent every consecutive integer, so each round trip can silently drop increments and hand the
+overflow check a value that is no longer the true sum. A separate boolean, not a non-nil pointer,
+carries the "some element reported this" state, so the nil-versus-measured-zero distinction
+survives without the field doubling as storage. The metric is aggregated ONLY across response elements that actually carried
 it, and the result stays nil when none did — treating an absent element value as a zero addend
 would convert "LinkedIn did not report this" into a measured zero, which is the substitution the
 pointer exists to prevent, and it would do so most often on exactly the responses where the

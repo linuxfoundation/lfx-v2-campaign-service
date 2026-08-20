@@ -304,15 +304,34 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 		Enum("zero_delivery", "underspending", "budget_constrained", "low_ctr", "no_conversions")
 		// PINNED. With no explicit example Goa auto-selects an enum member, and which member
 		// it picks is a function of the whole design rather than of this attribute — an
-		// unrelated edit elsewhere in this file silently moves it. `budget_constrained` is
-		// what this contract already published, and it is the member that stays coherent
-		// with the sibling examples below (`platform: reddit-ads`, `issue: No impressions or
-		// spend recorded`): Reddit never reports a conversion count, so an auto-selected
-		// `no_conversions` here would advertise a finding this service cannot produce on
-		// that platform.
-		Example("budget_constrained")
+		// unrelated edit elsewhere in this file silently moves it. Two constraints bind the
+		// choice, and `zero_delivery` is the member that satisfies both:
+		//
+		//   - It must not be `no_conversions`. The sibling example pins `platform:
+		//     reddit-ads`, and Reddit never reports a conversion count, so that member would
+		//     advertise a finding this service cannot produce on that platform (the
+		//     no_conversions rule is gated on Conversions != nil precisely to avoid it).
+		//   - It must agree with the sibling `issue` and `action` examples below, which
+		//     describe a campaign that recorded no impressions and no spend and tell the
+		//     operator to check targeting and creative approval. That is the zero_delivery
+		//     symptom and remedy. `budget_constrained` — previously pinned here — is the
+		//     OPPOSITE state: it fires on a campaign spending AHEAD of plan and its remedy is
+		//     to raise or accept the budget, so the composed example described two different
+		//     findings at once and propagated that incoherence into every
+		//     `action_items` array example.
+		//
+		// zero_delivery fires on paid-ads channels including reddit-ads (it is gated on
+		// BillsPerDelivery, which every paid-ads channel sets), so the composition is
+		// producible as published. Its priority is HIGH, pinned on the sibling attribute.
+		Example("zero_delivery")
 	})
-	Attribute("priority", String, "How urgently this wants attention.", func() { Enum("HIGH", "MED") })
+	// Pinned for the same reason `rule` is: the composed example must describe ONE finding.
+	// zero_delivery is raised at HIGH priority, so an auto-selected MED would contradict the
+	// rule pinned above.
+	Attribute("priority", String, "How urgently this wants attention.", func() {
+		Enum("HIGH", "MED")
+		Example("HIGH")
+	})
 	Attribute("campaign_id", String, "The campaign this concerns", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
 	Attribute("platform", String, "The channel that campaign runs on", func() { Example("reddit-ads") })
 	Attribute("issue", String, "What is wrong, in operator-facing wording.", func() { Example("No impressions or spend recorded") })
