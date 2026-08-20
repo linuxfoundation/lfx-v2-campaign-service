@@ -75,11 +75,24 @@ callers arrived one at a time and each found the CACHE the previous one populate
 during the leader's fetch, so under scheduler load a late caller observes the populated cache
 and a NON-coalescing implementation reports 1 and passes. Demonstrated, not reasoned about:
 with the `inflight` join deleted entirely and callers staggered past the leader's completion,
-the sleep-based assertion still reported `exchanges == 1`. The test now has every caller
-signal arrival on a channel, waits for all N signals, and only then releases the handler — so
-no exchange can COMPLETE before the last caller has arrived and no caller can find a warm
-cache. Under the same deletion it reports `exchanges == 25`. **A count that a cache can
-satisfy is not a measurement of coalescing.**
+the sleep-based assertion still reported `exchanges == 1`.
+
+A test-side arrival barrier — every caller signals a channel, the test waits for all N, then
+releases the handler — does NOT close this. The signal is sent before the call, so it bounds
+when callers START, not when they reach the cache check, and releasing the handler lets the
+leader populate the cache while a straggler is still descheduled short of its own cache read.
+Under the same join deletion with callers staggered past the leader, that barrier reported
+`exchanges == 15` (the stragglers hit the warm cache) and, with enough stagger, `exchanges == 1`
+— it passed its own negation exactly as the sleep did.
+
+The barrier therefore signals from INSIDE `accessTokenValue`, under `tokenMu` and PAST the
+cache read, through the nil-in-production `Client.pastCacheCheck` hook installed by
+`withPastCacheCheck`. A caller that signals has provably already found the cache unusable, so
+releasing the handler after the Nth signal orders the leader's completion strictly after every
+caller's cache check and no caller can reach a warm fast path. Under the same deletion and the
+strongest stagger it reports `exchanges == 25`. **A count that a cache can satisfy is not a
+measurement of coalescing — and a barrier only rules the cache out if it sits past the cache
+check.**
 
 **No supported write persists an access-token expiry, and that is ENFORCED rather
 than assumed.** `Credentials.AccessTokenExpiresAt` gates a branch in `token.go`

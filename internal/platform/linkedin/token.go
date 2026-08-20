@@ -234,6 +234,15 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 		return token, nil
 	}
 
+	// Nil in production. The single-flight test installs it so it can release the
+	// leader's exchange only after every caller has crossed the cache read above;
+	// see Client.pastCacheCheck. Called with tokenMu HELD and after the read, which
+	// is the whole point — a caller that reaches here has provably already decided
+	// the cache did not serve it.
+	if c.pastCacheCheck != nil {
+		c.pastCacheCheck()
+	}
+
 	if !c.creds.CanRefresh() {
 		c.tokenMu.Unlock()
 		// Bearer-only connection. Fail closed ONLY on a known-past expiry: an unknown

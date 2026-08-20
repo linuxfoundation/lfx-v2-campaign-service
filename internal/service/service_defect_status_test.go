@@ -95,6 +95,45 @@ func TestServiceDefect_ToggleAnswers500NotAConnectionRepair409(t *testing.T) {
 	}
 }
 
+// Adoption resolves credentials through the same dispatcher path as metrics and the toggle,
+// so it reaches this sentinel the same way — and its 409 is the most misleading of the set,
+// because the adoption switch carries THREE other ConflictError arms whose messages each name
+// a different remedy the operator does not need ("repair the connection", "select an account",
+// "connect your own ad account"). A ConflictError here is indistinguishable from those to the
+// caller.
+//
+// This arm shipped without a test. service_defect_status_test.go covered metrics, the toggle,
+// discovery, the brief-metrics row and the async dispatch log, and deleting the adoption arm
+// left every one of them green while the misleading 409 came back.
+//
+// The error is injected through the LOOKUP, which is where the dispatcher resolves credentials:
+// LookupPlatformCampaign wraps whatever the adapter returns, so this is the production shape.
+func TestServiceDefect_AdoptionAnswers500NotAConnectionRepair409(t *testing.T) {
+	disp := &adopterDispatcher{err: serviceDefectErr()}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+
+	_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+
+	var conflict *briefs.ConflictError
+	if errors.As(err, &conflict) {
+		t.Fatalf("answered 409 %q — the operator is sent to repair a connection that is not at "+
+			"fault, for a request this service built wrongly", conflict.Message)
+	}
+	var bad *briefs.BadRequestError
+	if errors.As(err, &bad) {
+		t.Fatalf("answered 400 %q — a caller-fault status for a defect no caller can repair", bad.Message)
+	}
+	var ise *briefs.InternalServerError
+	if !errors.As(err, &ise) {
+		t.Fatalf("want 500 (InternalServerError), got %T: %v", err, err)
+	}
+	// Nothing may be bound: a defect on the verification read must not persist a binding to a
+	// campaign this service never confirmed exists.
+	if len(camps.adopted) != 0 {
+		t.Errorf("bound %d campaigns despite an unverified lookup, want 0", len(camps.adopted))
+	}
+}
+
 func TestServiceDefect_DiscoveryAnswers500NotAConfigurationFault400(t *testing.T) {
 	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
 	svc.SetOrchestrator(&Orchestrator{

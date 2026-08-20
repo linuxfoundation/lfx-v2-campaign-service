@@ -67,43 +67,65 @@ func tokenServer(t *testing.T, count *atomic.Int32, delay time.Duration) *httpte
 // a valid token to everyone and pass a weaker assertion while hammering the token
 // endpoint and risking rate limits.
 //
-// The rendezvous is EXPLICIT, and that is the load-bearing part of this test. It used to
-// rely on a 50ms time.Sleep in the handler, with a comment claiming the delay "guarantees
-// the followers arrive while the leader's fetch is in flight". A sleep guarantees no such
-// thing: under scheduler load a caller can be descheduled past the leader's completion,
-// observe the now-populated cache, and never attempt an exchange — so a NON-coalescing
-// implementation could report exchanges == 1 and pass. The test asserted a real property
-// and could not fail on its negation, which is the same as asserting nothing.
+// The rendezvous is EXPLICIT, and that is the load-bearing part of this test. It took
+// three attempts to make it bind, and both dead ends are worth recording because each
+// looked correct.
 //
-// What replaces it: every caller signals arrival on `arrived` BEFORE calling, the test
-// waits for all N signals, and only then closes `release` to let the handler return. The
-// leader is therefore provably still inside its exchange when the last follower calls, so
-// a per-caller refresh has nowhere to hide — each straggler would find an empty cache and
-// add a second exchange. Verified by mutation: deleting the `inflight` coalescing makes
-// this fail with exchanges == 25.
+//  1. A 50ms time.Sleep in the handler, with a comment claiming the delay "guarantees
+//     the followers arrive while the leader's fetch is in flight". A sleep guarantees
+//     no such thing.
+//
+//  2. A test-side barrier: each goroutine signalled `arrived` and the test closed
+//     `release` only after N signals. The signal is sent BEFORE the call, so it bounds
+//     when callers START, not when they reach the cache check. The argument for why
+//     that residual gap was harmless — "a straggler finds an EMPTY cache, so it can
+//     only add an exchange, never coalesce spuriously" — is false precisely because
+//     `release` then lets the leader FINISH: the leader populates the cache while the
+//     straggler is still descheduled between its signal and its cache read, the
+//     straggler hits the now-WARM fast path, returns without ever consulting
+//     `inflight`, and a non-coalescing implementation reports exchanges == 1. The test
+//     could pass its own negation, which is the same defect the sleep had.
+//
+// What binds: the barrier is signalled from INSIDE accessTokenValue, under tokenMu and
+// PAST the cache read (Client.pastCacheCheck). A caller that signals has provably
+// already decided the cache did not serve it, so closing `release` after the Nth signal
+// orders the leader's completion strictly after every caller's cache check. No caller
+// can reach the warm fast path, and under a non-coalescing implementation every one of
+// them must exchange.
+//
+// Verified by mutation, and by a mutation strong enough to matter: removing the
+// `inflight` join alone makes this fail even on an idle machine when the barrier does
+// NOT bind, so it proves nothing. The binding mutation removes the join AND staggers
+// the callers so some arrive after the leader has populated the cache — the exact shape
+// attempt 2 admitted. Under it this test reports the full exchange count and fails.
 func TestAccessTokenValueSingleFlight(t *testing.T) {
 	var exchanges atomic.Int32
 
 	const callers = 25
-	// arrived is signalled once per caller, before it enters accessTokenValue. release is
-	// closed only after all N have signalled, and the handler blocks on it — so no exchange
-	// can COMPLETE until every caller is already past the point where it would consult the
-	// cache. Buffered to N so a signal never blocks a caller that is about to call.
-	arrived := make(chan struct{}, callers)
+	// pastCache is signalled once per caller from inside accessTokenValue, after the
+	// fast-path cache read and with tokenMu held. release is closed only after all N
+	// have signalled, and the handler blocks on it — so no exchange can COMPLETE until
+	// every caller has already consulted the cache and found it unusable.
+	//
+	// Buffered to N so a signal never blocks: the hook runs under tokenMu, and an
+	// unbuffered send would deadlock the leader's own cache write against a follower
+	// holding nothing the test is draining yet.
+	pastCache := make(chan struct{}, callers)
 	release := make(chan struct{})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		exchanges.Add(1)
 		// Blocks until the test releases it. A handler that returned promptly would let the
-		// leader populate the cache before the followers arrived — exactly the hole the sleep
-		// left open.
+		// leader populate the cache before the followers reached their cache read — exactly
+		// the hole the sleep, and then the test-side barrier, left open.
 		<-release
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(linkedInSampleTokenResponse))
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL),
+		withPastCacheCheck(func() { pastCache <- struct{}{} }))
 
 	var wg sync.WaitGroup
 	tokens := make([]string, callers)
@@ -112,23 +134,14 @@ func TestAccessTokenValueSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			arrived <- struct{}{}
 			tokens[i], errs[i] = c.accessTokenValue(context.Background())
 		}()
 	}
-	// Every caller has signalled before the single in-flight exchange is allowed to finish.
-	//
-	// A signal is sent immediately before the call, so a goroutine could in principle be
-	// descheduled between the two — the barrier bounds when callers START, not when they
-	// reach the cache check. That residual gap is closed by the direction of the remaining
-	// race rather than by more synchronization: a straggler that arrives LATE finds the
-	// cache still EMPTY, because `release` is closed only after this loop and no exchange
-	// can complete before then. Late arrival therefore produces an EXTRA exchange under a
-	// non-coalescing implementation, never a spuriously coalesced one. The test can only
-	// fail in the direction that indicates a real defect, which is the property the sleep
-	// did not have — there, a late arrival found the cache POPULATED and silently passed.
+	// Every caller is PAST its cache check before the single in-flight exchange is
+	// allowed to finish. There is no window left in which a caller could observe a
+	// populated cache: the population cannot happen until this loop completes.
 	for range callers {
-		<-arrived
+		<-pastCache
 	}
 	close(release)
 	wg.Wait()

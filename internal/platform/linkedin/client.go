@@ -72,6 +72,21 @@ type Client struct {
 	// and runs the fetch on a detached context; followers wait on the shared
 	// tokenRefresh.done. Mirrors the google-ads and microsoft clients.
 	inflight *tokenRefresh
+	// pastCacheCheck, when non-nil, is called by accessTokenValue immediately after
+	// the fast-path cache read and while tokenMu is still held. Unexported and nil in
+	// production, so it costs one nil check on the token path and nothing else.
+	//
+	// It exists because the single-flight property CANNOT be tested without it. The
+	// test must release the leader's exchange only once every caller has crossed the
+	// cache check; any barrier the test can raise on its own side signals BEFORE the
+	// call, leaving the caller free to be descheduled between the signal and the cache
+	// read. Once the leader is released it populates the cache, so such a straggler
+	// finds a WARM cache, returns without consulting inflight, and a non-coalescing
+	// implementation reports exchanges == 1 — the test passes its own negation. Only a
+	// hook INSIDE the lock, past the read, can order the release after the last
+	// caller's cache check. The alternative is a test whose correctness depends on the
+	// scheduler, which is not a test.
+	pastCacheCheck func()
 }
 
 // Option customizes a Client.
@@ -117,6 +132,21 @@ func withTokenURL(u string) Option {
 	return func(c *Client) {
 		if u != "" {
 			c.tokenURL = u
+		}
+	}
+}
+
+// withPastCacheCheck installs the hook accessTokenValue calls just after its
+// fast-path cache read, with tokenMu held. Unexported: only the single-flight test
+// uses it, to release the leader's exchange strictly after every concurrent caller
+// has crossed the cache check. See Client.pastCacheCheck for why the property is
+// untestable without it.
+//
+// The hook runs UNDER tokenMu, so it must not call back into the Client.
+func withPastCacheCheck(fn func()) Option {
+	return func(c *Client) {
+		if fn != nil {
+			c.pastCacheCheck = fn
 		}
 	}
 }
