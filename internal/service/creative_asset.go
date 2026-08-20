@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"image"
+	"image/color"
 
 	// Register the PNG and JPEG decoders so image.DecodeConfig can recognise them. Blank
 	// imports: their init() functions register the formats; nothing calls them directly. The
@@ -115,9 +116,11 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// BEFORE stage 3 allocates a pixel buffer for it. This is the decompression-bomb gate: both
 	// PNG (zlib) and JPEG compress uniformly flat images enormously, so a body well inside the
 	// 42 MiB request cap can declare dimensions whose decoded form is gigabytes. A 30000x30000
-	// PNG is a few hundred KB on the wire and 3.3 GiB decoded. The check uses only the header
-	// values, so a bomb is rejected having cost one header read.
-	if !dimensionsWithinLimits(cfg.Width, cfg.Height) {
+	// PNG is a few hundred KB on the wire and 3.3 GiB decoded. The budget is expressed in
+	// DECODED BYTES and priced from the declared colour model, so a 16-bit PNG — which Go
+	// decodes at 8 bytes per pixel, twice the usual rate — is charged what it really costs. The
+	// check uses only header values, so a bomb is rejected having cost one header read.
+	if !dimensionsWithinLimits(cfg.Width, cfg.Height, cfg.ColorModel) {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "image dimensions exceed the maximum accepted for a creative asset"}
 	}
 
@@ -157,33 +160,78 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	return creativeAssetResult(stored), nil
 }
 
-// Dimension limits for an uploaded creative. These bound the pixel buffer image.Decode may
-// allocate, and they are deliberately generous against real ad creatives rather than tuned to
-// them — this is an anti-bomb ceiling, not a Meta policy check (that lives at dispatch).
+// Decode budget for an uploaded creative. The bound that matters is BYTES ALLOCATED during
+// image.Decode, not pixels: pixels are only a proxy, and the conversion factor is a property of
+// the decoded REPRESENTATION, which varies by bit depth.
 //
-// The largest creative anyone plausibly uploads is 4K UHD, 3840x2160 = 8.29M pixels; Meta's own
-// recommended feed maximum is 1936x1936 = 3.75M. maxCreativePixels sits at 20M, roughly 2.4x
-// beyond 4K, which caps a decoded RGBA buffer near 76 MiB. maxCreativeDimension additionally
-// bounds each SIDE, because the pixel product alone admits a degenerate 1x20,000,000 strip that
-// is within the area budget yet is no image any creative pipeline should accept.
+// maxCreativeDecodedBytes is 80 MiB of decoded pixel buffer. That figure is deliberately the
+// ceiling the previous pixel-only bound INTENDED — its comment promised ~76 MiB — rather than
+// the ~153 MiB it actually permitted once 16-bit images are priced correctly. Setting the budget
+// to that larger real number would have blessed the defect instead of fixing it: nothing
+// previously admitted would newly be refused, and the gate would have been rewritten to no
+// effect.
+//
+// It is generous against real creatives: 80 MiB admits ~21M pixels at 8-bit and ~10M at 16-bit,
+// against a 4K UHD upload (3840x2160 = 8.29M pixels) which is the largest anyone plausibly sends
+// — Meta's own recommended feed maximum is 1936x1936 = 3.75M. A 4K image is accepted at BOTH bit
+// depths.
+//
+// bytesPerPixel is what makes the budget honest across bit depths. Go's image/png decodes a
+// 16-bit colour-type-6 PNG to *image.NRGBA64 at EIGHT bytes per pixel, not four — so a
+// pixel-only cap silently permits twice the memory it appears to. An earlier revision of this
+// code capped 20M pixels and its comment claimed ~76 MiB; the true worst case was ~160 MiB. The
+// budget is now expressed in bytes and the per-pixel cost is read from the declared colour
+// model, so a 16-bit image is charged what it actually costs.
+//
+// maxCreativeDimension additionally bounds each SIDE, because a byte budget alone admits a
+// degenerate 1x20,000,000 strip that is no image any creative pipeline should accept.
 const (
-	maxCreativePixels    = 20_000_000
-	maxCreativeDimension = 10_000
+	maxCreativeDecodedBytes = 80 << 20 // 80 MiB of decoded pixel data
+	maxCreativeDimension    = 10_000
+	// narrowBytesPerPixel is the cost of the widest 8-bit-per-channel representation Go
+	// produces (RGBA/NRGBA). Gray and YCbCr are cheaper; charging all of them the RGBA rate
+	// keeps the estimate conservative without needing a case per format.
+	narrowBytesPerPixel = 4
+	// wideBytesPerPixel is the cost of a 16-bit-per-channel representation (*image.NRGBA64,
+	// *image.RGBA64). This is the case the pixel-only bound missed.
+	wideBytesPerPixel = 8
 )
 
-// dimensionsWithinLimits reports whether header-declared dimensions are acceptable to decode.
-// Non-positive values are refused rather than trusted: a decoder that reports them has not given
-// a usable size, and letting them through would make the multiplication below meaningless.
-func dimensionsWithinLimits(width, height int) bool {
+// bytesPerPixelFor reports the per-pixel cost of the representation image.Decode will produce
+// for this colour model. It reads DecodeConfig's ColorModel, which is available BEFORE any
+// allocation — that is the whole point, since the estimate has to be made before the decode it
+// is protecting against.
+//
+// It is deliberately fail-safe: any colour model not recognised as narrow is charged the WIDE
+// rate. A new or unusual model is exactly the case where guessing cheap would be wrong, and the
+// cost of over-charging a legitimate image is a refusal at a size no real creative reaches.
+func bytesPerPixelFor(m color.Model) int64 {
+	switch m {
+	case color.RGBAModel, color.NRGBAModel, color.AlphaModel, color.GrayModel,
+		color.YCbCrModel, color.CMYKModel, color.NYCbCrAModel:
+		return narrowBytesPerPixel
+	default:
+		// color.RGBA64Model, color.NRGBA64Model, color.Gray16Model, color.Alpha16Model,
+		// and anything added later.
+		return wideBytesPerPixel
+	}
+}
+
+// dimensionsWithinLimits reports whether a header-declared image is safe to decode: each side is
+// bounded, and the pixel buffer its colour model implies fits the byte budget.
+//
+// Non-positive values are refused rather than trusted: a decoder reporting them has not given a
+// usable size, and letting them through would make the arithmetic below meaningless.
+func dimensionsWithinLimits(width, height int, m color.Model) bool {
 	if width <= 0 || height <= 0 {
 		return false
 	}
 	if width > maxCreativeDimension || height > maxCreativeDimension {
 		return false
 	}
-	// Safe from overflow: both sides are already bounded by maxCreativeDimension above, so the
-	// product cannot exceed 1e8 and fits an int on every platform this builds for.
-	return width*height <= maxCreativePixels
+	// Safe from overflow: both sides are bounded by maxCreativeDimension above, so the product
+	// cannot exceed 1e8 and the byte figure cannot exceed 8e8 — both well inside int64.
+	return int64(width)*int64(height)*bytesPerPixelFor(m) <= maxCreativeDecodedBytes
 }
 
 // mimeForImageFormat maps an image.DecodeConfig format name to this endpoint's verified MIME

@@ -124,6 +124,53 @@ The truncated-PNG fixture asserts its own premises — that it clears stage 1 an
 cannot pass by being rejected for an unrelated reason. That check exists because of the vacuous
 fixture recorded above; the same trap was the first thing to look for.
 
+**Second review round — the bomb ceiling was half what it claimed.** The dimension gate capped
+20M pixels and its comment stated ~76 MiB, assuming 4 bytes per pixel. Go's `image/png` decodes a
+16-bit colour-type-6 PNG to `*image.NRGBA64` at EIGHT bytes per pixel — measured directly: a
+64x64 fixture yields a `Pix` slice of 32,768 bytes, exactly 8.0 per pixel. So the real ceiling was
+~153 MiB, and bit depth was never consulted. Two reviewers raised it independently.
+
+The bound is now expressed in DECODED BYTES and priced from `DecodeConfig`'s `ColorModel`, which
+is available before any allocation. Unrecognised models are charged the WIDE rate, because a new
+or unusual model is exactly where guessing cheap is wrong.
+
+The budget is **80 MiB, not 160**, and that choice is the substance of the fix. Setting it to the
+~153 MiB the old bound actually permitted would have blessed the defect: nothing previously
+admitted would newly be refused, and the gate would have been rewritten to no effect. 80 MiB is
+the ceiling the old comment INTENDED, now actually enforced. It admits ~21M pixels at 8-bit and
+~10M at 16-bit, against a 4K UHD creative of 8.29M pixels — accepted at both depths.
+
+The proof that this closes a real gap is a mutation, not an assertion: reverting to the old
+pixel-only 20M bound fails `RefusesWideBitDepthBomb`, whose fixture is a 4000x4000 16-bit PNG —
+16M pixels, comfortably under the old cap, but 122 MiB decoded. The test asserts that premise
+itself, so it cannot pass by being refused for an unrelated reason.
+
+**`MaxBytesReader` never receives the concrete ResponseWriter.** Its connection-close signal
+works only by type-asserting the writer to net/http's unexported `requestTooLarger` interface,
+which solely the server's own `*http.response` satisfies. `buildHandler` mounts this middleware
+INSIDE the request-ID and OTel wrappers, so by read time the writer is a wrapper and the
+assertion fails silently. The doc comment promised that signal.
+
+The comment was corrected rather than the position changed. Moving `MaxBodyBytes` outermost would
+restore the signal but cost every 413 its request id and trace span — the wrong trade for an
+operator diagnosing one, and the memory bound (the reason this middleware exists) holds either
+way: without the signal net/http may DRAIN the remaining body, discarding bytes rather than
+buffering them. A security comment promising a guarantee it cannot deliver is worse than no
+comment.
+
+**A survivor, found and closed.** Narrowing the response buffering to the failing case left the
+deferral itself unpinned: mutating `deferredBufferWriter` to buffer ALWAYS passed every existing
+test, because both modes deliver identical bytes to the client. Correctness cannot see the
+difference — only TIMING can. Two tests now probe the underlying writer from inside the handler
+to distinguish "wrote through" from "wrote, held, and replayed", and the mutation fails them.
+`http.NoBody` is non-nil, so a bodyless GET reaches this path and would otherwise have been
+buffered too.
+
+Also: the happy-path test asserted `MimeType` and `Checksum` but never `ByteSize`, though it is
+equally server-derived and never client-trusted — an off-by-one mutation passed. Now asserted.
+And the cap-derivation comment computed a 39-byte envelope from `image/png`; the enum also
+permits `image/jpeg`, making the worst case 41,943,080. Comment-only — 42 MiB still admits it.
+
 **A survivor worth recording.** Deleting either `SetCreativeAssetRepo` call from the
 container COMPILED and left the whole suite green, while in production every upload would
 answer `503` forever on that pod with the rest of the brief routes live. `briefBackendSetter`

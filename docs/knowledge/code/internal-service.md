@@ -146,9 +146,16 @@ never bounds the bytes read off the wire. That bound is a separate, inbound one 
 [internal/middleware](internal-middleware.md)). Validation then runs in three stages, and the ORDER is
 the security property. **Stage 1**, `image.DecodeConfig`, reads only the header — enough to name
 the format and read the declared dimensions — and rejects garbage a declared `content_type`
-alone would wave through. **Stage 2** refuses dimensions beyond `maxCreativePixels` (20M, ~2.4x
-a 4K creative) or `maxCreativeDimension` (10,000 per side, which also rejects a degenerate
-1x20,000,000 strip inside the area budget). This is the decompression-bomb gate: PNG and JPEG
+alone would wave through. **Stage 2** refuses an image whose decoded pixel buffer would
+exceed `maxCreativeDecodedBytes` (80 MiB), or whose sides exceed `maxCreativeDimension`
+(10,000 each, which also rejects a degenerate 1x20,000,000 strip inside the byte budget). The
+budget is in BYTES, not pixels, because the pixels→bytes factor depends on bit depth: Go decodes
+a 16-bit colour-type-6 PNG to `*image.NRGBA64` at EIGHT bytes per pixel, so a pixel-only cap
+silently permits twice the memory it advertises. `bytesPerPixelFor` prices the image from
+`DecodeConfig`'s `ColorModel` — available before any allocation — and charges any unrecognised
+model the wide rate. 80 MiB admits ~21M pixels at 8-bit and ~10M at 16-bit, against a 4K UHD
+creative of 8.29M pixels, which is accepted at both depths. This is the decompression-bomb gate:
+PNG and JPEG
 both compress a flat image enormously, so a body well inside the 42-MiB request cap can declare
 dimensions decoding to gigabytes, and the check spends only the header read. **Stage 3** decodes
 in FULL and discards the result, because stage 1 proves only that a HEADER parses — a PNG

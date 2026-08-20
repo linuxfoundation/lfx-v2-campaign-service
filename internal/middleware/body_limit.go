@@ -30,9 +30,19 @@ import (
 //     and it is cheapest to answer immediately.
 //   - The declared length is absent, understated, or the body is chunked. Then only
 //     reading can reveal the size, so http.MaxBytesReader wraps the body and fails the
-//     read once the handler has consumed one byte past the cap. MaxBytesReader also
-//     signals the ResponseWriter to stop reading further, so the connection is not left
-//     draining an attacker's stream.
+//     read once the handler has consumed one byte past the cap.
+//
+// What the second arm bounds is the READ — the handler cannot obtain more than the cap,
+// so memory is bounded whatever the client sends. It does NOT close the connection.
+// MaxBytesReader can request that only by type-asserting its ResponseWriter to net/http's
+// unexported requestTooLarger interface, which solely the server's own *http.response
+// satisfies; this middleware is mounted inside the request-ID and OTel wrappers (see
+// buildHandler), so by read time the writer is a wrapper and that assertion fails
+// silently. Moving MaxBodyBytes outermost would restore the signal but cost every 413 its
+// request id and its trace span, which is the wrong trade for an operator diagnosing one.
+// The consequence of the missing signal is that net/http may drain the remaining body
+// before reusing the connection; the bytes are discarded rather than buffered, so the
+// memory bound this middleware exists to provide still holds.
 //
 // The second arm is why this is not merely a Content-Length check: Content-Length is
 // caller-supplied and a chunked request carries none at all.
@@ -69,16 +79,21 @@ func MaxBodyBytes(limit int64) func(http.Handler) http.Handler {
 			tracked := &limitTrackingBody{ReadCloser: http.MaxBytesReader(w, r.Body, limit)}
 			r.Body = tracked
 
-			// Buffer the response so the 400 the decoder is about to write can be replaced.
-			// Nothing is forwarded to the client until the handler returns, so there is no
-			// risk of a half-written body: either the recorder is flushed verbatim, or it is
-			// discarded and a 413 is written instead.
-			rec := &bufferedResponseWriter{ResponseWriter: w, status: http.StatusOK}
+			// Buffer the response so a 400 written after a truncated read can be replaced.
+			//
+			// The buffering is DEFERRED, not unconditional. Holding every response in memory
+			// to rewrite the rare one would tax all traffic — including bodyless GETs, whose
+			// http.NoBody is non-nil and would otherwise qualify — for a rewrite that fires
+			// only when the cap is actually hit. So the writer starts in pass-through mode
+			// and begins buffering at the moment the limit trips: bytes written BEFORE that
+			// moment cannot describe a truncation, since the handler had not yet failed a
+			// read, and by the time it writes a status the read has already failed.
+			rec := &deferredBufferWriter{ResponseWriter: w, buffering: tracked.exceeded}
 			next.ServeHTTP(rec, r)
 
-			if tracked.exceeded() {
+			if tracked.exceeded() && !rec.committed() {
 				// The handler's response describes a truncated body, so it is wrong whatever
-				// it says. Discard it and answer the real reason.
+				// it says. Discard the buffered version and answer the real reason.
 				writeRequestTooLarge(w)
 				return
 			}
@@ -106,34 +121,61 @@ func (b *limitTrackingBody) Read(p []byte) (int, error) {
 
 func (b *limitTrackingBody) exceeded() bool { return b.hit.Load() }
 
-// bufferedResponseWriter holds the handler's response until the middleware has decided whether
-// the request was truncated. Only headers, status and body bytes are captured; the middleware
-// either replays them verbatim or drops them in favour of a 413.
-type bufferedResponseWriter struct {
+// deferredBufferWriter passes writes straight through until the body limit trips, and buffers
+// from that point on so the middleware can discard a response that describes a truncation.
+//
+// The two modes matter for cost: unconditional buffering would put every response on every
+// route through a bytes.Buffer to serve one rewrite on one arm. Deferring means ordinary traffic
+// pays nothing and only a request that actually overran is held.
+//
+// committed reports whether any bytes reached the client before buffering began. If they did,
+// the response is already partly on the wire and CANNOT be replaced by a 413 — the status line
+// is long gone — so the middleware flushes what remains rather than corrupting the exchange.
+type deferredBufferWriter struct {
 	http.ResponseWriter
+	// buffering reports whether the limit has tripped. It is the tracker's own predicate, read
+	// at write time rather than snapshotted, so the mode switches the instant the read fails.
+	buffering   func() bool
 	buf         bytes.Buffer
 	status      int
 	wroteHeader bool
+	passedThru  bool
+	held        bool
 }
 
-func (w *bufferedResponseWriter) WriteHeader(status int) {
+func (w *deferredBufferWriter) WriteHeader(status int) {
 	if w.wroteHeader {
 		return
 	}
-	w.status = status
 	w.wroteHeader = true
+	w.status = status
+	if w.buffering() {
+		w.held = true
+		return
+	}
+	w.passedThru = true
+	w.ResponseWriter.WriteHeader(status)
 }
 
-func (w *bufferedResponseWriter) Write(p []byte) (int, error) {
+func (w *deferredBufferWriter) Write(p []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
-	return w.buf.Write(p)
+	if w.held {
+		return w.buf.Write(p)
+	}
+	return w.ResponseWriter.Write(p)
 }
 
-// flush replays the captured response onto the real ResponseWriter. Headers were written
-// straight through (the embedded Header map is the real one), so only status and body remain.
-func (w *bufferedResponseWriter) flush() {
+// committed reports whether any part of the response already reached the client.
+func (w *deferredBufferWriter) committed() bool { return w.passedThru }
+
+// flush replays anything held back. Headers were written through the embedded ResponseWriter's
+// own map, so only the status and buffered body remain.
+func (w *deferredBufferWriter) flush() {
+	if !w.held {
+		return
+	}
 	w.ResponseWriter.WriteHeader(w.status)
 	// Best-effort: the status is already committed, so a failed write has no recovery path.
 	_, _ = w.ResponseWriter.Write(w.buf.Bytes())

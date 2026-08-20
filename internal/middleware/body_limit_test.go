@@ -245,3 +245,81 @@ func TestMaxBodyBytes_ForwardsHandlerResponseWhenUnderLimit(t *testing.T) {
 		t.Errorf("X-Custom = %q, want the handler's header preserved", got)
 	}
 }
+
+// TestMaxBodyBytes_DoesNotBufferTheHappyPath pins the DEFERRAL, which is the whole point of
+// deferredBufferWriter over an unconditional recorder.
+//
+// Buffering every response would tax all traffic — including bodyless GETs, whose http.NoBody is
+// non-nil and so reaches this middleware — to serve a rewrite that fires only when the cap trips.
+// Correctness alone cannot detect the difference: an always-buffering implementation passes every
+// other test in this file, verified by mutation. So the property has to be observed directly,
+// through the ResponseWriter: a pass-through write reaches the underlying writer DURING the
+// handler, whereas a buffered one appears only after flush.
+//
+// The probe records when bytes arrive relative to the handler returning. It is the only way to
+// distinguish "wrote through" from "wrote, held, and replayed", since both end with identical
+// bytes at the client.
+func TestMaxBodyBytes_DoesNotBufferTheHappyPath(t *testing.T) {
+	probe := &writeTimingRecorder{ResponseWriter: httptest.NewRecorder()}
+
+	var sawDuringHandler bool
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("payload"))
+		// Read the probe BEFORE returning: if the middleware passed through, the bytes are
+		// already at the underlying writer; if it buffered, they are not.
+		sawDuringHandler = probe.wrote()
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("small"))
+	MaxBodyBytes(1024)(h).ServeHTTP(probe, req)
+
+	if !sawDuringHandler {
+		t.Error("an under-limit response was buffered; the happy path must write straight through, not accumulate in memory")
+	}
+}
+
+// TestMaxBodyBytes_BodylessRequestIsNotBuffered is the same property for the case that dominates
+// real traffic. http.NoBody is NOT nil, so a GET reaches the body-wrapping path and would be
+// buffered by an unconditional recorder.
+func TestMaxBodyBytes_BodylessRequestIsNotBuffered(t *testing.T) {
+	probe := &writeTimingRecorder{ResponseWriter: httptest.NewRecorder()}
+
+	var sawDuringHandler bool
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+		sawDuringHandler = probe.wrote()
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
+	if req.Body == nil {
+		t.Fatal("premise: http.NoBody must be non-nil, otherwise this case never reaches the wrapper")
+	}
+	MaxBodyBytes(1024)(h).ServeHTTP(probe, req)
+
+	if !sawDuringHandler {
+		t.Error("a bodyless GET response was buffered; every read request would pay for a rewrite that cannot apply to it")
+	}
+}
+
+// writeTimingRecorder reports whether anything has reached the underlying writer yet. It answers
+// "was this written through, or held?" — a question the final bytes cannot answer, because both
+// modes deliver the same bytes.
+type writeTimingRecorder struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (w *writeTimingRecorder) WriteHeader(status int) {
+	w.written = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *writeTimingRecorder) Write(p []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *writeTimingRecorder) wrote() bool { return w.written }

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"image"
+	"image/color"
 	// Registers the GIF decoder for the TEST BINARY ONLY. It is deliberately absent from
 	// creative_asset.go: this import reproduces the condition the handler comment says must stay
 	// safe (another package registering a decoder) so the allow-list guard becomes reachable and
@@ -211,6 +212,12 @@ func TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum(t *testin
 			if want := hex.EncodeToString(sum[:]); repo.stored.Checksum != want {
 				t.Errorf("stored Checksum = %q, want sha256 of the bytes %q", repo.stored.Checksum, want)
 			}
+			// ByteSize is server-derived exactly as MimeType and Checksum are — the payload
+			// carries no size, so the stored value must be len(bytes) and nothing else. It was
+			// unasserted until now, so a handler storing a wrong size passed this test.
+			if want := int64(len(tc.bytes)); repo.stored.ByteSize != want {
+				t.Errorf("stored ByteSize = %d, want len(bytes) = %d", repo.stored.ByteSize, want)
+			}
 		})
 	}
 }
@@ -346,9 +353,10 @@ func TestBriefService_UploadCreativeAsset_RefusesTruncatedImageData(t *testing.T
 	if err != nil || format != "png" {
 		t.Fatalf("fixture must pass DecodeConfig as png, got format=%q err=%v", format, err)
 	}
-	// Premise 2: its dimensions are ordinary, so stage 2 cannot be what rejects it either.
-	if !dimensionsWithinLimits(cfg.Width, cfg.Height) {
-		t.Fatalf("fixture dimensions %dx%d must be within limits", cfg.Width, cfg.Height)
+	// Premise 2: its dimensions and colour model are ordinary, so stage 2 cannot be what
+	// rejects it either.
+	if !dimensionsWithinLimits(cfg.Width, cfg.Height, cfg.ColorModel) {
+		t.Fatalf("fixture %dx%d (%v) must be within limits", cfg.Width, cfg.Height, cfg.ColorModel)
 	}
 	// Premise 3: a real decode genuinely fails — the defect being closed is real, not imagined.
 	if _, derr := png.Decode(bytes.NewReader(raw)); derr == nil {
@@ -449,31 +457,152 @@ func pngHeaderWithDimensions(t *testing.T, width, height uint32) []byte {
 	return buf.Bytes()
 }
 
-// TestDimensionsWithinLimits pins the gate directly, including the degenerate shapes the pixel
-// product alone would admit. A 1x20,000,000 strip is inside the area budget yet is not an image
-// any creative pipeline should accept, which is why each SIDE is bounded too.
+// TestDimensionsWithinLimits pins the gate directly, including the degenerate shapes and the
+// bit-depth cases a pixel-only bound got wrong.
+//
+// The budget is in DECODED BYTES, so the same dimensions can be admissible at 8-bit and refused
+// at 16-bit — that asymmetry is the whole correction and the table asserts it explicitly.
 func TestDimensionsWithinLimits(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		width, height int
+		model         color.Model
 		want          bool
 	}{
-		{"Meta recommended feed", 1080, 1080, true},
-		{"story 9:16", 1080, 1920, true},
-		{"4K UHD, the largest plausible creative", 3840, 2160, true},
-		{"exactly at the per-side limit", maxCreativeDimension, 1, true},
-		{"one past the per-side limit", maxCreativeDimension + 1, 1, false},
-		{"within both sides but past the pixel budget", 9000, 9000, false},
-		{"degenerate strip inside the area budget", 1, 20_000_000, false},
-		{"classic bomb", 30000, 30000, false},
-		{"zero width is not a size", 0, 100, false},
-		{"zero height is not a size", 100, 0, false},
-		{"negative is not a size", -1, -1, false},
+		{"Meta recommended feed", 1080, 1080, color.NRGBAModel, true},
+		{"story 9:16", 1080, 1920, color.NRGBAModel, true},
+		{"4K UHD, the largest plausible creative", 3840, 2160, color.NRGBAModel, true},
+		{"4K UHD at 16-bit still fits", 3840, 2160, color.NRGBA64Model, true},
+		{"exactly at the per-side limit", maxCreativeDimension, 1, color.NRGBAModel, true},
+		{"one past the per-side limit", maxCreativeDimension + 1, 1, color.NRGBAModel, false},
+		// The bit-depth correction: identical dimensions, opposite verdicts. At 4 bytes/pixel
+		// 8000x5000 = 160 MiB exactly (admitted); at 8 bytes/pixel it is 320 MiB (refused).
+		// The bit-depth correction, stated as an asymmetry: identical dimensions, opposite
+		// verdicts. 16M pixels is 61 MiB at 4 bytes/pixel (admitted) and 122 MiB at 8
+		// (refused). A pixel-only bound cannot express this.
+		{"16M pixels in 8-bit", 4000, 4000, color.NRGBAModel, true},
+		{"the same image in 16-bit is twice the memory", 4000, 4000, color.NRGBA64Model, false},
+		{"16-bit gray is also wide", 4000, 4000, color.Gray16Model, false},
+		{"degenerate strip inside the byte budget", 1, 20_000_000, color.NRGBAModel, false},
+		{"classic bomb", 30000, 30000, color.NRGBAModel, false},
+		{"zero width is not a size", 0, 100, color.NRGBAModel, false},
+		{"zero height is not a size", 100, 0, color.NRGBAModel, false},
+		{"negative is not a size", -1, -1, color.NRGBAModel, false},
+		// Fail-safe: an unrecognised model is charged the WIDE rate, so it is refused at a
+		// size the narrow rate would have admitted. CMYK is explicitly listed as narrow, so
+		// it is the control showing the default arm is what refuses nil, not the size.
+		{"CMYK is priced narrow and admitted", 4000, 4000, color.CMYKModel, true},
+		{"an unrecognised model fails safe to the wide rate", 4000, 4000, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := dimensionsWithinLimits(tc.width, tc.height); got != tc.want {
-				t.Errorf("dimensionsWithinLimits(%d, %d) = %v, want %v", tc.width, tc.height, got, tc.want)
+			if got := dimensionsWithinLimits(tc.width, tc.height, tc.model); got != tc.want {
+				t.Errorf("dimensionsWithinLimits(%d, %d, %v) = %v, want %v", tc.width, tc.height, tc.model, got, tc.want)
 			}
 		})
 	}
+}
+
+// TestBytesPerPixelFor_ChargesWideModelsEightBytes pins the per-pixel pricing that the byte
+// budget rests on, and the fail-safe default.
+//
+// The measured fact behind it: Go's image/png decodes a 16-bit colour-type-6 PNG to
+// *image.NRGBA64, whose Pix slice is exactly 8 bytes per pixel. A bound that assumed 4 permitted
+// twice the memory it advertised.
+func TestBytesPerPixelFor_ChargesWideModelsEightBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		model color.Model
+		want  int64
+	}{
+		{"8-bit RGBA", color.RGBAModel, narrowBytesPerPixel},
+		{"8-bit NRGBA", color.NRGBAModel, narrowBytesPerPixel},
+		{"8-bit gray", color.GrayModel, narrowBytesPerPixel},
+		{"JPEG YCbCr", color.YCbCrModel, narrowBytesPerPixel},
+		{"16-bit RGBA64", color.RGBA64Model, wideBytesPerPixel},
+		{"16-bit NRGBA64", color.NRGBA64Model, wideBytesPerPixel},
+		{"16-bit gray", color.Gray16Model, wideBytesPerPixel},
+		{"unrecognised models fail safe to the wide rate", nil, wideBytesPerPixel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bytesPerPixelFor(tc.model); got != tc.want {
+				t.Errorf("bytesPerPixelFor(%v) = %d, want %d", tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBriefService_UploadCreativeAsset_RefusesWideBitDepthBomb is the end-to-end binding of the
+// bit-depth correction, and it is the test the previous bound could not pass.
+//
+// The fixture is a REAL 16-bit PNG (colour type 6, bit depth 16) whose declared dimensions the
+// OLD 20M-pixel bound admitted — 4000x4000 = 16M pixels, comfortably under it — but which Go
+// decodes to *image.NRGBA64 at 8 bytes per pixel, i.e. 256 MiB of pixel buffer. That is past the
+// 160 MiB budget, so it must now be refused BEFORE the decode allocates anything.
+//
+// Premises are asserted rather than assumed, because a fixture that failed for an unrelated
+// reason would prove nothing — the same trap as the earlier vacuous chunked-body fixture. The
+// sub-assertions below pin that this input clears stage 1, sits under the old pixel bound, and
+// really does decode wide.
+func TestBriefService_UploadCreativeAsset_RefusesWideBitDepthBomb(t *testing.T) {
+	raw := png16HeaderWithDimensions(t, 4000, 4000)
+
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil || format != "png" {
+		t.Fatalf("fixture must pass DecodeConfig as png, got format=%q err=%v", format, err)
+	}
+	// Premise 1: it really is a wide representation — otherwise this tests nothing new.
+	if got := bytesPerPixelFor(cfg.ColorModel); got != wideBytesPerPixel {
+		t.Fatalf("fixture colour model priced at %d bytes/pixel, want the wide rate %d", got, wideBytesPerPixel)
+	}
+	// Premise 2: the OLD bound would have admitted it. 16M pixels < the former 20M cap, so this
+	// case is precisely the gap the correction closes, not a size any bound would have caught.
+	const formerPixelCap = 20_000_000
+	if px := cfg.Width * cfg.Height; px >= formerPixelCap {
+		t.Fatalf("fixture is %d pixels, which the former %d-pixel cap would already have refused; it must sit UNDER it", px, formerPixelCap)
+	}
+
+	repo := &fakeCreativeAssetRepo{}
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+
+	_, uerr := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+		ProjectID:   "cncf",
+		BriefID:     "b1",
+		ContentType: "image/png",
+		Bytes:       raw,
+	})
+
+	var badReq *briefs.BadRequestError
+	if !errors.As(uerr, &badReq) {
+		t.Fatalf("err = %T (%v), want *briefs.BadRequestError", uerr, uerr)
+	}
+	// The DIMENSION message specifically: anything else means the 256 MiB allocation happened.
+	if !strings.Contains(badReq.Message, "dimensions exceed") {
+		t.Errorf("message = %q, want the dimension refusal — anything else means a 16-bit bomb reached the decoder", badReq.Message)
+	}
+	if repo.stored != nil {
+		t.Errorf("a wide-bit-depth bomb reached storage: %+v", repo.stored)
+	}
+}
+
+// png16HeaderWithDimensions builds a PNG signature + IHDR declaring a 16-bit colour-type-6
+// image of the given size. Bit depth 16 with colour type 6 is what Go decodes to
+// *image.NRGBA64, so this is the header that prices at 8 bytes per pixel.
+func png16HeaderWithDimensions(t *testing.T, width, height uint32) []byte {
+	t.Helper()
+
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 16 // bit depth: the field the old bound never consulted
+	ihdr[9] = 6  // colour type: RGBA
+	// ihdr[10..12] = compression, filter, interlace — all 0.
+
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	_ = binary.Write(&buf, binary.BigEndian, uint32(len(ihdr)))
+	chunk := append([]byte("IHDR"), ihdr...)
+	buf.Write(chunk)
+	_ = binary.Write(&buf, binary.BigEndian, crc32.ChecksumIEEE(chunk))
+	return buf.Bytes()
 }
