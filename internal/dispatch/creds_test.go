@@ -162,6 +162,12 @@ type scopedConnReader struct {
 	// probe itself failing, which must not be read as "no".
 	tombstoned    map[string]bool
 	disconnectErr error
+
+	// errRows supplies a row value to return ALONGSIDE an errs entry. A repository is free to
+	// hand back a partially populated value with a failure, and callers must key on the error
+	// rather than on the value being nil — a fixture that only ever returned nil on failure
+	// would let that confusion pass untested.
+	errRows map[string]*model.Connection
 }
 
 func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ model.Provider) (bool, error) {
@@ -174,7 +180,7 @@ func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ m
 func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
 	f.gets = append(f.gets, projectID)
 	if err, ok := f.errs[projectID]; ok {
-		return nil, err
+		return f.errRows[projectID], err
 	}
 	if c, ok := f.rows[projectID]; ok {
 		return c, nil

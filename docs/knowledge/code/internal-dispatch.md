@@ -1130,10 +1130,33 @@ Two preconditions gate that extra lookup, both structural rather than convention
 - a NON-EMPTY recorded id — a legacy row makes no system claim, so reaching for the system row on
   its behalf would address its campaign id in a namespace it does not belong to.
 
-When both scopes fail the **project's** error is returned, never the system one:
-`internal/service/brief.go` and `internal/service/connection.go` branch on
-`domain.ErrSystemConnectionOrigin` to decide whose repair it is, so substituting the system error
-would page the platform operator for a project that simply disconnected.
+Which failure is REPORTED keys on the recorded account too, and this is a third place the same
+invariant applies rather than a separate rule. `internal/service/brief.go` and
+`internal/service/connection.go` branch on the system sentinels to decide whose repair it is, so
+the choice decides whether the caller is told to reconnect their own connection (409/404) or an
+operator is paged to repair the LF row (500).
+
+Two arms face it: both scopes failing, and the project resolving a DIFFERENT account while the
+system row is broken. Neither can be answered by "which resolution failed", because both
+readings are correct for one case and wrong for its sibling:
+
+- a PROJECT-created campaign whose project disconnected or re-pointed its connection. The
+  project's error is right; substituting the system error pages the platform operator for a
+  repair the project has to make.
+- a SYSTEM-created campaign whose system row has since broken. The project's error is wrong: it
+  names a connection that never created this campaign and could not address it if repaired, so
+  the project receives an unfollowable remedy while the campaign keeps spending.
+
+`systemCreated` separates them on the recorded fact. It reads the system row's `AccountID`
+COLUMN directly rather than going through `resolveForcedSystem`, because that function loads,
+validates and DECRYPTS and returns an error INSTEAD of a value — so at the moment the system row
+is broken, which is exactly when the routing decision matters, its account id is unavailable.
+The column is readable whether or not the credentials validate.
+
+It returns `known=false` when the question cannot be settled — no recorded provenance, a system
+row that is absent or nameless, or a repo failure — and callers keep the project-owned default.
+The asymmetry is deliberate: claiming system creation pages an operator, so an unproven claim
+must not be guessed in that direction.
 
 Passing the id as a parameter is deliberate: it makes the omission a COMPILE ERROR. The bug being
 fixed here was a `resolveExisting` that took only `(ctx, projectID, provider)` and so could not

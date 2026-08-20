@@ -35,7 +35,8 @@ behavior change is opt-in and reversible without a code change.
 Two properties are what make "reversible" true rather than aspirational, and both
 are enforced in code rather than left to operator discipline:
 
-- The flag governs **creation only**. Toggle-status and read-metrics resolve the
+- The flag governs **creation and account discovery only** (FR-002; both run
+  through `credsSource.resolve`). Toggle-status and read-metrics resolve the
   account the campaign was actually created under (`credsSource.resolveExisting`),
   so campaigns that pre-date the cutover stay pausable and readable while it is on.
   Forcing them onto the system account would trip each adapter's account-provenance

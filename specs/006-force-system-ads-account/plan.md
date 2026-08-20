@@ -5,11 +5,13 @@
 ## Design
 
 One policy on the shared credential resolver flips every paid-ads platform at
-once. Every paid-ads dispatcher constructs its `credsSource` via
-`newCredsSource(repo, enc)` and calls `credsSource.resolve(ctx, projectID,
-provider)` on create / toggle / metrics / discovery. Adding a `forceSystemPaidAds
-bool` to `credsSource` and a guard at the top of `resolve` therefore covers all
-six with no per-dispatcher logic:
+once, but it must apply to **creation and account discovery only** — never to an
+operation on a campaign that already exists.
+
+Every paid-ads dispatcher constructs its `credsSource` via
+`newCredsSource(repo, enc)`. Creation and discovery call `credsSource.resolve(ctx,
+projectID, provider)`, and adding a `forceSystemPaidAds bool` to `credsSource`
+with a guard at the top of `resolve` covers all six with no per-dispatcher logic:
 
 ```go
 func (s *credsSource) resolve(ctx, projectID, provider) (*resolved, error) {
@@ -19,6 +21,23 @@ func (s *credsSource) resolve(ctx, projectID, provider) (*resolved, error) {
     // ...unchanged...
 }
 ```
+
+Toggle-status and read-metrics do **not** go through `resolve`. They call
+`credsSource.resolveExisting(ctx, projectID, provider, creationAccountID)`, which
+consults the flag nowhere and instead resolves the account the campaign RECORDS
+having been created under (`metaCreationAccountID` and its four siblings). Forcing
+one of those operations is unrecoverable in both directions: a pre-cutover campaign
+forced onto the system account, or a cutover-created campaign resolved back to the
+project's, trips the adapter's account-provenance guard and leaves a live campaign
+the service cannot stop. Keying on the recorded account handles both without a flag
+test, and keeps cutover-created campaigns pausable after the flag is retired.
+
+When neither scope resolves — or the project resolves a different account and the
+system row is broken — the error reported keys on that same recorded account
+(`systemCreated`), not on which resolution happened to fail. A system-created
+campaign surfaces the operator-owned system fault; anything else, including
+provenance that cannot be established, keeps the project's own actionable error.
+Reporting the wrong one sends the wrong operator to repair a healthy row.
 
 `resolveForcedSystem` loads the system row directly (`Get(SystemProjectID,
 provider)` → `resolveConn`), stamps `fromSystem = true`, and wraps failures in

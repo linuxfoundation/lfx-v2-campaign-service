@@ -320,10 +320,10 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 		}
 		sysRes, sysErr := s.resolveForcedSystem(ctx, provider)
 		if sysErr != nil {
-			// The system row is missing or unusable too. Report the PROJECT's error, which is
-			// the one the caller asked about; a system-row fault raised here would aim the
-			// remedy at the wrong operator.
-			return nil, err
+			// BOTH scopes failed, and which error to report is decided by the recorded creation
+			// account, not by which resolution happened to fail. See systemCreated: the two
+			// cases have different owners and only the row's own provenance separates them.
+			return nil, s.faultForCreator(ctx, provider, creationAccountID, err, sysErr)
 		}
 		if matchesAccount(sysRes.accountID, creationAccountID) {
 			return sysRes, nil
@@ -342,10 +342,24 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 	// and the system credentials are the ones that can address it.
 	sysRes, sysErr := s.resolveForcedSystem(ctx, provider)
 	if sysErr != nil {
-		// The system row is missing or unusable. Return the PROJECT's resolution rather than
-		// the system error: the caller's provenance guard will refuse with the actionable
-		// account-mismatch message, and reporting a system-row fault here would aim the
-		// remedy at the wrong operator for a project that simply re-pointed its connection.
+		// The system row is missing or unusable, and the project resolved a DIFFERENT account
+		// than the one that created this campaign. Two states reach here with opposite owners,
+		// and returning the project's resolution unconditionally answers for only one of them:
+		//
+		//   - a PROJECT-created campaign whose project merely re-pointed its connection. The
+		//     project's resolution is right: the provenance guard refuses with the actionable
+		//     account-mismatch 409 naming the account to reconnect.
+		//   - a SYSTEM-created campaign whose system row has since broken. Returning the
+		//     project's resolution renders that same project-owned 409 for a fault only an
+		//     operator can repair, and the campaign keeps spending with nobody paged.
+		//
+		// systemCreated separates them on the recorded fact rather than on which resolution
+		// succeeded, so neither case is answered with the other's remedy. Asked through the
+		// same helper as the both-fail arm above, so the rule has ONE home: this PR's repeated
+		// defect has been a rule applied on one arm and not on its sibling.
+		if s.systemIsTheCreator(ctx, provider, creationAccountID) {
+			return nil, sysErr
+		}
 		return res, nil
 	}
 	if matchesAccount(sysRes.accountID, creationAccountID) {
@@ -355,6 +369,74 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 	// exactly what the provenance guards exist to catch. Return the project resolution so the
 	// guard renders its mismatch against the account the project currently points at.
 	return res, nil
+}
+
+// faultForCreator picks WHICH failure to report when neither scope resolved, keying on the
+// account the campaign was created under rather than on which resolution failed.
+//
+// Both errors are real here, and reporting the wrong one sends the wrong operator to repair a
+// row that is not the problem. internal/service/brief.go and internal/service/connection.go
+// branch on domain.ErrSystemConnectionMissing / ErrSystemConnectionNotUsable to route the
+// remedy, so this choice decides whether the caller is told to reconnect their own connection
+// (409/404, project-owned) or an operator is paged to repair the LF row (500, operator-owned).
+//
+// A SYSTEM-created campaign is the system row's to answer for: the project's error names a
+// connection that never created this campaign and could not address it if it were repaired.
+// Anything else — project-created, or provenance that cannot be established — keeps the
+// project's error, which is what the caller asked about and the only actionable one. That
+// default is what stops a project that merely disconnected from paging the platform operator.
+func (s *credsSource) faultForCreator(ctx context.Context, provider model.Provider, creationAccountID string, projErr, sysErr error) error {
+	if s.systemIsTheCreator(ctx, provider, creationAccountID) {
+		return sysErr
+	}
+	return projErr
+}
+
+// systemIsTheCreator reports whether the LF system row is PROVABLY the account this campaign
+// was created under. It collapses systemCreated's two results into the single question both
+// arms of resolveExisting ask, so "unproven" and "proven not" cannot be told apart by a caller
+// and accidentally routed differently — the only safe reading of either is the project-owned
+// default.
+func (s *credsSource) systemIsTheCreator(ctx context.Context, provider model.Provider, creationAccountID string) bool {
+	created, known := s.systemCreated(ctx, provider, creationAccountID)
+	return known && created
+}
+
+// systemCreated reports whether creationAccountID names the LF system row's ad account, and
+// whether that question could be answered at all.
+//
+// It exists because the provenance question survives the system row being UNRESOLVABLE, while
+// resolveForcedSystem's answer does not. That function LOADS, VALIDATES and DECRYPTS, and
+// returns an error INSTEAD of a value — so at the very moment the system row is broken, which
+// is exactly when the routing decision matters most, its account id is unavailable and the
+// caller is left inferring provenance from which resolution happened to succeed. That
+// inference is what produced this defect twice: it answers correctly for a project that
+// re-pointed its connection and wrongly for a campaign the system account created.
+//
+// The recorded account id is a plain COLUMN, so it is readable whether or not the credentials
+// validate or decrypt. Reading it directly answers "whose fault is this" for a row that is
+// present but unusable — a missing credential blob, a rotated key — none of which change which
+// account created the campaign.
+//
+// Returns known=false when the question cannot be settled: no recorded provenance on the
+// campaign, a system row that is absent or records no account of its own, or a repo failure.
+// Callers must treat that as "not established" and keep the project-owned default rather than
+// guessing, since a wrong guess in that direction pages an operator for a project's own repair.
+func (s *credsSource) systemCreated(ctx context.Context, provider model.Provider, creationAccountID string) (created bool, known bool) {
+	if strings.TrimSpace(creationAccountID) == "" {
+		return false, false
+	}
+	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
+	if err != nil || conn == nil {
+		// A missing system row cannot prove the campaign was NOT created on it (the row may
+		// have been deleted since), but neither can it prove that it was. Unproven, so the
+		// project-owned default stands rather than a guess in either direction.
+		return false, false
+	}
+	if strings.TrimSpace(conn.AccountID) == "" {
+		return false, false
+	}
+	return matchesAccount(conn.AccountID, creationAccountID), true
 }
 
 // matchesAccount reports whether a resolved account id is the one a campaign was created
