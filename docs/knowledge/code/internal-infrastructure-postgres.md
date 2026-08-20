@@ -259,6 +259,25 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   from when a job REACHED its terminal state, not from when it was created.
   Restricting it to terminal rows also keeps it off the hot path: an in-flight
   queued/running job's insert-and-update cycle never touches this index.
+- `000028` — `creative_assets` table (creative-asset storage, LFXV2-3295): an uploaded
+  image subordinate to a brief via a COMPOSITE `(brief_id, project_id)` FK referencing
+  `campaign_briefs (id, project_id)` — the same tenant-integrity shape `000007` retrofitted
+  onto `campaign_audiences`, and for the same reason: the row copies `project_id` and the read
+  path trusts that copy, so a `brief_id`-only FK would let a non-API writer persist an asset
+  whose `project_id` names a different project than its brief. It also carries `project_id`
+  for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`,
+  a `checksum` (lowercase-hex SHA-256 of the bytes), the `bytes` themselves as `BYTEA`, and
+  `created_by` JSONB. `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
+  table is INSERT-ONLY: no `updated_at`, no `version` — an asset is created once and read back,
+  never edited, so there is no optimistic-concurrency handle. The bytes are stored plaintext,
+  NOT encrypted: an ad image is not a secret, unlike the credential blobs. It stores the SOURCE
+  BYTES rather than a platform handle because an ad platform's image handle is per-ad-account
+  and only resolvable at dispatch, so the bytes must survive the gap between upload and campaign
+  create. **It is numbered 000028, not 000027**: 000027 is claimed by open PR #164
+  (`000027_campaigns_ran_on_system_account`, LFXV2-3050), and two branches holding one version
+  are green on both PRs and red only on whichever merges second. The resulting 000027 gap is
+  recorded in `allowedVersionGaps` and is a MERGE-ORDER obligation — #164 must land first, or
+  golang-migrate skips 000027 permanently. See *Migration numbering* above.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
@@ -1134,3 +1153,101 @@ Two guards live in the same transaction as the insert, and neither can be enforc
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.
+
+## `CreativeAssetRepo` (creative-asset storage, LFXV2-3295)
+
+`CreativeAssetRepo` backs `000028`'s `creative_assets` table with two methods, and both are
+built around the parent-brief gate and the content-addressed dedupe key. This is the STORAGE
+layer only: nothing in the service calls it yet — the upload endpoint and the dispatch-time
+asset resolution land in the two follow-on PRs, and the repo is wired into the container there.
+
+`CreateAsset` runs a single statement:
+`INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
+checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>`. Four things
+are doing work here and each has a failure mode if changed:
+
+- **The `WHERE EXISTS` gate is the parent-brief check, in SQL, not in Go.** The row is inserted
+  only if a brief with this `id` and `project_id` exists and is not archived. A brief that is
+  absent, archived, or owned by ANOTHER project produces no inserted row, so `RETURNING` comes
+  back empty → `pgx.ErrNoRows` → `domain.ErrNotFound`. Folding the check into the insert's
+  `SELECT` removes the application-level window a separate `SELECT`-then-`INSERT` would open,
+  but it does **not** serialize against archival: the statement takes no lock on the parent, so
+  under READ COMMITTED its snapshot can still see an active brief while a concurrent
+  `ArchiveBrief` commits. This is the same position the plain `CreateAudience` holds with the
+  identical `status <> 'archived'` guarded insert, and it is deliberate — the `SELECT … FOR
+  UPDATE` treatment is reserved for `CreateAudienceForApprovedBrief`, where losing the race
+  creates REAL HubSpot lists from a brief that is no longer approved. Storing an image under a
+  just-archived brief has no external side effect: the bytes sit unreferenced, the archived
+  brief refuses every subsequent operation, and a later dispatch cannot reach them. Dropping the
+  clause, by contrast, does not merely widen an error path — it lets a
+  caller scoped to project A attach an asset to project B's brief, so it is a tenant boundary.
+  `TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief` asserts each of the three
+  refusals AND that no row was stored, because returning `ErrNotFound` and storing nothing are
+  two separate claims and a broken gate can do one without the other.
+- **`DO UPDATE SET byte_size = creative_assets.byte_size` is a deliberate NO-OP, not a real
+  update.** The point is idempotency: a re-upload of identical bytes collides on
+  `(brief_id, checksum)` and must RETURN the existing row. `DO NOTHING` would suppress
+  `RETURNING` on the conflict → `ErrNoRows` → a spurious `ErrNotFound` on what is actually a
+  successful repeat upload; the no-op `DO UPDATE` keeps the row eligible for `RETURNING` while
+  changing nothing (`byte_size` set to its OWN stored value, qualified `creative_assets.`, not
+  the incoming `EXCLUDED.` one). The `SET` must copy NOTHING from the incoming row: a matching
+  checksum already means the bytes are identical, so a re-send by a different actor has nothing
+  new to write, and the FIRST uploader's `created_by` must survive — a re-sender does not
+  re-author the asset. `TestCreativeAssetRepo_CreateAsset_IsIdempotentOnChecksum` pins that by
+  re-uploading as a second principal and reading `created_by` back.
+- **The parent FK is COMPOSITE, and it is not redundant with the `WHERE EXISTS` gate.** The
+  gate protects the API path; `FOREIGN KEY (brief_id, project_id) REFERENCES campaign_briefs
+  (id, project_id)` protects the TABLE, from every writer — a worker, a backfill, a psql
+  session. `GetAsset` trusts the stored `project_id` for tenant scoping, so an asset whose
+  `project_id` disagreed with its brief's would be served under the wrong tenant.
+  `TestCreativeAssets_CompositeTenantFKRejectsMismatchedProject` binds it with a DIRECT insert
+  that bypasses the repository, because a write through `CreateAsset` would be stopped by the
+  gate and would prove only that the gate works.
+- **`byte_size` is bound from the payload, not defaulted.** The column is the size callers and
+  metrics read INSTEAD of loading the multi-megabyte `bytes`, so a wrong value is not caught by
+  any read that avoids the blob — it is silently wrong exactly where it is relied on.
+  `TestCreativeAssetRepo_CreateAsset_StoresByteSizeMatchingPayload` asserts the stored
+  `byte_size` equals `length(bytes)` READ BACK FROM THE DATABASE, so it fails on a stored `0`
+  or any other value that disagrees with the payload actually persisted. The column carries ONE
+  constraint, `CHECK (byte_size = octet_length(bytes))` — a separate `CHECK (byte_size >= 0)` was
+  removed as redundant, since `octet_length()` is never negative so the equality already implies
+  it, and deleting the `>= 0` clause broke no test. It is load-bearing because
+  `CreateAsset` binds `a.ByteSize` and `a.Bytes` as INDEPENDENT parameters — nothing in the
+  insert derives one from the other — so a buggy caller or any direct writer could otherwise
+  persist a size that does not describe the blob, invisibly to every reader that uses the column
+  as intended. It is close to free: `octet_length(bytea)` reads the varlena size header via
+  `toast_raw_datum_size` and does NOT detoast (measured: 0.27 ms over 150 MB of TOASTed rows,
+  against 179 ms for `md5()` on the same rows). There is deliberately no UPPER bound: it would have to equal the upload endpoint's
+  request limit, and that endpoint lands in a later PR, so guessing it here would mean two
+  limits that silently disagree.
+- **The returned column set OMITS `bytes`.** `creativeAssetCols` (used by the write and the
+  metadata result) does not select the potentially-multi-megabyte blob; only `GetAsset`'s
+  `creativeAssetColsWithBytes` appends it. A create returns metadata, so a `stored.Bytes` read
+  back from `CreateAsset` is `nil` by design.
+
+`GetAsset` reads one asset `WHERE id = $1 AND project_id = $2 AND brief_id = $3`, plus an
+`EXISTS` on a non-archived parent brief — so the lookup is scoped to the tenant, the brief, AND
+the live lifecycle. A correct id under the wrong project or brief reads as absent
+(`ErrNotFound`), so a cross-brief or cross-project reference is a bad reference rather than a
+leak. The active-parent `EXISTS` mirrors `GetAudience` and exists for the reason stated there:
+without it archival would be half-applied — `CreateAsset` refuses an archived parent while
+`GetAsset` still serves its bytes. `TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant`
+pins it by reading the asset successfully, archiving the brief underneath it, and requiring the
+same read to 404. It selects `creativeAssetColsWithBytes`, because the bytes ARE the point of this
+read: they are what a dispatch-time consumer hands to the ad platform.
+
+The parent predicate is ACTIVE, not APPROVED, and that is deliberate: uploading a creative is
+part of COMPOSING a brief, which happens before approval — unlike campaign creation, which does
+gate on approval. `TestCreativeAssetRepo_CreateAsset_AcceptsDraftBrief` drives a `draft` parent
+so the distinction is bound; without it the predicate could be narrowed to `status = 'approved'`
+with the suite still green. `TestCreativeAssets_MimeTypeCheckRejectsUnsupported` does the same
+for the `mime_type` allow-list, asserting both that `image/gif` is refused and that `image/jpeg`
+is accepted — so narrowing the CHECK to PNG alone fails too.
+
+The repository has no source-text SQL assertion (unlike the campaign/connection repos); its
+behaviour — the parent-brief gate's three rejection shapes, the `ON CONFLICT` idempotency, the
+`byte_size` binding, and `GetAsset`'s scoping — is pinned by `creative_asset_repo_live_test.go`.
+That test is IN-PACKAGE (`package postgres`, alongside `audience_reconcile_live_test.go`)
+rather than under `dbtest/`, because `NewCreativeAssetRepo` needs the instrumented `*Pool`
+wrapper that `dbtest.Pool` does not expose; it follows the same `TEST_DATABASE_URL`-gated
+skip/fail-on-CI convention and the same `UniqueID` discipline as the rest of the live suite.
