@@ -346,12 +346,74 @@ driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 googleAdsConfig?: object        — Google Ads-specific params (see GoogleAdsConfig below)
 linkedInConfig?: object         — LinkedIn-specific params
-redditConfig?: object           — Reddit-specific params
+redditConfig?: object           — Reddit-specific params (see RedditConfig below)
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
 microsoftConfig?: object        — Microsoft Ads-specific params (see MicrosoftConfig below)
 hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
 ```
+
+#### RedditConfig (the `redditConfig` object)
+
+Reddit Ads per-platform config. The dispatcher creates a PAUSED campaign -> ad group ->
+ad (promoted post). Targeting is communities (subreddits) + keywords + geo; a conversion
+pixel is required on EVERY objective. The ad's creative comes from EITHER a supplied
+`postUrl` (promote an existing post) OR, when `postUrl` is absent, an `imageUrl` the client
+uses to AUTHOR a promoted image post itself (the brief->servable-ad path, parity with
+`googleAdsConfig`/`metaConfig`). With neither, the campaign + ad group are created but the ad
+is left for manual creation in Reddit Ads Manager. **Budget is in USD** (a LIFETIME spend cap,
+not daily).
+
+```
+budgetUsd: number               — LIFETIME spend cap in USD. Must be finite and POSITIVE and
+                                  round to at least one micro-dollar; NaN/Inf/non-positive is
+                                  rejected during dispatch (a pre-create job failure, since
+                                  CreateCampaigns is async). Omitting it fails the platform job.
+startDate: string               — YYYY-MM-DD (required, calendar-valid).
+endDate: string                 — YYYY-MM-DD (required, must be AFTER startDate).
+objective?: string              — awareness | traffic | conversions | video_views.
+                                  Defaults to conversions.
+geoTargets?: string[]           — ISO 3166-1 alpha-2 country codes (e.g. ['US','JP']), spelled as
+                                  in `metaConfig`/`googleAdsConfig`. Uppercased/de-duplicated; an
+                                  invalid code is rejected before any create. Defaults to ['US'].
+subreddits?: string[]           — Community targeting as subreddit NAMES ('r/golang' or 'golang';
+                                  the 'r/' prefix is stripped). Sent as `communities` names, not
+                                  t5_ IDs. A name Reddit rejects is dropped with a warning step
+                                  (never orphans the campaign).
+interests?: string[]            — Interest targeting. Reddit wants opaque interest IDs while briefs
+                                  produce human labels, so these are commonly dropped with a warning
+                                  (label->ID resolution tracked in LFXV2-3261).
+keywords?: string[]             — Keyword targeting attached to the ad group.
+variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUrl` drives an ad, one
+                                  "ready" instruction per variant is emitted (headline + display UTM
+                                  URL) for manual ad creation. On the author-a-post path the FIRST
+                                  variant's headline is the authored post's headline.
+postUrl?: string                — OPTIONAL existing Reddit post to promote. Accepts a t3_ id, a
+                                  reddit.com/comments/<id> URL, or a redd.it short link; validated
+                                  against reddit.com/redd.it hosts. When set it TAKES PRECEDENCE and
+                                  `imageUrl`/`callToAction` are ignored. Its query/fragment is stripped
+                                  from the stored config snapshot (may carry a secret).
+imageUrl?: string               — OPTIONAL public absolute http(s) image URL. When set and `postUrl`
+                                  is absent, the client AUTHORS a promoted ("dark") IMAGE post from it
+                                  (Reddit ingests and re-hosts the image at create time; there is no
+                                  LINK post type and no separate upload step) and attaches it as the
+                                  ad's creative. A malformed URL / embedded userinfo / non-http(s)
+                                  scheme is rejected before any create. Its query/fragment is stripped
+                                  from the stored config snapshot (a signed URL may carry a secret).
+callToAction?: string           — OPTIONAL button label for an AUTHORED post (see `imageUrl`).
+                                  Case-insensitive, resolved to Reddit's exact title-case label (e.g.
+                                  'Learn More', 'Sign Up', 'Buy Tickets'); an unknown value is rejected
+                                  before any create. Defaults to 'Learn More'. Ignored when `postUrl`
+                                  is set.
+conversionPixelId?: string      — OPTIONAL per-campaign override of the connection's conversion pixel.
+                                  A pixel is REQUIRED for every objective; normally it comes from the
+                                  Reddit connection, and a create with none configured is refused
+                                  before any upstream call.
+videoGoal?: string              — REQUIRED when objective is video_views: VIDEO_VIEW_6S | VIDEO_VIEW_15S
+                                  (Reddit has no bare VIDEO_VIEWS goal). Ignored for other objectives.
+```
+
+The connection supplies the ad account id and OAuth2 credentials — not this campaign config.
 
 #### MicrosoftConfig (the `microsoftConfig` object)
 
