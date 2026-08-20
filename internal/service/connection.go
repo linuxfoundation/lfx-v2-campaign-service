@@ -334,6 +334,23 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 			"project_id", credentialProject, "requested_by_project_id", projectID,
 			"provider", string(d.provider), "error", aerr)
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
+	case errors.Is(aerr, domain.ErrServiceDefect):
+		// ABOVE both connection arms below. The 400 below completes "the stored <provider>
+		// connection cannot be used as configured" with a remedy naming the fields to go and
+		// check — and here every one of those fields is correct. LinkedIn refused the SHAPE of
+		// a request this service built, evaluating no stored credential, so an operator sent
+		// to audit their client_id audits something that was never at fault. That is the exact
+		// outcome the reason sentinel behind this one was split out to prevent.
+		//
+		// A 500 and an ERROR log, like the decryption arm above: the only actor who can repair
+		// this reads the log. The response body names no remedy because the caller has none.
+		//
+		// The reason token is logged, never the error — one condition reachable behind this
+		// classification decodes a DECRYPTED credential blob (see unusableConnectionReason).
+		slog.ErrorContext(ctx, "a defect in this service is blocking "+d.label()+"; the stored connection is NOT at fault and needs no repair",
+			"project_id", projectID, "provider", string(d.provider),
+			"reason", unusableConnectionReason(aerr))
+		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
 	case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
 		// The project has no connection of its own and the LF system row it fell back
 		// to is unusable. The 400 below would tell this caller to edit "the stored
@@ -569,10 +586,46 @@ func validateLinkedInRefreshCredentials(c *conn.LinkedinAdsCredentials) error {
 	if c == nil {
 		return nil
 	}
-	present := 0
-	for _, f := range []*string{c.RefreshToken, c.ClientID, c.ClientSecret} {
-		if f != nil && strings.TrimSpace(*f) != "" {
+	// Two distinct states, deliberately not collapsed. A nil pointer is the key ABSENT from
+	// the payload; a non-nil pointer whose value trims to "" is the key SUPPLIED holding no
+	// credential. Counting only the second as "not present" made them indistinguishable, and
+	// the all-or-none guard below reads `present == 0` as "all three omitted" — so
+	// `{"refresh_token": ""}` scored 0, passed, and was stored. CanRefresh() then read it as
+	// absent and the connection was silently bearer-only, while the operator had watched the
+	// field be accepted and reasonably believed renewal was configured. That is verbatim the
+	// failure the paragraph above says this function prevents.
+	//
+	// The sibling boundary already refuses it: internal/bootstrap/sysacct.go treats a
+	// supplied-but-blank string as "a supplied key holding no credential" and faults. Two
+	// boundaries write the same trio, and one canonicalizing to absence while the other
+	// refuses is a difference no operator can see until renewal silently never happens.
+	present, blank := 0, []string(nil)
+	for _, f := range []struct {
+		name string
+		val  *string
+	}{
+		{"refresh_token", c.RefreshToken},
+		{"client_id", c.ClientID},
+		{"client_secret", c.ClientSecret},
+	} {
+		switch {
+		case f.val == nil:
+			// Absent. The supported bearer-only case is all three like this.
+		case strings.TrimSpace(*f.val) == "":
+			blank = append(blank, f.name)
+		default:
 			present++
+		}
+	}
+	// Checked BEFORE the all-or-none verdict, like the padding rule below, and for the same
+	// reason: a blank field must not be able to reach a verdict that reads it as omitted.
+	if len(blank) > 0 {
+		return &conn.BadRequestError{
+			Code: "400",
+			Message: "linkedin refresh credentials must not be supplied empty: " +
+				strings.Join(blank, ", ") +
+				" carries no credential; omit the field entirely for a bearer-only connection, " +
+				"or supply a real value — an empty one would be stored and silently disable renewal",
 		}
 	}
 	// Surrounding whitespace is REFUSED, not trimmed away, and it is checked BEFORE the

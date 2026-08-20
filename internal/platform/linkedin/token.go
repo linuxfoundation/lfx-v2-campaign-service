@@ -56,9 +56,36 @@ type applicationCredentialsError struct {
 	// StatusCode is the status LinkedIn answered the TOKEN EXCHANGE with (400 or 401).
 	// It is recorded for classification and deliberately not rendered.
 	StatusCode int
+	// Code is the RFC 6749 §5.2 error code LinkedIn returned — one of the two members of
+	// oauthAppFaultCodes. It selects the MESSAGE, because the two members name different
+	// application faults with different remedies even though they share this sentinel.
+	//
+	// Safe to render, unlike anything else in the response body: it is matched against
+	// oauthAppFaultCodes before it is stored, so only a value this file declares as a
+	// constant ever reaches here. No upstream free text travels with it.
+	Code string
 }
 
 func (e *applicationCredentialsError) Error() string {
+	// The two codes under this sentinel do NOT share a remedy, and one message for both
+	// sent half the operators who hit it to the wrong place. `unauthorized_client` on
+	// LinkedIn is an app that lacks Marketing Developer Platform approval for the
+	// refresh-token grant — the client_id and client_secret are entirely correct, and the
+	// shared text told the reader they were "wrong or unknown to LinkedIn". Auditing a
+	// correct credential pair is precisely the useless-but-actionable remedy this whole
+	// taxonomy exists to stop handing out; the sentinel split was right, only the text
+	// was not.
+	//
+	// Both remain ErrApplicationCredentialsInvalid: both are permanent, both name the
+	// APPLICATION registration rather than a member grant, and both are repaired by the
+	// same OWNER. Only the action that owner takes differs.
+	if e.Code == oauthErrorUnauthorizedClient {
+		return fmt.Sprintf("linkedin: %s was refused by LinkedIn: the registered application is not "+
+			"authorized for the refresh-token grant — on LinkedIn this is an app without Marketing "+
+			"Developer Platform approval for it. The stored client_id/client_secret are not at fault "+
+			"and re-pasting them will not help; the application's LinkedIn access has to be granted",
+			e.Connection)
+	}
 	return fmt.Sprintf("linkedin: %s was refused by LinkedIn: the stored application credentials "+
 		"(client_id/client_secret) are wrong or unknown to LinkedIn — correct the connection's "+
 		"application credentials; re-authorizing the member will not help", e.Connection)
@@ -414,6 +441,12 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 				// refresh-token grants). Both name the APPLICATION registration, which is
 				// what an operator stored and can correct.
 				//
+				// One sentinel, two MESSAGES. The remedies diverge — one is "correct the
+				// stored pair", the other is "get the app approved, the pair is fine" — so
+				// the code is carried onto the error and selects the text there. A single
+				// message telling an unauthorized_client operator their credentials were
+				// "wrong or unknown" sent them to audit a correct pair.
+				//
 				// Deliberately NOT ErrCredentialsExpired — that resolves to "re-authorize",
 				// and no member re-authorization repairs an application credential. Equally
 				// deliberately, the three REQUEST/PROTOCOL codes are no longer routed here:
@@ -428,6 +461,10 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 				return "", &applicationCredentialsError{
 					Connection: c.creds.ConnectionLabel(),
 					StatusCode: resp.StatusCode,
+					// Carried so the message can distinguish the two members of this map.
+					// `code` reached here only by matching oauthAppFaultCodes, so it is one
+					// of this file's own constants and never upstream free text.
+					Code: code,
 				}
 			}
 			// `invalid_grant` — the ONE §5.2 code that describes a dead grant — plus the

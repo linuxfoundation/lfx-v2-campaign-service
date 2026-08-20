@@ -66,15 +66,45 @@ func tokenServer(t *testing.T, count *atomic.Int32, delay time.Duration) *httpte
 // COUNT, not merely that a token came back — a per-caller refresh would still return
 // a valid token to everyone and pass a weaker assertion while hammering the token
 // endpoint and risking rate limits.
+//
+// The rendezvous is EXPLICIT, and that is the load-bearing part of this test. It used to
+// rely on a 50ms time.Sleep in the handler, with a comment claiming the delay "guarantees
+// the followers arrive while the leader's fetch is in flight". A sleep guarantees no such
+// thing: under scheduler load a caller can be descheduled past the leader's completion,
+// observe the now-populated cache, and never attempt an exchange — so a NON-coalescing
+// implementation could report exchanges == 1 and pass. The test asserted a real property
+// and could not fail on its negation, which is the same as asserting nothing.
+//
+// What replaces it: every caller signals arrival on `arrived` BEFORE calling, the test
+// waits for all N signals, and only then closes `release` to let the handler return. The
+// leader is therefore provably still inside its exchange when the last follower calls, so
+// a per-caller refresh has nowhere to hide — each straggler would find an empty cache and
+// add a second exchange. Verified by mutation: deleting the `inflight` coalescing makes
+// this fail with exchanges == 25.
 func TestAccessTokenValueSingleFlight(t *testing.T) {
 	var exchanges atomic.Int32
-	// A delay guarantees the followers arrive while the leader's fetch is in flight;
-	// without it the calls could serialize and each legitimately find an empty cache.
-	srv := tokenServer(t, &exchanges, 50*time.Millisecond)
+
+	const callers = 25
+	// arrived is signalled once per caller, before it enters accessTokenValue. release is
+	// closed only after all N have signalled, and the handler blocks on it — so no exchange
+	// can COMPLETE until every caller is already past the point where it would consult the
+	// cache. Buffered to N so a signal never blocks a caller that is about to call.
+	arrived := make(chan struct{}, callers)
+	release := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		// Blocks until the test releases it. A handler that returned promptly would let the
+		// leader populate the cache before the followers arrived — exactly the hole the sleep
+		// left open.
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(linkedInSampleTokenResponse))
+	}))
+	t.Cleanup(srv.Close)
 
 	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
 
-	const callers = 25
 	var wg sync.WaitGroup
 	tokens := make([]string, callers)
 	errs := make([]error, callers)
@@ -82,9 +112,25 @@ func TestAccessTokenValueSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			arrived <- struct{}{}
 			tokens[i], errs[i] = c.accessTokenValue(context.Background())
 		}()
 	}
+	// Every caller has signalled before the single in-flight exchange is allowed to finish.
+	//
+	// A signal is sent immediately before the call, so a goroutine could in principle be
+	// descheduled between the two — the barrier bounds when callers START, not when they
+	// reach the cache check. That residual gap is closed by the direction of the remaining
+	// race rather than by more synchronization: a straggler that arrives LATE finds the
+	// cache still EMPTY, because `release` is closed only after this loop and no exchange
+	// can complete before then. Late arrival therefore produces an EXTRA exchange under a
+	// non-coalescing implementation, never a spuriously coalesced one. The test can only
+	// fail in the direction that indicates a real defect, which is the property the sleep
+	// did not have — there, a late arrival found the cache POPULATED and silently passed.
+	for range callers {
+		<-arrived
+	}
+	close(release)
 	wg.Wait()
 
 	for i := range callers {
@@ -982,6 +1028,82 @@ func TestNonGrantOAuthCodesSplitByWhoCanRepairThem(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestUnauthorizedClientDoesNotBlameTheStoredCredentialPair pins the second half of the
+// message split under ErrApplicationCredentialsInvalid.
+//
+// oauthAppFaultCodes holds BOTH `invalid_client` and `unauthorized_client`, and they shared
+// one message: "the stored application credentials (client_id/client_secret) are wrong or
+// unknown to LinkedIn". That is true of the first and false of the second. This branch's own
+// taxonomy comment identifies `unauthorized_client` as the app lacking refresh-token grant —
+// a Marketing Developer Platform approval — where client_id and client_secret are entirely
+// correct. An operator handed that text re-pastes a correct pair, finds nothing, and the
+// approval that would actually fix it is never mentioned.
+//
+// The SENTINEL split is right and is deliberately not changed: both are permanent, both name
+// the application registration, both have the same owner. Only the action differs, so only
+// the text does.
+func TestUnauthorizedClientDoesNotBlameTheStoredCredentialPair(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized_client","error_description":"app 99 secret sk-LEAKME"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("unauthorized_client was accepted")
+	}
+	// The classification is unchanged: same sentinel, same owner.
+	if !errors.Is(err, ErrApplicationCredentialsInvalid) {
+		t.Fatalf("unauthorized_client must still unwrap to ErrApplicationCredentialsInvalid: %v", err)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "are wrong or unknown to LinkedIn") {
+		t.Errorf("the message tells the operator their stored client_id/client_secret are wrong, "+
+			"for a fault in which they are correct — the app simply lacks the refresh-token "+
+			"grant: %q", msg)
+	}
+	if !strings.Contains(msg, "not authorized for the refresh-token grant") {
+		t.Errorf("the message must name the actual fault (the app is not authorized for this "+
+			"grant), or the operator has no path to the fix: %q", msg)
+	}
+	// The upstream body still never travels — the code is one of THIS file's constants,
+	// matched before it is stored; nothing free-text comes with it.
+	for _, leak := range []string{"sk-LEAKME", "app 99"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("upstream token-endpoint text %q leaked into the error: %v", leak, err)
+		}
+	}
+}
+
+// The sibling keeps its own text: invalid_client really IS a wrong or unknown stored pair,
+// and the split must not blur in the other direction either.
+func TestInvalidClientStillNamesTheStoredCredentialPair(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("invalid_client was accepted")
+	}
+	if !errors.Is(err, ErrApplicationCredentialsInvalid) {
+		t.Fatalf("invalid_client must unwrap to ErrApplicationCredentialsInvalid: %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "are wrong or unknown to LinkedIn") {
+		t.Errorf("invalid_client must keep naming the stored pair — that IS its fault: %q", msg)
+	}
+	if strings.Contains(msg, "not authorized for the refresh-token grant") {
+		t.Errorf("invalid_client took the approval message, which names a remedy that does not "+
+			"apply to a wrong or unknown credential pair: %q", msg)
 	}
 }
 

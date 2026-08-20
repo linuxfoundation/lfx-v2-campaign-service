@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -775,6 +776,80 @@ func TestLinkedInRefreshCredentialsAreAllOrNone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLinkedInRefreshCredentialsRejectSuppliedButEmpty pins the state the all-or-none rule
+// silently swallowed: a field SUPPLIED holding no credential.
+//
+// `present` counted only non-blank values, so `{"refresh_token": ""}` scored 0 and matched
+// the `present == 0` arm — the arm that means "all three omitted, a supported bearer-only
+// connection". It was accepted and stored. CanRefresh() then read the blank as absent, so
+// the connection was bearer-only, while the operator had watched the field be accepted and
+// reasonably believed renewal was configured. They meet the same 60-day expiry this feature
+// exists to prevent, with nothing anywhere reporting a fault. That is verbatim the failure
+// validateLinkedInRefreshCredentials's own docstring claims to prevent.
+//
+// `present == 0` was carrying two incompatible meanings — "three nil pointers" (legitimate)
+// and "supplied but empty" (a defect) — so nil and non-nil-but-blank are now distinguished
+// rather than collapsed. The sibling boundary already refused this shape:
+// internal/bootstrap/sysacct.go calls a supplied-but-blank string "a supplied key holding no
+// credential" and faults on it. Two boundaries write the same trio; agreeing is the point.
+func TestLinkedInRefreshCredentialsRejectSuppliedButEmpty(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	cases := []struct {
+		name  string
+		creds *conn.LinkedinAdsCredentials
+	}{
+		// The reported shape: ONE field supplied empty, the other two genuinely absent. It
+		// scored present == 0 and took the bearer-only arm.
+		{"empty refresh token alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("")}},
+		{"whitespace-only refresh token alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("   ")}},
+		{"empty client id alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientID: s("")}},
+		{"empty client secret alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientSecret: s("")}},
+		// All three supplied empty also scored 0. It reads as "the operator configured
+		// refresh" far more strongly than one blank field does, and passed just as quietly.
+		{"all three supplied empty", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s(""), ClientID: s(""), ClientSecret: s("")}},
+		{"all three whitespace-only", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s(" "), ClientID: s("\t"), ClientSecret: s("\n")}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateLinkedInRefreshCredentials(tc.creds)
+			if err == nil {
+				t.Fatal("a supplied-but-empty refresh credential was accepted; it stores, reads " +
+					"back as absent through CanRefresh(), and leaves the connection bearer-only " +
+					"while the operator believes renewal is configured")
+			}
+			var bad *conn.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("err = %T, want *conn.BadRequestError so the caller gets a 400", err)
+			}
+			// The message must name the shape, or the operator re-sends the same payload: the
+			// all-or-none text ("supplied together, or all omitted") reads as satisfied to
+			// someone who supplied all three, just emptily.
+			if !strings.Contains(bad.Message, "empty") {
+				t.Errorf("message = %q, want it to name the supplied-but-empty shape", bad.Message)
+			}
+		})
+	}
+
+	// The narrowing half. Absence must stay legitimate — all three nil is the supported
+	// bearer-only case, and a rule that refused it would break every non-MDP connection.
+	for _, ok := range []*conn.LinkedinAdsCredentials{
+		{AccessToken: "at"},
+		{AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs")},
+	} {
+		if err := validateLinkedInRefreshCredentials(ok); err != nil {
+			t.Errorf("a legitimate payload was refused: %v", err)
+		}
 	}
 }
 

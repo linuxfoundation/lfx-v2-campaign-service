@@ -334,6 +334,32 @@ var (
 	// constructing wrongly.
 	ErrTokenRequestRejected = errors.New("the platform rejected the token request itself; this is a service defect")
 
+	// ErrServiceDefect marks a failure whose remedy belongs to NOBODY the request can
+	// reach: not the caller, not the operator who configured the connection. This service
+	// built something wrong, and only a code change repairs it.
+	//
+	// It exists because the reason vocabulary and the STATUS CODE are separate decisions,
+	// and ErrTokenRequestRejected only ever won the first of them. That sentinel documents
+	// its own remedy as "this is a service defect, file a bug" — there is no field on a
+	// connection whose editing makes a malformed refresh request well-formed. But it was
+	// wrapped alongside ErrConnectionNotUsable, and every consumer of THAT sentinel answers
+	// a caller-fault status: 409 "repair the connection" on the metrics and toggle paths,
+	// 400 "the stored connection cannot be used as configured" on discovery. So the split
+	// created to stop sending operators to audit a correct configuration went on doing
+	// exactly that, with the reason token visible only in a server log.
+	//
+	// It is wrapped ALONGSIDE a reason sentinel, never instead of one, on the same
+	// arrangement as ErrSystemConnectionNotUsable: this one selects the status (a 5xx that
+	// pages whoever owns the code) while the reason token stays machine-readable for
+	// unusableConnectionReason. And like that sentinel it must be matched ABOVE the general
+	// ErrConnectionNotUsable arm wherever both can appear, or the general arm swallows it
+	// and the caller-fault status returns.
+	//
+	// PERMANENT, never retryable — but a 5xx rather than a 4xx, because "retry" and "fix
+	// your request" are both wrong and only one audience can act. A 500 that pages us is
+	// the honest answer to a defect that is ours.
+	ErrServiceDefect = errors.New("this service constructed the request wrongly; no caller or operator action can repair it")
+
 	// ErrCredentialsAbsent — the connection row exists but its credential column is
 	// EMPTY. Nothing was decrypted because there was nothing to decrypt.
 	//

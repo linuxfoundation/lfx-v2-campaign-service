@@ -362,9 +362,21 @@ func TestLinkedinExpiryTagsTokenRequestRejected(t *testing.T) {
 
 	got := linkedinExpiry(base)
 
-	if !errors.Is(got, domain.ErrConnectionNotUsable) {
-		t.Error("want ErrConnectionNotUsable: a refused token request is permanent, so it must not " +
-			"reach the retryable 503 arm asking a caller to retry a defect only a code change fixes")
+	// ErrServiceDefect, NOT ErrConnectionNotUsable — and this assertion is the correction of
+	// a test that encoded the bug. It previously required ErrConnectionNotUsable here, on the
+	// reasoning that the tag merely keeps the error off the retryable 503 arm. It does that,
+	// but it does much more: every consumer of that sentinel answers a CALLER-FAULT status,
+	// so requiring it pinned the 409 "repair the connection" this sentinel's whole existence
+	// argues against. Both sentinels keep the error off the 503; only one of them tells the
+	// truth about who has to act.
+	if !errors.Is(got, domain.ErrServiceDefect) {
+		t.Error("want ErrServiceDefect: a refused token request is permanent AND ours, so it must " +
+			"reach neither the retryable 503 arm nor the caller-fault arms that say 'repair the connection'")
+	}
+	if errors.Is(got, domain.ErrConnectionNotUsable) {
+		t.Error("must NOT carry ErrConnectionNotUsable: every consumer of it answers a caller-fault " +
+			"status (409 on metrics/toggle/adoption, 400 on discovery), which is precisely the " +
+			"'audit a correct configuration' remedy this sentinel was split out to retire")
 	}
 	if !errors.Is(got, domain.ErrTokenRequestRejected) {
 		t.Error("want domain.ErrTokenRequestRejected as the machine-readable reason")

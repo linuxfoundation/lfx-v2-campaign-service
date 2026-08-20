@@ -265,6 +265,13 @@ the remedy is identical, an operator repairs the connection) and `failed` (the 5
 deliberately NOT merged — a staged email draft and an ad-platform outage produce the same
 absence of numbers and want opposite responses.
 
+`domain.ErrServiceDefect` takes `failed`, NOT `connection_problem`, and its own arm above the
+connection ones. This row carries no status code — it carries the STRING an operator reads — and
+`connection_problem` renders as "go fix your connection" for a connection that is fine, which is
+the same provably useless remedy a 409 would have been. `failed` already means "not this
+campaign's configuration, and retrying is the caller's only move"; the MESSAGE is what
+distinguishes it, and it names the fault as ours and no remedy the reader owns.
+
 Two sentinels reach this path WITHOUT `ErrConnectionNotUsable` and so need their own arms
 above the connection ones, or they fall through to the retryable default and tell an operator
 to retry something only a human edit clears: `domain.ErrNotFound` (no connection row for this
@@ -451,6 +458,17 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   key is not. It logs at ERROR because it is the arm that should page someone, and the cause IS
   logged here — it is produced by the encryptor from ciphertext and key material only, never from
   plaintext.
+- `domain.ErrServiceDefect` → **500** — matched ABOVE every connection arm below. The failure is
+  in a request THIS SERVICE constructed, so nothing the caller or the operator owns is broken.
+  Each arm below names a remedy belonging to someone who has nothing to repair: the 400 tells an
+  operator their stored connection "cannot be used as configured" and lists fields to check that
+  are all correct. That is the audit-a-correct-configuration outcome the reason vocabulary exists
+  to prevent, and tagging the error `ErrConnectionNotUsable` reintroduced it while the reason token
+  reached only the log. **The reason sentinel and the STATUS sentinel are separate axes.** A 5xx
+  because the only actor who can act reads the log, not the response; the body names no remedy
+  because the caller has none. Produced today by `linkedinExpiry` for a token request LinkedIn
+  refused on protocol grounds (`ErrTokenRequestRejected`), and wrapped ALONGSIDE that reason so
+  `unusableConnectionReason` keeps reporting `token_request_rejected`.
 - `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
   stands: inactive, an incomplete or undecodable credential blob, or a malformed stored config
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what

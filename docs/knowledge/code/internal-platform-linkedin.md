@@ -46,13 +46,40 @@ The bootstrap site matters most: `requiredCredentialKeys[linkedin-ads]` is
 conditional-group loop, and the row it guards is the LF system account — the
 fallback for every project with no connection of its own. Refusal is deliberate:
 a credential is opaque to this service, so silently rewriting one would hide a
-truncated paste. `fetchToken` also trims `ClientID`/`ClientSecret` as defence in
+truncated paste.
+
+**Both boundaries must also agree that SUPPLIED-BUT-EMPTY is a fault, not an absence.**
+`validateLinkedInRefreshCredentials` counted only non-blank values, so `{"refresh_token": ""}`
+scored `present == 0` — the arm meaning "all three omitted, a supported bearer-only
+connection" — passed the all-or-none guard, and was stored. `CanRefresh()` then read the
+blank as absent and the connection was bearer-only, while the operator had watched the field
+be accepted and reasonably believed renewal was configured; they meet the same ~60-day expiry
+the feature exists to prevent, with nothing reporting a fault. `present == 0` was carrying two
+incompatible meanings — three nil pointers (legitimate) and supplied-but-empty (a defect) — so
+nil and non-nil-but-blank are now distinguished rather than collapsed, and the blank case is
+refused with its own message before the all-or-none verdict is reached. `sysacct.go` already
+called this "a supplied key holding no credential" and faulted on it. **Two boundaries writing
+the same trio must agree; one refusing while the other canonicalizes to absence is a difference
+no operator can see until renewal silently never happens.** `fetchToken` also trims `ClientID`/`ClientSecret` as defence in
 depth for rows written before those validators existed (`NewClient` already
 trimmed `RefreshToken`). When refresh material IS
 present the client exchanges it at LinkedIn's token endpoint before the access
 token expires, coalescing concurrent callers single-flight (`tokenMu` is never
 held across the network call) so N callers produce ONE exchange — the same
 discipline as the google-ads and microsoft clients.
+
+**The coalescing test needs a BARRIER, not a sleep.** Its assertion is a server-side
+exchange COUNT of exactly 1, and that count has two possible causes: callers coalesced, or
+callers arrived one at a time and each found the CACHE the previous one populated. A
+`time.Sleep` in the handler cannot separate them — nothing forces the followers to arrive
+during the leader's fetch, so under scheduler load a late caller observes the populated cache
+and a NON-coalescing implementation reports 1 and passes. Demonstrated, not reasoned about:
+with the `inflight` join deleted entirely and callers staggered past the leader's completion,
+the sleep-based assertion still reported `exchanges == 1`. The test now has every caller
+signal arrival on a channel, waits for all N signals, and only then releases the handler — so
+no exchange can COMPLETE before the last caller has arrived and no caller can find a warm
+cache. Under the same deletion it reports `exchanges == 25`. **A count that a cache can
+satisfy is not a measurement of coalescing.**
 
 **No supported write persists an access-token expiry, and that is ENFORCED rather
 than assumed.** `Credentials.AccessTokenExpiresAt` gates a branch in `token.go`
@@ -94,7 +121,8 @@ only a body outside the RFC — or one that cannot be read — reaches a fallbac
 | §5.2 code | sentinel | who repairs it |
 | --- | --- | --- |
 | `invalid_grant` | `ErrCredentialsExpired` | the MEMBER re-authorizes |
-| `invalid_client`, `unauthorized_client` | `ErrApplicationCredentialsInvalid` | an OPERATOR edits the connection |
+| `invalid_client` | `ErrApplicationCredentialsInvalid` | an OPERATOR corrects the stored pair |
+| `unauthorized_client` | `ErrApplicationCredentialsInvalid` | an OPERATOR gets the app APPROVED (the pair is correct) |
 | `invalid_request`, `unsupported_grant_type`, `invalid_scope` | `ErrTokenRequestRejected` | WE fix the service |
 
 Exactly ONE code, `invalid_grant`, describes a dead grant: the RFC reserves it for an
@@ -127,6 +155,19 @@ that points at this service rather than at the caller's configuration: the remed
 No sentinel here is wider than its name — each exists because a call site acts on it
 differently.
 
+**One sentinel can still owe two MESSAGES.** `invalid_client` and `unauthorized_client`
+share `ErrApplicationCredentialsInvalid` correctly — both are permanent, both name the
+application registration, both have the same owner — but they do not share a remedy, and
+for a while they shared a message saying the stored `client_id`/`client_secret` "are wrong
+or unknown to LinkedIn". On `unauthorized_client` that is false: the pair is correct and
+the app simply lacks Marketing Developer Platform approval for the refresh-token grant. An
+operator handed that text re-pastes a correct credential and never hears about the
+approval. `applicationCredentialsError` therefore carries the §5.2 `Code` and selects the
+message from it. The code is safe to render because it is matched against
+`oauthAppFaultCodes` before it is stored, so only one of this file's own constants ever
+reaches the field — no upstream free text travels with it. **A shared sentinel is a claim
+about the OWNER, not about the remedy.**
+
 **The fallback is a choice, not an accident.** An absent, non-JSON or unrecognised
 code takes the EXPIRED arm. That asymmetry is picked because its failure mode is
 self-correcting: if the guess is wrong the member re-authorizes, the real fault
@@ -143,10 +184,16 @@ and falls through to the generic retryable 503, the same opaque surface the spli
 exists to retire. It is therefore its own typed error unwrapping to the exported
 `ErrApplicationCredentialsInvalid`, and a refused token request its own typed error
 unwrapping to `ErrTokenRequestRejected`. The dispatch layer (`linkedinExpiry`) re-tags
-each as `ErrConnectionNotUsable` plus its own reason sentinel: the shared sentinel
-keeps ALL THREE out of the retryable bucket and out of an opaque 500, while the
-distinct reason carries the remedy — the member re-authorizes, the operator who
-configured the connection corrects it, or we fix the service. **`linkedinExpiry` and
+each with its own reason sentinel plus a STATUS sentinel — and the status sentinel is
+**not the same for all three**. The two credential faults take `ErrConnectionNotUsable`,
+whose consumers answer a caller-fault 4xx, because a human outside this codebase repairs
+them. A refused token request takes `ErrServiceDefect` and a 5xx, because every
+`ErrConnectionNotUsable` consumer answers "repair your connection" — a 409 on metrics,
+toggle and adoption, a 400 on discovery — which for a request this service built wrongly is
+the exact audit-a-correct-configuration remedy the split existed to retire. Tagging it
+`ErrConnectionNotUsable` made the reason token visible only in a log while the RESPONSE
+went on blaming the operator. **The reason sentinel and the status sentinel are separate
+axes; getting the first right does not settle the second.** **`linkedinExpiry` and
 `linkedinConnectionDefect` must list the same sentinels.** The predicate is what call
 sites guard on, so a sentinel re-tagged by the first but missing from the second is
 classified correctly and then never reached — which is exactly how `invalid_client`

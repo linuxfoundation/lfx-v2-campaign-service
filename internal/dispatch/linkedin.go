@@ -81,14 +81,20 @@ func linkedinConnectionLabel(res *resolved) string {
 // that simply aged out reaches the caller as a generic upstream failure whose cause
 // is visible only in a server log.
 //
-// It re-tags two further permanent token-exchange faults the same way, each onto its own
-// reason sentinel: an invalid APPLICATION credential (linkedin.ErrApplicationCredentialsInvalid
+// It re-tags two further permanent token-exchange faults, each onto its own reason
+// sentinel: an invalid APPLICATION credential (linkedin.ErrApplicationCredentialsInvalid
 // — LinkedIn's `invalid_client`/`unauthorized_client`) and a token REQUEST LinkedIn refused on
 // protocol grounds (linkedin.ErrTokenRequestRejected — `invalid_request`,
-// `unsupported_grant_type`, `invalid_scope`). All three are permanent connection-path defects
-// that must not reach the retryable 503 arm, which is why one helper covers them; only the
-// REMEDY differs, and that is exactly what the distinct reason sentinels carry — the member
-// re-authorizes, the operator edits the connection, or we fix the service.
+// `unsupported_grant_type`, `invalid_scope`). All three are permanent and none may reach the
+// retryable 503 arm, which is why one helper covers them; only the REMEDY differs — the
+// member re-authorizes, the operator edits the connection, or we fix the service.
+//
+// The STATUS sentinel is NOT the same for all three, and that is deliberate. The first two
+// are connection-path defects a human outside this codebase repairs, so they take
+// domain.ErrConnectionNotUsable and its caller-fault 4xx. The third is OURS: it takes
+// domain.ErrServiceDefect and a 5xx, because every ErrConnectionNotUsable consumer answers
+// "repair your connection", which for a malformed request this service built is a remedy
+// that provably cannot work.
 //
 // A no-op for every other error, so call sites can apply it unconditionally. The
 // client's message already names the connection; no credential material is added.
@@ -101,7 +107,17 @@ func linkedinExpiry(err error) error {
 		// so both credential remedies below are wrong for it: one sends a member through a
 		// re-authorization and the other sends an operator to audit their client_id, and
 		// neither can make a malformed refresh request well-formed.
-		return fmt.Errorf("%w: %w: %w", domain.ErrConnectionNotUsable, domain.ErrTokenRequestRejected, err)
+		//
+		// domain.ErrServiceDefect, NOT domain.ErrConnectionNotUsable — and that difference is
+		// the whole point of the arm. Every consumer of ErrConnectionNotUsable answers a
+		// caller-fault status (409 "repair the connection" on metrics and toggle, 400 "the
+		// stored connection cannot be used as configured" on discovery), so wrapping it here
+		// guaranteed the exact remedy this sentinel was created to retire: an operator sent
+		// to audit a configuration that is correct. The reason token reached only the log.
+		//
+		// The reason sentinel still travels ALONGSIDE, so unusableConnectionReason keeps
+		// reporting token_request_rejected; only the status axis changed.
+		return fmt.Errorf("%w: %w: %w", domain.ErrServiceDefect, domain.ErrTokenRequestRejected, err)
 	case errors.Is(err, linkedin.ErrApplicationCredentialsInvalid):
 		// Checked BEFORE the expiry arm. The two sentinels are disjoint today, but if an
 		// error ever carried both, the operator-actionable reading is the one that must win:

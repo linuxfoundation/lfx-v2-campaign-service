@@ -39,8 +39,14 @@ enforced on the system row:
   while LinkedIn's preflight (`internal/platform/linkedin/client.go`) refuses a padded token, so
   the row every unconnected project falls back to was one every dispatch rejects. Refused rather
   than canonicalized: a credential is opaque here, and silently rewriting one would hide a
-  truncated paste. Padding INSIDE a value, and padding on a key the provider does not require, are
-  left alone — a secret's interior is not this command's business.
+  truncated paste. Padding INSIDE a value is left alone — a secret's interior is not this
+  command's business. Padding on an OPTIONAL key is NOT left alone: `validateConditionalGroups`
+  refuses it for every member of a conditional group, and LinkedIn's refresh trio
+  (`refresh_token`/`client_id`/`client_secret`) is exactly such a group — optional as a set,
+  mandatory as a set. `requiredCredentialKeys[linkedin-ads]` is `{"access_token"}` only, so the
+  required-key loop never sees the trio, which is why the rule had to be restated there. A
+  supplied-but-blank member of that group is refused on the same loop, as a supplied key holding
+  no credential.
 - **Unknown credential keys are REFUSED** (`requireKnownCredentialKeys`, checked on the folded
   document before any value rule). An unsupported key is not inert here. `canonicalCredentials`
   folds EVERY supplied key and re-marshals the whole map, so the key survives into the encrypted
