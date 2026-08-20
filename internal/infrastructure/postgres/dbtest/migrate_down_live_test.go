@@ -257,10 +257,10 @@ func schemaAtVersion(ctx context.Context, t *testing.T, version uint) []string {
 	return schemaObjects(ctx, t, dsn)
 }
 
-// schemaObjects lists the public schema as comparable strings: tables, COLUMNS, indexes
-// and constraints.
+// schemaObjects lists the public schema as comparable strings: tables, COLUMNS, indexes,
+// constraints and SEQUENCES.
 //
-// All four kinds are here because each is the only witness to some migration's down file,
+// All five kinds are here because each is the only witness to some migration's down file,
 // and a snapshot that omits one lets that file be emptied without the test noticing.
 // Every kind below was added in response to a mutation that SURVIVED a narrower version of
 // this helper:
@@ -270,6 +270,12 @@ func schemaAtVersion(ctx context.Context, t *testing.T, version uint) []string {
 //   - adding indexes still missed 000021, whose down drops a COLUMN.
 //   - adding columns still missed 000013, whose index is dropped by a neighbouring
 //     migration regardless; the constraint 000014 restores is what distinguishes them.
+//   - adding constraints still missed the SEQUENCE a BIGSERIAL creates. 000010's
+//     `id BIGSERIAL PRIMARY KEY` creates `index_outbox_id_seq`, and a sequence's
+//     increment, bounds, cache and cycle flag are carried by NO other object: a down
+//     that restores the sequence with `INCREMENT BY 7` leaves every table, column,
+//     index and constraint byte-identical, so the comparison passed while the restored
+//     schema hands out different keys than the one it claims to be the exact inverse of.
 //
 // golang-migrate's own `schema_migrations` bookkeeping table is excluded: it survives Down
 // by design, is not part of this service's schema, and its CONTENT is the version pointer
@@ -301,6 +307,16 @@ func schemaObjects(ctx context.Context, t *testing.T, dsn string) []string {
 	// expression is joined in from pg_attrdef: a down that drops a DEFAULT changes what the
 	// column does on every subsequent INSERT, and the old snapshot selected no default at
 	// all, so that was invisible too.
+	//
+	// The sequence arm reads pg_sequences for the same reason the column arm reads
+	// pg_attribute: the DEFINING properties, not the name. A BIGSERIAL column's sequence is
+	// a schema object in its own right, and none of its parameters — increment, bounds,
+	// cache, cycle — is observable through the table, column, index or constraint rows
+	// above. `last_value` is deliberately NOT selected: it is the sequence's runtime
+	// position, advanced by whatever rows a test inserted, so including it would make the
+	// snapshot depend on activity rather than on schema and fail on a correct down file.
+	// Ownership is likewise omitted; it is carried by the column's DEFAULT expression,
+	// which the column arm already renders as `nextval('index_outbox_id_seq'::regclass)`.
 	rows, err := conn.Query(ctx, `
 		SELECT 'table:' || tablename
 		FROM pg_tables
@@ -329,6 +345,16 @@ func schemaObjects(ctx context.Context, t *testing.T, dsn string) []string {
 		FROM pg_constraint c
 		WHERE c.connamespace = 'public'::regnamespace
 		  AND c.conrelid::regclass::text <> 'schema_migrations'
+		UNION ALL
+		SELECT 'sequence:' || sequencename || ' ' || data_type ||
+		       ' START ' || start_value ||
+		       ' MIN ' || min_value ||
+		       ' MAX ' || max_value ||
+		       ' INCREMENT ' || increment_by ||
+		       ' CACHE ' || cache_size ||
+		       CASE WHEN cycle THEN ' CYCLE' ELSE ' NO CYCLE' END
+		FROM pg_sequences
+		WHERE schemaname = 'public'
 		ORDER BY 1`)
 	if err != nil {
 		t.Fatalf("read the schema: %v", err)

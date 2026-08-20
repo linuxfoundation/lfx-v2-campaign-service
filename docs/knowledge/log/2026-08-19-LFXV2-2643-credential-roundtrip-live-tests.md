@@ -40,17 +40,31 @@ What was genuinely missing was the credential path. Every pre-existing
 credential assertion in `connection_live_test.go` writes a literal such as
 `[]byte("ciphertext-v1")`. That value is printable ASCII, so it survives a
 column typed as text, a driver that transcodes on the wire, and an encryptor
-that never ran — none of which it can distinguish. Real AES-256-GCM output
-cannot: it is a random nonce followed by ciphertext and a tag, carrying NUL
-bytes, invalid UTF-8, and every byte value. So the round-trip test seals a
-deliberately non-ASCII plaintext with the PRODUCTION `crypto.AESGCM` and writes
-it through the real repository.
+that never ran — none of which it can distinguish. Real AES-256-GCM output is
+different in kind: it is a random nonce followed by ciphertext and a tag, so its
+bytes are drawn from the whole 0x00–0xff range instead of from printable ASCII.
+What that buys is per-SAMPLE, not guaranteed — a 54-byte seal cannot contain
+every byte value, and carries a NUL only ~19% of the time; what it essentially
+always is, is invalid UTF-8 (measured: 200,000 of 200,000). Since the property
+that makes the test able to see a TEXT column belongs to the individual sample
+rather than to GCM, `sealTextHostile` ASSERTS it on each run rather than
+trusting it. So the round-trip test seals a deliberately non-ASCII plaintext
+with the PRODUCTION `crypto.AESGCM`, through that precondition, and writes it
+through the real repository.
+
+*(Corrected 2026-08-20.* This paragraph originally claimed GCM output carries
+"NUL bytes, invalid UTF-8, and every byte value". That is a guarantee no
+54-byte sample can offer, and it contradicted both the follow-up further down
+this same entry and the 2026-08-20 entry, which measure the NUL rate at 19.0%.
+The per-sample behaviour and the `sealTextHostile` precondition are what is
+true.*)
 
 The assertion set is three-part on purpose, because the obvious version of this
 test proves nothing. Asserting only that the decrypted plaintext matches the
 original passes for an encryptor that stores cleartext — cleartext decrypts to
 itself. The test therefore also asserts the NEGATIVE: the stored column is not
-the plaintext and contains no recognizable fragment of it. Third, the stored
+the plaintext, and it has the SHAPE of a sealed blob (nonce + ciphertext + tag).
+Third, the stored
 bytes are byte-identical to what `Encrypt` returned, which is what makes this a
 statement about the DATABASE rather than about crypto — if the column mangled
 one byte, GCM authentication would fail and the failure would be read as
@@ -162,5 +176,7 @@ test that fails without saying why. Mutating `Decrypt` to return a same-length
 wrong plaintext yields `got 26 bytes sha256=b2cf0dec… want 26 bytes
 sha256=48fa99d3…`; shortening it by three bytes yields `got 23 bytes … want 26
 bytes …`, so the two fault classes stay distinguishable. The
-`bytes.Contains(..., []byte("secret"))` assertion was left alone — it prints
-only the fixed literal it searched for, never the blob.
+`bytes.Contains(..., []byte("secret"))` assertion was left alone at the time —
+it prints only the fixed literal it searched for, never the blob. It has since
+been REPLACED for an unrelated reason; see the 2026-08-20 entry on the
+substring search that could fail correct encryption.

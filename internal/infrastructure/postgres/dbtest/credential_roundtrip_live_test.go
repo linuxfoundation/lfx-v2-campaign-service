@@ -6,6 +6,8 @@ package dbtest_test
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"errors"
 	"testing"
@@ -36,6 +38,30 @@ func newAESGCM(t *testing.T) *crypto.AESGCM {
 		t.Fatalf("crypto.NewAESGCM: %v", err)
 	}
 	return enc
+}
+
+// gcmSizes returns the nonce and tag lengths that crypto.AESGCM's output carries, read
+// off a cipher.AEAD constructed exactly as crypto.NewAESGCM constructs its own (AES with
+// credentialKey, wrapped in NewGCM) rather than hard-coded as 12 and 16.
+//
+// Reading them beats pinning literals because the numbers are load-bearing in an assertion
+// about the PRODUCTION encryptor's output shape: if crypto.AESGCM ever moved to a
+// different nonce length, a pinned 12 would turn a correct blob into a test failure, and a
+// pinned expectation recomputed to match would be an assertion that agrees with itself.
+// It also beats exporting NonceSize/TagSize from the crypto package: that would widen the
+// production API for a test's benefit, which is the move this ticket's knowledge log
+// already records as the wrong instinct.
+func gcmSizes(t *testing.T) (nonceSize, tagSize int) {
+	t.Helper()
+	block, err := aes.NewCipher(credentialKey)
+	if err != nil {
+		t.Fatalf("aes.NewCipher: %v", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("cipher.NewGCM: %v", err)
+	}
+	return aead.NonceSize(), aead.Overhead()
 }
 
 // textHostileSeals is how many Encrypt attempts sealTextHostile makes before giving up.
@@ -195,9 +221,38 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 		t.Fatal("the credentials column holds the PLAINTEXT: the blob is being stored " +
 			"unencrypted, and a decrypt-equals-plaintext assertion cannot detect it")
 	}
-	if bytes.Contains(got.EncryptedCredentials, []byte("secret")) {
-		t.Fatalf("the credentials column contains a recognisable fragment of the "+
-			"plaintext (%q); the stored blob is not sealed", "secret")
+	// The stored blob has the SHAPE of AES-GCM output: a 12-byte nonce, the ciphertext
+	// (which GCM, a stream mode, makes exactly as long as the plaintext), and a 16-byte
+	// tag. This replaced a `bytes.Contains(blob, []byte("secret"))` search for a plaintext
+	// fragment, which was the wrong TOOL for the job in both directions. GCM ciphertext is
+	// pseudorandom, so it can legitimately contain the six bytes `secret` — for this
+	// 54-byte blob the exact probability is (54-6+1)/256^6 = 1.74e-13, about 1 in 5.7
+	// trillion — which is a nonzero chance of failing correct encryption. And its absence
+	// proved nothing either: an encryptor that stored ROT13 of the plaintext, or the
+	// plaintext with one byte flipped, contains no literal `secret` and passes.
+	//
+	// That is precisely the class of probabilistic assertion `sealTextHostile` was added
+	// to this file to eliminate, still live one function away. A length identity is the
+	// deterministic replacement: it holds for EVERY sample rather than almost all of them,
+	// and it is the invariant a passthrough actually violates — cleartext is 26 bytes, not
+	// 54, so it fails here as well as on the equality check above. It also catches the
+	// encoding wrappers a substring search cannot see: a hex- or base64-encoded blob has
+	// the wrong length, and so does any encryptor that drops the nonce or the tag.
+	//
+	// The expected size comes from gcmSizes, which reads NonceSize()/Overhead() off a
+	// cipher.AEAD built the same way crypto.AESGCM builds its own — not from a hard-coded
+	// 54, and not from a new exported constant on the production package. A test does not
+	// get to widen the production API, and pinning the literal would silently retune the
+	// assertion to whatever the code did on the day it was written.
+	nonceSize, tagSize := gcmSizes(t)
+	wantSealed := nonceSize + len(plaintext) + tagSize
+	if len(got.EncryptedCredentials) != wantSealed {
+		// Shape only: lengths, never bytes. See the note on the decrypt assertion below.
+		t.Fatalf("the stored blob is %d bytes, want %d (a %d-byte nonce + %d-byte "+
+			"ciphertext + %d-byte tag); it does not have the shape of AES-GCM output, so "+
+			"it is not a sealed credential",
+			len(got.EncryptedCredentials), wantSealed,
+			nonceSize, len(plaintext), tagSize)
 	}
 
 	// (1) The round-trip closes.
