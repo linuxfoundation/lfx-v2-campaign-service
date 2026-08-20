@@ -178,7 +178,7 @@ type campaignDispatcher interface {
 //
 // Every case drives a real create against that adapter's own fake API, reusing the harnesses
 // its existing tests use. Eleven of the thirteen reach a clean success; the two linkedin rows
-// reach the UNCONFIRMED arm instead, and that is declared per row in `wantErr` and ASSERTED —
+// reach the UNCONFIRMED arm instead, and that is declared per row in `wantErrContains` and ASSERTED —
 // so a fake API that drifts into returning partials everywhere fails loudly rather than
 // quietly weakening what this table covers. An earlier revision of this table pointed all seven at one
 // 5xx server on the theory that the error exit is the interesting one; that produced a table
