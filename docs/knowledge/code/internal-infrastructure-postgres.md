@@ -1157,9 +1157,14 @@ write is — see `enqueueCampaignIndex`.
 ## `CreativeAssetRepo` (creative-asset storage, LFXV2-3295)
 
 `CreativeAssetRepo` backs `000028`'s `creative_assets` table with two methods, and both are
-built around the parent-brief gate and the content-addressed dedupe key. This is the STORAGE
-layer only: nothing in the service calls it yet — the upload endpoint and the dispatch-time
-asset resolution land in the two follow-on PRs, and the repo is wired into the container there.
+built around the parent-brief gate and the content-addressed dedupe key.
+
+`CreateAsset`'s caller is `BriefService.UploadCreativeAsset`, backing
+`POST .../briefs/{brief_id}/creative-assets` (see [internal/service](internal-service.md)),
+which validates the bytes and derives the checksum before this layer sees them. Both startup
+paths bind the repo through `bindBriefLiveBackends` (see
+[internal/container](internal-container.md)). `GetAsset` still has no caller: the dispatch-time
+asset resolution that reads the stored bytes lands in the follow-on PR.
 
 `CreateAsset` runs a single statement:
 `INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,

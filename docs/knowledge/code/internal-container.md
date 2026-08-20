@@ -48,8 +48,9 @@ reports ready), and the connection, brief, AND audiences services start with nil
 repos (their routes stay mounted and return the typed 503). A background goroutine
 then retries on `dbRetryInterval`, and once the pool opens it LATE-BINDS the live
 pool/repos into ALL the mounted services — the connection service (`SetBackend`), the
-brief service + orchestrator (`BriefService.SetBackend`, guarded by an RWMutex;
-handlers snapshot their collaborators via `ready()` so a swap can't race a request),
+brief service + orchestrator (via `bindBriefLiveBackends` — see below — guarded by an
+RWMutex; handlers snapshot their collaborators via `ready()` so a swap can't race a
+request),
 the audiences service (`AudienceService.SetBackend`, same RWMutex/`ready()` pattern),
 and health readiness (`SetReadinessDep`) — and runs the same stuck-job recovery +
 starts the periodic sweeper the fast path does. Readiness is flipped LAST, so
@@ -131,6 +132,16 @@ connection.
 `WithNAT64Prefixes` panics on a malformed or non-RFC-6052 length, which is the wanted
 behaviour at this call site specifically: composition runs at startup, so a prefix typed
 wrong stops the pod instead of silently decoding at the wrong offset for its lifetime.
+
+Both startup paths bind the brief service's pool-backed collaborators through ONE helper,
+`bindBriefLiveBackends`, rather than as separate statements. `briefBackendSetter` carries
+`SetCreativeAssetRepo` alongside `SetBackend` for the same reason. The interface forces the
+method to EXIST; only the shared helper forces it to be CALLED — and deleting either
+original call site compiled and left the whole suite green, while on a live pod every
+creative-asset upload would answer `503` forever with the rest of the brief routes working.
+That gap is undetectable from outside the process, because the handler's `503` is
+deliberately identical to the no-database mode's, so the coupling is made structural instead
+of remembered. A caller that bypasses the helper entirely is still not caught by a test.
 
 See [internal/container](../../../internal/container).
 

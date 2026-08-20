@@ -128,6 +128,63 @@ into the drain budget. Both run on every replica with no leader election.
   on the first transient error. See the postgres concept for why only terminal
   statuses are eligible and why they are an allow-list.
 
+
+## Creative asset upload (LFXV2-3295)
+
+`BriefService.UploadCreativeAsset` (backing `POST .../briefs/{briefId}/creative-assets`)
+validates and stores an uploaded image so a Meta ad creative can later reference it by id. It
+touches NO ad platform — the bytes are held until dispatch, where Meta's per-ad-account
+`image_hash` is resolved (see [internal/platform/meta](internal-platform-meta.md)).
+
+The generated validator already enforces what the CONTRACT can express — `content_type` is one of
+the allowed MIME strings and the byte length is within `[1, 30 MiB]` — so what this handler ADDS
+is that the BYTES are actually a decodable image of the DECLARED type. Note what the declared
+`MaxLength` does NOT do: it is checked against the already-DECODED slice, which the validator
+only sees after the JSON decoder has read the whole request body and base64-decoded it, so it
+never bounds the bytes read off the wire. That bound is a separate, inbound one —
+`constants.MaxRequestBodyBytes`, applied by `middleware.MaxBodyBytes` (see
+[internal/middleware](internal-middleware.md)). Validation then runs in three stages, and the ORDER is
+the security property. **Stage 1**, `image.DecodeConfig`, reads only the header — enough to name
+the format and read the declared dimensions — and rejects garbage a declared `content_type`
+alone would wave through. **Stage 2** refuses dimensions beyond `maxCreativePixels` (20M, ~2.4x
+a 4K creative) or `maxCreativeDimension` (10,000 per side, which also rejects a degenerate
+1x20,000,000 strip inside the area budget). This is the decompression-bomb gate: PNG and JPEG
+both compress a flat image enormously, so a body well inside the 42-MiB request cap can declare
+dimensions decoding to gigabytes, and the check spends only the header read. **Stage 3** decodes
+in FULL and discards the result, because stage 1 proves only that a HEADER parses — a PNG
+truncated immediately after its IHDR passes `DecodeConfig` while carrying no recoverable pixel
+data, and storing it yields a corrupt asset that fails much later at dispatch. Stage 2 exists so
+that stage 3's allocation is bounded by the pixel cap rather than by whatever the header claims;
+running the decode first would make the gate worthless, since the allocation IS the attack. The set of registered decoders (`image/png`,
+`image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
+allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.
+That authority is TESTED rather than merely asserted: the service test package imports
+`image/gif` itself — registering the decoder for the test binary only, reproducing exactly the
+condition the claim must survive — feeds a real, decodable GIF, and requires the refusal. Without
+it, widening `mimeForImageFormat` to accept any recognised format changed no test result. The
+stored `mime_type` is the SNIFFED one, and a declared/sniffed mismatch is REFUSED (400), not
+silently corrected. Three distinct 400s are kept apart: bytes that do not decode at all, bytes
+that decode to a format outside the allow-list, and a declared type that disagrees with the
+sniff. Meta's creative POLICY (minimum dimensions, aspect ratio) is deliberately NOT checked
+here — it is Meta-specific and belongs at dispatch; this endpoint is storage integrity.
+
+Unlike `CreateCampaigns`/`AdoptCampaign` there is no `validateProjectSlug`: an asset's
+`project_id` is only a tenant-scoping predicate, never an attribution or connection-lookup key,
+so it stays UUID-or-slug like the other nested brief routes. The `checksum` is the
+lowercase-hex SHA-256 of the bytes (`sha256Hex`), which is the `(brief_id, checksum)` dedupe key
+— a repeat upload of the same image returns the existing asset. `created_by` is the attributed
+actor (NULL when none decodes, same as `CreateBrief`); on an idempotent re-upload the repo
+preserves the FIRST uploader, so this attributes creation, not re-sending. The `bytes` are
+deliberately NOT echoed in the result (`creativeAssetResult` returns metadata only — the caller
+already has the bytes it sent, and a multi-megabyte base64 body on every upload would be pure
+overhead). Like the other late-bound methods, an unwired repo returns a typed `503`
+(availability-neutral wording, since in the cold-start window the database is configured but the
+repo has not bound yet); `SetCreativeAssetRepo` is on `briefBackendSetter` so the cold-start path
+binds it in the same step as the brief repos, and BOTH startup paths bind through the single
+`bindBriefLiveBackends` helper — the interface forces the method to exist, only the shared helper
+forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
+no-database mode's, so a mis-wired live container cannot be detected from the outside.
+
 ## Campaign status toggle
 
 `BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`

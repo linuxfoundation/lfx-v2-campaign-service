@@ -1470,3 +1470,76 @@ func scrapeRegistry(t *testing.T, r *metrics.Registry) string {
 	require.Equal(t, http.StatusOK, rec.Code)
 	return rec.Body.String()
 }
+
+// TestBriefService_ColdStartBindsCreativeAssetRepo pins that the cold-start retry path binds the
+// creative-asset repo in the SAME step it binds the brief repos.
+//
+// Written because deleting either SetCreativeAssetRepo call from container.go COMPILED and left
+// the entire suite green, while in production every upload would answer 503 forever on that pod
+// — the exact silent gap that pulled SetBriefRepo/SetBuilder onto audienceBackendSetter. The
+// handler's 503 is availability-neutral and identical to the no-database mode's, so no
+// error-based assertion can distinguish a wired service from an unwired one; the wiring has to be
+// observed directly (see BriefService.CreativeAssetRepoIsSet).
+//
+// Declaring the variable as briefBackendSetter is load-bearing: it makes the concrete service
+// satisfy the full late-bind contract at COMPILE time, so dropping SetCreativeAssetRepo from the
+// interface breaks the build here rather than silently narrowing what cold start restores.
+func TestBriefService_ColdStartBindsCreativeAssetRepo(t *testing.T) {
+	var bb briefBackendSetter = service.NewBriefService(nil, nil, nil, nil)
+
+	s, ok := bb.(*service.BriefService)
+	require.True(t, ok)
+	require.False(t, s.CreativeAssetRepoIsSet(), "premise: an unwired service must start unbound")
+
+	bb.SetBackend(nil, nil, nil, nil)
+	assert.False(t, s.CreativeAssetRepoIsSet(),
+		"SetBackend must NOT bind the creative-asset repo; if it did, this test could not tell the two wiring steps apart")
+
+	bb.SetCreativeAssetRepo(fakeCreativeAssetRepo{})
+	assert.True(t, s.CreativeAssetRepoIsSet(),
+		"the cold-start path must bind the creative-asset repo; binding only the brief repos leaves UploadCreativeAsset 503 forever")
+}
+
+// TestBindBriefLiveBackends_BindsEveryPoolBackedDependency covers the ONE place both startup
+// paths bind the brief service's pool-backed collaborators, and it is the test that actually
+// holds the wiring.
+//
+// The interface test above proves SetCreativeAssetRepo exists and works; it cannot prove the
+// container CALLS it. Deleting either original call site compiled and kept the suite green, and
+// so does deleting the bind from this helper — an unused *postgres.Pool parameter is legal Go.
+// So the assertion has to be that the helper leaves the service BOUND, observed through
+// CreativeAssetRepoIsSet.
+//
+// A nil *postgres.Pool is deliberate and sufficient: NewCreativeAssetRepo only stores its
+// argument, so no connection is attempted, and the resulting repo is still a non-nil interface
+// value — which is exactly the fact under test (that something was bound), not that it can serve
+// queries. Binding behaviour against a real database belongs to the repo's own live tests.
+func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
+	s := service.NewBriefService(nil, nil, nil, nil)
+	require.False(t, s.CreativeAssetRepoIsSet(), "premise: unbound before wiring")
+
+	bindBriefLiveBackends(s, nil, nil, nil, nil, nil)
+
+	assert.True(t, s.CreativeAssetRepoIsSet(),
+		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
+}
+
+// TestSetCreativeAssetRepo_IgnoresNil guards the degraded path: a nil repo must leave the service
+// reporting unbound rather than storing a nil interface that panics on first upload.
+func TestSetCreativeAssetRepo_IgnoresNil(t *testing.T) {
+	s := service.NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(nil)
+	assert.False(t, s.CreativeAssetRepoIsSet(), "a nil creative-asset repo must not register as configured")
+}
+
+// fakeCreativeAssetRepo is a wiring stand-in only; the upload behaviour it would back is covered
+// in internal/service.
+type fakeCreativeAssetRepo struct{}
+
+func (fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
+	return a, nil
+}
+
+func (fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}

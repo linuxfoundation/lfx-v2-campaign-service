@@ -43,6 +43,7 @@ func NewClient(createAudience, getAudience, listAudiences, updateAudience, build
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) CreateAudience(ctx context.Context, p *CreateAudiencePayload) (res *Audience, err error) {
 	var ires any
@@ -62,6 +63,7 @@ func (c *Client) CreateAudience(ctx context.Context, p *CreateAudiencePayload) (
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GetAudience(ctx context.Context, p *GetAudiencePayload) (res *Audience, err error) {
 	var ires any
@@ -81,6 +83,7 @@ func (c *Client) GetAudience(ctx context.Context, p *GetAudiencePayload) (res *A
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) ListAudiences(ctx context.Context, p *ListAudiencesPayload) (res *ListAudiencesResult, err error) {
 	var ires any
@@ -100,6 +103,7 @@ func (c *Client) ListAudiences(ctx context.Context, p *ListAudiencesPayload) (re
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
@@ -121,6 +125,7 @@ func (c *Client) UpdateAudience(ctx context.Context, p *UpdateAudiencePayload) (
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) BuildAudience(ctx context.Context, p *BuildAudiencePayload) (res *Audience, err error) {
 	var ires any

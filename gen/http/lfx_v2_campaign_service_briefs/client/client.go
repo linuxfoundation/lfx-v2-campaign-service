@@ -46,6 +46,10 @@ type Client struct {
 	// fetch-event-url endpoint.
 	FetchEventURLDoer goahttp.Doer
 
+	// UploadCreativeAsset Doer is the HTTP client used to make requests to the
+	// upload-creative-asset endpoint.
+	UploadCreativeAssetDoer goahttp.Doer
+
 	// CreateCampaigns Doer is the HTTP client used to make requests to the
 	// create-campaigns endpoint.
 	CreateCampaignsDoer goahttp.Doer
@@ -113,6 +117,7 @@ func NewClient(
 		ApproveBriefDoer:         doer,
 		DeleteBriefDoer:          doer,
 		FetchEventURLDoer:        doer,
+		UploadCreativeAssetDoer:  doer,
 		CreateCampaignsDoer:      doer,
 		AdoptCampaignDoer:        doer,
 		GetCampaignDoer:          doer,
@@ -294,6 +299,30 @@ func (c *Client) FetchEventURL() goa.Endpoint {
 		resp, err := c.FetchEventURLDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// UploadCreativeAsset returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service upload-creative-asset server.
+func (c *Client) UploadCreativeAsset() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeUploadCreativeAssetRequest(c.encoder)
+		decodeResponse = DecodeUploadCreativeAssetResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildUploadCreativeAssetRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.UploadCreativeAssetDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
 		}
 		return decodeResponse(resp)
 	}

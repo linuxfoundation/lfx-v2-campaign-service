@@ -44,4 +44,14 @@ installed, nothing logged, and no exit code for the Job to fail on. Only the FIR
 classified, and only when it does not begin with `-`: a subcommand has to come first, and scanning
 further would mistake a flag VALUE (`-p 8080`) for a command and break ordinary startup.
 
+`buildHandler` is the chain seam beside `buildMux`, and exists for the same reason: it
+wraps the mounted mux in the service's middleware — innermost `middleware.MaxBodyBytes`
+(the inbound body cap that answers `413`, sized by `constants.MaxRequestBodyBytes`), then
+request-ID, then debug/OTel, with the in-flight tracker outermost. The cap sits inside the
+other wrappers so a refused request still carries a request id and is still traced, but
+outside the mux, because the Goa decoders behind the mux are what would otherwise buffer an
+unbounded body. Extracting it lets a test drive the REAL chain — a security control's
+presence is invisible to any test that exercises the mux directly. See
+[internal/middleware](internal-middleware.md) for the cap's rationale and sizing.
+
 See [cmd/campaign-service](../../../cmd/campaign-service).

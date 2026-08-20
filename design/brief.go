@@ -388,6 +388,22 @@ var CampaignUpdateInput = Type("campaign-update-input", func() {
 	Required("campaign_name", "status")
 })
 
+// CreativeAsset is an uploaded image asset a Meta ad creative can reference by id.
+// It is insert-only (no version/ETag): the bytes are immutable once stored, and the
+// upload is idempotent per (brief, content checksum) — re-uploading identical bytes
+// returns the existing asset rather than creating a second row.
+var CreativeAsset = Type("creative-asset", func() {
+	Attribute("id", String, "Creative asset UUID", func() { Format(FormatUUID) })
+	Attribute("project_id", String, "Owning project")
+	Attribute("brief_id", String, "Parent brief")
+	Attribute("mime_type", String, "Stored image MIME type, as verified from the bytes (not merely the declared header)", func() {
+		Enum("image/png", "image/jpeg")
+	})
+	Attribute("byte_size", Int64, "Size of the stored image in bytes")
+	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
+	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
+})
+
 // ─── Brief + campaign service ───
 
 var _ = Service("lfx-v2-campaign-service-briefs", func() {
@@ -566,6 +582,51 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			POST("/projects/{project_id}/fetch-event-url")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("upload-creative-asset", func() {
+		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.")
+		Payload(func() {
+			bearerToken()
+			// Permissive project identifier (UUID or slug), matching the other brief
+			// sub-resources: project_id here only scopes ownership/authz. Unlike
+			// create-campaigns it is never stamped into a campaign name or used as the
+			// connection-lookup key — the asset is bound to a campaign later by its
+			// asset id, so the slug-only constraint does not apply.
+			projectIDAttr()
+			briefIDAttr()
+			Attribute("content_type", String, "Declared MIME type of the uploaded bytes. The bytes are re-sniffed server-side and must match; the stored mime_type is the verified one.", func() {
+				Enum("image/png", "image/jpeg")
+			})
+			// Goa Bytes -> []byte in Go, base64-encoded string in the JSON body. This is
+			// the transport choice: Goa-native, no multipart machinery. MinLength/MaxLength put the accepted size in the contract and in
+			// the OpenAPI document, and the generated validator applies them before the
+			// handler runs: MinLength(1) rejects an empty upload; MaxLength is a hard
+			// ceiling at Meta's documented single-image maximum.
+			//
+			// These bound the DECODED image, and the generated validator sees that slice
+			// only AFTER goahttp.RequestDecoder's json.Decoder has read the whole request
+			// body and base64-decoded it — so MaxLength alone does not bound what the
+			// server reads off the wire. The inbound byte cap that does is
+			// constants.MaxRequestBodyBytes, applied by middleware.MaxBodyBytes in the
+			// server's handler chain; it is sized from this ceiling (see that constant) and
+			// must be raised alongside any increase here.
+			Attribute("bytes", Bytes, "Raw image bytes, base64-encoded in the JSON request body.", func() {
+				MinLength(1)
+				MaxLength(31457280) // 30 MiB hard ceiling; at/above Meta's ~30 MB single-image max file size
+			})
+			Required("project_id", "brief_id", "content_type", "bytes")
+		})
+		Result(CreativeAsset)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/creative-assets")
+			Header("bearer_token:Authorization")
+			// 201 with no ETag: creative assets are insert-only and carry no version,
+			// so there is no optimistic-concurrency handle to hand back.
+			Response(StatusCreated)
 			briefErrorResponses()
 		})
 	})
@@ -880,6 +941,12 @@ func commonBriefErrors() {
 	Error("Conflict", ConflictError, "Conflict")
 	Error("InternalServerError", InternalServerError, "Internal server error")
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+	// PayloadTooLarge is produced by middleware.MaxBodyBytes, which sits outside the mux
+	// and so never reaches a Goa encoder — declaring it here is what gives the generated
+	// CLIENT a decode case for 413 (otherwise an oversized upload surfaces as
+	// ErrInvalidResponse) and what puts the status in the OpenAPI documents. It is on
+	// every method because the cap is global, not upload-specific.
+	Error("PayloadTooLarge", PayloadTooLargeError, "Payload too large")
 }
 
 // briefErrorResponses maps the standard errors to HTTP responses. Every error
@@ -899,4 +966,5 @@ func briefErrorResponses() {
 	Response("Conflict", StatusConflict)
 	Response("InternalServerError", StatusInternalServerError)
 	Response("ServiceUnavailable", StatusServiceUnavailable)
+	Response("PayloadTooLarge", StatusRequestEntityTooLarge)
 }
