@@ -1688,12 +1688,14 @@ func TestValidatePrerequisites_RejectsOnlyTrulyEmptyCriteria(t *testing.T) {
 				t.Fatalf("profile %q with jobFunctions present must be accepted, got: %v", profile, err)
 			}
 
-			// Simulate a truly-empty assembled criteria by temporarily emptying the
-			// package-level jobFunctions: now skills, groups, AND jobFunctions are all
-			// empty, so the assembled criteria would be empty and must be rejected.
-			saved := jobFunctions
-			jobFunctions = nil
-			t.Cleanup(func() { jobFunctions = saved })
+			// Simulate a truly-empty assembled criteria by temporarily emptying
+			// defaultJobFunctions (the profile configures no override, so this is what
+			// effectiveJobFunctions resolves to): now skills, groups, AND jobFunctions
+			// are all empty, so the assembled criteria would be empty and must be
+			// rejected.
+			saved := defaultJobFunctions
+			defaultJobFunctions = nil
+			t.Cleanup(func() { defaultJobFunctions = saved })
 			if err := c.validatePrerequisites(cfg.DefaultAccountID, profile); err == nil {
 				t.Fatalf("profile %q with truly-empty assembled criteria must be rejected", profile)
 			}
@@ -2328,9 +2330,9 @@ func TestCreateCampaign_EmptyConfigHandledIdenticallyForCustomAndCloudNative(t *
 			}
 			c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
 
-			saved := jobFunctions
-			jobFunctions = nil
-			t.Cleanup(func() { jobFunctions = saved })
+			saved := defaultJobFunctions
+			defaultJobFunctions = nil
+			t.Cleanup(func() { defaultJobFunctions = saved })
 
 			in := base
 			in.TargetingProfile = profile

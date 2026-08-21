@@ -27,6 +27,11 @@ Marketing API. `CreateCampaign` builds the full sponsored-content hierarchy in
 one call — Campaign Group (ACTIVE) -> Campaign (PAUSED) -> Dark Post
 (`feedDistribution: NONE`) -> Creative — with targeting assembled from the
 runtime config's profile (skills/groups/job-functions) and resolved geo URNs.
+Job functions and seniority exclusions are each profile-scoped: a
+`TargetingProfileConfig` may set its own `JobFunctions`/`SeniorityExclusions`,
+falling back to a shared default pair when it sets neither (`effectiveJobFunctions`/
+`effectiveSeniorityExclusions` in `targeting.go`), so different profiles can target
+different audience shapes instead of every campaign sharing one fixed pair of lists.
 Cross-tenant org/account pairing fails closed. `GetCampaignMetrics` reads live
 campaign analytics from LinkedIn's Ad Analytics API; the dispatcher's `ReadMetrics`
 method implements the optional `service.MetricsReader` interface the orchestrator

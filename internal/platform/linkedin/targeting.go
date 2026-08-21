@@ -61,9 +61,11 @@ var facetURNRE = regexp.MustCompile(`^[0-9]+$`)
 // (the newer Marketing-API org entity, and what earlier config used) is also kept
 // so an existing runtime config that supplied organization URNs keeps working.
 var facetNamespace = map[string][]string{
-	"skills":              {"urn:li:skill:"},
-	"groups":              {"urn:li:group:"},
-	"employer-exclusions": {"urn:li:company:", "urn:li:organization:"},
+	"skills":               {"urn:li:skill:"},
+	"groups":               {"urn:li:group:"},
+	"employer-exclusions":  {"urn:li:company:", "urn:li:organization:"},
+	"job-functions":        {"urn:li:function:"},
+	"seniority-exclusions": {"urn:li:seniority:"},
 }
 
 // validFacets returns the non-blank entries of in and an error naming the first
@@ -249,10 +251,37 @@ func (c *Client) resolveAccountID(override string) (string, error) {
 	return "", fmt.Errorf("no LinkedIn ad account configured: provide defaultAccountId in the runtime config")
 }
 
+// effectiveJobFunctions returns p's configured job-function facets, or
+// defaultJobFunctions when p is nil or configures none. Shared by
+// buildTargetingCriteria and validatePrerequisites so both resolve a profile's
+// facets identically.
+func effectiveJobFunctions(p *TargetingProfileConfig) []string {
+	if p != nil && len(nonBlankFacets(p.JobFunctions)) > 0 {
+		return p.JobFunctions
+	}
+	return defaultJobFunctions
+}
+
+// effectiveSeniorityExclusions returns p's configured seniority-exclusion
+// facets, or defaultSeniorityExclusions when p is nil or configures none. See
+// effectiveJobFunctions.
+func effectiveSeniorityExclusions(p *TargetingProfileConfig) []string {
+	if p != nil && len(nonBlankFacets(p.SeniorityExclusions)) > 0 {
+		return p.SeniorityExclusions
+	}
+	return defaultSeniorityExclusions
+}
+
 // buildTargetingCriteria builds the targetingCriteria block for a campaign.
 // Mirrors buildTargetingCriteria(): skills, groups, and jobFunctions go into a
 // SINGLE `or` block alongside the geo `or` block (both under one `and`).
 // Employer and seniority exclusions form the `exclude.or` block.
+//
+// jobFunctions and seniorityExclusions come from the resolved profile's
+// JobFunctions/SeniorityExclusions when it configures them, falling back to
+// defaultJobFunctions/defaultSeniorityExclusions otherwise (effectiveJobFunctions,
+// effectiveSeniorityExclusions) — so a profile can target a different audience
+// shape without every campaign sharing one fixed pair of facet lists.
 //
 // The profile "custom" is treated as an alias for "cloud-native" (matching the
 // TypeScript fallback). Any other profile must exist in the runtime config.
@@ -306,6 +335,16 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 	if ferr != nil {
 		return nil, ferr
 	}
+
+	jobFunctions, ferr := validFacets("job-functions", effectiveJobFunctions(found))
+	if ferr != nil {
+		return nil, ferr
+	}
+	seniorityExclusions, ferr := validFacets("seniority-exclusions", effectiveSeniorityExclusions(found))
+	if ferr != nil {
+		return nil, ferr
+	}
+
 	if geoURNs == nil {
 		geoURNs = []string{}
 	}

@@ -181,6 +181,89 @@ func TestBuildTargetingCriteria_UnknownProfileErrors(t *testing.T) {
 	}
 }
 
+// TestBuildTargetingCriteria_PerProfileJobFunctionsOverride verifies a profile
+// that configures its own JobFunctions gets THOSE facets on the wire instead of
+// defaultJobFunctions, so different profiles can target different audiences
+// instead of every campaign sharing one fixed job-function list.
+func TestBuildTargetingCriteria_PerProfileJobFunctionsOverride(t *testing.T) {
+	cfg := testConfig()
+	cfg.TargetingProfiles = append(cfg.TargetingProfiles, TargetingProfileConfig{
+		ID:           "sales-leaders",
+		Label:        "Sales Leaders",
+		Skills:       []string{"urn:li:skill:9"},
+		JobFunctions: []string{"urn:li:function:11"},
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+
+	crit, err := c.buildTargetingCriteria("sales-leaders", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
+	}
+	b, _ := json.Marshal(crit)
+	if !strings.Contains(string(b), "urn:li:function:11") {
+		t.Errorf("expected overridden job function urn:li:function:11, got %s", b)
+	}
+	for _, def := range defaultJobFunctions {
+		if strings.Contains(string(b), def) {
+			t.Errorf("profile-scoped override must NOT fall back to default job function %s, got %s", def, b)
+		}
+	}
+
+	// A profile that configures no override (cloud-native, from testConfig)
+	// still gets defaultJobFunctions, unaffected by the sibling profile's override.
+	crit, err = c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
+	}
+	b, _ = json.Marshal(crit)
+	if !strings.Contains(string(b), defaultJobFunctions[0]) {
+		t.Errorf("profile without an override should still get defaultJobFunctions, got %s", b)
+	}
+}
+
+// TestBuildTargetingCriteria_PerProfileSeniorityExclusionsOverride mirrors
+// TestBuildTargetingCriteria_PerProfileJobFunctionsOverride for the exclude-side
+// SeniorityExclusions facet.
+func TestBuildTargetingCriteria_PerProfileSeniorityExclusionsOverride(t *testing.T) {
+	cfg := testConfig()
+	cfg.TargetingProfiles = append(cfg.TargetingProfiles, TargetingProfileConfig{
+		ID:                  "exec-only",
+		Label:               "Executives Only",
+		Skills:              []string{"urn:li:skill:9"},
+		SeniorityExclusions: []string{"urn:li:seniority:2"},
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+
+	crit, err := c.buildTargetingCriteria("exec-only", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
+	}
+	b, _ := json.Marshal(crit)
+	if !strings.Contains(string(b), "urn:li:seniority:2") {
+		t.Errorf("expected overridden seniority exclusion urn:li:seniority:2, got %s", b)
+	}
+	for _, def := range defaultSeniorityExclusions {
+		if strings.Contains(string(b), def) {
+			t.Errorf("profile-scoped override must NOT fall back to default seniority exclusion %s, got %s", def, b)
+		}
+	}
+}
+
+// TestBuildTargetingCriteria_MalformedJobFunctionRejected verifies a
+// profile-supplied JobFunctions entry outside the urn:li:function: namespace
+// fails validation up front, exactly like a malformed skill/group facet.
+func TestBuildTargetingCriteria_MalformedJobFunctionRejected(t *testing.T) {
+	cfg := testConfig()
+	cfg.TargetingProfiles = append(cfg.TargetingProfiles, TargetingProfileConfig{
+		ID:           "bad",
+		JobFunctions: []string{"urn:li:skill:1"},
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	if _, err := c.buildTargetingCriteria("bad", nil); err == nil {
+		t.Fatal("expected error for job-function facet outside the urn:li:function: namespace")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Idempotency: search-by-name returns existing ID -> no duplicate create
 // ---------------------------------------------------------------------------

@@ -2025,18 +2025,21 @@ func stripDashes(text string) string {
 // profile actually yields usable targeting — i.e. that the FINAL assembled
 // targeting criteria would be non-empty. Mirroring the TS source, an empty
 // skills/groups config is acceptable AS LONG AS the resulting include criteria
-// is non-empty: buildTargetingCriteria always adds the hardcoded jobFunctions
-// facets to the include block, so a profile with empty skills AND groups still
-// contributes real targeting (the jobFunctions) and is accepted. The rejection
-// keys off the ASSEMBLED include facets being empty, not merely off skills/groups
-// being empty. Because jobFunctions is always present, a config-only-blank
-// skills/groups profile is accepted, exactly as the TS does.
+// is non-empty: buildTargetingCriteria always adds a jobFunctions facet list to
+// the include block — the profile's own JobFunctions when it configures them,
+// else defaultJobFunctions (effectiveJobFunctions) — so a profile with empty
+// skills AND groups still contributes real targeting and is accepted. The
+// rejection keys off the ASSEMBLED include facets being empty, not merely off
+// skills/groups being empty. Because the resolved jobFunctions is virtually
+// always non-empty (defaultJobFunctions unless a profile explicitly sets an
+// empty override), a config-only-blank skills/groups profile is accepted,
+// exactly as the TS does.
 //
 // The "custom" profile aliases "cloud-native": both are normalized to the same
 // lookup and evaluated identically. validatePrerequisites REQUIRES the resolved
 // profile to EXIST (it errors when absent, exactly like any other profile). The
 // non-empty-criteria check keys on the normalized profile (after custom ->
-// cloud-native aliasing) plus the always-present jobFunctions, so custom and
+// cloud-native aliasing) plus its resolved jobFunctions, so custom and
 // cloud-native are provably equivalent here: both are accepted when jobFunctions
 // keep the criteria non-empty, and both are rejected only if the assembled
 // criteria would be truly empty. (The lower-level buildTargetingCriteria
@@ -2059,33 +2062,43 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// non-empty. Count only NON-BLANK skill/group entries — a config-supplied
 		// slice can contain blank strings (e.g. []string{""} or {"  "}) that are not
 		// usable facets and are dropped by buildTargetingCriteria before the wire —
-		// then add the always-present hardcoded jobFunctions facets that
-		// buildTargetingCriteria injects into the SAME include `or` block. Mirroring
-		// the TS source, empty skills AND groups is acceptable so long as the
-		// assembled criteria is non-empty: because jobFunctions is always non-empty,
+		// then add this profile's resolved jobFunctions (its own override, or
+		// defaultJobFunctions — effectiveJobFunctions) that buildTargetingCriteria
+		// injects into the SAME include `or` block. Mirroring the TS source, empty
+		// skills AND groups is acceptable so long as the assembled criteria is
+		// non-empty: because the resolved jobFunctions is virtually always non-empty,
 		// the include criteria is never empty and such a profile is ACCEPTED. Only a
-		// truly-empty assembled criteria (no skills, no groups, AND no jobFunctions)
-		// is rejected.
+		// truly-empty assembled criteria (no skills, no groups, AND no jobFunctions —
+		// which requires a profile to explicitly override JobFunctions to empty) is
+		// rejected.
 		//
 		// This check operates on the NORMALIZED profile (the resolved lookup after
-		// custom->cloud-native aliasing) plus the shared jobFunctions, so it does NOT
+		// custom->cloud-native aliasing) plus its resolved jobFunctions, so it does NOT
 		// special-case the ORIGINAL name: custom and cloud-native resolve to the same
 		// lookup and the same TargetingProfileConfig (p) and are evaluated
 		// identically. Both are accepted when jobFunctions keep the criteria
 		// non-empty; both are rejected only if the assembled criteria would be truly
 		// empty. (Absence of the aliased profile is still enforced in the not-found
 		// branch below for both names.)
+		jobFunctions := effectiveJobFunctions(p)
 		assembledIncludeFacets := len(nonBlankFacets(p.Skills)) + len(nonBlankFacets(p.Groups)) + len(nonBlankFacets(jobFunctions))
 		if assembledIncludeFacets == 0 {
 			return fmt.Errorf("LinkedIn targeting profile %q would yield empty targeting criteria (no skills, groups, or job functions) — refusing to create a campaign with no targeting", lookup)
 		}
-		// Validate facet URN shapes up front (skills, groups, employer exclusions),
-		// so a malformed value fails here rather than after the campaign group is
-		// created inside buildTargetingCriteria.
+		// Validate facet URN shapes up front (skills, groups, job functions,
+		// seniority exclusions, employer exclusions), so a malformed value fails
+		// here rather than after the campaign group is created inside
+		// buildTargetingCriteria.
 		if _, err := validFacets("skills", p.Skills); err != nil {
 			return err
 		}
 		if _, err := validFacets("groups", p.Groups); err != nil {
+			return err
+		}
+		if _, err := validFacets("job-functions", jobFunctions); err != nil {
+			return err
+		}
+		if _, err := validFacets("seniority-exclusions", effectiveSeniorityExclusions(p)); err != nil {
 			return err
 		}
 		if _, err := validFacets("employer-exclusions", c.cfg.EmployerExclusions); err != nil {

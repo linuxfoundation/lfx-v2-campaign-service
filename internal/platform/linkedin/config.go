@@ -83,17 +83,21 @@ const maxRetryWait = 60 * time.Second
 // headroom for network/scheduling latency between the recompute and the POST.
 const startTimeBuffer = 10 * time.Minute
 
-// jobFunctions are the default job-function facets included in targeting.
-// Mirrors JOB_FUNCTIONS.
-var jobFunctions = []string{
+// defaultJobFunctions are the job-function facets included in targeting for any
+// profile that doesn't configure its own (JobFunctions is empty). Mirrors the
+// fixed JOB_FUNCTIONS the TS source always sent; kept as the fallback so an
+// existing runtime config with no per-profile override keeps today's behavior.
+var defaultJobFunctions = []string{
 	"urn:li:function:8",
 	"urn:li:function:13",
 	"urn:li:function:16",
 }
 
-// seniorityExclusions are the default seniority facets excluded from targeting.
-// Mirrors SENIORITY_EXCLUSIONS.
-var seniorityExclusions = []string{
+// defaultSeniorityExclusions are the seniority facets excluded from targeting
+// for any profile that doesn't configure its own (SeniorityExclusions is
+// empty). Mirrors the fixed SENIORITY_EXCLUSIONS the TS source always sent;
+// kept as the fallback for the same reason as defaultJobFunctions.
+var defaultSeniorityExclusions = []string{
 	"urn:li:seniority:1",
 	"urn:li:seniority:3",
 }
@@ -159,11 +163,18 @@ type Account struct {
 
 // TargetingProfileConfig is a named targeting profile from the runtime config.
 // Mirrors LinkedInTargetingProfileConfig.
+//
+// JobFunctions and SeniorityExclusions are optional per-profile overrides of
+// defaultJobFunctions/defaultSeniorityExclusions: a profile that leaves either
+// empty gets the shared default for that facet, so an existing runtime config
+// with no opinion here keeps behaving exactly as before this field was added.
 type TargetingProfileConfig struct {
-	ID     string   `json:"id"`
-	Label  string   `json:"label"`
-	Skills []string `json:"skills"`
-	Groups []string `json:"groups"`
+	ID                  string   `json:"id"`
+	Label               string   `json:"label"`
+	Skills              []string `json:"skills"`
+	Groups              []string `json:"groups"`
+	JobFunctions        []string `json:"jobFunctions,omitempty"`
+	SeniorityExclusions []string `json:"seniorityExclusions,omitempty"`
 }
 
 // RuntimeConfig is the injected, vendor-specific configuration. Mirrors
