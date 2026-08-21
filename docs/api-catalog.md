@@ -175,9 +175,9 @@ Because the connection is a singleton, there is **no service-generated `{id}` in
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| POST | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). `projectId` MUST be a canonical slug, not a UUID (see the slug note below). |
+| POST | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). `projectId` MUST be a canonical slug, not a UUID (see the slug note below). **`LFX_FORCE_SYSTEM_ADS_ACCOUNT` adds a conditional 400 to this row.** While that deployment-wide env var is set to exactly `true`, a write that would newly set or CHANGE the connection's `account_id` is refused with **400** for the six PAID-ADS providers (`google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`, `microsoft-ads`). **HubSpot is untouched** — its `account_id` is a marketing list id that no ad-account discovery ever produced, and the guard asks `Provider.IsPaidAds()` precisely so the email channel is never caught by it. The reason is reversibility: while the flag is on, account discovery resolves the LF SYSTEM credential, so every id the picker can offer names an LF-owned account; persisting one onto a project's own row outlives the flag, leaving credentials from one account and a target from another once it is turned off. The guard reads the env var per request (the dispatch layer caches its copy at construction, so the two are not in step until a restart). On create there is no prior row by construction, so **every non-empty `account_id` in the body is newly set and is refused**. The consequence is deliberate and worth planning around: `linkedin-ads`, `reddit-ads`, `twitter-ads` and `microsoft-ads` all declare `account_id` **required** on their create payloads (`design/connection.go`), so a body omitting it does not decode — **those four cannot be connected at all while the flag is on**. `google-ads` and `meta-ads` are credentials-first (no `Required("account_id")`), so they can still be created and then pointed at an account after the flag is cleared. |
 | GET | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Get the connection (credentials redacted); returns ETag. |
-| PUT | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
+| PUT | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). **`LFX_FORCE_SYSTEM_ADS_ACCOUNT` adds a conditional 400 to this row.** While that deployment-wide env var is set to exactly `true`, a write that would newly set or CHANGE the connection's `account_id` is refused with **400** for the six PAID-ADS providers (`google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`, `microsoft-ads`). **HubSpot is untouched** — its `account_id` is a marketing list id that no ad-account discovery ever produced, and the guard asks `Provider.IsPaidAds()` precisely so the email channel is never caught by it. The reason is reversibility: while the flag is on, account discovery resolves the LF SYSTEM credential, so every id the picker can offer names an LF-owned account; persisting one onto a project's own row outlives the flag, leaving credentials from one account and a target from another once it is turned off. The guard reads the env var per request (the dispatch layer caches its copy at construction, so the two are not in step until a restart). The comparison is against the STORED value and is exact apart from a surrounding-whitespace trim, so **re-sending the id already on the row is allowed** (the write moves nothing) and **clearing a selection is allowed** (an absent/empty `account_id`, since PUT is a full replace and refusing it would trap a connection in whatever state the flag found it in). Only a change to a different non-empty id is refused. |
 | DELETE | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Remove the connection (soft delete). |
 | POST | `/projects/{projectId}/connection-google-ads/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
 | POST | `/projects/{projectId}/connection-google-ads/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
@@ -348,12 +348,74 @@ driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 googleAdsConfig?: object        — Google Ads-specific params (see GoogleAdsConfig below)
 linkedInConfig?: object         — LinkedIn-specific params
-redditConfig?: object           — Reddit-specific params
+redditConfig?: object           — Reddit-specific params (see RedditConfig below)
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
 microsoftConfig?: object        — Microsoft Ads-specific params (see MicrosoftConfig below)
 hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
 ```
+
+#### RedditConfig (the `redditConfig` object)
+
+Reddit Ads per-platform config. The dispatcher creates a PAUSED campaign -> ad group ->
+ad (promoted post). Targeting is communities (subreddits) + keywords + geo; a conversion
+pixel is required on EVERY objective. The ad's creative comes from EITHER a supplied
+`postUrl` (promote an existing post) OR, when `postUrl` is absent, an `imageUrl` the client
+uses to AUTHOR a promoted image post itself (the brief->servable-ad path, parity with
+`googleAdsConfig`/`metaConfig`). With neither, the campaign + ad group are created but the ad
+is left for manual creation in Reddit Ads Manager. **Budget is in USD** (a LIFETIME spend cap,
+not daily).
+
+```
+budgetUsd: number               — LIFETIME spend cap in USD. Must be finite and POSITIVE and
+                                  round to at least one micro-dollar; NaN/Inf/non-positive is
+                                  rejected during dispatch (a pre-create job failure, since
+                                  CreateCampaigns is async). Omitting it fails the platform job.
+startDate: string               — YYYY-MM-DD (required, calendar-valid).
+endDate: string                 — YYYY-MM-DD (required, must be AFTER startDate).
+objective?: string              — awareness | traffic | conversions | video_views.
+                                  Defaults to conversions.
+geoTargets?: string[]           — ISO 3166-1 alpha-2 country codes (e.g. ['US','JP']), spelled as
+                                  in `metaConfig`/`googleAdsConfig`. Uppercased/de-duplicated; an
+                                  invalid code is rejected before any create. Defaults to ['US'].
+subreddits?: string[]           — Community targeting as subreddit NAMES ('r/golang' or 'golang';
+                                  the 'r/' prefix is stripped). Sent as `communities` names, not
+                                  t5_ IDs. A name Reddit rejects is dropped with a warning step
+                                  (never orphans the campaign).
+interests?: string[]            — Interest targeting. Reddit wants opaque interest IDs while briefs
+                                  produce human labels, so these are commonly dropped with a warning
+                                  (label->ID resolution tracked in LFXV2-3261).
+keywords?: string[]             — Keyword targeting attached to the ad group.
+variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUrl` drives an ad, one
+                                  "ready" instruction per variant is emitted (headline + display UTM
+                                  URL) for manual ad creation. On the author-a-post path the FIRST
+                                  variant's headline is the authored post's headline.
+postUrl?: string                — OPTIONAL existing Reddit post to promote. Accepts a t3_ id, a
+                                  reddit.com/comments/<id> URL, or a redd.it short link; validated
+                                  against reddit.com/redd.it hosts. When set it TAKES PRECEDENCE and
+                                  `imageUrl`/`callToAction` are ignored. Its query/fragment is stripped
+                                  from the stored config snapshot (may carry a secret).
+imageUrl?: string               — OPTIONAL public absolute http(s) image URL. When set and `postUrl`
+                                  is absent, the client AUTHORS a promoted ("dark") IMAGE post from it
+                                  (Reddit ingests and re-hosts the image at create time; there is no
+                                  LINK post type and no separate upload step) and attaches it as the
+                                  ad's creative. A malformed URL / embedded userinfo / non-http(s)
+                                  scheme is rejected before any create. Its query/fragment is stripped
+                                  from the stored config snapshot (a signed URL may carry a secret).
+callToAction?: string           — OPTIONAL button label for an AUTHORED post (see `imageUrl`).
+                                  Case-insensitive, resolved to Reddit's exact title-case label (e.g.
+                                  'Learn More', 'Sign Up', 'Buy Tickets'); an unknown value is rejected
+                                  before any create. Defaults to 'Learn More'. Ignored when `postUrl`
+                                  is set.
+conversionPixelId?: string      — OPTIONAL per-campaign override of the connection's conversion pixel.
+                                  A pixel is REQUIRED for every objective; normally it comes from the
+                                  Reddit connection, and a create with none configured is refused
+                                  before any upstream call.
+videoGoal?: string              — REQUIRED when objective is video_views: VIDEO_VIEW_6S | VIDEO_VIEW_15S
+                                  (Reddit has no bare VIDEO_VIEWS goal). Ignored for other objectives.
+```
+
+The connection supplies the ad account id and OAuth2 credentials — not this campaign config.
 
 #### MicrosoftConfig (the `microsoftConfig` object)
 
@@ -598,6 +660,38 @@ placements?: object             — Which feeds to run on; ALL keys optional boo
                                   NOTE: `MessengerInbox: true` is REJECTED — Meta removed the
                                   Messenger Inbox placement (Nov 2025), so the client fails the
                                   dispatch job pre-create if it is enabled. Leave it false/omitted.
+instagramUserId?: string        — Instagram account (IGSID) bound to the ad creative (sent as the
+                                  top-level `instagram_user_id` adcreative field). Meta requires it to
+                                  PUBLISH whenever an Instagram placement is used — the default
+                                  `placements` enable Instagram Feed — otherwise Meta refuses ("Please
+                                  add Instagram account"), even though the ad is created. PRESENCE is
+                                  NOT validated locally: this service does not reject a create that
+                                  omits it, so a missing pairing surfaces only as an async publish block
+                                  on Meta, not a synchronous error. The FORMAT is: a supplied value must
+                                  be a numeric IGSID, and a malformed one fails the dispatch job
+                                  pre-create (it is otherwise only consumed at the creative call, after
+                                  the campaign and ad set exist, where the failure is non-fatal and
+                                  would leave a billable campaign with no publishable ad). Omit for a
+                                  Facebook-only campaign. Sent only when non-empty; a blank/whitespace
+                                  value is treated as absent.
+dsaBeneficiary?: string         — EU Digital Services Act "advertiser" disclosure, set on the ad set
+                                  (`dsa_beneficiary`). Meta requires BOTH `dsaBeneficiary` and
+                                  `dsaPayor` to PUBLISH an ad set that targets a regulated location, and
+                                  blocks publish ("Please add Advertiser" / "Please add Payer") until
+                                  they are present. Supply BOTH or NEITHER: a ONE-SIDED pair (exactly
+                                  one of the two) IS validated locally and fails the dispatch job
+                                  pre-create, because it is deterministically unpublishable and knowable
+                                  before any billable call. Omitting BOTH is NOT validated locally —
+                                  that is the ordinary non-regulated flow; like `instagramUserId`, a
+                                  disclosure missing where Meta requires one then surfaces only as an
+                                  async publish block on Meta. Sent only when non-empty;
+                                  blank/whitespace is treated as absent (so a whitespace-only
+                                  counterpart still counts as one-sided). Omit both for non-regulated
+                                  targeting.
+dsaPayor?: string               — EU DSA "payer" disclosure counterpart, set on the ad set
+                                  (`dsa_payor`); same rules as `dsaBeneficiary` — both are required by
+                                  Meta together for regulated locations, a one-sided pair is rejected
+                                  locally pre-create while both-absent is not, sent only when non-empty.
 variants: AdVariant[]           — One ad per variant; at least one is required.
 ```
 

@@ -902,6 +902,17 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
+		case errors.Is(merr, domain.ErrSystemConnectionMissing):
+			// ABOVE the ErrNotFound arm below, which is wrapped ALONGSIDE this sentinel and
+			// would otherwise win. Forced-system mode is on and the LF system row is not
+			// installed for this provider: the project's own connection is what forced mode
+			// ignores, so "connect it" is advice that cannot work, and the operator who must
+			// install the LF row would never be paged. Their page, so 500 and an ERROR log —
+			// the same treatment ErrSystemConnectionNotUsable gets above.
+			slog.ErrorContext(ctx, "the LF system connection is not installed; campaign metrics reads are failing for every project while force-system mode is on",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
 		case errors.Is(merr, domain.ErrNotFound):
 			// The metrics half of LFXV2-3065. The toggle's arm carries the full reasoning;
 			// repeated here only in summary because the two switches are read separately and a
@@ -1354,6 +1365,16 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before changing campaign status"}
+		case errors.Is(terr, domain.ErrSystemConnectionMissing):
+			// ABOVE the ErrNotFound arm below, which is wrapped ALONGSIDE this sentinel and
+			// would otherwise win, telling the caller to connect a platform when forced-system
+			// mode is precisely what ignores their connection. The LF system row is missing for
+			// this provider — an operator installs it; nobody else can. 500 and an ERROR log,
+			// matching ErrSystemConnectionNotUsable above.
+			slog.ErrorContext(ctx, "the LF system connection is not installed; campaign status toggles are failing for every project while force-system mode is on",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		case errors.Is(terr, domain.ErrNotFound):
 			// ABOVE the general ErrConnectionNotUsable arm, but for a WEAKER reason than the
 			// ErrAccountNotSelected arm above, and the difference is worth not blurring.
@@ -1969,6 +1990,12 @@ func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason
 		// path cannot tell the two apart, so the message names neither and points at the one
 		// actor who can act on either.
 		return "connection_problem", "this campaign's stored credentials could not be decrypted — an operator must investigate before metrics can be read"
+	case errors.Is(err, domain.ErrSystemConnectionMissing):
+		// ABOVE the ErrNotFound arm, which is wrapped alongside this one. The brief-level
+		// summary must not tell a reader to connect a platform when the actual fault is that
+		// this deployment forces the shared LF account and nobody installed it — that is an
+		// operator's repair, and pointing at the project's own connection hides it.
+		return "connection_problem", "this deployment runs paid-ads campaigns on the shared LF ad account and that connection is not installed — an operator must install it before metrics can be read"
 	case errors.Is(err, domain.ErrNotFound):
 		// PERMANENT: no connection row exists for this (project, provider) and the shared
 		// system row did not cover it. There is nothing to retry against — the fix is to
@@ -2065,11 +2092,13 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 				lvl := slog.LevelWarn
 				switch {
 				case errors.Is(merr, domain.ErrCredentialDecryptionFailed),
-					errors.Is(merr, domain.ErrSystemConnectionNotUsable):
-					// Both are OPERATOR-scope defects on shared infrastructure: a rotated key
-					// or a broken LF system row fails every project that depends on it, and
-					// the discriminator is the COUNT of these lines. Left at WARN they page
-					// nobody. GetCampaignMetrics answers 500 for both for the same reason.
+					errors.Is(merr, domain.ErrSystemConnectionNotUsable),
+					errors.Is(merr, domain.ErrSystemConnectionMissing):
+					// All three are OPERATOR-scope defects on shared infrastructure: a rotated
+					// key, a broken LF system row, or — under force-system mode — no LF row at
+					// all. Each fails every project that depends on it, and the discriminator is
+					// the COUNT of these lines. Left at WARN they page nobody. GetCampaignMetrics
+					// answers 500 for all three for the same reason.
 					lvl = slog.LevelError
 				case status == "not_ready":
 					lvl = slog.LevelInfo

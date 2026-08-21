@@ -350,7 +350,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	if err != nil {
 		return err
 	}
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInCreationAccountID(campaign)))
 	if err != nil {
 		return err
 	}
@@ -449,8 +449,13 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 // they wrap in notCreated() to release the dispatch claim, which is a different contract from
 // returning a classified error to a synchronous handler, and folding the two would mean this
 // helper had to know which caller it had.
-func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds linkedinCreds, err error) {
-	res, err = d.creds.resolve(ctx, projectID, platform)
+//
+// resolveCreds selects the credential entry point (see credsResolver): discovery is governed by
+// the forced-system flag; an operation on an existing campaign resolves the account that
+// campaign was CREATED under (linkedInCreationAccountID), which is the LF system account for a
+// campaign created while the flag was on.
+func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (res *resolved, creds linkedinCreds, err error) {
+	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, linkedinCreds{}, err
 	}
@@ -528,7 +533,7 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 // the likeliest places to meet an expired system credential — the one path that must
 // not answer with a generic label.
 func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (*resolved, linkedinCreds, error) {
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolve)
 	switch {
 	case err == nil:
 		return res, creds, nil
@@ -661,7 +666,7 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
 
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInCreationAccountID(campaign)))
 	if err != nil {
 		return nil, err
 	}

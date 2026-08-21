@@ -798,7 +798,7 @@ func TestClientCache_ReusedClientPerformsOneTokenExchange(t *testing.T) {
 	// Five resolves, each followed by a call that needs a bearer token — the dashboard-polling
 	// shape this change exists for.
 	for i := range 5 {
-		c, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+		c, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 		if err != nil {
 			t.Fatalf("resolve #%d: %v", i, err)
 		}
@@ -839,7 +839,7 @@ func TestClientCache_RotatedCredentialRebuildsClient(t *testing.T) {
 	d := NewGoogleAdsDispatcher(repo, identityEncryptor{},
 		googleads.WithTokenURL(srv.URL+"/token"), googleads.WithBaseURL(srv.URL))
 
-	c1, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	c1, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 	if err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -852,7 +852,7 @@ func TestClientCache_RotatedCredentialRebuildsClient(t *testing.T) {
 	rotated.Provider = model.ProviderGoogleAds
 	repo.row = rotated
 
-	c2, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	c2, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 	if err != nil {
 		t.Fatalf("second resolve: %v", err)
 	}
@@ -910,11 +910,11 @@ func TestClientCache_DifferentProjectsDoNotShareAClient(t *testing.T) {
 	d := NewGoogleAdsDispatcher(repo, identityEncryptor{},
 		googleads.WithTokenURL(srv.URL+"/token"), googleads.WithBaseURL(srv.URL))
 
-	cncf, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	cncf, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 	if err != nil {
 		t.Fatalf("resolve cncf: %v", err)
 	}
-	lfai, err := d.resolveGoogleAdsClient(context.Background(), "lfai", model.ProviderGoogleAds)
+	lfai, err := d.resolveGoogleAdsClient(context.Background(), "lfai", model.ProviderGoogleAds, nil)
 	if err != nil {
 		t.Fatalf("resolve lfai: %v", err)
 	}
@@ -960,7 +960,7 @@ func TestClientCache_FallbackProjectsShareOneSystemClient(t *testing.T) {
 
 	var first *googleads.Client
 	for _, p := range []string{"alpha", "beta", "gamma", "alpha", "beta"} {
-		c, err := d.resolveGoogleAdsClient(context.Background(), p, model.ProviderGoogleAds)
+		c, err := d.resolveGoogleAdsClient(context.Background(), p, model.ProviderGoogleAds, nil)
 		if err != nil {
 			t.Fatalf("resolve %s: %v", p, err)
 		}
@@ -1149,7 +1149,7 @@ func TestClientCache_ReconnectAtSameVersionRebuildsClient(t *testing.T) {
 	d := NewGoogleAdsDispatcher(repo, identityEncryptor{},
 		googleads.WithTokenURL(srv.URL+"/token"), googleads.WithBaseURL(srv.URL))
 
-	c1, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	c1, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 	if err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -1165,7 +1165,7 @@ func TestClientCache_ReconnectAtSameVersionRebuildsClient(t *testing.T) {
 	reconnected.Provider = model.ProviderGoogleAds
 	repo.row = reconnected
 
-	c2, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	c2, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 	if err != nil {
 		t.Fatalf("second resolve: %v", err)
 	}

@@ -1420,6 +1420,15 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				slog.ErrorContext(ctx, "platform dispatch failed before upstream create because of a defect in this service; the connection is NOT at fault and needs no repair (claim released)",
 					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
 					"reason", unusableConnectionReason(derr))
+			case errors.Is(derr, domain.ErrSystemConnectionMissing):
+				// Forced-system mode is on and no LF row is installed for this provider, so
+				// EVERY paid-ads dispatch on this deployment fails the same way. Its own arm
+				// above the not-usable one: "install the connection" and "repair the connection"
+				// are different repairs, and the default arm would log it as an ordinary
+				// per-project dispatch failure — which reads as one project's problem when it is
+				// the deployment's.
+				slog.ErrorContext(ctx, "the LF system connection is not installed; platform campaign creation is failing for every project while force-system mode is on (claim released)",
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID)
 			case errors.Is(derr, domain.ErrSystemConnectionNotUsable):
 				slog.ErrorContext(ctx, "the LF system connection is not usable; platform campaign creation is failing for every project without its own connection (claim released)",
 					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,

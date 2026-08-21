@@ -288,6 +288,17 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 	switch {
 	case errors.Is(aerr, ErrAccountsUnsupported):
 		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+	case errors.Is(aerr, domain.ErrSystemConnectionMissing):
+		// ABOVE the ErrNotFound arm, and load-bearing: the forced-system resolver wraps this
+		// sentinel ALONGSIDE ErrNotFound, so the broad arm below would win and answer 404
+		// "connect your project" for a fault the project cannot fix — forced mode ignores the
+		// project's own connection by definition, so connecting one would change nothing.
+		// The LF system row is simply not installed for this provider, which only an operator
+		// can repair, so this is their page: a 500 and an ERROR log, matching the treatment
+		// ErrSystemConnectionNotUsable already gets below.
+		slog.ErrorContext(ctx, "the LF system connection is not installed; "+d.label()+" is failing for every project while force-system mode is on",
+			"project_id", projectID, "provider", string(d.provider))
+		return &conn.InternalServerError{Code: "500", Message: d.label() + " is unavailable"}
 	case errors.Is(aerr, domain.ErrNotFound):
 		// The project has no stored connection for this provider. That is a client-side
 		// state error, not a platform outage — reporting 503 would tell the caller
