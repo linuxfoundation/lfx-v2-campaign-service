@@ -1589,12 +1589,13 @@ func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int
 // NOT ATOMIC: the find-then-create is best-effort, not an atomic upsert (LinkedIn
 // exposes no upsert primitive). This is a GET-then-POST: two concurrent
 // CreateCampaign calls for the same name can both observe "not found" and both
-// POST, creating duplicate campaign groups. The client does NOT attempt to close
-// this window and provides NO single-flight guarantee: this find-or-create is
-// best-effort and re-POSTs on a repeat call. An orchestrator per-(brief, platform)
-// single-flight claim is PLANNED but NOT provided here (tracked separately as
-// LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
-// must serialize concurrent calls for the same name on their own.
+// POST, creating duplicate campaign groups. This client provides no dedup
+// guarantee of its own. In the real dispatch path this window is already closed:
+// the orchestrator's per-(brief, platform, variant) claim
+// (internal/service/orchestrator.go, LFXV2-2665) serializes dispatch for the same
+// tuple before this function is ever reached. A caller invoking this method
+// outside that claimed path must still serialize concurrent calls for the same
+// name on its own.
 func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate string, endMs int64) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
@@ -1675,11 +1676,12 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 // subsequent create POST are separate calls, so two concurrent CreateCampaign
 // runs for the same (name, group) can both miss and both create a duplicate
 // campaign. LinkedIn offers no upsert primitive to close this window client-side,
-// and this client provides NO single-flight guarantee: the find-or-create is
-// best-effort and re-POSTs on a repeat call. An orchestrator per-(brief, platform)
-// single-flight claim is PLANNED but NOT provided here (tracked separately as
-// LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
-// must serialize concurrent calls for the same name on their own.
+// and this client provides no dedup guarantee of its own. In the real dispatch
+// path this window is already closed: the orchestrator's per-(brief, platform,
+// variant) claim (internal/service/orchestrator.go, LFXV2-2665) serializes
+// dispatch for the same tuple before this function is ever reached. A caller
+// invoking this method outside that claimed path must still serialize concurrent
+// calls for the same name on its own.
 func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
@@ -2178,16 +2180,21 @@ func validateRegistrationURL(raw string) error {
 // the per-variant dark-post/creative loop as a whole. Unlike the campaign group
 // and campaign — which are found idempotently by name (see
 // findOrCreateCampaignGroup / createSponsoredCampaign) — dark posts and creatives
-// have NO name-based lookup and LinkedIn exposes no upsert primitive, so every
-// CreateCampaign re-call RE-CREATES all dark posts and creatives, duplicating
+// have NO name-based lookup and LinkedIn exposes no upsert primitive, so a direct
+// re-call of CreateCampaign RE-CREATES all dark posts and creatives, duplicating
 // them. This is the same inherent client-level non-atomicity documented on
 // findOrCreateCampaignGroup and createSponsoredCampaign. The client does NOT
-// attempt per-creative idempotency. A PLANNED orchestrator per-(brief, platform)
-// single-flight claim (LFXV2-2665) is intended to be the authoritative dedup so
-// the creative loop isn't re-executed against an already-populated campaign, but
-// that claim is NOT implemented/enforced yet — this client provides no dedup
-// guarantee of its own. Until it lands, a caller must serialize CreateCampaign
-// per (brief, platform) itself to avoid duplicate dark posts/creatives.
+// attempt per-creative idempotency of its own.
+//
+// In the real dispatch path this re-call never happens: the orchestrator's
+// per-(brief, platform, variant) claim (internal/service/orchestrator.go,
+// LFXV2-2665) treats a partial result as either reusable (created_degraded) or a
+// retained orphan requiring reconciliation, and in neither case re-invokes
+// CreateCampaign for the same tuple. A caller invoking this method directly,
+// outside that claimed path, must still serialize calls per (brief, platform)
+// itself to avoid duplicate dark posts/creatives — automatic reconciliation
+// (resuming a partial dispatch by discovering and completing missing creatives)
+// remains a separate, still-open piece of LFXV2-2665.
 //
 // If a later variant fails after earlier ones succeeded, the group and campaign
 // are found (idempotent by name) on a retry, but each already-created dark post is
@@ -2486,11 +2493,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	steps = append(steps, fmt.Sprintf("Campaign ensured: %s (ID: %s)", campaignName, campaignID))
 
 	// NOT idempotent: dark posts and creatives have no name-based lookup and
-	// LinkedIn has no upsert, so re-running this loop duplicates every dark post
-	// and creative. A single-flight guard one layer up (the PLANNED orchestrator
-	// per-(brief, platform) claim, LFXV2-2665) is intended to prevent re-runs, but
-	// it is NOT implemented yet — this loop provides no dedup itself; see the
-	// CreateCampaign godoc.
+	// LinkedIn has no upsert, so a direct re-call of this loop duplicates every
+	// dark post and creative. This loop provides no dedup itself; see the
+	// CreateCampaign godoc for why the real dispatch path never re-invokes it for
+	// an already-created/degraded campaign.
 	creativeCount := 0
 	for i, variant := range in.Variants {
 		destURL := BuildUTMURL(reg, in.HSToken, campaignName, i+1)

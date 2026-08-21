@@ -22,8 +22,10 @@ import (
 // Result. Distinct from campaignStatusCreated so the degraded state is visible, and
 // PlatformCampaignID is left empty so the orchestrator's idempotency fast path does NOT
 // treat it as a completed campaign (it keys reuse on a real id + terminal status). The
-// retained claim then blocks a blind re-dispatch; actual recovery awaits the planned
-// reconciliation/single-flight support (LFXV2-2665). See campaignFromLinkedIn.
+// retained claim (internal/service/orchestrator.go) then blocks a blind re-dispatch —
+// that guard is already live; actual recovery (auto-discovering and completing the
+// orphaned group) awaits the reconciliation support still tracked separately under
+// LFXV2-2665. See campaignFromLinkedIn.
 const campaignStatusGroupCreated = "group_created"
 
 // campaignStatusUnconfirmed marks a LinkedIn dispatch where NEITHER the campaign nor
@@ -74,11 +76,15 @@ func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linked
 //
 // RETRY CAVEAT: unlike the reddit/twitter clients, the LinkedIn client's CreateCampaign
 // is NOT idempotent — dark posts and creatives have no name-based find-or-create lookup,
-// so a blind re-dispatch after an ambiguous failure would DUPLICATE them. A non-nil
+// so a direct re-call after an ambiguous failure would DUPLICATE them. A non-nil
 // partial result returned alongside an error therefore means "may exist — do NOT blindly
-// retry"; the orchestrator RETAINS the claim on it, and safe re-dispatch depends on the
-// planned per-(brief, platform) single-flight guard (LFXV2-2665). Callers must not treat
-// a LinkedIn ambiguous error as freely retryable the way name-idempotent platforms are.
+// retry"; the orchestrator RETAINS the claim on it and, via the per-(brief, platform,
+// variant) single-flight claim already implemented in internal/service/orchestrator.go
+// (LFXV2-2665), never re-invokes Dispatch for that tuple — it instead reuses a
+// degraded-but-created campaign or reports "reconciliation required" for a true orphan.
+// Callers must not treat a LinkedIn ambiguous error as freely retryable the way
+// name-idempotent platforms are; automatic reconciliation of a true orphan remains a
+// separate, still-open piece of LFXV2-2665.
 func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
