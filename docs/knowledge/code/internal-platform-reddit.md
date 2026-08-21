@@ -187,12 +187,30 @@ defects on this path were one surface: (1) Step 4's generic ad guidance still fi
 after an authoring failure — on the ambiguous arm it said "create the ads" while
 `AdWarning` said the post may exist and to verify first, and its "No ad variants or
 post URL provided" wording was false whenever `Variants` were supplied; (2) the
-definite-failure arms omitted the "(campaign and ad group created, PAUSED)" context
-the ad-create path carries, so an operator following them literally builds a SECOND
-campaign while the first sits PAUSED and orphaned; (3) nothing said to delete a
-stray post. Now Step 4 emits nothing when `postWarning != ""` (guarded at the
-variant-LISTING level, which is the arm that actually fired), every arm names the
-campaign and ad group as created and PAUSED, and the ambiguous arms say DELETE.
+definite-failure arms omitted the campaign/ad-group context, so an operator
+following them literally builds a SECOND campaign while the first sits PAUSED and
+orphaned; (3) nothing said to delete a stray post. Step 4 now emits nothing when
+`postWarning != ""` (guarded at the variant-LISTING level, which is the arm that
+actually fired), and the ambiguous arms say DELETE.
+
+**The campaign-state context is DEFERRED, not stated at Step 1.5.** Fixing (2) by
+writing "campaign + ad group created (PAUSED)" into the Step 1.5 arms replaced a
+missing-context defect with a premature-claim one — the same class, since Step 1.5
+runs BEFORE the campaign POST (Step 2) and the ad-group POST (Step 3). The claim
+became true only when both creates went on to succeed; on an ambiguous campaign
+create the persisted runbook asserted both resources existed directly above
+`"a PAUSED campaign may exist"`, and told the operator to attach an ad to a campaign
+that may never have been created.
+
+So the Step 1.5 arms confine themselves to the POST that actually happened
+("continuing without an ad"), and a single step naming the real ids
+(`Campaign <id> and ad group <id> were created (PAUSED)…`) plus an `AdWarning`
+suffix are appended at **Step 4**, under `postWarning != ""`. Reaching Step 4 is
+the proof the claim holds: every path between the campaign POST and it returns
+early — ambiguous partial, malformed 2xx, definite failure, and the ad-group
+equivalents — so control arrives only when both ids are decoded non-empty and both
+resources are PAUSED. **A runbook sentence must be emitted from a point where its
+claim is already known, not from where it is convenient to write.**
 
   - **UNCONFIRMED** — anything `createOutcomeAmbiguous` accepts: a `transportError`
     from an in-flight failure, a 2xx whose body carried no `data.id` (which

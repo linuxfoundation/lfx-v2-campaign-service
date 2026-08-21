@@ -1473,12 +1473,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			//     so no post exists and the operator can remediate directly;
 			//   - anything else (token refresh, body encode, request build, a
 			//     pre-connect dial failure): proven pre-send, nothing was created.
-			// Every arm names the campaign and ad group as CREATED and PAUSED. The campaign
-			// POST below still runs, so by the time an operator reads this guidance those two
-			// resources exist; guidance saying only "author the post and add the ad manually"
-			// reads as though nothing were created and invites a SECOND campaign while the
-			// first sits PAUSED and orphaned. This mirrors the ad-create path's wording,
-			// which has carried that context all along.
+			// NO ARM NAMES THE CAMPAIGN OR AD-GROUP STATE, because at this point in the
+			// function it is not yet known: the campaign POST is Step 2 and the ad group is
+			// Step 3, both BELOW. An earlier version of these strings asserted "campaign +
+			// ad group created (PAUSED)" here to supply context the operator genuinely needs
+			// — but it was written where the claim could not be true yet. It becomes true
+			// only on the path where both creates succeed; when the campaign create returns
+			// an ambiguous partial, the persisted runbook asserted two resources exist while
+			// the very next step said "a PAUSED campaign MAY exist", and told the operator to
+			// attach an ad to a campaign that may never have been created.
+			//
+			// That is the same defect class these strings were fixed for — a runbook
+			// asserting something the code does not guarantee — so the context is DEFERRED
+			// rather than dropped: Step 4 appends it once, from a point where both outcomes
+			// are known (see the postWarning block there). Every arm here confines itself to
+			// the POST, which is the only thing that has actually happened.
 			var postAPIErr *apiError
 			gotStatus := errors.As(err, &postAPIErr)
 			switch {
@@ -1487,20 +1496,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				// caller cancellation). Verify BEFORE authoring again, and DELETE a stray:
 				// whether such a post is publicly visible is undocumented (see Step 1.5), so
 				// removal is the instruction that is correct either way.
-				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit); the campaign and ad group were created (PAUSED) and no ad exists — verify in Reddit Ads Manager BEFORE authoring the post again to avoid a duplicate, and DELETE any post that is not attached to an ad"
+				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit) and no ad was created — verify in Reddit Ads Manager BEFORE authoring the post again to avoid a duplicate, and DELETE any post that is not attached to an ad"
 				if gotStatus {
-					steps = append(steps, fmt.Sprintf("Promoted-post authoring UNCONFIRMED (HTTP %d) -- campaign + ad group created (PAUSED) without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad", postAPIErr.StatusCode))
+					steps = append(steps, fmt.Sprintf("Promoted-post authoring UNCONFIRMED (HTTP %d) -- continuing without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad", postAPIErr.StatusCode))
 				} else {
-					steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- campaign + ad group created (PAUSED) without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad")
+					steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- continuing without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad")
 				}
 			case gotStatus:
 				// A definite 4xx: Reddit received and REJECTED the post, so none exists and
 				// authoring one again carries no duplicate risk.
-				postWarning = "promoted-post authoring FAILED (Reddit rejected the post); the campaign and ad group were created (PAUSED) and no ad exists — author the post and add the ad to the EXISTING campaign in Reddit Ads Manager"
-				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- campaign + ad group created (PAUSED) without an ad; add the ad to this campaign in Reddit Ads Manager", postAPIErr.StatusCode))
+				postWarning = "promoted-post authoring FAILED (Reddit rejected the post) and no ad was created — author the post and add the ad in Reddit Ads Manager"
+				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- continuing without an ad; author the post and add the ad in Reddit Ads Manager", postAPIErr.StatusCode))
 			default:
-				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post exists and the campaign and ad group were created (PAUSED) with no ad — author the post and add the ad to the EXISTING campaign in Reddit Ads Manager"
-				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- campaign + ad group created (PAUSED) without an ad; add the ad to this campaign in Reddit Ads Manager")
+				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post exists and no ad was created — author the post and add the ad in Reddit Ads Manager"
+				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- continuing without an ad; author the post and add the ad in Reddit Ads Manager")
 			}
 			// validatedPostID stays empty -> no ad. Unlike the no-PostURL path (where
 			// the caller never asked for an ad), an ad WAS intended here and does not
@@ -1890,6 +1899,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The no-PostURL/no-ImageURL path never sets postWarning, so it still yields an
 	// empty AdWarning and a clean `created`, as its contract requires.
 	adWarning := postWarning
+
+	// The DEFERRED half of the Step 1.5 authoring runbook. The campaign-state context an
+	// operator needs — that a campaign and ad group DO exist, PAUSED, so remediation means
+	// attaching an ad to them rather than building a second campaign — is appended HERE
+	// rather than at Step 1.5, because only here is it known to be true.
+	//
+	// Reaching this line is the proof. Every earlier exit returns: the campaign create
+	// returns on an ambiguous partial, on a malformed 2xx and on a definite failure, and the
+	// ad-group create does the same. So control arrives only when both POSTs succeeded and
+	// both ids were decoded — campaignID and adGroupID are non-empty — and CreateCampaign
+	// PAUSES both. Asserting it at Step 1.5 was wrong for exactly the case that matters: an
+	// ambiguous campaign create left a persisted runbook claiming two resources existed
+	// beside a step saying one of them MAY exist.
+	//
+	// Appended only when authoring actually failed (postWarning is non-empty, which is the
+	// same condition that seeded adWarning). A clean run has no authoring runbook to complete.
+	if postWarning != "" {
+		steps = append(steps, fmt.Sprintf(
+			"Campaign %s and ad group %s were created (PAUSED) with no ad -- add the ad to THIS campaign in Reddit Ads Manager rather than creating a new one",
+			campaignID, adGroupID))
+		adWarning += " (the campaign and ad group were created and are PAUSED)"
+	}
 
 	// A post id here came from EITHER a caller-supplied PostURL OR Step 1.5
 	// authoring an image post — both feed the same ad-creation path.

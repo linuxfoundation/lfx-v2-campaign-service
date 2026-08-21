@@ -1217,3 +1217,172 @@ func TestValidateImageURL_RejectsNonAbsoluteAndHostless(t *testing.T) {
 		t.Errorf("validateImageURL rejected a well-formed absolute https URL: %v", err)
 	}
 }
+
+// TestCreateCampaign_AuthoringRunbookNeverAssertsUncreatedResources pins that the authoring
+// runbook never claims a campaign or ad group exists before the code knows one does.
+//
+// Step 1.5 runs BEFORE the campaign POST (Step 2) and the ad-group POST (Step 3). An earlier
+// version of these strings supplied the operator's context — "campaign + ad group created
+// (PAUSED)" — at Step 1.5, where it cannot be true yet. It became true only when both creates
+// went on to succeed. When the campaign create instead returns an AMBIGUOUS PARTIAL, the
+// persisted result carried both claims at once:
+//
+//	"Promoted-post authoring UNCONFIRMED ... campaign + ad group created (PAUSED) without an ad"
+//	"Campaign creation is UNCONFIRMED ... a PAUSED campaign may exist"
+//
+// — the runbook asserting two resources exist beside a step saying one of them merely may, and
+// directing the operator to attach an ad to a campaign that may never have been created.
+//
+// The three subtests are the three outcomes the campaign create can produce after an authoring
+// failure, and the claim must hold on each: absent when nothing is confirmed (ambiguous), and
+// present exactly once when both creates are confirmed (success). The assertions are on the
+// campaign-state phrase, which is discriminating — "created (PAUSED)" is the claim under test,
+// while UNCONFIRMED/authoring tokens appear on arms that are not.
+func TestCreateCampaign_AuthoringRunbookNeverAssertsUncreatedResources(t *testing.T) {
+	// campaignStateClaimed reports whether any step asserts the campaign/ad-group pair exists.
+	// Matching on the phrase rather than a whole string keeps it robust to the id values that
+	// the success path interpolates.
+	campaignStateClaimed := func(steps []string) []string {
+		var hits []string
+		for _, s := range steps {
+			if strings.Contains(s, "were created (PAUSED)") || strings.Contains(s, "ad group created (PAUSED)") {
+				hits = append(hits, s)
+			}
+		}
+		return hits
+	}
+
+	newInput := func() CampaignInput {
+		return CampaignInput{
+			EventName:       "Open Source Summit",
+			Project:         "tlf",
+			EventSlug:       "oss-2026",
+			RegistrationURL: "https://events.linuxfoundation.org/oss/",
+			BudgetUSD:       500,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"linux"},
+			Objective:       "conversions",
+			ImageURL:        "https://events.linuxfoundation.org/banner.jpg",
+			CallToAction:    "sign up",
+			Variants:        []AdVariant{{Headline: "Join us in Amsterdam"}},
+		}
+	}
+
+	// serve builds a client whose /posts always fails (so the authoring runbook is emitted)
+	// and whose /campaigns responds as the case requires.
+	serve := func(t *testing.T, campaignHandler func(http.ResponseWriter)) *Client {
+		t.Helper()
+		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+		}))
+		t.Cleanup(tokenSrv.Close)
+
+		handler := http.NewServeMux()
+		handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+			case r.Method == http.MethodPost && strings.HasSuffix(path, "/profiles/t2_test/posts"):
+				// A definite 4xx: the authoring runbook is emitted, and the post is known
+				// NOT to exist, so nothing here depends on the ambiguous-authoring arm.
+				http.Error(w, "nope", http.StatusBadRequest)
+			case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+				campaignHandler(w)
+			case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+			default:
+				http.Error(w, "unexpected", http.StatusNotFound)
+			}
+		})
+		apiSrv := httptest.NewServer(handler)
+		t.Cleanup(apiSrv.Close)
+
+		return NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	}
+
+	t.Run("ambiguous campaign create: no step may claim the campaign exists", func(t *testing.T) {
+		// A 5xx on the campaign POST — the campaign MAY exist. This is the path where the
+		// premature claim was false.
+		c := serve(t, func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) })
+
+		res, err := c.CreateCampaign(context.Background(), newInput())
+		if err == nil {
+			t.Fatal("CreateCampaign succeeded despite a 5xx on the campaign create")
+		}
+		if res == nil {
+			t.Fatal("expected a partial result for an ambiguous campaign create (the claim must be retained)")
+		}
+		if hits := campaignStateClaimed(res.Steps); len(hits) > 0 {
+			t.Errorf("the runbook asserts the campaign and ad group exist, but the campaign create was "+
+				"UNCONFIRMED and the ad group was never attempted. Offending step(s): %q\nfull steps: %v",
+				hits, res.Steps)
+		}
+		if strings.Contains(res.AdWarning, "created and are PAUSED") {
+			t.Errorf("AdWarning = %q asserts the campaign was created; the campaign create was "+
+				"UNCONFIRMED", res.AdWarning)
+		}
+		// The authoring runbook itself must still be present — deferring the campaign-state
+		// sentence must not silently drop the authoring guidance with it.
+		var sawAuthoring bool
+		for _, s := range res.Steps {
+			if strings.Contains(s, "Promoted-post authoring") {
+				sawAuthoring = true
+			}
+		}
+		if !sawAuthoring {
+			t.Errorf("no promoted-post authoring step in %v", res.Steps)
+		}
+	})
+
+	t.Run("malformed 2xx campaign create: no step may claim the campaign exists", func(t *testing.T) {
+		// A 2xx with no data.id: the campaign may exist but its id is unknown, and the ad
+		// group is never attempted. The claim is equally unfounded here.
+		c := serve(t, func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		})
+
+		res, err := c.CreateCampaign(context.Background(), newInput())
+		if err == nil {
+			t.Fatal("CreateCampaign succeeded despite a campaign create returning no id")
+		}
+		if res == nil {
+			t.Fatal("expected a partial result for a malformed campaign create")
+		}
+		if hits := campaignStateClaimed(res.Steps); len(hits) > 0 {
+			t.Errorf("the runbook asserts the campaign and ad group exist, but the campaign id could "+
+				"not be read and the ad group was never attempted. Offending step(s): %q\nfull steps: %v",
+				hits, res.Steps)
+		}
+	})
+
+	t.Run("both creates succeed: the campaign state IS stated, exactly once", func(t *testing.T) {
+		// The context is genuinely needed here and must not have been lost in the move:
+		// without it an operator reading "authoring failed, add the ad manually" builds a
+		// SECOND campaign beside the PAUSED one this call created.
+		c := serve(t, func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		})
+
+		res, err := c.CreateCampaign(context.Background(), newInput())
+		if err != nil {
+			t.Fatalf("CreateCampaign: %v (an authoring failure must degrade, not fail the create)", err)
+		}
+		hits := campaignStateClaimed(res.Steps)
+		if len(hits) != 1 {
+			t.Fatalf("want exactly ONE step stating the campaign/ad-group state, got %d: %q\nfull steps: %v",
+				len(hits), hits, res.Steps)
+		}
+		// It must name the real ids, so the operator can find the campaign it refers to.
+		if !strings.Contains(hits[0], "camp_1") || !strings.Contains(hits[0], "ag_1") {
+			t.Errorf("step %q must name the created campaign and ad group ids (camp_1 / ag_1) so the "+
+				"operator can attach the ad to the right campaign", hits[0])
+		}
+		if !strings.Contains(res.AdWarning, "created and are PAUSED") {
+			t.Errorf("AdWarning = %q must carry the campaign-state context on the degraded-success "+
+				"path; it is what stops an operator creating a second campaign", res.AdWarning)
+		}
+	})
+}
