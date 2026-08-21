@@ -668,6 +668,38 @@ deciding whether to retry, so naming the wrong one sends them to the wrong subsy
 `accountDiscovery.label()`, the same value `classifyDiscoveryError` uses one layer up, so the two
 messages a single request can produce always agree.
 
+## LinkedIn org/account pairing verification (LFXV2-2665)
+
+`TestLinkedinAds` is the one `Test<Platform>Ads` handler that goes beyond the shared `testConn`
+baseline (connection exists, has credentials — testConn itself does not verify upstream; see
+the note above and its LFXV2-2556 follow-up, which still applies unchanged to the other 5
+platforms). It calls `testConn` first and short-circuits on failure or `!result.OK`; only when
+the baseline passes does it call `Orchestrator.VerifyAccountOrg`, which cross-checks the
+connection's stored `org_id` against LinkedIn's own record of which organization sponsors the
+stored `account_id` (`linkedin.Client.VerifyAccountOrgReference`, via
+`LinkedInDispatcher.VerifyAccountOrg` — see `internal-platform-linkedin.md`'s "Org/account
+reference verification" section for the client-level mechanics). This is the one piece of "org
+id bootstrap" the service can verify today: `CreateLinkedinAds`/`UpdateLinkedinAds` persist a
+caller-supplied `org_id` with no upstream check at write time, so a mistyped org id is otherwise
+undetectable until it breaks a campaign create.
+
+A confirmed mismatch, or ANY failure verifying the pairing (network, credential, or
+connection-state failure), is folded into an ordinary FAILED test (`OK: false`) rather than
+surfaced as a 5xx — a connection test failing is an expected outcome for a caller to see, not a
+service outage. A 503 stays reserved for `resolveBackendWithOrch` reporting the repo or
+orchestrator itself unavailable, checked before the verification call is attempted.
+
+`OrgReferenceVerifier` (`orchestrator.go`) is the optional-capability outlier among this
+package's dispatcher-discovered interfaces. `StatusToggler`, `MetricsReader`, `AccountLister`
+and `CampaignAdopter` all treat a dispatcher NOT implementing them as an error the caller
+explicitly asked for and didn't get (`ErrToggleUnsupported`, `ErrMetricsUnsupported`,
+`ErrAccountsUnsupported`, …). `Orchestrator.VerifyAccountOrg` instead returns `nil` — silently —
+for an unregistered platform OR a dispatcher that isn't an `OrgReferenceVerifier`, because it is
+meant to be reachable from every platform's connection-test path, and only LinkedIn's `reference`
+field gives this service anything to check; the other 5 platforms have no equivalent upstream
+signal, and that must read as "nothing to report" rather than a degraded result the caller has
+to special-case.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the

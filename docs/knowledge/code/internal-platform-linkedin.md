@@ -218,6 +218,36 @@ offering ids that fail at bind time. An unusable id fails the WHOLE walk rather 
 the row: a response shape that far from the documented one is not the response we think it is,
 and the rest of it is not trustworthy either.
 
+## Org/account reference verification (LFXV2-2665)
+
+`CreateLinkedinAds`/`UpdateLinkedinAds` (`internal/service/connection.go`) persist a
+caller-supplied `org_id` with no upstream check at write time — a manually mistyped org id is
+otherwise undetectable until it silently breaks a campaign create. `AdAccount.OrgID` and
+`Client.VerifyAccountOrgReference(ctx, accountID, configuredOrgID) error` close that gap using a
+signal `ListAdAccounts` already decodes: `adAccounts`' optional `reference` field, an
+account-only URN LinkedIn returns by default — `urn:li:organization:{id}` when the account is
+sponsored by an organization, `urn:li:person:{id}` for a personal account, or absent.
+`referenceOrgID(reference string) string` (`accounts.go`, reusing `orgIDRE` from
+`targeting.go`) extracts the numeric id from the organization form and returns `""` for
+anything else (person-scoped, malformed, or absent) — a person-scoped reference carries no org
+signal to check, not a signal that disagrees.
+
+`VerifyAccountOrgReference` walks the existing `ListAdAccounts` enumeration (there is no
+single-resource `GET /adAccounts/{id}` — `doRequest`'s GET path requires an `elements`
+envelope, i.e. only the list/search response shape) looking for `accountID`, and follows the
+same fail-closed-only-on-a-CONFIRMED-disagreement discipline as `resolveOrgID`
+(`targeting.go`): the account not appearing in the walk, an empty/person-scoped reference, or a
+missing configured org id are all INCONCLUSIVE (`nil` — nothing to confirm or refute), while
+`account.OrgID != configuredOrgID` is the one CONFIRMED-disagreement case and returns an error.
+An enumeration failure (upstream/transport error from `ListAdAccounts` itself) also propagates
+as an error — that is a failure to check, which is a different outcome from checking and finding
+nothing wrong, and callers must not conflate the two.
+
+This is wired into exactly one place: `TestLinkedinAds`'s connection-test RPC (see
+[internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"
+section for the service-layer half). `CreateCampaign` and every other LinkedIn path are
+untouched.
+
 ## Dispatch adapter (internal/dispatch)
 
 The `internal/dispatch` linkedin adapter (see [internal/dispatch](internal-dispatch.md))
@@ -233,5 +263,13 @@ creatives via the creatives FINDER (LinkedIn persists only a creative count, not
 PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite 400 on an
 in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) — the
 campaign is already the effective gate.
+
+`LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements a fifth optional
+capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
+adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
+reference verification" above). It resolves credentials the same way `Dispatch` does
+(`d.creds.resolve`, needing both `accountID` and `org_id`), not the way `ListAccounts`'s discovery
+path does (which deliberately does not require an account to be selected), because verifying a
+pairing needs both ids to be present.
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
