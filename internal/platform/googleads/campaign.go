@@ -244,6 +244,13 @@ type mutateOperation struct {
 // wholly succeeds or wholly fails — there is no partial state to report.
 type mutateRequest struct {
 	Operations []mutateOperation `json:"operations"`
+	// ValidateOnly, when true, has Google Ads run every request-level and business-rule
+	// validation without creating, updating, or spending anything — the exact mechanism
+	// already used out-of-band to verify the DEMAND_GEN + targetSpend campaign shape
+	// (see the 2026-08-14 result recorded in demandgen.go) and the shape research.md §7
+	// leans on for the O1/O2/O4 live-verification gates. omitempty keeps every existing
+	// call site's wire payload byte-for-byte unchanged.
+	ValidateOnly bool `json:"validateOnly,omitempty"`
 }
 
 // mutateResponse is the (subset of the) :mutate response we consume. results is
