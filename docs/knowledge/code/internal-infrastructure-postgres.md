@@ -670,62 +670,6 @@ A NULL is correct on an unattributed write, not a lost attribution.
 `scanCampaign` is covered directly (`TestScanCampaign_MapsEachColumnToItsField`,
 `TestCampaignCols_MatchesTheDeclaredOrder`) rather than only through the queries that call it.
 
-## System-account provenance (`campaigns.ran_on_system_account`)
-
-When a project has no connection of its own, dispatch falls back to the reserved system
-scope (`model.SystemProjectID`) and the campaign is created on an LF-OWNED credential.
-`internal/dispatch` knows this at the moment it happens — `resolve` stamps `fromSystem` on
-the credential it returns (`creds.go`) — but before `000027` that fact was DISCARDED once
-the credential had been used. The campaign row recorded the PROJECT, never the credential
-that served it, so nothing could answer "which campaigns ran on the LF account": neither
-attributing system-account spend back to the projects that incurred it, nor computing blast
-radius when the LF credential is revoked.
-
-**Three states, not two.** The column is nullable with no default, and each value is a
-different claim:
-
-| value   | meaning                                                  |
-| ------- | -------------------------------------------------------- |
-| `NULL`  | unknown — the row predates `000027`; nothing recorded it   |
-| `false` | known to have run on the project's OWN connection          |
-| `true`  | known to have run on the LF system account                 |
-
-Existing rows are deliberately NOT backfilled, and the column has no `DEFAULT FALSE`. Both
-would be cheaper to query and both would be a lie: they assert of every historical campaign
-that we know the project paid, when in fact some took the fallback and we cannot tell which.
-Because the column exists to attribute SPEND, a false `false` moves LF-funded campaigns out
-of the LF column and understates what the foundation paid, silently and unrecoverably. The
-absent default matters for the same reason going forward — with one, a future write that
-forgets the flag would claim "the project's own account" by omission. A consumer totalling
-system-account spend must treat `NULL` as excluded-unknown, never as `false`.
-
-**A historical fact, never recomputed.** The value describes the credential that served the
-campaign AT CREATION. Re-deriving it later — asking whether the project has its own
-connection NOW — is the tempting bug: a project that connects its own ad account next month
-did not retroactively pay for a campaign the LF funded last month. `upsertCampaignQuery`
-therefore OMITS the column from its `DO UPDATE` arm, exactly as it omits `created_by`, so a
-later update or status toggle cannot revise it. The omission is a bare one and **not** a
-`COALESCE`: unlike `updated_by`, a row legitimately holding `false` must not be upgradable
-to `true` by a later write that happens to carry one. Both mistakes are pinned live
-(`TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate`, whose two arms fail for the bare
-assignment and the `COALESCE` respectively).
-
-**Crossing the package boundary.** `fromSystem` is learned in `internal/dispatch` and the
-row is written in `internal/service`, and those two are SIBLINGS — neither imports the
-other. No new dependency was introduced: the value rides the `*model.Campaign` that
-`PlatformDispatcher.Dispatch` already returns, through the shared `internal/domain/model`
-both packages import. Each dispatcher applies `resolved.stampProvenance` via a `defer` on a
-NAMED RETURN rather than at each `return campaignFromX(...)` site, so the UNCONFIRMED and
-degraded paths — which return a campaign ALONGSIDE an error, and are exactly the rows an
-operator reconciling spend cannot afford to have unstamped — are covered too, as is any exit
-added later. The orchestrator's role is purely negative: it stamps ownership, variant and
-status onto that campaign and must leave the provenance field alone
-(`TestOrchestrator_PersistsDispatcherProvenance`).
-
-The column is NOT exposed in `design/`, and so appears nowhere in `gen/` or the OpenAPI
-documents. It is operator-facing provenance for spend attribution and credential blast
-radius, in the same class as `created_by`, which is likewise persisted and likewise absent
-from the API.
 Both actor columns are JSONB and both timestamps are `time.Time`, so a swap in its destination
 list cannot fail at the type level: `created_by` and `updated_by` would simply trade places and
 every other test would stay green while the audit trail named the wrong person on every row.
@@ -774,6 +718,91 @@ the loaded row already carries the PREVIOUS editor, so writing it back unchanged
 silently re-assert them as the author of somebody else's edit. That is the failure mode the
 second edit in `TestAudienceActor_UpdateStampsTheEditorNotTheCreator` exists to catch —
 a fill-only-if-empty stamp passes a single-edit test and is wrong from the second edit on.
+
+## System-account provenance (`campaigns.ran_on_system_account`)
+
+When a project has no connection of its own, dispatch falls back to the reserved system
+scope (`model.SystemProjectID`) and the campaign is created on an LF-OWNED credential.
+`internal/dispatch` knows this at the moment it happens — `resolve` stamps `fromSystem` on
+the credential it returns (`creds.go`) — but before `000027` that fact was DISCARDED once
+the credential had been used. The campaign row recorded the PROJECT, never the credential
+that served it, so nothing could answer "which campaigns ran on the LF account": neither
+attributing system-account spend back to the projects that incurred it, nor computing blast
+radius when the LF credential is revoked.
+
+**Three states, not two.** The column is nullable with no default, and each value is a
+different claim:
+
+| value   | meaning                                                  |
+| ------- | -------------------------------------------------------- |
+| `NULL`  | unknown — the row predates `000027`; nothing recorded it   |
+| `false` | known to have run on the project's OWN connection          |
+| `true`  | known to have run on the LF system account                 |
+
+Existing rows are deliberately NOT backfilled, and the column has no `DEFAULT FALSE`. Both
+would be cheaper to query and both would be a lie: they assert of every historical campaign
+that we know the project paid, when in fact some took the fallback and we cannot tell which.
+Because the column exists to attribute SPEND, a false `false` moves LF-funded campaigns out
+of the LF column and understates what the foundation paid, silently and unrecoverably. The
+absent default matters for the same reason going forward — with one, a future write that
+forgets the flag would claim "the project's own account" by omission. A consumer totalling
+system-account spend must treat `NULL` as excluded-unknown, never as `false`.
+
+**Write-once: stamped on the first write, frozen thereafter.** The value describes the
+credential that served the campaign AT CREATION. Re-deriving it later — asking whether the
+project has its own connection NOW — is the tempting bug: a project that connects its own ad
+account next month did not retroactively pay for a campaign the LF funded last month. So
+`upsertCampaignQuery`'s `DO UPDATE` arm assigns the column only while the STORED value is
+still `NULL`:
+
+```sql
+ran_on_system_account=CASE
+    WHEN campaigns.ran_on_system_account IS NULL THEN EXCLUDED.ran_on_system_account
+    ELSE campaigns.ran_on_system_account
+END,
+```
+
+The guard has to be on the stored value, and the column has to be present in the arm at all.
+Both halves were learned the hard way:
+
+- **Not a bare omission.** Omitting it (as `created_by` is omitted) looks like the strongest
+  protection, but the INSERT arm is *not* the arm a normal dispatch reaches.
+  `dispatchPlatform` upserts only after `ClaimCampaignDispatch` won, and that claim has
+  already INSERTed a `pending` row on the same `(brief_id, platform, variant)` slot — so the
+  upsert lands on the CONFLICT arm every time. With the column omitted there, the
+  dispatcher's `fromSystem` was computed and then discarded on every dispatch, leaving the
+  column `NULL` forever: the "unknown" state the three-way column exists to distinguish from
+  a real answer. The claim row is exactly a row whose provenance is still `NULL`, which is
+  why the `IS NULL` guard stamps it correctly.
+- **Not a `COALESCE`.** `COALESCE(EXCLUDED.…, campaigns.…)` guards only against an INCOMING
+  `NULL`. A row legitimately holding `false` would still be upgradable to `true` by a later
+  write that happens to carry one. Guarding on the STORED value freezes `false` and `true`
+  alike.
+
+All three shapes are pinned live: `TestLiveClaimThenUpsertPersistsProvenance` drives the real
+claim-then-upsert sequence and fails against the bare omission, while
+`TestLiveProvenanceIsWrittenOnceThenFrozen` and
+`TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate` fail against the bare assignment and the
+`COALESCE`. The distinction matters because a test that both CREATES and UPDATES through
+`UpsertCampaign` alone never sees the conflict arm on a claimed row, and so stays green while
+the column is never written at all.
+
+**Crossing the package boundary.** `fromSystem` is learned in `internal/dispatch` and the
+row is written in `internal/service`, and those two are SIBLINGS — neither imports the
+other. No new dependency was introduced: the value rides the `*model.Campaign` that
+`PlatformDispatcher.Dispatch` already returns, through the shared `internal/domain/model`
+both packages import. Each dispatcher applies `resolved.stampProvenance` via a `defer` on a
+NAMED RETURN rather than at each `return campaignFromX(...)` site, so the UNCONFIRMED and
+degraded paths — which return a campaign ALONGSIDE an error, and are exactly the rows an
+operator reconciling spend cannot afford to have unstamped — are covered too, as is any exit
+added later. The orchestrator's role is purely negative: it stamps ownership, variant and
+status onto that campaign and must leave the provenance field alone
+(`TestOrchestrator_PersistsDispatcherProvenance`).
+
+The column is NOT exposed in `design/`, and so appears nowhere in `gen/` or the OpenAPI
+documents. It is operator-facing provenance for spend attribution and credential blast
+radius, in the same class as `created_by`, which is likewise persisted and likewise absent
+from the API.
 
 ## Migration numbering
 

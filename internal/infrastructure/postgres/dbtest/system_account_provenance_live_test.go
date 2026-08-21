@@ -147,7 +147,16 @@ func TestLiveUpsertCampaignPersistsProvenance(t *testing.T) {
 //
 // Both update shapes are exercised, because they fail differently. A bare assignment breaks
 // on the false case; a COALESCE — the "safe" fix someone reaches for — still breaks on it,
-// since false is not NULL. Only omitting the column from the DO UPDATE arm holds both.
+// since false is not NULL. What holds both is the conflict arm's write-once guard, which
+// assigns only while the STORED value IS NULL.
+//
+// Note what this test does NOT cover, and why it needs its sibling in
+// system_account_provenance_dispatch_live_test.go: it seeds the row with UpsertCampaign
+// itself, so the INSERT arm stamps the provenance before the update under test runs. The
+// production path seeds the row with ClaimCampaignDispatch instead, which stamps nothing —
+// so this test passed even while the conflict arm discarded the flag on every real dispatch.
+// A test that both creates and updates through the same INSERT arm can only see the freezing
+// half of the invariant, never the writing half.
 func TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
