@@ -255,8 +255,18 @@ openssl rand -base64 32
   While it is on, an ad account id cannot be SAVED onto a project's
   connection (400); discovery is resolving the LF credential, so the ids
   it returns are LF-owned and persisting one would outlive the flag.
-  Clearing a selection stays allowed. This is what keeps the rollout
-  reversible by flipping the flag back.
+  Clearing a selection stays allowed, as is re-sending the id already
+  stored — the guard refuses a CHANGED id, not a present one. This is
+  what keeps the rollout reversible by flipping the flag back.
+
+  One consequence to plan around: `linkedin-ads`, `reddit-ads`,
+  `twitter-ads` and `microsoft-ads` declare `account_id` as REQUIRED on
+  their create payloads, so a create body cannot omit it and those four
+  providers cannot be connected at all while the flag is on. `google-ads`
+  and `meta-ads` are credentials-first and can still be created. The
+  per-endpoint status contract is in
+  [`docs/api-catalog.md`](docs/api-catalog.md) under Platform
+  Connections.
 
   HubSpot/email is never forced (the path gates on the paid-ads channel
   kind). A missing or unusable system row fails the dispatch closed

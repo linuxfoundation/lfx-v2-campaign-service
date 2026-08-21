@@ -158,10 +158,20 @@ type credsSource struct {
 }
 
 func newCredsSource(repo connReader, enc domain.Encryptor) *credsSource {
-	// Mirrors the dispatch-layer REDDIT_METRICS_ENABLED flag: a process-wide toggle read
-	// from the environment at construction, not threaded through the seven New*Dispatcher
-	// signatures (191 call sites) and Config for a value only credsSource consumes. "true"
-	// and nothing else turns it on, matching the existing flag's exact-match parse.
+	// A process-wide toggle read from the environment ONCE HERE, at construction, rather
+	// than threaded through the seven New*Dispatcher signatures and Config for a value only
+	// credsSource consumes. "true" and nothing else turns it on, matching the exact-match
+	// parse REDDIT_METRICS_ENABLED uses.
+	//
+	// The parse is shared with that flag; the LIFECYCLE is deliberately NOT, and the two must
+	// not be described as mirroring each other. REDDIT_METRICS_ENABLED is read PER CALL
+	// (internal/dispatch/reddit.go's metrics path) precisely so it can be flipped without a
+	// restart. This one is captured into forceSystemPaidAds below and read from the struct
+	// thereafter, so changing the environment mid-process does nothing until the service is
+	// restarted. internal/service/connection_handler.go's guard RELIES on that difference —
+	// it reads the force flag live per request while the dispatchers hold the cached copy —
+	// so a future editor who "unifies" the two lifecycles on the strength of a mirroring
+	// comment would silently change when the guard starts and stops firing.
 	return &credsSource{
 		repo:               repo,
 		enc:                enc,
@@ -360,6 +370,22 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 		if s.systemIsTheCreator(ctx, provider, creationAccountID) {
 			return nil, sysErr
 		}
+		// A third state reaches here and is neither of the two above: the system row is
+		// proven ABSENT while the campaign records an account the project does not own.
+		// Nothing reachable can address that campaign — the project's connection points
+		// elsewhere and no LF row is installed — so returning the project's resolution hands
+		// back an account-mismatch 409 telling the caller to reconnect an account that was
+		// never theirs, for a missing LF credential only an operator can install.
+		//
+		// This is deliberately keyed on PROVEN absence, not on systemIsTheCreator being
+		// false: "unproven" (a repo failure, or a system row that names no account) keeps
+		// the project-owned default, because a wrong guess in THAT direction pages an
+		// operator for a project's own repair. sysErr already carries
+		// ErrSystemConnectionMissing alongside ErrNotFound (resolveForcedSystem), which is
+		// the sentinel internal/service branches on to answer the operator-owned 500.
+		if s.systemRowProvablyAbsent(ctx, provider, creationAccountID) {
+			return nil, sysErr
+		}
 		return res, nil
 	}
 	if matchesAccount(sysRes.accountID, creationAccountID) {
@@ -398,8 +424,26 @@ func (s *credsSource) faultForCreator(ctx context.Context, provider model.Provid
 // and accidentally routed differently — the only safe reading of either is the project-owned
 // default.
 func (s *credsSource) systemIsTheCreator(ctx context.Context, provider model.Provider, creationAccountID string) bool {
-	created, known := s.systemCreated(ctx, provider, creationAccountID)
+	created, known, _ := s.systemCreated(ctx, provider, creationAccountID)
 	return known && created
+}
+
+// systemRowProvablyAbsent reports whether the LF system row is PROVEN not to exist for this
+// provider — a settled read of storage, not merely an unanswered question.
+//
+// It is the arm systemIsTheCreator cannot express. That helper collapses "unproven" and
+// "proven not the creator" into one false, which is right for its question ("is the system
+// PROVABLY the creator") and wrong for this one. A campaign that records a creation account
+// the project does not own, whose system row is absent, has no credentials anywhere that can
+// address it — and the missing LF row is an operator's repair, not the project's. Reporting
+// that as the project's account-mismatch leaves a spending campaign unpausable with nobody
+// paged, which is the failure this whole file exists to prevent.
+//
+// An empty creationAccountID still yields false: with no recorded provenance there is no
+// system claim to honour and the project's own error is the honest answer, absent row or not.
+func (s *credsSource) systemRowProvablyAbsent(ctx context.Context, provider model.Provider, creationAccountID string) bool {
+	_, _, absent := s.systemCreated(ctx, provider, creationAccountID)
+	return absent
 }
 
 // systemCreated reports whether creationAccountID names the LF system row's ad account, and
@@ -419,24 +463,42 @@ func (s *credsSource) systemIsTheCreator(ctx context.Context, provider model.Pro
 // account created the campaign.
 //
 // Returns known=false when the question cannot be settled: no recorded provenance on the
-// campaign, a system row that is absent or records no account of its own, or a repo failure.
-// Callers must treat that as "not established" and keep the project-owned default rather than
-// guessing, since a wrong guess in that direction pages an operator for a project's own repair.
-func (s *credsSource) systemCreated(ctx context.Context, provider model.Provider, creationAccountID string) (created bool, known bool) {
+// campaign, a system row that records no account of its own, or a repo failure. Callers must
+// treat that as "not established" and keep the project-owned default rather than guessing,
+// since a wrong guess in that direction pages an operator for a project's own repair.
+//
+// A row proven ABSENT is reported separately, via absent, and is NOT one of those cases. The
+// distinction is the point: "cannot determine" and "determined absent" are different answers
+// and only the first has to fall back to a guess-free default. domain.ErrNotFound is a settled
+// reading of storage — no LF row is installed for this provider — whereas a repo failure or a
+// nameless row leaves the question open. Collapsing the two is what let an absent row render
+// as the project's account-mismatch 409, paging nobody for a deployment-wide repair.
+func (s *credsSource) systemCreated(ctx context.Context, provider model.Provider, creationAccountID string) (created, known, absent bool) {
 	if strings.TrimSpace(creationAccountID) == "" {
-		return false, false
+		return false, false, false
 	}
 	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
-	if err != nil || conn == nil {
-		// A missing system row cannot prove the campaign was NOT created on it (the row may
-		// have been deleted since), but neither can it prove that it was. Unproven, so the
-		// project-owned default stands rather than a guess in either direction.
-		return false, false
+	if err != nil {
+		// ErrNotFound is a SETTLED answer: storage was read and holds no LF row for this
+		// provider. Any other error left the question open — an unanswered lookup is not a
+		// proof of absence, and treating a database hiccup as one would page an operator
+		// every time it happened.
+		if errors.Is(err, domain.ErrNotFound) {
+			return false, false, true
+		}
+		return false, false, false
+	}
+	if conn == nil {
+		// A nil row with a nil error is the same settled absence ErrNotFound expresses;
+		// domain.ConnectionReader does not forbid a reader from reporting it this way.
+		return false, false, true
 	}
 	if strings.TrimSpace(conn.AccountID) == "" {
-		return false, false
+		// Present but nameless (installed-but-unconfigured). It names no account, so it can
+		// be shown neither to own nor to disown this campaign: unproven, not absent.
+		return false, false, false
 	}
-	return matchesAccount(conn.AccountID, creationAccountID), true
+	return matchesAccount(conn.AccountID, creationAccountID), true, false
 }
 
 // matchesAccount reports whether a resolved account id is the one a campaign was created

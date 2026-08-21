@@ -1153,10 +1153,28 @@ validates and DECRYPTS and returns an error INSTEAD of a value — so at the mom
 is broken, which is exactly when the routing decision matters, its account id is unavailable.
 The column is readable whether or not the credentials validate.
 
-It returns `known=false` when the question cannot be settled — no recorded provenance, a system
-row that is absent or nameless, or a repo failure — and callers keep the project-owned default.
-The asymmetry is deliberate: claiming system creation pages an operator, so an unproven claim
-must not be guessed in that direction.
+It returns `(created, known, absent)`, and the three unlike states behind the old two-value
+answer are now told apart:
+
+- `known=false, absent=false` — the question **cannot be settled**: no recorded provenance, a
+  system row present but nameless, or a repo failure. Callers keep the project-owned default.
+  The asymmetry is deliberate: claiming system creation pages an operator, so an unproven claim
+  must not be guessed in that direction.
+- `known=false, absent=true` — the system row is **proven absent** (`ErrNotFound`, or a
+  `(nil, nil)` read). This is a completed read of storage, not an open question: no LF row is
+  installed for this provider.
+
+`systemRowProvablyAbsent` exposes the third value, and `resolveExisting`'s mismatch arm uses it
+to return the system error (which already carries `ErrSystemConnectionMissing` → a 500) instead
+of the project's resolution. Without the distinction, a campaign recording a creation account
+the project does not own, whose system row does not exist, answered
+`ErrCampaignAccountMismatch` → a 409 telling the caller to reconnect an account that was never
+theirs, for a missing LF credential only an operator can install — nobody paged, campaign still
+spending.
+
+**"Cannot determine" and "determined absent" are different answers.** A boolean meaning "not
+established" acquires "established false" the moment a caller needs to separate them, and that
+caller is usually the one deciding who gets paged.
 
 Passing the id as a parameter is deliberate: it makes the omission a COMPILE ERROR. The bug being
 fixed here was a `resolveExisting` that took only `(ctx, projectID, provider)` and so could not

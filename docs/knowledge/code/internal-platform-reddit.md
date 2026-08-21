@@ -107,17 +107,31 @@ There are two ways an ad gets a creative, and an explicit post always wins:
 
 - **`PostURL` supplied**: the given post is validated (`extractRedditPostID`) and
   promoted as-is. `ImageURL`/`CallToAction` are ignored.
-- **`ImageURL` supplied, no `PostURL`**: the client AUTHORS a promoted ("dark")
-  IMAGE post via `POST /profiles/{accountID}/posts`, then attaches its `t3_` id
-  as the ad's `post_id`. Reddit's profile id IS the ad-account id (`t2_...`).
+- **`ImageURL` supplied, no `PostURL`**: the client AUTHORS an IMAGE post via
+  `POST /profiles/{accountID}/posts`, then attaches its `t3_` id as the ad's
+  `post_id`. Reddit's profile id IS the ad-account id (`t2_...`). Reddit marks
+  this endpoint **legacy** (superseded by the structured-post job flow); not
+  migrated, recorded so the next editor knows.
 
 Reddit has NO LINK post type and will not auto-fetch an image from the
 destination, so authoring requires an image URL; Reddit INGESTS that image at
 post-create time and re-hosts it to `i.redd.it` (there is no separate
-media-upload step). The dark-post body is
+media-upload step). The post body is
 `{"data":{"type":"IMAGE","headline":..,"allow_comments":false,"content":[{"media_url":..,"call_to_action":..,"destination_url":..}]}}`.
-`allow_comments:false` marks it promoted-only (not distributed to a feed on its
-own). `call_to_action` must be one of Reddit's title-case labels (e.g.
+
+**`allow_comments:false` disables comments, and that is ALL Reddit documents it to
+do.** An earlier version of this page said it marked the post promoted-only and
+kept it out of feeds. That is two claims and both fail: the causal one is
+**contradicted** (a separate PATCH exists purely to flip `allow_comments` on an
+existing post — if it governed dark status, that PATCH would toggle a live ad
+between hidden and public), and "the endpoint inherently creates promoted-only
+posts" is **undocumented** (no visibility, publication or distribution field
+exists on the create body or the GET that reads a post back). Reddit's "promoted
+posts are only placed in feeds" wording belongs to the SELF-SERVE
+promote-an-existing-post flow and does not transfer. Nothing in the client relies
+on the post being invisible; see the ordering note below.
+
+`call_to_action` must be one of Reddit's title-case labels (e.g.
 "Learn More", "Sign Up", "Buy Tickets"); the client accepts a case-insensitive
 value and resolves it to Reddit's exact label against `redditCTAs` (captured live
 from the API; a caller typo fails locally with the accepted set named).
@@ -128,12 +142,24 @@ is the first ad variant's headline, else the event name, capped at
 
 The authored post's image URL, CTA, and headline are validated UP FRONT (before
 any mutating call), so a bad value fails fast rather than after paid resources
-exist. The post itself is created BEFORE the paid campaign (`Step 1.5`): a dark
-post is zero-cost and invisible, so a post-authoring FAILURE degrades to a
-campaign + ad group with NO ad rather than orphaning a paid resource, and a post
-that succeeds but is never attached (a later step fails) is a harmless unbilled
-orphan. A caller context cancellation during authoring is fatal (abort before any
-paid create). The degrade step reports ONLY the HTTP status, never the error body
+exist. The post itself is created BEFORE the paid campaign (`Step 1.5`), and the
+argument for that ordering is the **billing asymmetry**, not invisibility: an
+unattached post carries no spend of its own while a campaign does, so a
+post-authoring FAILURE degrades to a campaign + ad group with NO ad rather than
+orphaning a PAID resource. Because a stray post's visibility is undocumented
+rather than known-benign, it is treated as a stray to REMOVE: every arm where a
+post may exist tells the operator to DELETE a post not attached to an ad, which is
+correct whether or not the post is distributed.
+
+A caller context cancellation during authoring is fatal, but only in conjunction
+with ambiguity: `ctx.Err() != nil && createOutcomeAmbiguous(err)` returns a
+name-carrying PARTIAL result so `Dispatch` RETAINS the claim (release keys on
+`result == nil` alone, and the request layer wraps ctx errors as `transportError`
+because a ctx error from `Do` can fire after the POST reached Reddit — so
+`(nil, err)` there released the claim on a post that may exist and a retry
+duplicated it). A non-ambiguous cancellation still aborts with `(nil, err)`.
+Every NON-cancellation failure, including a plain 5xx, stays non-fatal and
+degrades. The degrade step reports ONLY the HTTP status, never the error body
 — a reflective Reddit validation error can echo the `destination_url` (which
 carries the caller's permitted secret-bearing query params).
 
@@ -155,6 +181,18 @@ message, never to select the arm. The order is load-bearing because the two are 
 disjoint: `createOutcomeAmbiguous` returns true for an `*apiError` carrying a 5xx or
 a mutating 3xx, so testing the type first swallows both into the "Reddit rejected
 it" arm and tells the operator to author a post that may already exist.
+
+**`Steps` is read as a RUNBOOK, so its arms must not contradict each other.** Three
+defects on this path were one surface: (1) Step 4's generic ad guidance still fired
+after an authoring failure — on the ambiguous arm it said "create the ads" while
+`AdWarning` said the post may exist and to verify first, and its "No ad variants or
+post URL provided" wording was false whenever `Variants` were supplied; (2) the
+definite-failure arms omitted the "(campaign and ad group created, PAUSED)" context
+the ad-create path carries, so an operator following them literally builds a SECOND
+campaign while the first sits PAUSED and orphaned; (3) nothing said to delete a
+stray post. Now Step 4 emits nothing when `postWarning != ""` (guarded at the
+variant-LISTING level, which is the arm that actually fired), every arm names the
+campaign and ad group as created and PAUSED, and the ambiguous arms say DELETE.
 
   - **UNCONFIRMED** — anything `createOutcomeAmbiguous` accepts: a `transportError`
     from an in-flight failure, a 2xx whose body carried no `data.id` (which

@@ -855,3 +855,57 @@ func TestUnprovableProvenanceKeepsTheProjectFault(t *testing.T) {
 		})
 	}
 }
+
+// TestAbsentSystemRowSurfacesTheOperatorFault covers the third arm of the same routing
+// defect its two siblings above already fixed, arriving through the system row being
+// ABSENT rather than present-and-unusable.
+//
+// systemCreated answers known=false for three distinct states, and the deliberate design
+// is that an UNSETTLEABLE question must not fabricate an answer. Two of those states are
+// genuinely unsettleable and TestUnprovableProvenanceKeepsTheProjectFault pins them: a
+// system row that records no account of its own, and a lookup that FAILED. Neither can be
+// shown to own the campaign, so the project keeps its own actionable error.
+//
+// A row proven ABSENT is not one of them, and collapsing it into the same answer is what
+// this test refuses. ErrNotFound is a settled reading of storage, not an unanswered
+// question: it says no LF row is installed for this provider. So when a campaign RECORDS
+// a creation account that the project's own connection does not match, and the system row
+// that could have owned it is proven absent, the fault is the operator's — the LF
+// credential row is missing, which is a deployment-wide repair no project can make. The
+// prior arms already route the present-but-unusable version of this to
+// ErrSystemConnectionMissing/NotUsable; an absent row must not silently downgrade to the
+// project's account-mismatch 409, because that pages nobody while the campaign spends.
+//
+// The assertion is on the sentinel an operator actually receives, not on prose: brief.go
+// and orchestrator.go both branch on domain.ErrSystemConnectionMissing to answer 500.
+func TestAbsentSystemRowSurfacesTheOperatorFault(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	// The project resolves fine to act_111. The campaign records act_999 — an account the
+	// project does not own — and NO system row exists at all (no rows entry, no errs entry,
+	// so Get answers a clean domain.ErrNotFound).
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"cncf": metaConnFor("act_111")}}
+
+	res, err := newCredsSource(repo, identityEncryptor{}).
+		resolveExisting(context.Background(), "cncf", model.ProviderMetaAds, "act_999")
+	if err == nil {
+		t.Fatalf("resolveExisting SUCCEEDED (account %q): the campaign was created under act_999, "+
+			"which neither the project's connection nor any installed system row owns, so there are "+
+			"no credentials that can address it", res.accountID)
+	}
+	// The discriminating assertion. ErrCampaignAccountMismatch is the PROJECT-owned remedy
+	// ("reconnect the original account") and is what the unfixed code produces by way of
+	// returning the project resolution; ErrSystemConnectionMissing is the operator-owned one.
+	// Both are reachable from this call, so asserting the absence of one and the presence of
+	// the other is what separates the arms — a test asserting only "an error came back" passes
+	// on either.
+	if errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Errorf("err = %v, which routes to the project's account-mismatch 409. No LF system row is "+
+			"installed; that is a deployment-wide repair a project cannot make, so this pages nobody "+
+			"while the campaign keeps spending", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionMissing) {
+		t.Errorf("err = %v, want domain.ErrSystemConnectionMissing so internal/service answers the "+
+			"operator-owned 500 (internal/service/brief.go's ErrSystemConnectionMissing arm)", err)
+	}
+}

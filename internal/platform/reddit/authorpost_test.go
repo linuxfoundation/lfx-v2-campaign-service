@@ -790,3 +790,430 @@ func TestCreateCampaign_AuthorPostAmbiguousAPIErrorIsUnconfirmed(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateCampaign_InFlightCancelDuringAuthoringRetainsTheClaim pins the claim-retention
+// contract on the promoted-post authoring step, for a caller cancellation that interrupts the
+// POST while it is IN FLIGHT.
+//
+// The money path this protects: Reddit may already have accepted the mutating POST when the
+// cancellation lands. The request layer classifies a ctx error from Do as a transportError
+// precisely so it reads as AMBIGUOUS rather than pre-send (TestIsPreSendDialError states the
+// rule and its reason: "a ctx error from Do can fire AFTER the POST body reached Reddit").
+// CreateCampaign's own contract is that (nil, err) means nothing was or may have been created,
+// and RedditDispatcher.Dispatch keys claim release on `result == nil` ALONE — so returning
+// (nil, err) here tells the orchestrator to RELEASE the claim on a post that may exist, and a
+// retry authors a duplicate paid post.
+//
+// The observable outcome asserted is therefore the RESULT SHAPE, not the message: a non-nil
+// partial result alongside the error, which is what makes Dispatch retain the claim. The
+// campaign-create path at the same file's campaign POST already gets this right by asking
+// createOutcomeAmbiguous BEFORE ctx.Err(); this asserts the authoring step agrees.
+//
+// A clean PRE-SEND cancellation is the opposite case and must still abort with (nil, err) —
+// nothing was sent, so retaining a claim would strand it. The second subtest pins that, so a
+// fix cannot simply make every cancellation ambiguous.
+func TestCreateCampaign_InFlightCancelDuringAuthoringRetainsTheClaim(t *testing.T) {
+	newInput := func() CampaignInput {
+		return CampaignInput{
+			EventName:       "Open Source Summit",
+			Project:         "tlf",
+			EventSlug:       "oss-2026",
+			RegistrationURL: "https://events.linuxfoundation.org/oss/",
+			BudgetUSD:       500,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"linux"},
+			Objective:       "conversions",
+			ImageURL:        "https://events.linuxfoundation.org/banner.jpg",
+			CallToAction:    "sign up",
+		}
+	}
+
+	t.Run("cancelled while the authoring POST is in flight", func(t *testing.T) {
+		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+		}))
+		defer tokenSrv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		handler := http.NewServeMux()
+		handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/profiles/t2_test/posts") {
+				// The POST has REACHED the server — Reddit may commit it. Cancel the caller
+				// while the request is in flight, then hijack the connection and close it
+				// without writing a response, so the client's in-flight round trip fails
+				// exactly as a real interrupted one does. Hijacking (rather than blocking on
+				// r.Context().Done()) keeps the handler from holding the server for the
+				// client's full 30s request timeout.
+				cancel()
+				conn, _, hijackErr := w.(http.Hijacker).Hijack()
+				if hijackErr != nil {
+					t.Errorf("hijack: %v", hijackErr)
+					return
+				}
+				_ = conn.Close()
+				return
+			}
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				return
+			}
+			http.Error(w, "unexpected", http.StatusNotFound)
+		})
+		apiSrv := httptest.NewServer(handler)
+		defer apiSrv.Close()
+
+		c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+		res, err := c.CreateCampaign(ctx, newInput())
+		if err == nil {
+			t.Fatal("CreateCampaign succeeded; the authoring POST was interrupted in flight and must report an error")
+		}
+		// THE assertion. A nil result is what RedditDispatcher.Dispatch reads as
+		// NoUpstreamCreate, releasing the claim on a post Reddit may already hold.
+		if res == nil {
+			t.Fatalf("CreateCampaign = (nil, %v). The authoring POST reached Reddit and MAY have "+
+				"committed the post, so a nil result releases the claim (Dispatch keys release on "+
+				"result == nil alone) and a retry authors a DUPLICATE paid post. Want a non-nil "+
+				"partial result so the claim is RETAINED", err)
+		}
+		// The partial must be reconcilable: the campaign name is how an operator finds the
+		// orphan, and it is the only handle an id-less ambiguous partial carries.
+		if strings.TrimSpace(res.CampaignName) == "" {
+			t.Error("partial result carries no CampaignName; an id-less ambiguous partial is only " +
+				"reconcilable by name, so an empty one records a bare anonymous claim")
+		}
+	})
+
+	t.Run("cancelled cleanly before the authoring POST is sent", func(t *testing.T) {
+		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+		}))
+		defer tokenSrv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		handler := http.NewServeMux()
+		handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") {
+				// Cancel during account VERIFICATION, before any mutating request is built.
+				// Nothing was sent to /posts, so nothing can exist. Answer normally: the
+				// cancellation is already latched, so the next step observes a cancelled ctx
+				// with no mutating request ever having been sent.
+				cancel()
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				return
+			}
+			http.Error(w, "unexpected", http.StatusNotFound)
+		})
+		apiSrv := httptest.NewServer(handler)
+		defer apiSrv.Close()
+
+		c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+		res, err := c.CreateCampaign(ctx, newInput())
+		if err == nil {
+			t.Fatal("CreateCampaign succeeded despite a cancelled context")
+		}
+		if res != nil {
+			t.Errorf("CreateCampaign = (%+v, %v); the cancellation landed before any mutating "+
+				"request was sent, so nothing exists and the claim must be RELEASED", res, err)
+		}
+	})
+}
+
+// TestCreateCampaign_AuthorFailureDoesNotEmitContradictoryAdGuidance covers the Step 4
+// guidance branch on the authoring-failure path, which two independent causes now reach.
+//
+// The `else` arm was written when its only cause was "the caller never asked for an ad", and
+// its step says so: "No ad variants or post URL provided -- add ads manually". Step 1.5 added
+// an opposite way in — an ImageURL WAS provided and authoring failed — and the branch was not
+// updated. On the AMBIGUOUS arm that produced a runbook contradicting its own warning: the
+// warning says the post may exist and to verify before authoring again, while the step says go
+// create the ads. They contradict on exactly the path the classification exists to protect,
+// and the "no ad variants provided" wording is additionally false when Variants are supplied.
+//
+// Both subtests supply Variants AND an ImageURL, so the variant-listing arm is live and the
+// step text is not vacuously absent. The assertions are on DISCRIMINATING tokens: "ad
+// variant(s) ready" and "add ads manually" belong only to the create-the-ads guidance, while
+// UNCONFIRMED/failed belong only to the authoring report — a test asserting merely that some
+// step exists would pass on either.
+func TestCreateCampaign_AuthorFailureDoesNotEmitContradictoryAdGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		postStatus int
+		// wantUnconfirmed distinguishes the ambiguous arm (5xx: the post MAY exist, so the
+		// operator must verify and delete a stray) from the definite one (4xx: Reddit
+		// rejected it, nothing exists, so authoring it again is safe).
+		wantUnconfirmed bool
+	}{
+		{name: "ambiguous authoring failure (503)", postStatus: http.StatusServiceUnavailable, wantUnconfirmed: true},
+		{name: "definite authoring rejection (400)", postStatus: http.StatusBadRequest, wantUnconfirmed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tokenSrv.Close()
+
+			handler := http.NewServeMux()
+			handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+				path := r.URL.Path
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/profiles/t2_test/posts"):
+					http.Error(w, "nope", tc.postStatus)
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+				default:
+					http.Error(w, "unexpected", http.StatusNotFound)
+				}
+			})
+			apiSrv := httptest.NewServer(handler)
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:       "Open Source Summit",
+				Project:         "tlf",
+				EventSlug:       "oss-2026",
+				RegistrationURL: "https://events.linuxfoundation.org/oss/",
+				BudgetUSD:       500,
+				StartDate:       "2026-08-01",
+				EndDate:         "2026-08-31",
+				GeoTargets:      []string{"us"},
+				Keywords:        []string{"linux"},
+				Objective:       "conversions",
+				ImageURL:        "https://events.linuxfoundation.org/banner.jpg",
+				CallToAction:    "sign up",
+				// Variants ARE supplied: the "no ad variants provided" wording is false
+				// here, and their presence makes the variant-listing arm reachable.
+				Variants: []AdVariant{{Headline: "Join us in Amsterdam"}},
+			})
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v (a post-authoring failure must degrade, not fail the create)", err)
+			}
+			if res.AdCount != 0 || res.AdID != "" {
+				t.Errorf("AdCount/AdID = %d/%q, want 0/\"\": authoring failed so no ad exists", res.AdCount, res.AdID)
+			}
+			if strings.TrimSpace(res.AdWarning) == "" {
+				t.Error("AdWarning is empty: an ad was requested via ImageURL and none exists, so this is a DEGRADED success")
+			}
+
+			for _, s := range res.Steps {
+				// The contradiction, in both of its forms.
+				if strings.Contains(s, "ad variant(s) ready") {
+					t.Errorf("step %q tells the operator to create the ads, but post authoring failed "+
+						"and Step 1.5 has already issued the accurate guidance", s)
+				}
+				if strings.Contains(s, "No ad variants or post URL provided") {
+					t.Errorf("step %q claims no ad variants were provided; Variants WERE supplied and "+
+						"the real cause is the authoring failure", s)
+				}
+			}
+
+			// The authoring report itself must still be present and must carry the arm's own
+			// discriminating token — otherwise suppressing the else branch would leave the
+			// operator with no guidance at all.
+			var found bool
+			for _, s := range res.Steps {
+				if !strings.Contains(s, "Promoted-post authoring") {
+					continue
+				}
+				found = true
+				if tc.wantUnconfirmed {
+					if !strings.Contains(s, "UNCONFIRMED") {
+						t.Errorf("step %q: a 5xx leaves the post possibly created, so the step must say UNCONFIRMED", s)
+					}
+					// The remediation that is correct whether or not the post is
+					// distributed — the visibility question is undocumented.
+					if !strings.Contains(s, "DELETE") {
+						t.Errorf("step %q: an unattached stray post must be deleted, not left in place", s)
+					}
+				} else if strings.Contains(s, "UNCONFIRMED") {
+					t.Errorf("step %q: a 4xx is a definite rejection; calling it UNCONFIRMED would "+
+						"send the operator hunting a post that does not exist", s)
+				}
+			}
+			if !found {
+				t.Errorf("no promoted-post authoring step in %v; suppressing the generic ad guidance "+
+					"must not leave the operator with no runbook at all", res.Steps)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_AuthoredHeadlineSelection pins which string becomes the authored post's
+// headline, across the three inputs that select it.
+//
+// Both arms of the selection were untested: no authoring test set a non-empty
+// Variants[0].Headline, so "the variant wins over EventName" and the whitespace-only fallback
+// could each be reverted in silence. The second matters most — Reddit requires a non-empty
+// headline, and dropping the TrimSpace check sends a blank one, so the failure is an upstream
+// rejection (or a blank ad) rather than anything local.
+//
+// The assertions are on the exact headline VALUE the client put on the wire, not on the call
+// succeeding: every case here produces a working create, so a test that only checked the error
+// would pass on all three regardless of which string was chosen.
+func TestCreateCampaign_AuthoredHeadlineSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		variants []AdVariant
+		want     string
+	}{
+		{
+			name:     "no variants: the event name is the fallback",
+			variants: nil,
+			want:     "Open Source Summit",
+		},
+		{
+			name:     "a variant headline WINS over the event name",
+			variants: []AdVariant{{Headline: "Join us in Amsterdam"}},
+			want:     "Join us in Amsterdam",
+		},
+		{
+			name: "a whitespace-only variant headline falls back to the event name",
+			// Reddit requires a non-empty headline; without the TrimSpace check this sends
+			// "   " and the post is rejected or renders blank.
+			variants: []AdVariant{{Headline: "   "}},
+			want:     "Open Source Summit",
+		},
+		{
+			name:     "a variant headline is TRIMMED before it is sent",
+			variants: []AdVariant{{Headline: "  Join us in Amsterdam  "}},
+			want:     "Join us in Amsterdam",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var postBody map[string]any
+
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tokenSrv.Close()
+
+			handler := http.NewServeMux()
+			handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+				path := r.URL.Path
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/profiles/t2_test/posts"):
+					var env struct {
+						Data map[string]any `json:"data"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&env)
+					mu.Lock()
+					postBody = env.Data
+					mu.Unlock()
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t3_new"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/ads"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ad_1"}})
+				default:
+					http.Error(w, "unexpected", http.StatusNotFound)
+				}
+			})
+			apiSrv := httptest.NewServer(handler)
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+			if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:       "Open Source Summit",
+				Project:         "tlf",
+				EventSlug:       "oss-2026",
+				RegistrationURL: "https://events.linuxfoundation.org/oss/",
+				BudgetUSD:       500,
+				StartDate:       "2026-08-01",
+				EndDate:         "2026-08-31",
+				GeoTargets:      []string{"us"},
+				Keywords:        []string{"linux"},
+				Objective:       "conversions",
+				ImageURL:        "https://events.linuxfoundation.org/banner.jpg",
+				CallToAction:    "sign up",
+				Variants:        tc.variants,
+			}); err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if postBody == nil {
+				t.Fatal("no promoted post was authored")
+			}
+			if got := postBody["headline"]; got != tc.want {
+				t.Errorf("authored post headline = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDefaultRedditCTAIsAcceptedByReddit pins the invariant defaultRedditCTA's own definition
+// states but nothing enforced: the default must be a member of redditCTAs.
+//
+// A caller that supplies no CallToAction gets defaultRedditCTA sent to Reddit VERBATIM — it
+// bypasses the redditCTAs lookup that validates and canonicalises a caller-supplied value, so
+// nothing would catch a default that Reddit does not accept. The literal "Learn More" appeared
+// in no test at all, so a typo or a rename of the map key would ship a create that Reddit
+// rejects on every no-CTA campaign.
+//
+// Both directions are asserted. Membership alone would pass on a lower-case default, since the
+// map is keyed by the upper-cased form; the canonical-form check is what pins the exact string
+// that goes on the wire.
+func TestDefaultRedditCTAIsAcceptedByReddit(t *testing.T) {
+	canonical, ok := redditCTAs[strings.ToUpper(defaultRedditCTA)]
+	if !ok {
+		t.Fatalf("defaultRedditCTA = %q is not a member of redditCTAs (accepted: %s). It is sent to "+
+			"Reddit verbatim without passing through the lookup, so an unaccepted default fails "+
+			"every campaign created without an explicit CallToAction", defaultRedditCTA, redditCTAList())
+	}
+	if canonical != defaultRedditCTA {
+		t.Errorf("defaultRedditCTA = %q but its canonical form is %q; the default must already be "+
+			"in the exact form Reddit expects, since it skips canonicalisation", defaultRedditCTA, canonical)
+	}
+}
+
+// TestValidateImageURL_RejectsNonAbsoluteAndHostless covers the arm the suite left open:
+// !u.IsAbs() || u.Hostname() == "". Both halves are needed and neither implies the other.
+//
+// The hostless case is the subtle one the code's own comment flags: "https://:443/path" parses
+// cleanly, IS absolute (it has a scheme), and has an empty Hostname — so a check on IsAbs
+// alone would pass it through to Reddit as an image source.
+func TestValidateImageURL_RejectsNonAbsoluteAndHostless(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "relative path: no scheme, no host", raw: "/wp-content/uploads/banner.jpg"},
+		{name: "scheme-relative: host but no scheme", raw: "//events.linuxfoundation.org/banner.jpg"},
+		{name: "absolute but hostless: a port with no host", raw: "https://:443/path"},
+		{name: "empty", raw: ""},
+		{name: "whitespace only", raw: "   "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateImageURL(tc.raw); err == nil {
+				t.Errorf("validateImageURL(%q) = nil, want an error: a non-absolute or hostless URL "+
+					"cannot be fetched by Reddit as an image source", tc.raw)
+			}
+		})
+	}
+
+	// The positive control. Without it, a mutation making validateImageURL reject everything
+	// would satisfy every case above.
+	if err := validateImageURL("https://events.linuxfoundation.org/banner.jpg"); err != nil {
+		t.Errorf("validateImageURL rejected a well-formed absolute https URL: %v", err)
+	}
+}

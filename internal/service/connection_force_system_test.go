@@ -529,9 +529,14 @@ func TestForceSystem_UpdateStillRequiresIfMatchBeforeReadingTheRow(t *testing.T)
 }
 
 // TestForceSystem_FlagOffLeavesEveryUpdatePathAlone is the scoping half for the NEW code, not
-// just the old guard. The current-row read is unconditional, so this pins that adding it did not
-// change what an ordinary deployment does: with the flag off, changing an account id — the
-// ordinary bootstrap — still succeeds and still lands on the row.
+// just the old guard. The current-row read is CONDITIONAL — updateConn performs it only when
+// forcedSystemGuardApplies, so with the flag off (or for HubSpot) no extra round-trip happens
+// at all. This pins that adding the guard did not change what an ordinary deployment does:
+// with the flag off, changing an account id — the ordinary bootstrap — still succeeds and
+// still lands on the row.
+//
+// The read count itself is asserted by TestForceSystem_CurrentRowReadIsConditional below;
+// this test owns the OUTCOME half.
 func TestForceSystem_FlagOffLeavesEveryUpdatePathAlone(t *testing.T) {
 	t.Setenv(constants.EnvForceSystemAdsAccount, "")
 	repo := newFakeRepo()
@@ -548,5 +553,137 @@ func TestForceSystem_FlagOffLeavesEveryUpdatePathAlone(t *testing.T) {
 	}
 	if got := repo.store[repoKey("cncf", model.ProviderGoogleAds)].AccountID; got != "8666746580" {
 		t.Fatalf("account id on the row = %q, want the newly chosen %q", got, "8666746580")
+	}
+}
+
+// TestForceSystem_CurrentRowReadIsConditional pins the guard's SCOPE as a call count, which is
+// the only place it is observable.
+//
+// updateConn reads the current row solely to answer "does this write CHANGE the account id",
+// and forcedSystemGuardApplies gates both halves: the inspection and the read that feeds it.
+// Making the read unconditional is behaviour-preserving in every RESULT — the same connection
+// comes back either way — so no assertion on the returned value can tell the two apart. What
+// it costs is a database round-trip on every paid-ads connection update in every deployment
+// where the flag is off, which is all of them today.
+//
+// A stale comment on TestForceSystem_FlagOffLeavesEveryUpdatePathAlone asserted the read was
+// unconditional, contradicting the code and sitting exactly where this test was missing.
+//
+// The three cases below are the guard's two inputs crossed against each other, so a mutation
+// that drops EITHER conjunct is killed: dropping `forcedSystemAdsAccount()` is caught by the
+// flag-off case, dropping `IsPaidAds()` by the HubSpot case, and the flag-on paid case proves
+// the read still happens when it is genuinely needed (otherwise "never read" would pass two
+// of three).
+func TestForceSystem_CurrentRowReadIsConditional(t *testing.T) {
+	t.Run("flag off: a paid-ads update reads no current row", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "")
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: "1111111111"}
+		s := newTestService(t, repo)
+		ifMatch := "1"
+		repo.gets = 0
+
+		if _, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+			ProjectID: "cncf",
+			Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+			IfMatch:   &ifMatch,
+		}); err != nil {
+			t.Fatalf("update with the flag off: %v", err)
+		}
+		if repo.gets != 0 {
+			t.Errorf("repo.Get called %d time(s) with the flag OFF; the current-row read exists only "+
+				"to feed the force-system guard, so gating it is what keeps an ordinary deployment "+
+				"from paying an extra round-trip on every connection update", repo.gets)
+		}
+	})
+
+	t.Run("flag on, HubSpot: no current row is read", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderHubSpot)] = &model.Connection{Version: 1, AccountID: "12345678"}
+		s := newTestService(t, repo)
+		ifMatch := "1"
+		repo.gets = 0
+
+		if _, err := s.UpdateHubspot(context.Background(), &conn.UpdateHubspotPayload{
+			ProjectID: "cncf",
+			Config:    &conn.HubspotConnectionConfig{AccountID: "87654321"},
+			IfMatch:   &ifMatch,
+		}); err != nil {
+			t.Fatalf("HubSpot update must stay allowed while force-system mode is on: %v", err)
+		}
+		if repo.gets != 0 {
+			t.Errorf("repo.Get called %d time(s) for HubSpot; the guard scopes on IsPaidAds(), so the "+
+				"email channel must not pay for a read whose result is discarded", repo.gets)
+		}
+	})
+
+	t.Run("flag on, paid ads: the current row IS read", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: "1111111111"}
+		s := newTestService(t, repo)
+		ifMatch := "1"
+		repo.gets = 0
+
+		// Re-sending the STORED id is a no-op write, so it is allowed — and it still has to
+		// read the row to know that. This case would be indistinguishable from "never read"
+		// if it used a changed id, since the guard could then refuse on the incoming value
+		// alone.
+		if _, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+			ProjectID: "cncf",
+			Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("1111111111")},
+			IfMatch:   &ifMatch,
+		}); err != nil {
+			t.Fatalf("re-sending the stored account id must be allowed (the write moves nothing): %v", err)
+		}
+		if repo.gets == 0 {
+			t.Error("repo.Get was never called with the flag ON for a paid-ads provider; the guard " +
+				"cannot tell an unchanged id from a changed one without reading the stored value, " +
+				"so it would have to refuse every write or allow every write")
+		}
+	})
+}
+
+// TestForceSystem_NilCurrentRowDoesNotPanic covers the (nil, nil) return that
+// domain.ConnectionReader permits and does not forbid.
+//
+// updateConn dereferences the current row to read its account id, so a reader reporting
+// absence that way would panic and take down connection updates for EVERY paid-ads provider
+// while the flag is on. This is not hypothetical shape-lawyering: the same branch already
+// defends against exactly it in internal/dispatch/creds.go's systemCreated
+// (`err != nil || conn == nil`), so the contract is treated as reachable in one new call site
+// and, without this, unreachable in the other.
+//
+// The assertion is that an ERROR comes back rather than a panic, and specifically the 404 the
+// absence warrants — not a 400 blaming the caller's body, which is what defaulting a nil row
+// to an empty current selection would produce (every incoming id would look newly set).
+func TestForceSystem_NilCurrentRowDoesNotPanic(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{Version: 1, AccountID: "1111111111"}
+	repo.nilNilGet = true
+	s := newTestService(t, repo)
+	ifMatch := "1"
+
+	// Deliberately a CHANGED id: it is the input that reaches the guard's comparison, so a
+	// nil row is dereferenced rather than short-circuited by an earlier arm.
+	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   &ifMatch,
+	})
+	if err == nil {
+		t.Fatal("update SUCCEEDED against a nil current row; the guard cannot have compared " +
+			"against a stored value that was never read")
+	}
+	if _, isBadRequest := err.(*conn.BadRequestError); isBadRequest {
+		t.Errorf("err = %T (%v): a nil row is an ABSENT connection, not a bad request. Treating it "+
+			"as an empty current selection makes every incoming id look newly set and blames the "+
+			"caller's body for a row that is not there", err, err)
+	}
+	if _, isNotFound := err.(*conn.NotFoundError); !isNotFound {
+		t.Errorf("err = %T (%v), want *conn.NotFoundError: a (nil, nil) read is the same absence "+
+			"ErrNotFound expresses, and the update would have 404'd on it anyway", err, err)
 	}
 }

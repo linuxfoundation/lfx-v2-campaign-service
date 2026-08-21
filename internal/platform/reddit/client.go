@@ -1359,13 +1359,39 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
 	}
 
-	// Step 1.5: Author a promoted (dark) image post when the caller supplied an
-	// ImageURL instead of a PostURL. This runs BEFORE the paid campaign create on
-	// purpose: a dark post is zero-cost and invisible (allow_comments:false, never
-	// distributed to a feed on its own), so authoring it first means a post-create
-	// FAILURE degrades to a no-ad campaign rather than orphaning a paid resource.
-	// Conversely, a post that succeeds but is never attached (because a later step
-	// fails) is a harmless, unbilled orphan.
+	// Step 1.5: Author the image post when the caller supplied an ImageURL instead
+	// of a PostURL. This runs BEFORE the paid campaign create on purpose: the post
+	// carries no spend of its own (only an ad backed by a campaign budget is
+	// billed), so authoring it first means a post-create FAILURE degrades to a
+	// no-ad campaign rather than orphaning a PAID resource.
+	//
+	// What is NOT claimed here, deliberately. An earlier version of this comment said
+	// allow_comments:false marked the post "promoted-only" and kept it out of feeds.
+	// That is two claims and they fail differently:
+	//
+	//   - allow_comments:false makes a post promoted-only: CONTRADICTED. Reddit
+	//     documents the field as "whether comments are allowed on the post", and
+	//     nothing else, on both the legacy and structured post endpoints. There is
+	//     also a PATCH whose entire documented purpose is to modify allow_comments on
+	//     an EXISTING post — if that flag governed dark status it would toggle a live
+	//     ad between hidden and public.
+	//   - the endpoint inherently creates promoted-only posts: NOT DOCUMENTED. Reddit
+	//     is simply silent on feed distribution and profile visibility for posts made
+	//     through the ads API; no visibility, publication or distribution field exists
+	//     on the create body or on the GET that reads a post back. Unsupported is not
+	//     disproven — but it is not something to rely on either.
+	//
+	// (Reddit's "promoted posts are only placed in feeds" wording belongs to the
+	// SELF-SERVE promote-an-existing-post flow, a different product surface, and does
+	// not transfer to the ads API.)
+	//
+	// The ordering argument does not need it. It rests on the billing asymmetry
+	// above, which is what makes post-then-campaign strictly safer than the reverse.
+	// Because visibility is UNKNOWN rather than known-benign, an unattached post is
+	// treated as a stray to be REMOVED, not as a harmless orphan: every arm below
+	// where a post may exist tells the operator to delete it if it is not attached
+	// to an ad. That instruction is correct whether or not the post is distributed,
+	// which is precisely why it belongs there while the question is open.
 	//
 	// That degraded outcome RESEMBLES the missing-PostURL state (both end with
 	// AdCount == 0) but is NOT the same and must not be recorded as one: there the
@@ -1382,9 +1408,49 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// HTTP status, never the error body — a reflective Reddit validation error can
 	// echo the destination_url (which carries the caller's permitted secret-bearing
 	// query params), and persisting it in Steps would leak those.
+	// The campaign NAME is composed here, BEFORE the authoring step, because an ambiguous
+	// authoring failure has to return a reconcilable partial result and the name is the only
+	// handle such a result carries (no id exists yet). It is a pure function of values already
+	// settled above — `objective` and `geos` — so computing it earlier changes nothing about
+	// its value; its LENGTH validation stays below, next to the ad-group name it is checked
+	// with, since neither name can orphan anything before the campaign POST.
+	earlyCampaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+
 	if authorImageURL != "" {
 		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, authorImageURL)
 		if err != nil {
+			// A CALLER CANCELLATION is the only fatal authoring failure, and it is split by
+			// AMBIGUITY before it is acted on. Both halves of that sentence are load-bearing.
+			//
+			// Fatal only for a cancellation: every other authoring failure — including a
+			// plain 5xx, which is ambiguous — stays NON-FATAL and degrades to a campaign +
+			// ad group with no ad, which is the behaviour Step 1.5's ordering exists to
+			// provide. Aborting the whole create on any ambiguous error would throw away
+			// that degradation for the most ordinary transient failure there is.
+			//
+			// Split by ambiguity because a cancellation that interrupts THIS post's
+			// in-flight round trip surfaces as a transportError, and Reddit may already have
+			// committed the post — the request layer classifies ctx errors that way
+			// deliberately (TestIsPreSendDialError: "a ctx error from Do can fire AFTER the
+			// POST body reached Reddit"). Checking ctx.Err() alone returned (nil, err), and
+			// CreateCampaign's contract makes (nil, err) mean "nothing was or may have been
+			// created": RedditDispatcher.Dispatch keys claim release on `result == nil`
+			// ALONE. So an in-flight cancellation released the claim on a post that may
+			// exist, and a retry authored a DUPLICATE paid post. Returning a partial result
+			// retains the claim and records the orphan by name for reconciliation.
+			if ctxErr := ctx.Err(); ctxErr != nil && createOutcomeAmbiguous(err) {
+				steps = append(steps, "Promoted-post authoring is UNCONFIRMED (the request reached Reddit but the outcome is unknown) -- no campaign was created; check Reddit Ads Manager for a post with this headline BEFORE authoring it again to avoid a duplicate, and DELETE it if it exists and is not attached to an ad")
+				return &CampaignResult{
+						Platform:     "reddit-ads",
+						CampaignName: earlyCampaignName,
+						AccountID:    c.account.AccountID,
+						RedditURL:    redditAdsManagerURL,
+						Steps:        steps,
+					}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
+						earlyCampaignName, err)
+			}
+			// A cancellation that is NOT ambiguous landed cleanly before any authoring bytes
+			// went out, so no post exists: abort with a nil result and release the claim.
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctxErr)
 			}
@@ -1407,22 +1473,34 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			//     so no post exists and the operator can remediate directly;
 			//   - anything else (token refresh, body encode, request build, a
 			//     pre-connect dial failure): proven pre-send, nothing was created.
+			// Every arm names the campaign and ad group as CREATED and PAUSED. The campaign
+			// POST below still runs, so by the time an operator reads this guidance those two
+			// resources exist; guidance saying only "author the post and add the ad manually"
+			// reads as though nothing were created and invites a SECOND campaign while the
+			// first sits PAUSED and orphaned. This mirrors the ad-create path's wording,
+			// which has carried that context all along.
 			var postAPIErr *apiError
 			gotStatus := errors.As(err, &postAPIErr)
 			switch {
 			case createOutcomeAmbiguous(err):
-				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit); no ad was created and the post MAY exist — verify in Reddit Ads Manager BEFORE authoring it again to avoid a duplicate"
+				// The post MAY exist (a 5xx, a mutating 3xx, or a transport error with no
+				// caller cancellation). Verify BEFORE authoring again, and DELETE a stray:
+				// whether such a post is publicly visible is undocumented (see Step 1.5), so
+				// removal is the instruction that is correct either way.
+				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit); the campaign and ad group were created (PAUSED) and no ad exists — verify in Reddit Ads Manager BEFORE authoring the post again to avoid a duplicate, and DELETE any post that is not attached to an ad"
 				if gotStatus {
-					steps = append(steps, fmt.Sprintf("Promoted-post authoring UNCONFIRMED (HTTP %d) -- creating campaign + ad group without an ad; verify whether the post exists before authoring it again", postAPIErr.StatusCode))
+					steps = append(steps, fmt.Sprintf("Promoted-post authoring UNCONFIRMED (HTTP %d) -- campaign + ad group created (PAUSED) without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad", postAPIErr.StatusCode))
 				} else {
-					steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- creating campaign + ad group without an ad; verify whether the post exists before authoring it again")
+					steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- campaign + ad group created (PAUSED) without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad")
 				}
 			case gotStatus:
-				postWarning = "promoted-post authoring FAILED (Reddit rejected the post); no ad was created — author the post and add the ad manually in Reddit Ads Manager"
-				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager", postAPIErr.StatusCode))
+				// A definite 4xx: Reddit received and REJECTED the post, so none exists and
+				// authoring one again carries no duplicate risk.
+				postWarning = "promoted-post authoring FAILED (Reddit rejected the post); the campaign and ad group were created (PAUSED) and no ad exists — author the post and add the ad to the EXISTING campaign in Reddit Ads Manager"
+				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- campaign + ad group created (PAUSED) without an ad; add the ad to this campaign in Reddit Ads Manager", postAPIErr.StatusCode))
 			default:
-				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post and no ad were created -- author the post and add the ad manually in Reddit Ads Manager"
-				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- creating campaign + ad group without an ad; add the ad manually in Reddit Ads Manager")
+				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post exists and the campaign and ad group were created (PAUSED) with no ad — author the post and add the ad to the EXISTING campaign in Reddit Ads Manager"
+				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- campaign + ad group created (PAUSED) without an ad; add the ad to this campaign in Reddit Ads Manager")
 			}
 			// validatedPostID stays empty -> no ad. Unlike the no-PostURL path (where
 			// the caller never asked for an ad), an ad WAS intended here and does not
@@ -1494,7 +1572,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// limit, so enough valid codes could push adGroupName past Reddit's limit.
 	// Validating both here means an over-limit name fails BEFORE any paid resource
 	// exists, rather than orphaning the campaign at the ad-group step.
-	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+	campaignName := earlyCampaignName
 	geoLabel := strings.Join(geos, "+")
 	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
 	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
@@ -1899,6 +1977,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (2xx with no ad ID, post: %s) -- verify in Reddit Ads Manager before adding manually", postID))
 			}
 		}
+	} else if postWarning != "" {
+		// Step 1.5 was asked for an ad (an ImageURL was supplied) and the authoring failed,
+		// so it has ALREADY appended guidance describing exactly what happened and what to
+		// do. Emit nothing further here.
+		//
+		// This branch used to have one cause — "the caller never asked for an ad" — and the
+		// arms below still address that caller. Neither fits an authoring failure: the
+		// variant listing tells the operator to go create the ads, contradicting the
+		// UNCONFIRMED warning that says a post may exist and to verify before authoring
+		// again; and the no-variants line claims none were provided, which is false whenever
+		// Variants were supplied. Both mislead on the very path the ambiguity classification
+		// exists to protect, so the accurate Step 1.5 guidance is left to stand alone.
 	} else {
 		variantCount := len(in.Variants)
 		if variantCount > 0 {
@@ -1942,16 +2032,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // Mirrors microsoft.Client.AccountID.
 func (c *Client) AccountID() string { return c.account.AccountID }
 
-// createPromotedPost authors a promoted ("dark") IMAGE post on the ad account's
-// profile and returns its t3_ post id, for the author-a-post path (see
-// CampaignInput.ImageURL). It POSTs to /profiles/{accountID}/posts — Reddit's
-// profile id IS the ad-account id (t2_...) — with a dark-post body:
+// createPromotedPost authors an IMAGE post on the ad account's profile and returns
+// its t3_ post id, for the author-a-post path (see CampaignInput.ImageURL). It
+// POSTs to /profiles/{accountID}/posts — Reddit's profile id IS the ad-account id
+// (t2_...). Reddit marks this endpoint legacy ("create a structured post instead"),
+// which is worth knowing before extending it. The body:
 //
 //		{"data":{"type":"IMAGE","headline":..,"allow_comments":false,
 //		         "content":[{"media_url":..,"call_to_action":..,"destination_url":..}]}}
 //
-//	  - allow_comments:false marks it a promoted-only ("dark") post: it is not
-//	    distributed to a feed on its own and only serves as an ad's creative.
+//	  - allow_comments:false disables comments on the post, which is ALL Reddit
+//	    documents it to do — a separate PATCH exists purely to flip it on an existing
+//	    post, so it cannot be what marks a post promoted-only. Whether a post created
+//	    here is distributed to feeds or shown on the ad account's profile is
+//	    UNDOCUMENTED; callers must not assume it is invisible, and an unattached post
+//	    is treated as a stray to delete rather than a harmless orphan.
 //	  - media_url is ingested and re-hosted by Reddit at create time (there is no
 //	    separate media-upload step and no LINK post type), so it must be a public
 //	    absolute http(s) image URL — validated by validateImageURL before this call.
@@ -1985,7 +2080,9 @@ func (c *Client) createPromotedPost(ctx context.Context, accountID string, in Ca
 	if postID == "" {
 		// A 2xx with no id is a malformed success — the post MAY exist. Surface it
 		// as a transportError (ambiguous) so the caller degrades to a no-ad campaign
-		// without claiming the post was created; the orphan (if any) is unbilled.
+		// without claiming the post was created. Any such post carries no spend of its
+		// own, but its visibility is undocumented (see above), so the caller's guidance
+		// is to find and DELETE it rather than to leave it in place.
 		return "", &transportError{Method: http.MethodPost, Path: "/profiles/" + accountID + "/posts", Err: fmt.Errorf("post creation returned no id")}
 	}
 	return postID, nil

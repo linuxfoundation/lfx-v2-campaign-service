@@ -376,8 +376,23 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 	// would have produced anyway, and the version conflict is still the repository's to decide.
 	if forcedSystemGuardApplies(c.Provider) {
 		current, gerr := repo.Get(ctx, c.ProjectID, c.Provider)
+		// `current == nil` is checked ALONGSIDE the error, not instead of it.
+		// domain.ConnectionReader (internal/domain/port.go) does not forbid a (nil, nil)
+		// return, so a reader that reports absence that way would panic here and take down
+		// connection updates for every paid-ads provider while the flag is on. The same
+		// branch already defends against exactly this shape in internal/dispatch/creds.go's
+		// systemCreated (`err != nil || conn == nil`); treating the contract as reachable in
+		// one new call site and unreachable in the other is the drift worth closing.
+		//
+		// A nil row is rendered as the absence it is (domain.ErrNotFound → the 404 the update
+		// would have produced anyway), NOT as an empty current selection. Defaulting to "" on
+		// an unreadable row is the reverse of fail-closed: it would make every incoming id
+		// look newly set and turn the absence into a 400 blaming the caller's body.
 		if gerr != nil {
 			return nil, mapErr(gerr)
+		}
+		if current == nil {
+			return nil, mapErr(domain.ErrNotFound)
 		}
 		if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID, current.AccountID); err != nil {
 			return nil, err
