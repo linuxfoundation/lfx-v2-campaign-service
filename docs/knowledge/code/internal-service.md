@@ -294,6 +294,18 @@ deployment-wide, operator-owned fault — force-system mode is on and nobody ins
 which is precisely the connection a project cannot create. 500 + ERROR log, like the
 not-usable case; the repair differs (install a row, not fix one).
 
+**The brief-wide row logs a defect at the SAME level as the synchronous paths, and the rule
+is a property rather than a list.** Every sentinel whose remedy belongs to nobody the request
+can reach — the shared-infrastructure ones above, and `domain.ErrServiceDefect` for a fault in
+this service's own code — logs at ERROR in the fan-out, matching the 500 + ERROR the
+campaign-scoped handler, the toggle and the discovery handler answer for the identical error.
+The reason this endpoint in particular cannot afford to diverge: it returns a SUCCESSFUL
+aggregate (a `failed` row inside a 200), so unlike every other consumer there is no status
+code carrying the alarm and the log line is the entire signal that the defect happened. A row
+logged at WARN sits below the threshold anyone watches while the caller is told the request
+succeeded. Stated as the property because the arm previously carried a comment counting "all
+three", which the next sentinel added to it falsified without failing anything.
+
 **A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
 measurement; substituting one for a campaign that could not be read is indistinguishable from
 a campaign that genuinely served nothing, and that substitution is what turns an outage into

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -556,17 +557,82 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	return tok.AccessToken, nil
 }
 
+// refreshExpiryWarned records which connections have already had their near-expiry
+// warning logged in THIS PROCESS, so the warning is delivered once rather than once
+// per operation.
+//
+// It has to live at package scope, and that is forced by the client's lifetime rather
+// than chosen: internal/dispatch/linkedin.go constructs a Client PER OPERATION, so any
+// state held on the Client is discarded before the next operation could consult it.
+// The map is small and bounded by the number of distinct LinkedIn connections a
+// deployment has, and entries are never removed — a connection that has warned once
+// has nothing further to say until the process restarts, which is exactly the cadence
+// intended.
+var refreshExpiryWarned sync.Map
+
+// refreshExpiryWarnKey identifies a connection for dedupe purposes.
+//
+// NOT ConnectionLabel alone: that falls back to a shared constant ("the LinkedIn
+// connection") for any connection whose operator set no name, so keying on it would let
+// the first unnamed connection to warn silence every other unnamed one — the precise
+// failure the per-connection requirement exists to prevent. The client id and the ad
+// account scope the key to an actual connection; neither is a secret (the client id is
+// a public OAuth identifier) and the key is never logged. The account id is included
+// only as an extra discriminator; it is empty on the discovery path, where the label
+// and client id still separate connections.
+func (c *Client) refreshExpiryWarnKey() string {
+	return c.creds.ConnectionLabel() + "\x00" + c.creds.ClientID + "\x00" + c.cfg.DefaultAccountID
+}
+
+// resetRefreshExpiryWarnStateForTest clears the process-wide dedupe so a test can
+// observe the warning from a clean slate. Test-only; production never calls it.
+func resetRefreshExpiryWarnStateForTest() {
+	refreshExpiryWarned.Range(func(k, _ any) bool {
+		refreshExpiryWarned.Delete(k)
+		return true
+	})
+}
+
 // warnIfRefreshTokenNearExpiry logs when the REFRESH token is inside its final
 // window. LinkedIn does not extend a refresh token's TTL when it is used, so this
 // deadline is a hard stop that only a human re-authorization clears — surfacing it
 // early is the difference between a scheduled reconnect and an outage. Logs only
 // the connection label and a whole-day count: never a token.
+//
+// ONCE PER PROCESS PER CONNECTION, not once per evaluation. The window is 30 days wide
+// and every refresh-capable operation builds a fresh Client that exchanges immediately
+// (see accessTokenValue), so an un-deduped warning fires on every operation for a
+// MONTH — a brief-level fan-out alone emits one per campaign. Thousands of identical
+// lines is not a louder signal than one; it is how the line gets filtered out, leaving
+// the credential to die silently anyway.
+//
+// The other two shapes considered, and why this one:
+//
+//   - NARROW THE WINDOW (say 7 days). Reduces the volume but does not change the
+//     shape — it is still one line per operation, just for a shorter stretch — and it
+//     buys that reduction by deleting most of the notice period. The 30 days exist so a
+//     reconnect can be SCHEDULED; a week is not a campaign cycle.
+//   - MOVE IT TO A ONCE-PER-PROCESS PATH (startup, or a periodic sweep). The right
+//     long-term home, but no such path exists for this package today: credentials are
+//     injected per operation and this package never reads the database, so there is
+//     nothing that enumerates connections to sweep. Building one is a service-layer
+//     change, deliberately not made here.
+//
+// Deduping here keeps the full 30-day notice and the full per-connection coverage while
+// costing one map lookup. A process restart re-arms it, which is the desired floor: a
+// redeployed service re-states any credential still expiring.
 func (c *Client) warnIfRefreshTokenNearExpiry(ctx context.Context, deadline time.Time) {
 	if deadline.IsZero() {
 		return
 	}
 	remaining := deadline.Sub(c.now())
 	if remaining > refreshTokenExpiryWarning {
+		return
+	}
+	// LoadOrStore, not a Load-then-Store pair: concurrent dispatches for the same
+	// connection reach here in parallel, and a check-then-set would let several of them
+	// all observe "not yet warned" and log. Only the caller that STORED the entry warns.
+	if _, already := refreshExpiryWarned.LoadOrStore(c.refreshExpiryWarnKey(), struct{}{}); already {
 		return
 	}
 	slog.WarnContext(ctx, "linkedin refresh token is nearing expiry; re-authorize the connection to avoid an outage",

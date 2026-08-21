@@ -234,3 +234,67 @@ func TestServiceDefect_AsyncDispatchLogDoesNotBlameTheConnection(t *testing.T) {
 	}
 	t.Fatal("no dispatch-failure log record was emitted for this job, so the reason has nowhere to live")
 }
+
+// The brief-wide row logs the defect at the level the SYNCHRONOUS paths use, not below it.
+//
+// This endpoint returns a SUCCESSFUL aggregate: the row carries status `failed` and the
+// request is a 200. So unlike every other consumer of this sentinel there is no status code
+// carrying the alarm, and the log line is the entire signal that a defect in this service
+// occurred. GetCampaignMetrics, ToggleCampaignStatus and the discovery handler all answer 500
+// AND log at ERROR for this same sentinel; if the fan-out row logs it at WARN the identical
+// defect is visible at two different levels, and at the one below the threshold anybody
+// watches — while the caller is told the request succeeded.
+//
+// The level is asserted directly rather than through the presence of a line: a WARN and an
+// ERROR are the same record with the same message, so a test that only proved "something was
+// logged" would pass against the defect this pins.
+func TestServiceDefect_BriefMetricsRowLogsAtErrorNotWarn(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	disp := newPerCampaignDispatcher()
+	disp.errs["c1"] = serviceDefectErr()
+	s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderLinkedInAds))
+
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+	})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+	// Bind the fixture to the classification first. If the dispatcher error stopped reaching
+	// classifyBriefMetricsErr at all, every level assertion below would pass vacuously
+	// against a row that never took the defect arm.
+	if got := rowByCampaign(t, res, "c1").Status; got != "failed" {
+		t.Fatalf("row status = %q, want \"failed\" — the fixture is not reaching the "+
+			"ErrServiceDefect arm, so the level assertion below would prove nothing", got)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var found bool
+	for _, rec := range h.recs {
+		var campaign string
+		rec.Attrs(func(a slog.Attr) bool {
+			if a.Key == "campaign_id" {
+				campaign = a.Value.String()
+			}
+			return true
+		})
+		// slog.Default is process-wide; a sibling test's fan-out can drain here.
+		if campaign != "c1" || !strings.Contains(rec.Message, "brief metrics row could not be read") {
+			continue
+		}
+		found = true
+		if rec.Level != slog.LevelError {
+			t.Errorf("the brief-wide row logged this service's own defect at %v, want ERROR — "+
+				"the aggregate answers 200, so this line is the ONLY signal the defect "+
+				"occurred, and the synchronous paths log the same sentinel at ERROR", rec.Level)
+		}
+	}
+	if !found {
+		t.Fatal("no per-row log line for campaign c1; the level assertion proved nothing")
+	}
+}

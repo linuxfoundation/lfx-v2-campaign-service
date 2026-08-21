@@ -2086,19 +2086,28 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 				// rotated CREDENTIAL_ENCRYPTION_KEY failing every project at once, and the
 				// cheap discriminator is the COUNT of these lines. Aggregated into per-row
 				// WARNs, a key rotation that breaks every campaign on every brief would page
-				// nobody. GetCampaignMetrics answers 500 here for the same reason.
+				// nobody. GetCampaignMetrics answers 500 here for the same reason — as it does
+				// for each of the other no-caller-owns-this sentinels raised to ERROR below.
 				//
 				// not_ready is INFO because it is the ordinary state of a staged email draft.
 				lvl := slog.LevelWarn
 				switch {
 				case errors.Is(merr, domain.ErrCredentialDecryptionFailed),
 					errors.Is(merr, domain.ErrSystemConnectionNotUsable),
-					errors.Is(merr, domain.ErrSystemConnectionMissing):
-					// All three are OPERATOR-scope defects on shared infrastructure: a rotated
-					// key, a broken LF system row, or — under force-system mode — no LF row at
-					// all. Each fails every project that depends on it, and the discriminator is
-					// the COUNT of these lines. Left at WARN they page nobody. GetCampaignMetrics
-					// answers 500 for all three for the same reason.
+					errors.Is(merr, domain.ErrSystemConnectionMissing),
+					errors.Is(merr, domain.ErrServiceDefect):
+					// Every sentinel here is a defect on a scope NO caller owns — shared
+					// infrastructure (a rotated key, a broken LF system row, or under
+					// force-system mode no LF row at all) or this service's own code. None is
+					// repaired by anything the project can edit, each fails every project that
+					// depends on it, and the discriminator is the COUNT of these lines. Left at
+					// WARN they page nobody. The synchronous handlers answer 500 and log at
+					// ERROR for every one of them, and this level must not diverge from that:
+					// the brief-wide read returns a SUCCESSFUL aggregate, so for these rows the
+					// log line is the only signal the defect happened at all.
+					//
+					// Stated as the property rather than a count, because a count is falsified
+					// by the next sentinel added to this arm without anything failing.
 					lvl = slog.LevelError
 				case status == "not_ready":
 					lvl = slog.LevelInfo

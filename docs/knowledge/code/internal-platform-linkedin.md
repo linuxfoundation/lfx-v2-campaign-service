@@ -115,7 +115,22 @@ live is a schema and behaviour change, and it requires teaching
 
 Because LinkedIn does NOT reset a refresh token's TTL when it is used, refresh
 defers the 60-day access-token expiry but cannot remove the ~365-day deadline on
-the connection itself; the client logs a warning inside the final 30 days. A
+the connection itself; the client logs a warning inside the final 30 days —
+**once per process per connection, not once per evaluation**. The dedupe is forced
+by the client's lifetime rather than chosen: `internal/dispatch` builds a Client
+PER OPERATION and no access-token expiry is persisted, so every client exchanges on
+its first request and re-evaluates the window. Un-deduped, a 30-day window emits one
+WARN per refresh-capable operation for a MONTH — a brief-level fan-out alone is one
+per campaign — and thousands of identical lines is not a louder signal than one, it
+is how the line gets filtered out and the credential dies silently anyway. State
+therefore lives at package scope (`refreshExpiryWarned`), keyed on connection label
+PLUS client id and account id, because `ConnectionLabel()` falls back to a shared
+constant for unnamed connections and would let the first one to warn silence every
+other. `LoadOrStore` rather than check-then-set, since concurrent dispatches for one
+connection race here. Narrowing the window was rejected (same per-operation shape,
+bought by deleting the notice period the 30 days exist to provide); moving the
+warning to a once-per-process sweep is the better long-term home but has no path to
+live in this package, which never reads the database. A process restart re-arms it. A
 credential that is expired and unrefreshable — including a mid-flight 401, which
 revocation can trigger with no advance notice — fails CLOSED with the exported
 `ErrCredentialsExpired`, naming the connection so an operator knows what to
