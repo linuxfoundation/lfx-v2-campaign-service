@@ -1,6 +1,6 @@
 # 2026-08-21 — LinkedIn's dedup comments described a dead bug
 
-**Docs** — four comments in `internal/platform/linkedin/client.go` and one in
+**Docs** — four comments in `internal/platform/linkedin/client.go` and two in
 `internal/dispatch/linkedin.go` still described the retry-duplicates-creatives risk as
 "PLANNED but NOT provided" and pointed at LFXV2-2665 as the fix. The orchestrator's
 per-`(brief, platform, variant)` single-flight claim (`internal/service/orchestrator.go`,
