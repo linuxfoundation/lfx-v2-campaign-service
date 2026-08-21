@@ -3343,10 +3343,20 @@ func objectStorySpec(pageID, utmURL string, variant AdVariant, imageHash string)
 }
 
 // adImageUploadResponse mirrors the /act_{id}/adimages response: the uploaded
-// image(s) keyed by the request's form-field name, each carrying the account-scoped
-// hash a creative references. One image is uploaded per call, so there is exactly
-// one entry; uploadImage reads it by value, not by key, so it does not depend on
-// how Meta names the key.
+// image(s), each carrying the account-scoped hash a creative references.
+//
+// ON THE KEY: the reference documents the shape as
+// `Map { string: Map { string: Struct { hash, url, ... } } }` but does not say what
+// the outer string IS. The official PHP SDK does: it reads
+// `images[basename($filename)]`, so Meta keys the map by the BASENAME of the
+// filename the upload sent. That contract lives in SDK source rather than in the
+// reference, so uploadImage deliberately does NOT derive it — it reads the single
+// entry BY VALUE and stays correct whatever Meta names the key.
+//
+// Reading by value is sound only while there is exactly ONE entry, which one upload
+// per call guarantees. uploadImage ENFORCES that count rather than assuming it: see
+// the len(out.Images) != 1 guard, which exists because iterating and taking the first
+// non-empty hash returned an arbitrary image under Go's randomized map iteration.
 type adImageUploadResponse struct {
 	Images map[string]struct {
 		Hash string `json:"hash"`
@@ -3357,16 +3367,39 @@ type adImageUploadResponse struct {
 // uploadImage uploads one image's BYTES to the ad account and returns its
 // account-scoped image_hash for createVariantAd to attach to a creative.
 //
-// ON THE TRANSPORT, since this edge has a history in this file: POST
-// /act_<id>/adimages documents exactly TWO create parameters — `bytes` and
-// `copy_from`. An earlier revision of the image feature called it with a `url`
-// field, which is NOT an accepted input (url appears only on the RETURNED image
-// object), so that call would have been rejected live after the campaign and ad set
-// already existed; PR #144 correctly removed it and switched the by-URL case to
-// link_data.picture. That verdict is about the `url` PARAMETER, not about this edge:
-// sending the image as `bytes` is documented and is the only way to attach an image
-// we hold as stored bytes rather than as a URL. Both paths now coexist — see
-// objectStorySpec.
+// ON THE TRANSPORT, since this edge has a history in this file and the earlier note
+// here was itself imprecise enough to draw two review findings:
+//
+// The reference for POST /act_<id>/adimages documents exactly TWO create parameters —
+// `bytes` ("Image file", typed "Base64 UTF-8 string") and `copy_from`. It documents NO
+// multipart file field, and describes no multipart upload at all. So the naive reading
+// of that parameter list — "the part must therefore be named `bytes`" — is NOT
+// supported by anything Meta publishes; the docs are SILENT on this mechanism rather
+// than prescriptive about it.
+//
+// What settles the shape is the two OFFICIAL SDKs, which disagree with each other and
+// are both in production: the Python SDK's FacebookRequest.add_file builds
+// `file_key = 'source' + str(self._file_counter)` and uploads under `source0`, while
+// the PHP SDK's AdImage.php sets AdImageFields::FILENAME and uploads under `filename`.
+// Two vendor SDKs, two different part names, same endpoint — the upload handler is
+// LENIENT about the part's field name and treats any file part as the image. No
+// particular name is the contract, so the name below is not load-bearing and is not
+// evidence of a defect either way. What IS load-bearing is that the part carries a
+// FILENAME, since that is what makes Graph treat it as a file upload rather than a
+// scalar field — and, per adImageUploadResponse, it is the basename Meta echoes back
+// as the response key.
+//
+// Whether the filename needs a real EXTENSION is undocumented in both directions; no
+// authoritative source was found either way, and Meta sniffs content for format. It is
+// therefore not asserted here or in the tests.
+//
+// An earlier revision of the image feature called this edge with a `url` field, which
+// is NOT an accepted input (url appears only on the RETURNED image object), so that
+// call would have been rejected live after the campaign and ad set already existed;
+// PR #144 correctly removed it and switched the by-URL case to link_data.picture. That
+// verdict is about the `url` PARAMETER, not about this edge: uploading the bytes is
+// the only way to attach an image we hold as stored bytes rather than as a URL. Both
+// paths now coexist — see objectStorySpec.
 //
 // Meta CONTENT-ADDRESSES ad images — identical bytes always yield the same hash and
 // a repeat upload is a no-op returning that hash — so this is idempotent and needs
@@ -3392,9 +3425,12 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	// The field name becomes the image's key in the response; uploadImage reads the
-	// single entry by value, so any stable name works. A filename is what makes Graph
-	// treat the part as a file upload rather than a scalar field.
+	// The part's field name is NOT the contract — Meta's own SDKs send different ones
+	// (`source0` in Python, `filename` in PHP) against this same endpoint, so the
+	// handler accepts any file part. Any stable name works; this one is left as-is.
+	// The FILENAME is what matters: it makes Graph treat the part as a file upload
+	// rather than a scalar field, and Meta echoes its basename back as the response
+	// key. uploadImage reads the single entry by value rather than by that key.
 	partHeader := textproto.MIMEHeader{}
 	partHeader.Set("Content-Disposition", `form-data; name="source"; filename="creative"`)
 	if strings.TrimSpace(contentType) != "" {
@@ -3469,6 +3505,26 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 	var out adImageUploadResponse
 	if uerr := json.Unmarshal(raw, &out); uerr != nil {
 		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", uerr)}
+	}
+	// ONE upload yields ONE entry, and that invariant is enforced rather than assumed.
+	//
+	// The earlier revision iterated the map and returned the first non-empty hash. That
+	// was two defects in one line. Go RANDOMIZES map iteration order, so a response
+	// carrying more than one entry returned an ARBITRARY hash — and this hash becomes
+	// link_data.image_hash on a creative that spends money, so the failure mode is the
+	// wrong creative on a live paid ad, silently. It was also a workaround for a key
+	// this client never derives: Meta keys `images` by the BASENAME of the uploaded
+	// filename (the official PHP SDK reads images[basename(filename)]), which is a
+	// contract documented only in SDK source, not in the reference.
+	//
+	// Reading the single entry BY VALUE keeps the client independent of that key — the
+	// right call, since the key's contract is not documented — but it is only sound
+	// while there is exactly one entry. So the count is checked first and anything else
+	// is REFUSED. Failing closed is mandatory here: guessing among entries is what puts
+	// an unapproved image on a paid ad.
+	if len(out.Images) != 1 {
+		return "", &transportError{Method: http.MethodPost, Path: path,
+			Err: fmt.Errorf("image upload returned %d image entries, want exactly 1", len(out.Images))}
 	}
 	for _, img := range out.Images {
 		if h := strings.TrimSpace(img.Hash); h != "" {

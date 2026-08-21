@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -2221,5 +2222,141 @@ func TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig(t *testing.T) {
 	}
 	if original[0].ImageBytes != nil {
 		t.Errorf("the caller's variant was mutated in place; image bytes would reach the persisted config snapshot")
+	}
+}
+
+// multiCreativeAssets serves a DIFFERENT asset per id (and records every lookup), which
+// is what the dedupe and aggregate-bound tests need — the shared fakeCreativeAssets
+// returns one asset for any id, so it cannot distinguish "resolved twice" from
+// "resolved once and reused".
+type multiCreativeAssets struct {
+	assets map[string]*model.CreativeAsset
+
+	mu    sync.Mutex
+	calls []string // assetID per call, in order
+}
+
+func (m *multiCreativeAssets) GetAsset(_ context.Context, _, _, assetID string) (*model.CreativeAsset, error) {
+	m.mu.Lock()
+	m.calls = append(m.calls, assetID)
+	m.mu.Unlock()
+	a, ok := m.assets[assetID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return a, nil
+}
+
+func (m *multiCreativeAssets) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.calls)
+}
+
+// TestMeta_ResolveVariantAssetsDedupesByAssetID is the memory bound's load-bearing half.
+//
+// Nothing caps how many variants a config may carry and each asset may be 30 MiB, so the
+// earlier implementation performed one DB read and retained one full buffer PER VARIANT —
+// and the cheapest way to trigger that was the SAME asset id repeated, which requires no
+// extra stored data. This asserts the repeat costs exactly ONE read, and that every
+// variant still receives the bytes (dedupe must not silently drop the image from the
+// later variants, which would build link-only ads that spend money).
+func TestMeta_ResolveVariantAssetsDedupesByAssetID(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		id: {Bytes: []byte("IMAGE_BYTES"), MimeType: "image/png"},
+	}}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	// Five variants, all naming the SAME asset.
+	in := []meta.AdVariant{
+		{ImageAssetID: id}, {ImageAssetID: id}, {ImageAssetID: id},
+		{ImageAssetID: id}, {ImageAssetID: id},
+	}
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets error: %v", err)
+	}
+	if n := assets.callCount(); n != 1 {
+		t.Errorf("GetAsset called %d times for 5 variants naming one asset, want 1 — a repeated id must cost one read and one buffer, not N", n)
+	}
+	for i := range out {
+		if string(out[i].ImageBytes) != "IMAGE_BYTES" {
+			t.Errorf("variant %d bytes = %q, want the resolved asset's bytes — dedupe must not drop the image", i+1, out[i].ImageBytes)
+		}
+		if out[i].ImageMIME != "image/png" {
+			t.Errorf("variant %d mime = %q, want image/png", i+1, out[i].ImageMIME)
+		}
+	}
+	// The repeated variants must ALIAS one buffer rather than hold five copies; that
+	// aliasing is the allocation saving the dedupe exists for.
+	if len(out) > 1 && &out[0].ImageBytes[0] != &out[1].ImageBytes[0] {
+		t.Errorf("repeated variants hold distinct buffers; they must alias the single resolved copy")
+	}
+}
+
+// TestMeta_ResolveVariantAssetsBoundsAggregateBytes proves the aggregate ceiling refuses a
+// config naming more DISTINCT asset bytes than one dispatch may hold, and that it refuses
+// BEFORE retaining them. Distinct ids defeat dedupe, so this is the case the byte budget
+// (not the dedupe) has to catch.
+func TestMeta_ResolveVariantAssetsBoundsAggregateBytes(t *testing.T) {
+	// Nine assets of 30 MiB each = 270 MiB, past the 240 MiB (8-asset) ceiling. The
+	// buffers are allocated by the fake, not by the code under test; what is asserted is
+	// that resolution REFUSES rather than accumulating them into its own result.
+	const perAsset = 30 << 20
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{}}
+	var in []meta.AdVariant
+	for i := 0; i < 9; i++ {
+		id := fmt.Sprintf("%08d-1111-1111-1111-111111111111", i)
+		assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, perAsset), MimeType: "image/png"}
+		in = append(in, meta.AdVariant{ImageAssetID: id})
+	}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err == nil {
+		t.Fatalf("resolveVariantAssets accepted %d distinct maximum-size assets; the aggregate bound must refuse", len(out))
+	}
+	if out != nil {
+		t.Errorf("a refused resolution must return no variants, got %d", len(out))
+	}
+	if !strings.Contains(err.Error(), "distinct creative assets") {
+		t.Errorf("error = %v, want the aggregate-bytes refusal", err)
+	}
+	// It must stop AT the ceiling rather than reading every asset first.
+	if n := assets.callCount(); n > 9 {
+		t.Errorf("GetAsset called %d times, want at most 9", n)
+	}
+}
+
+// TestMeta_ResolveVariantAssetsAcceptsRealisticCampaign is the other side of the bound:
+// it must not refuse a legitimate campaign. Real Meta creatives are a few hundred KiB
+// (Meta's recommended feed image is 1936x1936), so a many-variant A/B test of realistic
+// images sits far under the ceiling and must resolve cleanly.
+func TestMeta_ResolveVariantAssetsAcceptsRealisticCampaign(t *testing.T) {
+	const realistic = 400 << 10 // 400 KiB, a generous real-world PNG
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{}}
+	var in []meta.AdVariant
+	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("%08d-2222-2222-2222-222222222222", i)
+		assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, realistic), MimeType: "image/png"}
+		in = append(in, meta.AdVariant{ImageAssetID: id})
+	}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("50 realistic (400 KiB) creatives were refused, but the bound must not reject a legitimate campaign: %v", err)
+	}
+	if len(out) != 50 {
+		t.Fatalf("resolved %d variants, want 50", len(out))
+	}
+	for i := range out {
+		if len(out[i].ImageBytes) != realistic {
+			t.Errorf("variant %d did not receive its bytes", i+1)
+		}
 	}
 }

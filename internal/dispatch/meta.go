@@ -95,6 +95,45 @@ func (d *MetaDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
 	d.creatives = r
 }
 
+// CreativeAssetRepoIsSet reports whether the creative-asset read path was bound.
+// Exported ONLY so the container's wiring tests can assert the binding directly, for
+// exactly the reason BriefService.CreativeAssetRepoIsSet is (see
+// internal/service/creative_asset.go): the container tests construct dispatchers with
+// all-nil arguments, so deleting registerDispatchers' SetCreativeAssetRepo call
+// COMPILES and leaves the whole suite green — while every asset-backed production
+// dispatch fails with "the creative-asset store is not configured", i.e. no ad at all
+// for a brief whose creative was uploaded successfully.
+//
+// An error-based assertion cannot close this gap: a dispatcher that was never bound
+// and one bound to a repo that cannot find the asset both fail the variant, and the
+// no-database container legitimately produces the unbound state. Only asking the
+// dispatcher directly distinguishes wired from unwired.
+func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != nil }
+
+// maxVariantAssetBytes bounds the total DISTINCT creative-asset bytes one dispatch may
+// hold in memory at once.
+//
+// It is aligned with the caps PR #170 already established rather than inventing a third
+// scheme. Those are all derived from ONE number — the 30 MiB per-asset ceiling declared on
+// the upload (design/brief.go's MaxLength(31457280), itself set at Meta's documented
+// single-image maximum): constants.MaxRequestBodyBytes is 42 MiB (one 30 MiB image
+// base64-expanded by 4/3, plus envelope) and the decode budget is 80 MiB. This is the same
+// ceiling applied to the one code path that holds SEVERAL assets simultaneously.
+//
+// 240 MiB is EIGHT maximum-size (30 MiB) assets. Justified against a legitimate campaign:
+// real Meta creatives are nothing like 30 MiB — Meta's own recommended feed image is
+// 1936x1936, which is a few hundred KiB as PNG or JPEG, so 240 MiB is several hundred
+// realistic creatives. A/B tests in this service run a handful of variants, not hundreds,
+// and a campaign that genuinely needs more distinct artwork than this is better split than
+// dispatched as one job. The bound therefore refuses only configs that are already
+// pathological, while capping what a single dispatch can allocate at a fixed, modest
+// multiple of the largest thing the upload contract admits.
+//
+// Deduplication (below) is what makes the bound meaningful: without it the SAME asset id
+// repeated N times would charge N times over, so the cheapest attack would exhaust the
+// budget using one stored image.
+const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB) assets
+
 // resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
 // the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
 // campaignFromMeta for the degraded-count check and the config snapshot — is not mutated.
@@ -117,6 +156,25 @@ func (d *MetaDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
 func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, error) {
 	out := make([]meta.AdVariant, len(variants))
 	copy(out, variants)
+	// Resolved assets are CACHED BY ID for the duration of this call, which is what makes
+	// the memory bound hold. Nothing caps how many variants a config may carry, and each
+	// asset may be 30 MiB (design/brief.go's MaxLength on the upload), so the earlier
+	// version's one-read-and-one-30-MiB-buffer PER VARIANT was unbounded in both DB reads
+	// and allocation — and the cheapest way to trigger it was the SAME asset id repeated,
+	// which needs no extra stored data at all. De-duplication makes repetition free: N
+	// variants naming one asset now cost one read and one buffer, and the ImageBytes slices
+	// alias that single buffer (they are only ever read, never mutated — the meta client
+	// copies them onto the wire).
+	//
+	// Cost is then bounded by the number of DISTINCT assets, so an aggregate ceiling is
+	// still needed for a config naming many different ones. It is deliberately derived from
+	// the caps PR #170 already set rather than being a third scheme: that PR bounds ONE
+	// request at constants.MaxRequestBodyBytes (42 MiB) and one decode at 80 MiB, both
+	// sized from the same 30 MiB per-asset ceiling. maxVariantAssetBytes applies the same
+	// idea to the one place that holds SEVERAL assets at once.
+	byID := make(map[string][]byte, len(out))
+	mimeByID := make(map[string]string, len(out))
+	var totalBytes int64
 	for i := range out {
 		assetID := strings.TrimSpace(out[i].ImageAssetID)
 		if assetID == "" {
@@ -124,6 +182,13 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		}
 		if _, perr := uuid.Parse(assetID); perr != nil {
 			return nil, fmt.Errorf("meta variant %d references creative asset %q, which is not a valid asset id", i+1, assetID)
+		}
+		if b, seen := byID[assetID]; seen {
+			// Already resolved for an earlier variant: no second read, no second buffer,
+			// and no second charge against the aggregate budget.
+			out[i].ImageBytes = b
+			out[i].ImageMIME = mimeByID[assetID]
+			continue
 		}
 		if d.creatives == nil {
 			return nil, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
@@ -141,6 +206,15 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		if len(asset.Bytes) == 0 {
 			return nil, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
+		// Charged once per DISTINCT asset, and checked BEFORE the buffer is retained so
+		// the ceiling bounds what this call holds rather than reporting after the fact.
+		totalBytes += int64(len(asset.Bytes))
+		if totalBytes > maxVariantAssetBytes {
+			return nil, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+				maxVariantAssetBytes, totalBytes, i+1)
+		}
+		byID[assetID] = asset.Bytes
+		mimeByID[assetID] = asset.MimeType
 		out[i].ImageBytes = asset.Bytes
 		out[i].ImageMIME = asset.MimeType
 	}

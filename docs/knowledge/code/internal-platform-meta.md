@@ -72,9 +72,42 @@ Meta reject it after the campaign and ad set already exist. `objectStorySpec`
 then encodes the same exclusivity structurally: `picture` is set only when no hash
 was uploaded.
 
-`image_hash` comes from `POST /act_<id>/adimages` with the image as a multipart
-`bytes` part. That edge documents exactly two CREATE parameters — `bytes` and
-`copy_from` — so this transport is the documented one.
+`image_hash` comes from `POST /act_<id>/adimages`, with the image sent as a
+multipart FILE part.
+
+ON THE PART'S FIELD NAME — the docs do not settle it, and an earlier version of
+this entry claimed they did. The reference documents exactly two CREATE
+parameters, `bytes` ("Image file", typed "Base64 UTF-8 string") and `copy_from`,
+and documents NO multipart file field: it is SILENT on multipart upload
+altogether. So "the parameter list says `bytes`, therefore the part must be named
+`bytes`" does not follow — that list describes a different (base64-in-a-scalar)
+way of sending the image.
+
+What shows the name is not load-bearing is that Meta's two OFFICIAL SDKs send
+DIFFERENT names against this same endpoint, both in production: the Python SDK's
+`FacebookRequest.add_file` builds `file_key = 'source' + str(self._file_counter)`
+and uploads under `source0`, while the PHP SDK's `AdImage.php` sets
+`AdImageFields::FILENAME` and uploads under `filename`. Two vendor SDKs, two
+names, one endpoint ⇒ the upload handler accepts any file part. The client's
+current name is therefore not a defect and is left alone.
+
+What IS load-bearing is that the part carries a FILENAME: that is what makes
+Graph treat it as a file upload rather than a scalar field, and Meta echoes the
+filename's BASENAME back as the key of the `images` map (the PHP SDK reads
+`images[basename($filename)]`). Whether that filename needs a real EXTENSION is
+undocumented in both directions — no authoritative source states a rule, and Meta
+sniffs content for format — so nothing in the code or tests asserts one.
+
+The response is `Map { string: Map { string: Struct { hash, url, ... } } }` under
+`images`. Because the key's contract lives in SDK source rather than in the
+reference, `uploadImage` does not derive it: it ENFORCES that exactly one entry is
+present (one upload yields one entry) and reads that entry BY VALUE. The count
+guard is not decoration. The earlier revision iterated the map and returned the
+first non-empty hash, which under Go's RANDOMIZED map iteration returned an
+arbitrary hash from a multi-entry response — and that hash becomes
+`link_data.image_hash` on a creative that spends money, so the failure mode was
+the wrong creative on a live paid ad, silently. Anything other than exactly one
+entry, or an entry whose hash is empty, is now refused as a `transportError`.
 
 CORRECTING AN EARLIER OVER-GENERALISATION: an earlier revision called the same
 edge with a `url` field, which is NOT an accepted input (`url` is a field on the
