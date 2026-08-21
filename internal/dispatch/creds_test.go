@@ -168,6 +168,12 @@ type scopedConnReader struct {
 	// rather than on the value being nil — a fixture that only ever returned nil on failure
 	// would let that confusion pass untested.
 	errRows map[string]*model.Connection
+
+	// nilNil names project ids for which Get returns (nil, nil) — the shape
+	// domain.ConnectionReader permits and does not forbid. A fixture that can only report
+	// absence as ErrNotFound makes a caller's nil-row handling untestable, so a missing guard
+	// reads as covered right up until a repository chooses the other shape.
+	nilNil map[string]bool
 }
 
 func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ model.Provider) (bool, error) {
@@ -179,6 +185,9 @@ func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ m
 
 func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
 	f.gets = append(f.gets, projectID)
+	if f.nilNil[projectID] {
+		return nil, nil
+	}
 	if err, ok := f.errs[projectID]; ok {
 		return f.errRows[projectID], err
 	}

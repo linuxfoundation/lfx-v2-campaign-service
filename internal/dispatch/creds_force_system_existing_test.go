@@ -856,56 +856,138 @@ func TestUnprovableProvenanceKeepsTheProjectFault(t *testing.T) {
 	}
 }
 
-// TestAbsentSystemRowSurfacesTheOperatorFault covers the third arm of the same routing
-// defect its two siblings above already fixed, arriving through the system row being
-// ABSENT rather than present-and-unusable.
+// TestAbsentSystemRowKeepsTheProjectFault replaces an earlier test that asserted the exact
+// OPPOSITE, and the reason it was wrong is worth stating: its fixture could not tell the two
+// owners apart.
 //
-// systemCreated answers known=false for three distinct states, and the deliberate design
-// is that an UNSETTLEABLE question must not fabricate an answer. Two of those states are
-// genuinely unsettleable and TestUnprovableProvenanceKeepsTheProjectFault pins them: a
-// system row that records no account of its own, and a lookup that FAILED. Neither can be
-// shown to own the campaign, so the project keeps its own actionable error.
+// That test set up a project resolving act_111, a campaign recording act_999, and no system
+// row, then asserted ErrSystemConnectionMissing — reasoning that since nothing reachable can
+// address the campaign, an operator must be paged. But that fixture is ALSO, exactly, an
+// ordinary re-pointed project: a PROJECT-created campaign made under the project's old
+// account, whose owner has since pointed the connection somewhere else and who never had a
+// system row. Absence of the LF row is not evidence about who CREATED the campaign; it proves
+// only that the row is missing now.
 //
-// A row proven ABSENT is not one of them, and collapsing it into the same answer is what
-// this test refuses. ErrNotFound is a settled reading of storage, not an unanswered
-// question: it says no LF row is installed for this provider. So when a campaign RECORDS
-// a creation account that the project's own connection does not match, and the system row
-// that could have owned it is proven absent, the fault is the operator's — the LF
-// credential row is missing, which is a deployment-wide repair no project can make. The
-// prior arms already route the present-but-unusable version of this to
-// ErrSystemConnectionMissing/NotUsable; an absent row must not silently downgrade to the
-// project's account-mismatch 409, because that pages nobody while the campaign spends.
+// Asserting the operator fault there inverted the pre-branch behaviour and sent a 500 for a
+// repair the project itself makes by reconnecting. Provenance therefore keeps ONE
+// discriminator — systemIsTheCreator, which is true only on a POSITIVE match against the
+// system row's recorded account.
 //
-// The assertion is on the sentinel an operator actually receives, not on prose: brief.go
-// and orchestrator.go both branch on domain.ErrSystemConnectionMissing to answer 500.
-func TestAbsentSystemRowSurfacesTheOperatorFault(t *testing.T) {
+// The assertions are discriminating in both directions: ErrCampaignAccountMismatch is the
+// project-owned remedy and ErrSystemConnectionMissing the operator-owned one, and both are
+// reachable from this call, so a test asserting merely "an error came back" passes on either.
+func TestAbsentSystemRowKeepsTheProjectFault(t *testing.T) {
 	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
 
-	// The project resolves fine to act_111. The campaign records act_999 — an account the
-	// project does not own — and NO system row exists at all (no rows entry, no errs entry,
-	// so Get answers a clean domain.ErrNotFound).
+	// A re-pointed PROJECT: the campaign was created under act_555 (the project's former
+	// account), the project now points at act_111, and no system row was ever installed.
 	repo := &scopedConnReader{rows: map[string]*model.Connection{"cncf": metaConnFor("act_111")}}
 
 	res, err := newCredsSource(repo, identityEncryptor{}).
+		resolveExisting(context.Background(), "cncf", model.ProviderMetaAds, "act_555")
+	if err != nil {
+		t.Fatalf("resolveExisting = %v, want the PROJECT's resolution. A missing LF row says nothing "+
+			"about who created this campaign, and this fixture is an ordinary re-pointed project: "+
+			"answering with a system fault pages an operator for the project's own reconnect", err)
+	}
+	if res.accountID != "act_111" {
+		t.Errorf("resolved account = %q, want act_111 so the provenance guard renders its "+
+			"account-mismatch against the account the project currently points at", res.accountID)
+	}
+	if res.fromSystem {
+		t.Error("resolution is marked fromSystem, but no system row exists and none was resolved")
+	}
+}
+
+// TestSystemCreatedCampaignWithAbsentRowSurfacesTheOperatorFault is the case the reverted test
+// MEANT to cover, set up so that the system row is provably the creator rather than merely
+// unreachable.
+//
+// The system row records act_999 and the campaign was created under act_999, so provenance is
+// POSITIVELY established; the row is then made unusable (present, but no credential blob) so
+// resolution fails. That is a fault only whoever installed the LF credential can repair, and
+// the project — resolving fine to its own act_111 — cannot act on it. Distinguishing this from
+// the re-pointed project above is the whole point of keying on a positive match.
+func TestSystemCreatedCampaignWithAbsentRowSurfacesTheOperatorFault(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"cncf":                metaConnFor("act_111"),
+		model.SystemProjectID: unusableMetaConnFor("act_999"),
+	}}
+
+	_, err := newCredsSource(repo, identityEncryptor{}).
 		resolveExisting(context.Background(), "cncf", model.ProviderMetaAds, "act_999")
 	if err == nil {
-		t.Fatalf("resolveExisting SUCCEEDED (account %q): the campaign was created under act_999, "+
-			"which neither the project's connection nor any installed system row owns, so there are "+
-			"no credentials that can address it", res.accountID)
+		t.Fatal("resolveExisting SUCCEEDED against a system row that is the recorded creator and " +
+			"is unusable; the campaign cannot be addressed and the fault must surface")
 	}
-	// The discriminating assertion. ErrCampaignAccountMismatch is the PROJECT-owned remedy
-	// ("reconnect the original account") and is what the unfixed code produces by way of
-	// returning the project resolution; ErrSystemConnectionMissing is the operator-owned one.
-	// Both are reachable from this call, so asserting the absence of one and the presence of
-	// the other is what separates the arms — a test asserting only "an error came back" passes
-	// on either.
 	if errors.Is(err, domain.ErrCampaignAccountMismatch) {
-		t.Errorf("err = %v, which routes to the project's account-mismatch 409. No LF system row is "+
-			"installed; that is a deployment-wide repair a project cannot make, so this pages nobody "+
-			"while the campaign keeps spending", err)
+		t.Errorf("err = %v routes to the project's account-mismatch 409, but the SYSTEM row created "+
+			"this campaign and the project cannot repair it", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v, want domain.ErrSystemConnectionNotUsable so internal/service answers the "+
+			"operator-owned 500", err)
+	}
+}
+
+// TestNilSystemRowIsTreatedAsMissing covers the (nil, nil) return that
+// domain.ConnectionReader permits, on the forced-system path.
+//
+// This is the THIRD place on this branch where the same interface shape mattered: updateConn
+// and systemCreated both guard it, and resolveForcedSystem did not. It passed the nil row
+// straight to resolveConn, whose first act is to read conn.ID for the credential-cache key —
+// so a reader reporting absence this way panicked and took down every forced-mode dispatch,
+// rather than failing closed with the operator-owned fault a missing LF row is meant to raise.
+//
+// The assertion is the sentinel an operator receives, not merely "an error came back": a
+// panic-free path that returned some other error would still misroute the page.
+func TestNilSystemRowIsTreatedAsMissing(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	repo := &scopedConnReader{
+		rows:   map[string]*model.Connection{"cncf": metaConnFor("act_111")},
+		nilNil: map[string]bool{model.SystemProjectID: true},
+	}
+
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolveForcedSystem(context.Background(), model.ProviderMetaAds)
+	if err == nil {
+		t.Fatal("resolveForcedSystem SUCCEEDED against a nil system row; no credentials exist to resolve")
 	}
 	if !errors.Is(err, domain.ErrSystemConnectionMissing) {
 		t.Errorf("err = %v, want domain.ErrSystemConnectionMissing so internal/service answers the "+
-			"operator-owned 500 (internal/service/brief.go's ErrSystemConnectionMissing arm)", err)
+			"operator-owned 500 — a nil row is the same absence ErrNotFound expresses", err)
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v must also carry domain.ErrNotFound: callers that only ask \"was anything "+
+			"found?\" have to keep seeing the absence", err)
+	}
+}
+
+// TestNilProjectRowFallsBackToTheSystemAccount is the project-scope half of the same contract.
+//
+// resolve's ErrNotFound arm falls back to the LF system row; a (nil, nil) read is the same
+// absence and must earn the same fallback. Returning an error instead would deny the LF
+// credential to a project a genuinely absent row would have served, and passing the nil
+// through would panic in resolveConn.
+func TestNilProjectRowFallsBackToTheSystemAccount(t *testing.T) {
+	repo := &scopedConnReader{
+		rows:   map[string]*model.Connection{model.SystemProjectID: metaConnFor("act_999")},
+		nilNil: map[string]bool{"cncf": true},
+	}
+
+	res, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderMetaAds)
+	if err != nil {
+		t.Fatalf("resolve = %v, want the system fallback: a nil project row is an absence, and an "+
+			"absent project row is exactly what the LF system account exists to serve", err)
+	}
+	if res.accountID != "act_999" {
+		t.Errorf("resolved account = %q, want act_999 (the system row)", res.accountID)
+	}
+	if !res.fromSystem {
+		t.Error("resolution must be marked fromSystem so a later defect is attributed to the LF row")
 	}
 }

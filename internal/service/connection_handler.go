@@ -340,6 +340,13 @@ func (s *ConnectionService) getConn(ctx context.Context, projectID string, p mod
 		return nil, err
 	}
 	c, gerr := repo.Get(ctx, projectID, p)
+	if gerr == nil && c == nil {
+		// (nil, nil) is a shape domain.ConnectionReader permits. Returning it verbatim would
+		// hand the adapters a nil connection with a nil error, which they marshal as a
+		// success — a 200 describing a connection that does not exist. Render it as the
+		// absence it is, matching the ErrNotFound arm mapErr already produces.
+		return nil, mapErr(domain.ErrNotFound)
+	}
 	return c, mapErr(gerr)
 }
 
@@ -455,6 +462,11 @@ func (s *ConnectionService) testConn(ctx context.Context, projectID string, p mo
 	c, err := repo.Get(ctx, projectID, p)
 	if err != nil {
 		return nil, mapErr(err)
+	}
+	// HasCredentials reads c.EncryptedCredentials, so a (nil, nil) read panics here rather
+	// than reporting the absence the caller asked about.
+	if c == nil {
+		return nil, mapErr(domain.ErrNotFound)
 	}
 	msg := "connection found; upstream verification not yet implemented"
 	return &conn.ConnectionTestResult{OK: c.HasCredentials(), Message: &msg}, nil

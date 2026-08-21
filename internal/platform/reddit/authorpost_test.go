@@ -1386,3 +1386,130 @@ func TestCreateCampaign_AuthoringRunbookNeverAssertsUncreatedResources(t *testin
 		}
 	})
 }
+
+// TestCreateCampaign_DeterministicFailuresAuthorNoPost pins that every deterministic input
+// check runs BEFORE the promoted-post POST, so a bad input costs nothing upstream.
+//
+// Step 1.5 made the authoring POST the first mutating call, but two deterministic checks — the
+// effective-window check and the composed-name length checks — stayed where they had been, just
+// above the campaign POST. With an ImageURL set they could therefore return (nil, error) with a
+// post ALREADY AUTHORED upstream. CreateCampaign's contract makes (nil, err) mean "nothing was
+// or may have been created" and RedditDispatcher.Dispatch releases the claim on `result == nil`
+// alone, so the claim was released on a post that definitely existed — and a retry, with the
+// same bad input, authors another duplicate every time.
+//
+// The assertion is the CLAIM OUTCOME plus the observable upstream effect: (nil, error) is only
+// safe if nothing was created, so the test requires BOTH that the result is nil (claim
+// released) AND that no POST ever reached /profiles/.../posts. Asserting only the error would
+// pass on the broken code, which also returned an error — the whole defect is what it left
+// behind.
+func TestCreateCampaign_DeterministicFailuresAuthorNoPost(t *testing.T) {
+	base := func() CampaignInput {
+		return CampaignInput{
+			EventName:       "Open Source Summit",
+			Project:         "tlf",
+			EventSlug:       "oss-2026",
+			RegistrationURL: "https://events.linuxfoundation.org/oss/",
+			BudgetUSD:       500,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"linux"},
+			Objective:       "conversions",
+			// The ImageURL is what makes Step 1.5 author a post at all — without it the
+			// ordering defect is unreachable and the test would be vacuous.
+			ImageURL:     "https://events.linuxfoundation.org/banner.jpg",
+			CallToAction: "sign up",
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*CampaignInput)
+		wantErr string
+	}{
+		{
+			name: "end date not after the nudged effective start",
+			mutate: func(in *CampaignInput) {
+				// A past start is nudged forward to now+buffer; this end is long past, so
+				// the window is invalid and the check must reject it.
+				in.StartDate = "2020-01-01"
+				in.EndDate = "2020-01-02"
+			},
+			wantErr: "is not after the effective start",
+		},
+		{
+			name: "composed ad group name exceeds Reddit's limit",
+			mutate: func(in *CampaignInput) {
+				// GeoTargets has no count limit and every code joins into adGroupName, so
+				// enough valid codes push the composed name past the cap.
+				many := make([]string, 0, 120)
+				for i := 0; i < 120; i++ {
+					many = append(many, "us", "gb", "de", "fr")
+				}
+				in.GeoTargets = many
+			},
+			wantErr: "too long",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var mutating []string
+
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tokenSrv.Close()
+
+			handler := http.NewServeMux()
+			handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					mu.Lock()
+					mutating = append(mutating, r.Method+" "+r.URL.Path)
+					mu.Unlock()
+				}
+				path := r.URL.Path
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/profiles/t2_test/posts"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t3_new"}})
+				case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+				default:
+					http.Error(w, "unexpected", http.StatusNotFound)
+				}
+			})
+			apiSrv := httptest.NewServer(handler)
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+			in := base()
+			tc.mutate(&in)
+
+			res, err := c.CreateCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatalf("CreateCampaign succeeded on a deterministically invalid input; want %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+			// (nil, err) tells Dispatch to RELEASE the claim, which is only correct if
+			// nothing exists upstream.
+			if res != nil {
+				t.Errorf("result = %+v, want nil: a deterministic validation failure creates nothing, "+
+					"so the claim must be released", res)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			// THE assertion. A released claim plus an authored post is the duplicate-post bug.
+			if len(mutating) > 0 {
+				t.Errorf("mutating request(s) reached Reddit before the deterministic check failed: %v\n"+
+					"the post is authored upstream while (nil, err) releases the claim, so a retry with "+
+					"the same input authors a DUPLICATE every time", mutating)
+			}
+		})
+	}
+}

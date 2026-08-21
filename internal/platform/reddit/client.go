@@ -1408,13 +1408,60 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// HTTP status, never the error body — a reflective Reddit validation error can
 	// echo the destination_url (which carries the caller's permitted secret-bearing
 	// query params), and persisting it in Steps would leak those.
-	// The campaign NAME is composed here, BEFORE the authoring step, because an ambiguous
-	// authoring failure has to return a reconcilable partial result and the name is the only
-	// handle such a result carries (no id exists yet). It is a pure function of values already
-	// settled above — `objective` and `geos` — so computing it earlier changes nothing about
-	// its value; its LENGTH validation stays below, next to the ad-group name it is checked
-	// with, since neither name can orphan anything before the campaign POST.
-	earlyCampaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+	// EVERY remaining deterministic check runs HERE, before Step 1.5 authors anything.
+	//
+	// The window check and the two composed-name checks used to sit further down, just above
+	// the campaign POST — which was correct while the first mutating call WAS that POST. Step
+	// 1.5 moved the first mutating call earlier without moving them, so with an ImageURL set
+	// they could return (nil, error) with a post already authored upstream. CreateCampaign's
+	// contract makes (nil, err) mean "nothing was or may have been created", and
+	// RedditDispatcher.Dispatch keys claim release on `result == nil` alone, so the claim was
+	// released on a post that definitely existed and a retry authored a duplicate.
+	//
+	// They belong here rather than being converted to partial returns because they are purely
+	// deterministic: their inputs are the caller's StartDate/EndDate/EventName/GeoTargets,
+	// `objective` and `geos` (both settled above), and the clock. None consumes anything the
+	// post produces, so failing them ahead of any mutating call restores the invariant Step
+	// 1.5's ordering was always meant to have — a bad input costs nothing upstream. Structural
+	// step toward #173.
+	campaignEndTime := toISOTimestamp(in.EndDate)
+	effectiveStart := toISOTimestamp(in.StartDate)
+	// Nudge the start forward whenever it does not already clear the workflow HORIZON
+	// (now + redditPastStartBuffer), not merely when it is already past: a start only a few
+	// seconds/minutes ahead could slip into the past DURING account verification, the token
+	// exchange, or a 429 retry, since this one timestamp is reused for the campaign and the
+	// (possibly retried) ad-group POST. redditPastStartBuffer is sized (see its definition) to
+	// cover that whole retryable campaign->ad-group workflow, so a start at/after now+buffer is
+	// guaranteed to still be future when every request that reuses it is accepted; anything
+	// earlier is nudged up to now+buffer.
+	horizon := c.now().Add(redditPastStartBuffer)
+	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
+		effectiveStart = toRedditTimestamp(horizon)
+	}
+	// After nudging a past start forward, the (unchanged) end could be at/before it; reject
+	// rather than sending an invalid window.
+	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
+		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
+			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
+		}
+	}
+
+	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
+	// EventName/Project bounds keep caller inputs sane, but the composed names also include
+	// region/objective (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no
+	// count limit, so enough valid codes could push adGroupName past Reddit's limit.
+	//
+	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
+	// composing it here serves both purposes.
+	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+	geoLabel := strings.Join(geos, "+")
+	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
+	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
+		return nil, fmt.Errorf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
+		return nil, fmt.Errorf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
 
 	if authorImageURL != "" {
 		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, authorImageURL)
@@ -1442,12 +1489,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, "Promoted-post authoring is UNCONFIRMED (the request reached Reddit but the outcome is unknown) -- no campaign was created; check Reddit Ads Manager for a post with this headline BEFORE authoring it again to avoid a duplicate, and DELETE it if it exists and is not attached to an ad")
 				return &CampaignResult{
 						Platform:     "reddit-ads",
-						CampaignName: earlyCampaignName,
+						CampaignName: campaignName,
 						AccountID:    c.account.AccountID,
 						RedditURL:    redditAdsManagerURL,
 						Steps:        steps,
 					}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
-						earlyCampaignName, err)
+						campaignName, err)
 			}
 			// A cancellation that is NOT ambiguous landed cleanly before any authoring bytes
 			// went out, so no post exists: abort with a nil result and release the claim.
@@ -1548,47 +1595,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		seenCommunity[key] = struct{}{}
 		communityNames = append(communityNames, name)
-	}
-
-	// Compute the effective start time ONCE, before the campaign POST. When the
-	// Nudge the start forward whenever it does not already clear the workflow
-	// HORIZON (now + redditPastStartBuffer), not merely when it is already past: a
-	// start only a few seconds/minutes ahead could slip into the past DURING
-	// account verification, the token exchange, or a 429 retry, since this one
-	// timestamp is reused for the campaign and the (possibly retried) ad-group
-	// POST. redditPastStartBuffer is sized (see its definition) to cover that whole
-	// retryable campaign->ad-group workflow, so a start at/after now+buffer is
-	// guaranteed to still be future when every request that reuses it is accepted;
-	// anything earlier is nudged up to now+buffer.
-	campaignEndTime := toISOTimestamp(in.EndDate)
-	effectiveStart := toISOTimestamp(in.StartDate)
-	horizon := c.now().Add(redditPastStartBuffer)
-	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
-		effectiveStart = toRedditTimestamp(horizon)
-	}
-	// After nudging a past start forward, the (unchanged) end could be at/before
-	// it; reject rather than sending an invalid window.
-	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
-		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
-			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
-		}
-	}
-
-	// Compute BOTH composed names (campaign + ad group) and validate their lengths
-	// up front — before the campaign POST. The per-field EventName/Project bounds
-	// keep caller inputs sane, but the composed names also include region/objective
-	// (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no count
-	// limit, so enough valid codes could push adGroupName past Reddit's limit.
-	// Validating both here means an over-limit name fails BEFORE any paid resource
-	// exists, rather than orphaning the campaign at the ad-group step.
-	campaignName := earlyCampaignName
-	geoLabel := strings.Join(geos, "+")
-	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
-	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
-		return nil, fmt.Errorf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
-	}
-	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
-		return nil, fmt.Errorf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
 	}
 
 	campaignData := map[string]any{

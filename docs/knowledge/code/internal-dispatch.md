@@ -1153,28 +1153,39 @@ validates and DECRYPTS and returns an error INSTEAD of a value — so at the mom
 is broken, which is exactly when the routing decision matters, its account id is unavailable.
 The column is readable whether or not the credentials validate.
 
-It returns `(created, known, absent)`, and the three unlike states behind the old two-value
-answer are now told apart:
+It returns `known=false` when the question cannot be settled — no recorded provenance, a system
+row that is absent, nameless, or unreadable — and callers keep the project-owned default. The
+asymmetry is deliberate: claiming system creation pages an operator, so an unproven claim must
+not be guessed in that direction.
 
-- `known=false, absent=false` — the question **cannot be settled**: no recorded provenance, a
-  system row present but nameless, or a repo failure. Callers keep the project-owned default.
-  The asymmetry is deliberate: claiming system creation pages an operator, so an unproven claim
-  must not be guessed in that direction.
-- `known=false, absent=true` — the system row is **proven absent** (`ErrNotFound`, or a
-  `(nil, nil)` read). This is a completed read of storage, not an open question: no LF row is
-  installed for this provider.
+**An ABSENT row is one of those unsettled cases, and acting on it separately was a regression.**
+A version of this code reported absence as a third value and used it to return the system fault
+when the recorded account matched neither scope. The reasoning — nothing reachable can address
+the campaign, so page an operator — answered the wrong question. Two questions are in play:
 
-`systemRowProvablyAbsent` exposes the third value, and `resolveExisting`'s mismatch arm uses it
-to return the system error (which already carries `ErrSystemConnectionMissing` → a 500) instead
-of the project's resolution. Without the distinction, a campaign recording a creation account
-the project does not own, whose system row does not exist, answered
-`ErrCampaignAccountMismatch` → a 409 telling the caller to reconnect an account that was never
-theirs, for a missing LF credential only an operator can install — nobody paged, campaign still
-spending.
+- *"can anything address this campaign right now?"* — absence is evidence for this.
+- *"who CREATED this campaign?"* — absence is evidence for **nothing** here.
 
-**"Cannot determine" and "determined absent" are different answers.** A boolean meaning "not
-established" acquires "established false" the moment a caller needs to separate them, and that
-caller is usually the one deciding who gets paged.
+Only the second decides who is paged, and a missing row proves only that the row is missing
+**now**. A PROJECT-created campaign whose project later re-pointed its connection presents
+identically: the recorded account differs from the current one and no system row exists. Acting
+on absence therefore sent a 500 for a repair the project makes itself by reconnecting, inverting
+the pre-branch behaviour. `TestAbsentSystemRowKeepsTheProjectFault` pins that case.
+
+Provenance keeps exactly ONE discriminator: `systemIsTheCreator`, true only on a **positive
+match** against the system row's recorded account id.
+
+### `ConnectionReader.Get` may return `(nil, nil)`
+
+The interface does not forbid a nil row with a nil error, so **every** call site treats that as
+the same absence `ErrNotFound` expresses. This is not defensive padding: `resolveConn`'s first
+act is to read `conn.ID` for the credential-cache key, so an unguarded nil panics rather than
+failing closed. All nine call sites are guarded — five in `internal/dispatch/creds.go`
+(`systemCreated`, `resolve`, `resolveForcedSystem`, `resolveOwned`, `systemConn`), three in
+`internal/service/connection_handler.go` (`getConn`, `updateConn`, `testConn`), and one in
+`internal/bootstrap/sysacct.go`. Each renders the nil as the absence its own arm already
+handles, so the sentinels and fallbacks stay identical to the `ErrNotFound` path — notably
+`resolve`, where a nil project row must still earn the LF system fallback.
 
 Passing the id as a parameter is deliberate: it makes the omission a COMPILE ERROR. The bug being
 fixed here was a `resolveExisting` that took only `(ctx, projectID, provider)` and so could not
