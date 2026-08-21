@@ -131,9 +131,16 @@ type Campaign struct {
 	//
 	// A pointer for the same reason CreatedBy is: the column has THREE states and a bool
 	// can only carry two.
-	//   nil   = unknown — the row predates migration 000027, so nothing recorded it.
+	//   nil   = provenance NOT RECORDED — nothing captured which account served this row.
 	//   false = known to have run on the project's OWN connection.
 	//   true  = known to have run on the LF system account.
+	//
+	// nil is NOT an age signal. Rows written before migration 000027 do have it, but so
+	// does every write that cannot know the answer: AdoptCampaign binds a campaign that
+	// already exists upstream — created outside this service's dispatch path, possibly by
+	// hand in the platform's UI — and deliberately omits the column, so a campaign adopted
+	// TODAY reads back nil. Reading nil as "old row" would date a fresh adoption to before
+	// the migration.
 	//
 	// nil is NOT false. Code totalling system-account spend must exclude nil as unknown
 	// rather than folding it into "the project paid" — see the migration for why a

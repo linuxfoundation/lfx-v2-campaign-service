@@ -412,8 +412,8 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 				if camp.RanOnSystemAccount == nil {
 					t.Fatalf("%s: Dispatch returned a campaign with NO provenance — the deferred "+
 						"stampProvenance did not run on this exit, so the row persists as "+
-						"\"unknown\" and is indistinguishable from a legitimate pre-migration row",
-						tc.name)
+						"\"not recorded\" and drops out of system-account attribution and "+
+						"blast-radius reporting entirely", tc.name)
 				}
 				if *camp.RanOnSystemAccount != fromSystem {
 					t.Errorf("%s: RanOnSystemAccount = %v, want %v — the campaign records the "+

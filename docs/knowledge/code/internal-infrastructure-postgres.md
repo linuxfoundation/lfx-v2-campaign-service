@@ -263,8 +263,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 - `000027` — `ran_on_system_account` BOOLEAN on `campaigns`, nullable and with NO
   default (LFXV2-3050). It records WHICH AD ACCOUNT served the campaign: the
   project's own connection, or the LF-owned system account dispatch falls back to
-  when the project has none. See *System-account provenance* below for why the
-  column is three-state and never recomputed.
+  when the project has none. `NULL` means provenance was not recorded, which is a
+  statement about knowledge rather than about the row's age. See *System-account
+  provenance* below for why the column is three-state and never recomputed.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
@@ -735,9 +736,16 @@ different claim:
 
 | value   | meaning                                                  |
 | ------- | -------------------------------------------------------- |
-| `NULL`  | unknown — the row predates `000027`; nothing recorded it   |
+| `NULL`  | provenance NOT RECORDED — nothing captured which account served it |
 | `false` | known to have run on the project's OWN connection          |
 | `true`  | known to have run on the LF system account                 |
+
+`NULL` is **not an age signal.** Rows written before `000027` carry it, but so does every
+write that cannot know the answer: `adoptCampaignQuery` omits the column deliberately —
+`AdoptCampaign` binds a campaign that already exists upstream, created outside this service's
+dispatch path, so which credential paid for it is genuinely unknown here — and a campaign
+adopted TODAY therefore reads back `NULL`. Consumers must read `NULL` as "unrecorded, exclude
+from attribution", never as "legacy row".
 
 Existing rows are deliberately NOT backfilled, and the column has no `DEFAULT FALSE`. Both
 would be cheaper to query and both would be a lie: they assert of every historical campaign

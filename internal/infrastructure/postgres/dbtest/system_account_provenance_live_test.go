@@ -21,11 +21,13 @@ import (
 // the assertion that matters most here — whether it is NULLABLE with NO DEFAULT.
 //
 // Nullability and the absent default are not stylistic. They are the three-state contract the
-// column is built on: NULL means "unknown, this row predates the column", false means "known to
-// have run on the project's own account", true means "known to have run on the LF account". A
-// NOT NULL or a DEFAULT false would collapse the first state into the second and silently
-// assert, of every historical campaign and every future write that forgets the flag, that the
-// project paid for it. That understates LF spend, and nothing downstream could detect it.
+// column is built on: NULL means "provenance not recorded", false means "known to have run on
+// the project's own account", true means "known to have run on the LF account". NULL is not a
+// statement about the row's AGE — AdoptCampaign omits the column deliberately, so a campaign
+// adopted today reads back NULL too. A NOT NULL or a DEFAULT false would collapse the first
+// state into the second and silently assert, of every unrecorded campaign and every future
+// write that forgets the flag, that the project paid for it. That understates LF spend, and
+// nothing downstream could detect it.
 func TestLiveRanOnSystemAccountColumnShape(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -46,8 +48,9 @@ func TestLiveRanOnSystemAccountColumnShape(t *testing.T) {
 		t.Errorf("campaigns.ran_on_system_account data_type = %q, want boolean", dataType)
 	}
 	if isNullable != "YES" {
-		t.Error("campaigns.ran_on_system_account is NOT NULL — rows predating 000027 have no " +
-			"provenance to backfill, so this either rejects them or forces a fabricated value")
+		t.Error("campaigns.ran_on_system_account is NOT NULL — rows whose provenance was never " +
+			"recorded (pre-000027 rows, and adoptions, which cannot know it) have nothing to " +
+			"backfill, so this either rejects them or forces a fabricated value")
 	}
 	if columnDefault != nil {
 		t.Errorf("campaigns.ran_on_system_account has DEFAULT %q — a default makes the ABSENCE "+

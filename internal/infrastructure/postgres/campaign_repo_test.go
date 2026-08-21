@@ -574,13 +574,14 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	assert.Nil(t, c.JobID)
 	assert.Empty(t, c.PlatformCampaignID)
 	assert.Nil(t, c.BudgetType)
-	// A NULL ran_on_system_account must stay nil rather than decoding to false. Every row
-	// written before migration 000027 has this column NULL, and false is a POSITIVE claim
-	// ("ran on the project's own account") that would silently move LF-funded historical
-	// campaigns out of system-account spend. nil means "unknown"; the two are not the same.
+	// A NULL ran_on_system_account must stay nil rather than decoding to false. NULL is
+	// reached two ways — rows written before migration 000027, and any write that cannot
+	// know the answer, such as AdoptCampaign — and false is a POSITIVE claim ("ran on the
+	// project's own account") that would silently move LF-funded campaigns out of
+	// system-account spend. nil means "not recorded"; the two are not the same.
 	assert.Nil(t, c.RanOnSystemAccount,
-		"a NULL ran_on_system_account means \"unknown, this row predates the column\" — "+
-			"decoding it to false would fabricate a fact about who paid")
+		"a NULL ran_on_system_account means \"provenance not recorded\" — decoding it to "+
+			"false would fabricate a fact about who paid")
 }
 
 // TestScanCampaign_MalformedActorJSONIsAnError pins that undecodable actor JSON FAILS the scan

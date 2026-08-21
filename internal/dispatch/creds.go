@@ -1033,11 +1033,12 @@ func (r *resolved) cacheIdentity(projectID string, provider model.Provider) (cre
 // three success/partial returns each, several of which return a campaign ALONGSIDE an
 // error (the UNCONFIRMED and degraded paths), and those are exactly the rows an operator
 // reconciling system-account spend cannot afford to have unstamped. Stamping per return
-// site would mean seventeen edits that a future eighth path silently omits, and the
-// omission would look identical to a campaign that genuinely ran on a project's own
-// account — a false FALSE, which the migration explains is the failure this column must
-// not have. A deferred call on the named return covers every exit, including ones not
-// written yet.
+// site would mean seventeen edits that a future eighth path silently omits. The omission is
+// not mistakable for a project-owned campaign — that is an explicit FALSE, while an unstamped
+// row is NULL — but it is worse in a quieter way: NULL means "provenance not recorded", so
+// those campaigns drop OUT of system-account attribution and credential blast-radius
+// reporting entirely, uncounted rather than miscounted, and nothing downstream flags the
+// gap. A deferred call on the named return covers every exit, including ones not written yet.
 //
 // Nil-safe on both sides. A dispatcher that returns (nil, err) has no row to stamp, and a
 // credential that was never resolved (r == nil) knows nothing to stamp with — in both

@@ -1044,10 +1044,13 @@ It is applied by a `defer` on a NAMED RETURN, not at each `return campaignFromX(
 The seven dispatchers have two or three campaign-returning exits each, several of which
 return a campaign ALONGSIDE an error (the UNCONFIRMED and degraded paths) — precisely the
 rows an operator reconciling spend cannot afford to have unstamped. Per-site stamping would
-be seventeen edits that an eighth path silently omits, and the omission would be
-indistinguishable from a campaign that genuinely ran on the project's own account. The
-helper is nil-safe on both sides, so a dispatcher that fails before resolving records
-"unknown" rather than a fabricated `false`. `resolveRedditClientWithCreds` /
+be seventeen edits that an eighth path silently omits. An unstamped row is not mistakable for
+a project-owned one — that is an explicit `false`, while unstamped is `NULL` — but the
+consequence is quieter and worse: `NULL` means provenance was never recorded, so those
+campaigns fall OUT of system-account attribution and credential blast-radius reporting
+altogether, uncounted rather than miscounted. The helper is nil-safe on both sides, so a
+dispatcher that fails before resolving records "not recorded" rather than a fabricated
+`false`. `resolveRedditClientWithCreds` /
 `resolveHubSpotClientWithCreds` exist only because those two adapters resolve behind a helper
 that returned the client alone; the read-only callers keep the narrower signature.
 

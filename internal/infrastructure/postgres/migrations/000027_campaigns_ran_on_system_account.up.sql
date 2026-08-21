@@ -31,10 +31,15 @@
 -- update or status toggle.
 --
 -- NULLABLE, AND DELIBERATELY NOT BACKFILLED. Three states, not two:
---   NULL  = unknown; this row predates the column. We do not know which account it ran
---           on, because nothing recorded it.
+--   NULL  = provenance NOT RECORDED. Nothing captured which account served this row.
 --   FALSE = known to have run on the project's OWN connection.
 --   TRUE  = known to have run on the LF system account.
+--
+-- NULL is NOT an age signal, and must not be read as one. Rows written before this
+-- migration carry it, but so does every write that cannot know the answer: the repository's
+-- AdoptCampaign binds a campaign that already exists upstream — created outside this
+-- service's dispatch path — and omits the column deliberately, so a campaign adopted TODAY
+-- reads back NULL. "Unrecorded" is the claim; "old" is not.
 --
 -- Defaulting existing rows to FALSE would be cheaper to query and would be a lie: it
 -- asserts of every historical campaign that we know it ran on the project's own

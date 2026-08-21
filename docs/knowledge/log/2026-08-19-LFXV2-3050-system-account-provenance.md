@@ -11,7 +11,7 @@ projects needs, and what computing blast radius on a revoked credential needs.
 Migration `000027` adds `campaigns.ran_on_system_account BOOLEAN`, nullable, **no default**.
 
 **Pre-existing rows stay NULL, deliberately.** The column carries three states: `NULL`
-unknown (row predates the column), `false` known to have run on the project's own account,
+provenance not recorded, `false` known to have run on the project's own account,
 `true` known to have run on the LF account. Backfilling `false` — or adding `DEFAULT FALSE` —
 would be cheaper to query and would fabricate a fact: it asserts of every historical campaign
 that the project paid, when some took the fallback and nothing recorded which. Because the
@@ -21,12 +21,14 @@ the same rule forward: with one, a future write that forgets the flag would clai
 project's own account" by omission. This is the `absence-cannot-carry-new-meaning` case —
 absence here already means "unknown", so it must not be recruited to mean "the project paid".
 
-**The value is a historical fact and is never recomputed.** `upsertCampaignQuery` omits the
-column from its `DO UPDATE` arm, exactly as it omits `created_by`. Re-deriving it from
-whether the project has its own connection TODAY would let a project that connects its own
-account next month rewrite who paid for a campaign the LF funded last month. The omission is
-bare and **not** a `COALESCE`: unlike `updated_by`, a row holding `false` must not be
-upgradable to `true` by a later write carrying one.
+**The value is a historical fact and is never recomputed.** Re-deriving it from whether the
+project has its own connection TODAY would let a project that connects its own account next
+month rewrite who paid for a campaign the LF funded last month. `upsertCampaignQuery`'s
+`DO UPDATE` arm therefore assigns the column only while the STORED value is still `NULL`. It
+is a guard rather than a bare omission (a bare omission wrote the column on no path at all —
+see `2026-08-19-LFXV2-3050-provenance-never-written`) and rather than a `COALESCE`: unlike
+`updated_by`, a row holding `false` must not be upgradable to `true` by a later write
+carrying one.
 
 **The boundary.** `fromSystem` lives in `internal/dispatch`, the persist happens in
 `internal/service`, and those packages are SIBLINGS — `go list -deps` confirms neither
