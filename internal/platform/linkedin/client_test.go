@@ -247,6 +247,18 @@ func TestBuildTargetingCriteria_PerProfileSeniorityExclusionsOverride(t *testing
 			t.Errorf("profile-scoped override must NOT fall back to default seniority exclusion %s, got %s", def, b)
 		}
 	}
+
+	// A profile that configures no override (cloud-native, from testConfig)
+	// still gets defaultSeniorityExclusions, unaffected by the sibling profile's
+	// override.
+	crit, err = c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
+	}
+	b, _ = json.Marshal(crit)
+	if !strings.Contains(string(b), defaultSeniorityExclusions[0]) {
+		t.Errorf("profile without an override should still get defaultSeniorityExclusions, got %s", b)
+	}
 }
 
 // TestBuildTargetingCriteria_MalformedJobFunctionRejected verifies a
@@ -261,6 +273,22 @@ func TestBuildTargetingCriteria_MalformedJobFunctionRejected(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, cfg)
 	if _, err := c.buildTargetingCriteria("bad", nil); err == nil {
 		t.Fatal("expected error for job-function facet outside the urn:li:function: namespace")
+	}
+}
+
+// TestBuildTargetingCriteria_MalformedSeniorityExclusionRejected mirrors
+// TestBuildTargetingCriteria_MalformedJobFunctionRejected for the exclude-side
+// SeniorityExclusions facet: an entry outside the urn:li:seniority: namespace
+// fails validation up front.
+func TestBuildTargetingCriteria_MalformedSeniorityExclusionRejected(t *testing.T) {
+	cfg := testConfig()
+	cfg.TargetingProfiles = append(cfg.TargetingProfiles, TargetingProfileConfig{
+		ID:                  "bad",
+		SeniorityExclusions: []string{"urn:li:skill:1"},
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	if _, err := c.buildTargetingCriteria("bad", nil); err == nil {
+		t.Fatal("expected error for seniority-exclusion facet outside the urn:li:seniority: namespace")
 	}
 }
 
