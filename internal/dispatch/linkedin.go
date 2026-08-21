@@ -418,6 +418,43 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	return accounts, nil
 }
 
+// VerifyAccountOrg cross-checks a project's stored LinkedIn connection against LinkedIn's own
+// record of which organization the connection's configured account advertises on behalf of.
+//
+// It satisfies the service-side OrgReferenceVerifier interface, type-asserted by
+// Orchestrator.VerifyAccountOrg for use by the connection-test endpoint. Unlike ListAccounts,
+// it resolves credentials the SAME way Dispatch does (d.creds.resolve, not
+// resolveLinkedInDiscoveryCredentials) — verifying a PAIRING needs both the account id AND
+// the org id the connection has stored, and the discovery path deliberately omits both
+// because it exists for the case where no account has been selected yet.
+func (d *LinkedInDispatcher) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if res.status != model.StatusActive {
+		return fmt.Errorf("linkedin connection for project %s is %s, not active", projectID, res.status)
+	}
+
+	var creds linkedinCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return fmt.Errorf("decode linkedin credentials: %w", err)
+	}
+	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
+	if creds.AccessToken == "" {
+		return fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
+	}
+
+	orgID := strings.TrimSpace(res.providerConfig["org_id"])
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" || orgID == "" {
+		return fmt.Errorf("linkedin connection for project %s is missing account id or org id", projectID)
+	}
+
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, linkedin.RuntimeConfig{}, d.opts...)
+	return client.VerifyAccountOrgReference(ctx, accountID, orgID)
+}
+
 // linkedInAccountLabel builds the string a picker shows for one ad account.
 //
 // It never returns "" for an account carrying any identifying information: an account with

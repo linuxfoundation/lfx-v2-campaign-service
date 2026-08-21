@@ -497,6 +497,23 @@ func (m *mockAccountListerDispatcher) ListAccounts(ctx context.Context, projectI
 	return m.accounts, nil
 }
 
+// mockOrgReferenceVerifierDispatcher is a dispatcher that implements OrgReferenceVerifier,
+// used by the TestLinkedinAds tests in connection_test.go to exercise
+// Orchestrator.VerifyAccountOrg without a real LinkedIn client.
+type mockOrgReferenceVerifierDispatcher struct {
+	err         error
+	gotPlatform model.Provider
+}
+
+func (m *mockOrgReferenceVerifierDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+func (m *mockOrgReferenceVerifierDispatcher) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
+	m.gotPlatform = platform
+	return m.err
+}
+
 type mockConnectionRepo struct{}
 
 func (m *mockConnectionRepo) Create(ctx context.Context, c *model.Connection) (*model.Connection, error) {

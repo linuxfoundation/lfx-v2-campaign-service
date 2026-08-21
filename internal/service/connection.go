@@ -607,8 +607,36 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 	return s.deleteConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
 }
 
+// TestLinkedinAds tests the stored LinkedIn connection.
+//
+// Beyond the shared testConn baseline (connection exists, has credentials — see testConn's
+// LFXV2-2556 caveat, which still applies to the other 5 platforms), this additionally cross-
+// checks the connection's configured account/org pairing against LinkedIn's OWN record of it
+// (Orchestrator.VerifyAccountOrg -> LinkedInDispatcher.VerifyAccountOrg ->
+// linkedin.Client.VerifyAccountOrgReference). This is the one piece of "org id bootstrap" this
+// service can verify today: UpdateLinkedinAds/CreateLinkedinAds persist a caller-supplied
+// org_id with no upstream check at write time, so a manually mistyped org id is otherwise
+// undetectable until it breaks a campaign creation.
+//
+// A confirmed mismatch, or any failure verifying the pairing (network, credential, or
+// connection-state failure), is reported as an ordinary FAILED test (OK: false) rather than a
+// 5xx: that is what "test this connection" means for a caller — a service-level 503 is
+// reserved for this endpoint itself being unavailable, not the thing under test not working.
 func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLinkedinAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	result, err := s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	if err != nil || !result.OK {
+		return result, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch("connection test")
+	if err != nil {
+		return nil, err
+	}
+	if verr := orch.VerifyAccountOrg(ctx, p.ProjectID, model.ProviderLinkedInAds); verr != nil {
+		msg := "connection found, but linkedin account/organization verification failed: " + verr.Error()
+		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+	}
+	msg := "connection found; linkedin account/organization pairing verified"
+	return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
 }
 
 func (s *ConnectionService) SetCredentialLinkedinAds(ctx context.Context, p *conn.SetCredentialLinkedinAdsPayload) error {

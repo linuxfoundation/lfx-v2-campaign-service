@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -311,6 +312,102 @@ func TestLinkedInAds_RoundTripsOrgID(t *testing.T) {
 	if res.OrgID == nil || *res.OrgID != "208777" {
 		t.Errorf("org_id = %v, want 208777", res.OrgID)
 	}
+}
+
+// TestTestLinkedinAds_NoOrchestratorIs503 pins that, once the shared testConn baseline
+// passes, verifying the account/org pairing is treated the SAME way account discovery is —
+// requiring an orchestrator — rather than silently skipping the check when none is wired.
+func TestTestLinkedinAds_NoOrchestratorIs503(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	if _, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+		ProjectID:   "tlf",
+		Config:      &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+		Credentials: &conn.LinkedinAdsCredentials{AccessToken: "tok"},
+	}); err != nil {
+		t.Fatalf("CreateLinkedinAds: %v", err)
+	}
+	_, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+	if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+		t.Fatalf("expected *conn.ConnServiceUnavailableError with no orchestrator wired, got %T (%v)", err, err)
+	}
+}
+
+// TestTestLinkedinAds_NoCredentialsSkipsUpstreamVerification pins that a connection which
+// fails the shared testConn baseline (no credentials) is reported as-is — OK: false — without
+// ever reaching the orchestrator's upstream check. There is nothing to verify an org pairing
+// against without credentials, and the orchestrator being unset here (it would 503, per the
+// test above) proves the short-circuit actually happened rather than merely succeeding too.
+func TestTestLinkedinAds_NoCredentialsSkipsUpstreamVerification(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("tlf", model.ProviderLinkedInAds)] = &model.Connection{
+		ProjectID: "tlf", Provider: model.ProviderLinkedInAds,
+		AccountID: "538170226", ProviderConfig: map[string]string{"org_id": "208777"},
+		Status: model.StatusActive, Version: 1,
+		// EncryptedCredentials deliberately empty — HasCredentials() must be false.
+	}
+	s := newTestService(t, repo)
+	res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+	if err != nil {
+		t.Fatalf("TestLinkedinAds: %v", err)
+	}
+	if res.OK {
+		t.Error("OK = true for a connection with no stored credentials")
+	}
+}
+
+// TestTestLinkedinAds_UpstreamVerification exercises the new behavior beyond the testConn
+// baseline: once a credentialed connection passes testConn, TestLinkedinAds must additionally
+// consult Orchestrator.VerifyAccountOrg and fold a confirmed mismatch into OK: false rather
+// than returning it as a transport-level error.
+func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
+	newConn := func(t *testing.T) *ConnectionService {
+		s := newTestService(t, newFakeRepo())
+		if _, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+			ProjectID:   "tlf",
+			Config:      &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+			Credentials: &conn.LinkedinAdsCredentials{AccessToken: "tok"},
+		}); err != nil {
+			t.Fatalf("CreateLinkedinAds: %v", err)
+		}
+		return s
+	}
+
+	t.Run("agreement reports OK", func(t *testing.T) {
+		s := newConn(t)
+		verifier := &mockOrgReferenceVerifierDispatcher{}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v", err)
+		}
+		if !res.OK {
+			t.Errorf("OK = false, want true; message = %v", res.Message)
+		}
+		if verifier.gotPlatform != model.ProviderLinkedInAds {
+			t.Errorf("verifier saw platform %q, want %q", verifier.gotPlatform, model.ProviderLinkedInAds)
+		}
+	})
+
+	t.Run("confirmed mismatch reports OK: false, not a transport error", func(t *testing.T) {
+		s := newConn(t)
+		mismatch := errors.New("linkedin ad account 538170226 advertises on behalf of organization 999, not the configured organization 208777")
+		verifier := &mockOrgReferenceVerifierDispatcher{err: mismatch}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v, want a normal (nil, result) failed test, not a transport error", err)
+		}
+		if res.OK {
+			t.Fatal("OK = true despite a confirmed org mismatch")
+		}
+		if res.Message == nil || !strings.Contains(*res.Message, "999") || !strings.Contains(*res.Message, "208777") {
+			t.Errorf("message = %v, want it to name both org ids", res.Message)
+		}
+	})
 }
 
 func TestJWTAuth_ExtractsActorFromToken(t *testing.T) {

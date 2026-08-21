@@ -276,6 +276,22 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// OrgReferenceVerifier is an OPTIONAL dispatcher capability: cross-check a project's stored
+// connection against the platform's OWN record of the org/account pairing it is scoped to,
+// for use by a connection-test endpoint. Discovered by type assertion like the other optional
+// capabilities above, but unlike them its ABSENCE is not an error condition — see
+// Orchestrator.VerifyAccountOrg. Only LinkedIn implements this today: it is the one platform
+// this service integrates with whose ad-account resource carries a platform-reported
+// "reference" naming the true sponsoring organization, independent of whatever org id a
+// connection happens to have stored. The other platforms have no equivalent signal to check.
+type OrgReferenceVerifier interface {
+	// VerifyAccountOrg reports whether the project's connection's configured account/org
+	// pairing agrees with the platform's own record of it. Returns nil for anything short of
+	// a CONFIRMED disagreement — an unconfirmable comparison (account not found, no
+	// reference to compare, malformed config) is not this call's to police.
+	VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -432,11 +448,12 @@ func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
 // is a secondary shape guard at the recording boundary, which degrades an id-shaped
 // or otherwise derived string to a bounded token rather than minting series.
 const (
-	opToggleStatus   = "toggle_status"
-	opReadMetrics    = "read_metrics"
-	opLookupCampaign = "lookup_campaign"
-	opListAccounts   = "list_accounts"
-	opSearchEmails   = "search_emails"
+	opToggleStatus     = "toggle_status"
+	opReadMetrics      = "read_metrics"
+	opLookupCampaign   = "lookup_campaign"
+	opListAccounts     = "list_accounts"
+	opSearchEmails     = "search_emails"
+	opVerifyAccountOrg = "verify_account_org"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -1835,6 +1852,31 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
 	}
 	return accounts, nil
+}
+
+// VerifyAccountOrg cross-checks a project's stored connection against the platform's own
+// record of the org/account pairing it is scoped to, when the platform's dispatcher supports
+// it. Unlike ReadAccounts and the other optional-capability methods above, an unsupported
+// platform is NOT an error here — this is meant to be called from every platform's
+// connection-test path, and only LinkedIn's `reference` field gives this service a way to
+// catch a manually mistyped org id against the platform's own data. The other 5 platforms
+// have no such signal to check, so silently doing nothing for them is the correct, expected
+// outcome, not a degraded one.
+func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil
+	}
+	verifier, ok := d.(OrgReferenceVerifier)
+	if !ok {
+		return nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	err := verifier.VerifyAccountOrg(callCtx, projectID, platform)
+	o.recordUpstream(ctx, platform, opVerifyAccountOrg, start, err)
+	return err
 }
 
 // SearchEmails returns the marketing emails reachable through the project's stored connection

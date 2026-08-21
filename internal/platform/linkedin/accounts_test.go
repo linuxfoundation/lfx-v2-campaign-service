@@ -381,3 +381,113 @@ func TestAdAccountServingHolds_ReportsEveryRecognizedHold(t *testing.T) {
 		t.Errorf("holds = %v, want [stopped restricted] in report order", holds)
 	}
 }
+
+func TestReferenceOrgID(t *testing.T) {
+	cases := []struct {
+		name      string
+		reference string
+		want      string
+	}{
+		{"organization reference", "urn:li:organization:2414183", "2414183"},
+		{"person reference is not an organization", "urn:li:person:abc123", ""},
+		{"absent reference", "", ""},
+		{"whitespace-only reference", "   ", ""},
+		{"malformed id", "urn:li:organization:not-a-number", ""},
+		{"unrelated urn shape", "urn:li:company:2414183", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := referenceOrgID(tc.reference); got != tc.want {
+				t.Errorf("referenceOrgID(%q) = %q, want %q", tc.reference, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestListAdAccounts_CarriesTheReferenceOrgID(t *testing.T) {
+	srv, _ := adAccountsServer(t, `{"elements":[
+		{"id":507404993,"reference":"urn:li:organization:2414183"},
+		{"id":507404994,"reference":"urn:li:person:555"},
+		{"id":507404995}
+	],"metadata":{}}`)
+	got, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d accounts, want 3", len(got))
+	}
+	if got[0].OrgID != "2414183" {
+		t.Errorf("organization-referenced account OrgID = %q, want \"2414183\"", got[0].OrgID)
+	}
+	if got[1].OrgID != "" {
+		t.Errorf("person-referenced account OrgID = %q, want empty", got[1].OrgID)
+	}
+	if got[2].OrgID != "" {
+		t.Errorf("no-reference account OrgID = %q, want empty", got[2].OrgID)
+	}
+}
+
+func TestVerifyAccountOrgReference(t *testing.T) {
+	t.Run("agreement passes", func(t *testing.T) {
+		srv, _ := adAccountsServer(t, `{"elements":[
+			{"id":507404993,"reference":"urn:li:organization:2414183"}
+		],"metadata":{}}`)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err != nil {
+			t.Errorf("VerifyAccountOrgReference: %v, want nil on agreement", err)
+		}
+	})
+
+	t.Run("confirmed disagreement fails closed", func(t *testing.T) {
+		srv, _ := adAccountsServer(t, `{"elements":[
+			{"id":507404993,"reference":"urn:li:organization:2414183"}
+		],"metadata":{}}`)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "999")
+		if err == nil {
+			t.Fatal("VerifyAccountOrgReference: want an error on a confirmed org mismatch")
+		}
+		if !strings.Contains(err.Error(), "2414183") || !strings.Contains(err.Error(), "999") {
+			t.Errorf("error = %v, want it to name both the platform's and the configured org id", err)
+		}
+	})
+
+	t.Run("account absent from the walk is inconclusive, not an error", func(t *testing.T) {
+		srv, _ := adAccountsServer(t, `{"elements":[
+			{"id":1,"reference":"urn:li:organization:2414183"}
+		],"metadata":{}}`)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err != nil {
+			t.Errorf("VerifyAccountOrgReference: %v, want nil when the account is not reachable by this walk", err)
+		}
+	})
+
+	t.Run("account with no reference is inconclusive, not an error", func(t *testing.T) {
+		srv, _ := adAccountsServer(t, `{"elements":[{"id":507404993}],"metadata":{}}`)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err != nil {
+			t.Errorf("VerifyAccountOrgReference: %v, want nil when the account carries no reference to compare", err)
+		}
+	})
+
+	t.Run("missing account or org id is inconclusive, not an error", func(t *testing.T) {
+		c := newAccountsClient(t, "http://unused.invalid")
+		if err := c.VerifyAccountOrgReference(context.Background(), "", "2414183"); err != nil {
+			t.Errorf("VerifyAccountOrgReference with no account id: %v, want nil", err)
+		}
+		if err := c.VerifyAccountOrgReference(context.Background(), "507404993", ""); err != nil {
+			t.Errorf("VerifyAccountOrgReference with no org id: %v, want nil", err)
+		}
+	})
+
+	t.Run("upstream failure surfaces as an error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err == nil {
+			t.Fatal("VerifyAccountOrgReference: want an error when the discovery walk itself fails")
+		}
+	})
+}

@@ -282,14 +282,20 @@ type responseElement struct {
 	// lookup to the resolved group, so a same-name campaign under a DIFFERENT
 	// (e.g. archived/replaced) group is not treated as a match.
 	CampaignGroup string `json:"campaignGroup"`
-	// Type, Currency, Test and ServingStatuses are only populated for ad-account
-	// search results (ListAdAccounts, accounts.go). An ad account carries two
+	// Type, Currency, Test, ServingStatuses and Reference are only populated for
+	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
 	// `servingStatuses` array below — and the picker needs both.
 	Type            string   `json:"type"`
 	Currency        string   `json:"currency"`
 	Test            bool     `json:"test"`
 	ServingStatuses []string `json:"servingStatuses"`
+	// Reference is the URN of the entity the account advertises on behalf of —
+	// "urn:li:organization:{id}" or "urn:li:person:{id}" — LinkedIn's own record of the
+	// account's sponsoring org, independent of whatever org id a connection has stored.
+	// It is optional on LinkedIn's side (absent for some legacy/person-sponsored accounts),
+	// so its absence here is inconclusive, never treated as "no organization".
+	Reference string `json:"reference"`
 }
 
 // pathValidRE allow-lists the characters a built request path may contain. `%` is included

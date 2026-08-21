@@ -60,6 +60,59 @@ func TestLinkedIn_PreCreateErrorsReleaseClaim(t *testing.T) {
 	}
 }
 
+// ---- VerifyAccountOrg (connection-test upstream cross-check) --------------
+
+// TestLinkedIn_VerifyAccountOrg mirrors the pre-create resolution failures in
+// TestLinkedIn_PreCreateErrorsReleaseClaim: VerifyAccountOrg resolves credentials the same
+// way Dispatch does (not the account-less discovery path ListAccounts uses), because
+// verifying a PAIRING needs both the connection's account id and its org id.
+func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
+	t.Run("resolution failures surface as errors", func(t *testing.T) {
+		cases := []struct {
+			name string
+			repo connReader
+			enc  domain.Encryptor
+		}{
+			{"missing connection", fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}},
+			{"no stored credentials", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, Status: model.StatusActive}}, identityEncryptor{}},
+			{"decrypt fails", fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, errEncryptor{}},
+			{"empty access token", fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":""}`)}, identityEncryptor{}},
+			{"inactive connection", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), ProviderConfig: map[string]string{"org_id": "o"}, Status: model.StatusInactive}}, identityEncryptor{}},
+			{"missing org id", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), Status: model.StatusActive}}, identityEncryptor{}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				d := NewLinkedInDispatcher(tc.repo, tc.enc)
+				if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err == nil {
+					t.Error("VerifyAccountOrg: want an error, got nil")
+				}
+			})
+		}
+	})
+
+	t.Run("agreement with the platform's reference passes", func(t *testing.T) {
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:987654321"}`)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err != nil {
+			t.Errorf("VerifyAccountOrg: %v, want nil on agreement", err)
+		}
+	})
+
+	t.Run("confirmed disagreement with the platform's reference fails", func(t *testing.T) {
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:111111111"}`)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when the connection's org_id disagrees with the platform's reference")
+		}
+		if !strings.Contains(err.Error(), "111111111") || !strings.Contains(err.Error(), "987654321") {
+			t.Errorf("error = %v, want it to name both org ids", err)
+		}
+	})
+}
+
 func TestLinkedIn_BadConfigIsPreCreate(t *testing.T) {
 	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{})
 	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, json.RawMessage(`{bad`))

@@ -24,8 +24,9 @@ import (
 // type-asserts, misses, and answers ErrAccountsUnsupported — the endpoint would exist and
 // always fail. A compile-time assertion catches that at build rather than at runtime.
 var (
-	_ service.AccountLister = (*LinkedInDispatcher)(nil)
-	_ service.AccountLister = (*MicrosoftDispatcher)(nil)
+	_ service.AccountLister        = (*LinkedInDispatcher)(nil)
+	_ service.AccountLister        = (*MicrosoftDispatcher)(nil)
+	_ service.OrgReferenceVerifier = (*LinkedInDispatcher)(nil)
 )
 
 // requestRecorder captures what the dispatcher actually put on the wire. Asserting on the
