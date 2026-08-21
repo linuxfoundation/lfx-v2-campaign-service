@@ -162,6 +162,18 @@ type scopedConnReader struct {
 	// probe itself failing, which must not be read as "no".
 	tombstoned    map[string]bool
 	disconnectErr error
+
+	// errRows supplies a row value to return ALONGSIDE an errs entry. A repository is free to
+	// hand back a partially populated value with a failure, and callers must key on the error
+	// rather than on the value being nil — a fixture that only ever returned nil on failure
+	// would let that confusion pass untested.
+	errRows map[string]*model.Connection
+
+	// nilNil names project ids for which Get returns (nil, nil) — the shape
+	// domain.ConnectionReader permits and does not forbid. A fixture that can only report
+	// absence as ErrNotFound makes a caller's nil-row handling untestable, so a missing guard
+	// reads as covered right up until a repository chooses the other shape.
+	nilNil map[string]bool
 }
 
 func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ model.Provider) (bool, error) {
@@ -173,8 +185,11 @@ func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ m
 
 func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
 	f.gets = append(f.gets, projectID)
+	if f.nilNil[projectID] {
+		return nil, nil
+	}
 	if err, ok := f.errs[projectID]; ok {
-		return nil, err
+		return f.errRows[projectID], err
 	}
 	if c, ok := f.rows[projectID]; ok {
 		return c, nil
@@ -490,7 +505,7 @@ func TestSystemScopedCoversEveryCallerNotJustDiscovery(t *testing.T) {
 			return err
 		},
 		"toggle+metrics/resolveGoogleAdsClient": func(d *GoogleAdsDispatcher) error {
-			_, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+			_, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds, nil)
 			return err
 		},
 		"discovery/resolveGoogleAdsDiscoveryClient": func(d *GoogleAdsDispatcher) error {

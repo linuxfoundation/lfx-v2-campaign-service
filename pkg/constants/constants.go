@@ -85,6 +85,15 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
+	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
+	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
+	// so every campaign authenticates as the marketing-ops account regardless of any
+	// per-project connection. Read once at credsSource construction (see
+	// internal/dispatch/creds.go); default-off, enabled per-environment via the ArgoCD
+	// overlay like the cutover flags. Excludes HubSpot/email by construction (the forced
+	// path gates on Provider.IsPaidAds()). See specs/006-force-system-ads-account.
+	EnvForceSystemAdsAccount = "LFX_FORCE_SYSTEM_ADS_ACCOUNT"
+
 	// LLM settings, used ONLY to generate email copy (LFXV2-2775). Optional as a GROUP:
 	// with url or key unset, the GenerateEmailCopy endpoint returns 503 (service unavailable).
 	// The service itself starts successfully with or without these configured.
