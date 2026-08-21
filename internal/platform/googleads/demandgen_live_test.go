@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -226,7 +227,7 @@ func testO2(t *testing.T, c *Client) {
 	reqA := mutateRequest{
 		ValidateOnly: true,
 		Operations: []mutateOperation{{Create: assetCreate{
-			ImageAsset: imageAsset{Data: b64(onePixelPNG)},
+			ImageAsset: imageAsset{Data: base64.StdEncoding.EncodeToString(onePixelPNG)},
 		}}},
 	}
 	_, errA := c.doRequest(ctx, "POST", c.customerPath("assets:mutate"), reqA, false)
@@ -249,7 +250,7 @@ func testO2(t *testing.T, c *Client) {
 	reqB := mutateRequest{
 		ValidateOnly: true,
 		Operations: []mutateOperation{{Create: assetCreateWithType{
-			ImageAsset: imageAssetWithType{Data: b64(onePixelPNG), Type: "IMAGE"},
+			ImageAsset: imageAssetWithType{Data: base64.StdEncoding.EncodeToString(onePixelPNG), Type: "IMAGE"},
 		}}},
 	}
 	_, errB := c.doRequest(ctx, "POST", c.customerPath("assets:mutate"), reqB, false)
@@ -449,36 +450,6 @@ func testO1(t *testing.T, c *Client, inv liveInventory) {
 	over.Headlines = textAssets([]string{strings.Repeat("H", 40), "H2", "H3"})
 	errWideHeadline := fire("O1 (40-char headline, current cap borrowed from RSA is 30)", over)
 	logProbe(t, "O1 (40-char headline note)", errWideHeadline)
-}
-
-func b64(b []byte) string {
-	const table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	var sb strings.Builder
-	for i := 0; i < len(b); i += 3 {
-		var n uint32
-		rem := len(b) - i
-		switch {
-		case rem >= 3:
-			n = uint32(b[i])<<16 | uint32(b[i+1])<<8 | uint32(b[i+2])
-			sb.WriteByte(table[(n>>18)&0x3f])
-			sb.WriteByte(table[(n>>12)&0x3f])
-			sb.WriteByte(table[(n>>6)&0x3f])
-			sb.WriteByte(table[n&0x3f])
-		case rem == 2:
-			n = uint32(b[i])<<16 | uint32(b[i+1])<<8
-			sb.WriteByte(table[(n>>18)&0x3f])
-			sb.WriteByte(table[(n>>12)&0x3f])
-			sb.WriteByte(table[(n>>6)&0x3f])
-			sb.WriteByte('=')
-		case rem == 1:
-			n = uint32(b[i]) << 16
-			sb.WriteByte(table[(n>>18)&0x3f])
-			sb.WriteByte(table[(n>>12)&0x3f])
-			sb.WriteByte('=')
-			sb.WriteByte('=')
-		}
-	}
-	return sb.String()
 }
 
 func errBody(err error) string {
