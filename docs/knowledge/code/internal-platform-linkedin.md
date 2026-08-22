@@ -131,6 +131,21 @@ it lands most often on exactly the responses where the field was never requested
 same discipline `microsoft/metrics.go` applies with `convIncomplete`, where one blank
 `ConversionsQualified` cell withdraws that report's entire total.
 
+An EMPTY `elements` array is the opposite case and answers a non-nil zero. The client always
+names `externalWebsiteConversions` in `fields`, and a well-formed empty array (a null/missing
+`elements` is rejected as a decode error upstream) is LinkedIn stating the campaign had no
+activity — the metric WAS asked for and the window WAS answered, so a no-activity window is a
+MEASUREMENT of zero, not an absence of one. This matches `googleads.GetCampaignMetrics`'s
+no-rows branch. Per `model.CampaignMetrics.Conversions`, nil is reserved for platforms that
+cannot report a campaign-level count AT ALL (Meta, X, Reddit, HubSpot); LinkedIn is not one of
+them, so returning nil here would assert something false about the platform. Note the two
+branches differ in what the response contains, not in how much is known: an element LinkedIn
+RETURNED without the metric is missing data about activity that happened, while an empty array
+means there was no activity to measure. `Impressions`/`Clicks`/`CostMicros` already answer 0 as
+measurements on that branch, so the pointer now agrees with its siblings instead of
+contradicting them inside one struct. The `no_conversions` rule is unaffected either way: it is
+gated on `Clicks >= minClicksForConversions` and this branch reports zero clicks.
+
 The same Rest.li-vs-transport encoding split applies to the find-or-create name filter, and
 `doRequest` handles it inline rather than by bypass. `restliEncode` produces the FINAL bytes
 for a name embedded in a Rest.li literal — the COMPLETE query component via `url.QueryEscape`

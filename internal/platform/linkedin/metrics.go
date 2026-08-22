@@ -218,8 +218,31 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// null/missing "elements" field on a well-formed 2xx — that case is rejected
 	// as a decode error inside makeAdAnalyticsRequest) when the campaign had no
 	// activity in the window.
+	//
+	// A no-activity window is a MEASUREMENT, not an absence of one, so Conversions is a
+	// non-nil zero here — the same answer googleads.GetCampaignMetrics gives for its
+	// equivalent no-rows branch. The request named externalWebsiteConversions in `fields`
+	// and LinkedIn answered with a well-formed empty array, so the metric WAS asked for and
+	// the campaign simply did nothing in the window. Leaving it nil would report "LinkedIn
+	// cannot measure conversions", which per model.CampaignMetrics.Conversions is reserved
+	// for platforms that cannot report a campaign-level count AT ALL — a claim that is false
+	// for LinkedIn and that this branch has no evidence for.
+	//
+	// This is distinct from the per-element omission handled in the aggregation loop below,
+	// which withdraws the total to nil: THERE an element LinkedIn returned came back without
+	// the metric, which is missing data about activity that happened. HERE there is no
+	// activity to have measured. Impressions/Clicks/Cost already answer 0 as measurements on
+	// this branch; the pointer now agrees with them rather than contradicting them in the
+	// same struct.
+	//
+	// No effect on the no_conversions rule either way: it is gated on
+	// Clicks >= minClicksForConversions (internal/service/rules/actions.go) and this branch
+	// reports zero clicks, so the rule cannot fire on it. What the zero buys is that every
+	// other consumer — the brief response, a conversion total — reads "measured, and the
+	// answer was none" instead of "unmeasured".
 	if len(*resp.Elements) == 0 {
-		return &model.CampaignMetrics{CampaignID: campaignID, Window: window}, nil
+		zero := 0.0
+		return &model.CampaignMetrics{CampaignID: campaignID, Window: window, Conversions: &zero}, nil
 	}
 
 	// Aggregate metrics from all elements. In practice there should be one element

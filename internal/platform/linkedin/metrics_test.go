@@ -1541,17 +1541,28 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 	}
 }
 
-// A campaign with no activity returns an empty elements array. That is LinkedIn stating the
-// campaign did nothing, but it says nothing about conversions having been MEASURED, so the
-// count must stay absent rather than becoming a zero the rule would act on.
-func TestGetCampaignMetrics_NoElementsLeavesConversionsAbsent(t *testing.T) {
+// A campaign with no activity returns an empty elements array. The client always names
+// externalWebsiteConversions in `fields`, so LinkedIn WAS asked for the metric and answered
+// that the campaign did nothing — an answered zero, not an unmeasured window. The count is
+// therefore a non-nil zero, matching googleads' no-rows branch.
+//
+// This assertion was previously inverted, on the reasoning that an empty array "says nothing
+// about conversions having been MEASURED" and that a zero here was one "the rule would act
+// on". Both halves were wrong: the metric was requested and the window was answered, and
+// no_conversions is gated on Clicks >= minClicksForConversions (50) while this branch reports
+// zero clicks, so the rule cannot fire on it either way.
+func TestGetCampaignMetrics_NoElementsIsAnAnsweredZero(t *testing.T) {
 	c, _ := linkedinConvServer(t, `{"elements":[]}`)
 	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.Conversions != nil {
-		t.Errorf("Conversions = %v on an empty elements array", *m.Conversions)
+	if m.Conversions == nil {
+		t.Fatal("Conversions = nil on an empty elements array; LinkedIn answered this window " +
+			"and the metric was in the fields list, so the zero is a measurement")
+	}
+	if *m.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *m.Conversions)
 	}
 }
 
@@ -1670,5 +1681,49 @@ func TestGetCampaignMetrics_ConversionsWithdrawnWhenOmissionFollowsAValue(t *tes
 	if m.Conversions != nil {
 		t.Errorf("Conversions = %v: a value from the first element survived a later element "+
 			"omitting the metric, publishing a partial sum as a complete count", *m.Conversions)
+	}
+}
+
+// TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero pins the convention that a
+// well-formed empty `elements` array is an ANSWERED zero-activity window, not an unmeasured
+// one. The client always names externalWebsiteConversions in `fields`, so LinkedIn was asked
+// for the metric and replied that nothing happened.
+//
+// The assertion is deliberately two-sided: non-nil AND exactly zero. Asserting only
+// non-nilness would pass on any garbage value, and asserting only nilness (the previous
+// behaviour) is the bug this test exists to prevent regressing to. The fixture returns a real
+// empty array over HTTP rather than constructing a struct, so the empty-elements branch is
+// genuinely executed.
+func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prove the metric really was requested: if the client stopped naming it, a nil
+		// Conversions would be the honest answer and this test's premise would be void.
+		if !strings.Contains(r.URL.RawQuery, "externalWebsiteConversions") {
+			t.Errorf("expected externalWebsiteConversions in the fields list, got %q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"elements": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	metrics, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowLast7Days)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics.Conversions == nil {
+		t.Fatal("expected a non-nil Conversions for an answered zero-activity window, got nil (unmeasured)")
+	}
+	if *metrics.Conversions != 0 {
+		t.Errorf("expected Conversions 0, got %v", *metrics.Conversions)
+	}
+	// The sibling measurements must agree with it: all four describe the same answered window.
+	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
+		t.Errorf("expected zero impressions/clicks/cost, got %+v", metrics)
 	}
 }

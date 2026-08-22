@@ -318,7 +318,11 @@ type CampaignMetrics struct {
 	//   - LinkedIn populates it from externalWebsiteConversions (typed `long` in the Ads
 	//     Reporting schema), which must be named in the request's `fields` list: LinkedIn
 	//     returns only impressions and clicks by default, so an unnamed metric comes back
-	//     absent rather than zero.
+	//     absent rather than zero. The client always names it, so a well-formed empty
+	//     `elements` array is an ANSWERED zero-activity window and materialises a non-nil
+	//     zero, matching Google's no-rows branch. Nil is reserved for the case where an
+	//     element LinkedIn DID return omitted the metric: that is missing data about
+	//     activity that happened, and it withdraws the whole total.
 	//   - Microsoft populates it from the ConversionsQualified report column, NOT from
 	//     Conversions. Microsoft's own column reference marks `Conversions` deprecated as of
 	//     2022, directs callers to ConversionsQualified, and warns the legacy column's values
