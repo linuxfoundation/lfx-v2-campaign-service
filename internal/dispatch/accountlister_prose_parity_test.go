@@ -104,6 +104,130 @@ func repoFile(t *testing.T, rel string) string {
 	return string(b)
 }
 
+// routeRegexp compiles the project-nested RegularExpression path match out of the raw
+// HTTPRoute template. The value carries no Helm templating (verified: the line is literal),
+// so it compiles directly without rendering the chart — which keeps this test runnable in
+// `go test ./...` without helm on PATH.
+//
+// Compiling it is the point. Asking whether a slug appears ANYWHERE in the template is not a
+// test that the provider's discovery route exists: the same slug appears in the /metrics
+// alternation and in the explanatory comments, so a substring check survives the deletion of
+// the /accounts path it claims to pin.
+func routeRegexp(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	route := repoFile(t, "charts/lfx-v2-campaign-service/templates/httproute.yaml")
+	for _, line := range strings.Split(route, "\n") {
+		s := strings.TrimSpace(line)
+		// The project-nested selector is the only RE2 value anchored at /projects/.
+		if !strings.HasPrefix(s, "value:") || !strings.Contains(s, "^/projects/") {
+			continue
+		}
+		raw := strings.TrimSpace(strings.TrimPrefix(s, "value:"))
+		if strings.Contains(raw, "{{") {
+			t.Fatalf("the HTTPRoute project regex now contains Helm templating (%q); this test "+
+				"compiles the raw value, so it must be rendered instead of re-pointed silently", raw)
+		}
+		re, err := regexp.Compile(raw)
+		if err != nil {
+			t.Fatalf("HTTPRoute project regex %q does not compile: %v", raw, err)
+		}
+		return re
+	}
+	t.Fatal("no RegularExpression /projects/ value found in the HTTPRoute template; if the chart " +
+		"was restructured, re-point this assertion — an unbindable check is one that passes forever.")
+	return nil
+}
+
+// projectAPIRuleID is the Heimdall rule whose paths gate on campaign_manager. Scoping to THIS
+// rule matters: a path moved into an allow_all or differently-scoped rule must not count as
+// authorized. charts/parity_test.go pins the authorizer content itself; here we only need the
+// path list of that same rule.
+const projectAPIRuleID = "rule:lfx:lfx-v2-campaign-service:project-api"
+
+// ruleSetMatchers compiles the Traefik path patterns of the project-api rule out of the raw
+// RuleSet template. Only `:name` placeholders appear on the /accounts entries, so the token
+// handling here is deliberately small: `:name` and `*` become one segment, `**` any suffix.
+func ruleSetMatchers(t *testing.T) []*regexp.Regexp {
+	t.Helper()
+	ruleset := repoFile(t, "charts/lfx-v2-campaign-service/templates/ruleset.yaml")
+	lines := strings.Split(ruleset, "\n")
+
+	start := -1
+	for i, line := range lines {
+		s := strings.TrimSpace(line)
+		if strings.HasPrefix(s, "- id:") && strings.Contains(s, projectAPIRuleID) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("rule %q not found in the RuleSet template; re-point this assertion rather than "+
+			"letting it stop checking anything", projectAPIRuleID)
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "- id:") {
+			end = i
+			break
+		}
+	}
+
+	var matchers []*regexp.Regexp
+	for _, line := range lines[start:end] {
+		s := strings.TrimSpace(line)
+		if !strings.HasPrefix(s, "- path:") {
+			continue
+		}
+		pat := strings.TrimSpace(strings.TrimPrefix(s, "- path:"))
+		if !strings.HasPrefix(pat, "/projects/") {
+			continue
+		}
+		matchers = append(matchers, ruleMatcher(t, pat))
+	}
+	if len(matchers) == 0 {
+		t.Fatalf("no /projects/ path patterns found in the %s rule", projectAPIRuleID)
+	}
+	return matchers
+}
+
+// ruleMatcher compiles one Traefik path pattern into an anchored Go regexp, mirroring how
+// Heimdall evaluates a rule entry.
+func ruleMatcher(t *testing.T, pattern string) *regexp.Regexp {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("^")
+	for i, seg := range strings.Split(pattern, "/") {
+		if i > 0 {
+			b.WriteString("/")
+		}
+		switch {
+		case seg == "**":
+			b.WriteString(".*")
+		case seg == "*" || strings.HasPrefix(seg, ":"):
+			b.WriteString("[^/]+")
+		default:
+			b.WriteString(regexp.QuoteMeta(seg))
+		}
+	}
+	b.WriteString("$")
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		t.Fatalf("rule pattern %q compiled to invalid regex %q: %v", pattern, b.String(), err)
+	}
+	return re
+}
+
+// anyRulePathMatches reports whether ANY project-api entry authorizes the path (Heimdall
+// authorizes when any rule entry matches).
+func anyRulePathMatches(matchers []*regexp.Regexp, path string) bool {
+	for _, m := range matchers {
+		if m.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
 func sortedSlugs(set map[model.Provider]bool) []string {
 	out := make([]string, 0, len(set))
 	for p := range set {
@@ -124,13 +248,49 @@ func TestAccountListerProseMatchesTheInterface(t *testing.T) {
 	// charts/parity_test already couples it to the Heimdall RuleSet. Coupling it to the
 	// INTERFACE here closes the remaining side: chart-vs-chart parity cannot notice that both
 	// sides agree on a set the code has moved past.
-	route := repoFile(t, "charts/lfx-v2-campaign-service/templates/httproute.yaml")
+	//
+	// COMPILE the matchers and probe a CONCRETE /accounts path per provider rather than
+	// asking whether the slug appears somewhere in the file. A substring check does not
+	// verify the discovery route exists: every slug already occurs elsewhere — in the
+	// per-provider `/metrics` alternation and in the surrounding prose comments — so
+	// deleting a provider from the `connection-(...)` discovery branch still satisfies
+	// Contains, and the check passes while the endpoint is unreachable. Mutation-verified:
+	// removing twitter-ads' /accounts from the route AND the RuleSet together left this
+	// test, and the whole charts parity suite, green.
+	routeRe := routeRegexp(t)
+	ruleMatchers := ruleSetMatchers(t)
 	for p := range listers {
 		slug := providerSlug[p]
-		if !strings.Contains(route, slug) {
-			t.Errorf("%s implements service.AccountLister but the HTTPRoute template never mentions %q: "+
-				"its /accounts path is not forwarded, so ad-account discovery is unreachable through "+
-				"the gateway", p, slug)
+		accountsPath := "/projects/p1/connection-" + slug + "/accounts"
+
+		if !routeRe.MatchString(accountsPath) {
+			t.Errorf("%s implements service.AccountLister but the HTTPRoute regex does not forward %q: "+
+				"ad-account discovery is unreachable through the gateway", p, accountsPath)
+		}
+
+		// Heimdall is default-deny, so a forwarded path with no rule is rejected before the
+		// FGA check runs. Assert the RuleSet side against the SAME concrete path.
+		if !anyRulePathMatches(ruleMatchers, accountsPath) {
+			t.Errorf("%s implements service.AccountLister but no Heimdall RuleSet entry authorizes %q: "+
+				"Heimdall default-denies an unruled path, so discovery is unreachable", p, accountsPath)
+		}
+	}
+
+	// Guard the negative direction too: a provider that does NOT implement AccountLister must
+	// not have its /accounts path routed or ruled, or the chart admits an endpoint the service
+	// answers with a 400 by construction.
+	for p, slug := range providerSlug {
+		if listers[p] {
+			continue
+		}
+		accountsPath := "/projects/p1/connection-" + slug + "/accounts"
+		if routeRe.MatchString(accountsPath) {
+			t.Errorf("%s does NOT implement service.AccountLister but the HTTPRoute regex forwards %q; "+
+				"the chart admits a path the service does not serve", p, accountsPath)
+		}
+		if anyRulePathMatches(ruleMatchers, accountsPath) {
+			t.Errorf("%s does NOT implement service.AccountLister but a RuleSet entry authorizes %q; "+
+				"that rules a path the service does not serve", p, accountsPath)
 		}
 	}
 
