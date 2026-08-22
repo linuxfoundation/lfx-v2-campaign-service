@@ -30,7 +30,8 @@ import (
 //   - same provider, second project      -> project_id must exclude it
 //   - same project, different provider   -> platform must exclude it
 //   - same project+provider, deleted     -> status <> 'deleted' must exclude it
-//   - same project+provider, empty id    -> the platform_campaign_id <> '' guard must exclude it
+//   - same project+provider, empty id    -> the empty-string guard on platform_campaign_id
+//     must exclude it
 //   - same project+provider, NULL id     -> the IS NOT NULL guard must exclude it
 //   - two live rows, one with NULL result and one with provenance JSON -> both returned,
 //     and the nullable scan must not error
