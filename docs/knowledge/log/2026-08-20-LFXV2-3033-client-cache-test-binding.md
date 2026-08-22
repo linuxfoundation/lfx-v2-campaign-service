@@ -1,8 +1,8 @@
 # 2026-08-20 — LFXV2-3033 client-cache review follow-ups: tests that did not bind
 
-Four review findings against the client-cache change. Three were real; one was reported with a
-false mechanism but pointed at a real defect a few lines away. Each real one is recorded with the
-compiling mutation that proves the fix binds.
+**Fix** — four review findings against the client-cache change. Three were real; one was reported
+with a false mechanism but pointed at a real defect a few lines away. Each real one is recorded
+with the compiling mutation that proves the fix binds.
 
 ## A test probe that dialled Microsoft production on every run
 
