@@ -213,6 +213,20 @@ type Credentials struct {
 	// used ONLY to make an expiry error actionable ("which connection do I
 	// reconnect?"). It must never carry credential material.
 	ConnectionName string
+
+	// ConnectionID is the immutable id of the connection ROW these credentials were
+	// decrypted from. It exists solely to give the near-expiry warning a per-connection
+	// dedupe identity, and it is never logged and never sent upstream.
+	//
+	// The three fields that were available before it cannot do that job. ConnectionName is
+	// operator-set and OPTIONAL, so every unnamed connection shares one fallback label;
+	// ClientID is the OAuth APPLICATION id, shared by every connection on one Marketing
+	// Developer Platform app; and the runtime account id is EMPTY on the discovery path and
+	// CHANGES for one connection once an account is selected — so it both merges distinct
+	// connections and splits a single one. A row id does neither.
+	//
+	// It is not a secret: it names a row, and reading it grants nothing.
+	ConnectionID string
 }
 
 // CanRefresh reports whether these credentials carry everything the refresh

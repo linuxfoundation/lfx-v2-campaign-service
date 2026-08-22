@@ -107,7 +107,7 @@ func TestLinkedinCredsDecodesTheStoredRefreshFields(t *testing.T) {
 		}
 	}
 
-	if !linkedinCredentials(got, "conn").CanRefresh() {
+	if !linkedinCredentials(got, "conn", "").CanRefresh() {
 		t.Error("a fully-populated stored credential must be refreshable")
 	}
 	// A bearer-only blob (the common non-MDP case) must decode and stay non-refreshable.
@@ -115,7 +115,7 @@ func TestLinkedinCredsDecodesTheStoredRefreshFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"AccessToken":"at"}`), &bearer); err != nil {
 		t.Fatalf("decode bearer-only: %v", err)
 	}
-	if linkedinCredentials(bearer, "conn").CanRefresh() {
+	if linkedinCredentials(bearer, "conn", "").CanRefresh() {
 		t.Error("a bearer-only credential must NOT report itself refreshable")
 	}
 }
@@ -398,5 +398,30 @@ func TestLinkedinExpiryTagsTokenRequestRejected(t *testing.T) {
 	if !linkedinConnectionDefect(base) {
 		t.Error("linkedinConnectionDefect must recognise a rejected token request, or linkedinExpiry " +
 			"is never applied to it and it falls through to the generic retryable arm")
+	}
+}
+
+// The client-side dedupe fix only binds if the dispatcher actually SUPPLIES the row id. The
+// four LinkedIn client constructions all go through linkedinCredentials, so this pins the
+// mapping at that seam: a resolution carrying a connID must produce Credentials carrying it.
+// Without this, refreshExpiryWarnKey silently falls back to the old composite key in
+// production while the platform-package test still passes.
+func TestLinkedinCredentialsCarriesTheConnectionRowID(t *testing.T) {
+	res := &resolved{connID: "conn-7f3a", label: "", accountID: ""}
+	got := linkedinCredentials(linkedinCreds{AccessToken: "a", ClientID: "shared-app"},
+		linkedinConnectionLabel(res), linkedinConnID(res))
+
+	if got.ConnectionID != "conn-7f3a" {
+		t.Fatalf("ConnectionID = %q, want the connection row id; the near-expiry dedupe would "+
+			"fall back to the label+client-id composite, which merges unnamed connections that "+
+			"share an OAuth app", got.ConnectionID)
+	}
+	// The label is unnamed here, which is precisely the case the old key could not separate.
+	if got.ConnectionName != "the LinkedIn connection" {
+		t.Errorf("ConnectionName = %q, want the shared fallback (this is the collision case)", got.ConnectionName)
+	}
+	// A nil resolution must not panic or invent an id.
+	if id := linkedinConnID(nil); id != "" {
+		t.Errorf("linkedinConnID(nil) = %q, want empty", id)
 	}
 }

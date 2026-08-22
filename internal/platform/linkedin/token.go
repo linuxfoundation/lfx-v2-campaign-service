@@ -572,15 +572,26 @@ var refreshExpiryWarned sync.Map
 
 // refreshExpiryWarnKey identifies a connection for dedupe purposes.
 //
-// NOT ConnectionLabel alone: that falls back to a shared constant ("the LinkedIn
-// connection") for any connection whose operator set no name, so keying on it would let
-// the first unnamed connection to warn silence every other unnamed one — the precise
-// failure the per-connection requirement exists to prevent. The client id and the ad
-// account scope the key to an actual connection; neither is a secret (the client id is
-// a public OAuth identifier) and the key is never logged. The account id is included
-// only as an extra discriminator; it is empty on the discovery path, where the label
-// and client id still separate connections.
+// ConnectionID when it is set, and nothing else. It is the id of the connection ROW, so it
+// is exactly one key per connection — which is what "once per process per connection" means.
+//
+// The earlier key was ConnectionLabel + ClientID + DefaultAccountID and it failed in BOTH
+// directions. ConnectionLabel falls back to a shared constant for any connection whose
+// operator set no name; ClientID is the OAuth APPLICATION id, which every connection on one
+// MDP app shares; and DefaultAccountID is empty on the discovery path (ListAccounts builds
+// the client with a zero RuntimeConfig, deliberately). Two unnamed connections on one app
+// therefore collided, and the first to warn silenced the other for the life of the process —
+// letting a refresh credential expire with no notice, the one outcome this warning exists to
+// prevent. In the other direction the SAME connection changed key once an account was
+// selected, so it warned twice.
+//
+// The fallback keeps the old composite for any caller that has not supplied a ConnectionID.
+// It is no worse than what it replaces, and it is reached only where a row id is genuinely
+// unavailable; every dispatch path supplies one.
 func (c *Client) refreshExpiryWarnKey() string {
+	if id := strings.TrimSpace(c.creds.ConnectionID); id != "" {
+		return "conn:" + id
+	}
 	return c.creds.ConnectionLabel() + "\x00" + c.creds.ClientID + "\x00" + c.cfg.DefaultAccountID
 }
 

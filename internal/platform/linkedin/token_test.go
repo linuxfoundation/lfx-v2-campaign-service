@@ -1150,3 +1150,45 @@ func TestTokenRequestRejectedNamesNoOperatorRemedy(t *testing.T) {
 		}
 	}
 }
+
+// Two DISTINCT connections must not share a near-expiry dedupe key.
+//
+// The key was ConnectionLabel + ClientID + DefaultAccountID. ConnectionLabel falls back to the
+// shared constant "the LinkedIn connection" for any connection whose operator set no name;
+// ClientID is the OAuth APPLICATION id, which every connection on one Marketing Developer
+// Platform app shares; and DefaultAccountID is EMPTY on the discovery path, where ListAccounts
+// deliberately builds the client with a zero RuntimeConfig. All three collapse together, so two
+// unnamed connections with different refresh tokens and different expiry dates produced the
+// same key — and the first to warn silenced the other until process restart. A refresh
+// credential that dies silently is exactly what this warning exists to prevent.
+func TestRefreshExpiryWarnKeySeparatesDistinctConnections(t *testing.T) {
+	newCreds := func(connID, refreshToken string) Credentials {
+		return Credentials{
+			ConnectionID: connID,
+			// Unnamed: both fall back to the shared label.
+			ConnectionName: "",
+			// One shared OAuth application, the ordinary deployment shape.
+			ClientID:     "shared-oauth-app-id",
+			ClientSecret: "s",
+			RefreshToken: refreshToken,
+		}
+	}
+	// Discovery shape: RuntimeConfig zero, so DefaultAccountID is empty for both.
+	a := &Client{creds: newCreds("conn-aaaa", "refresh-a"), cfg: RuntimeConfig{}}
+	b := &Client{creds: newCreds("conn-bbbb", "refresh-b"), cfg: RuntimeConfig{}}
+
+	if a.refreshExpiryWarnKey() == b.refreshExpiryWarnKey() {
+		t.Fatalf("two unnamed connections sharing one OAuth app collide on the dedupe key %q; "+
+			"the first to warn permanently silences the second, and its refresh token expires "+
+			"with no notice", a.refreshExpiryWarnKey())
+	}
+
+	// The same connection must keep ONE key across the discovery and the account-scoped
+	// paths, or it warns twice — the converse failure the reviewer named.
+	scoped := &Client{creds: newCreds("conn-aaaa", "refresh-a"), cfg: RuntimeConfig{DefaultAccountID: "5100"}}
+	if a.refreshExpiryWarnKey() != scoped.refreshExpiryWarnKey() {
+		t.Errorf("the same connection produced different keys once an account was selected "+
+			"(%q vs %q); it would warn again for the same credential",
+			a.refreshExpiryWarnKey(), scoped.refreshExpiryWarnKey())
+	}
+}

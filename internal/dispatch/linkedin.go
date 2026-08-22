@@ -151,7 +151,11 @@ func linkedinConnectionDefect(err error) bool {
 // linkedinCredentials maps the decrypted stored credentials onto the client's
 // injected Credentials, including the connection label used to name the connection
 // in an expiry error. The label is operator-set metadata and never secret.
-func linkedinCredentials(creds linkedinCreds, connLabel string) linkedin.Credentials {
+// connID is the connection ROW id (resolved.connID). It carries no credential material and is
+// never logged; the client uses it solely to dedupe the near-expiry warning per connection.
+// Passing it is what makes that dedupe correct — the label is optional and the OAuth client id
+// is shared across connections, so neither can tell two connections apart.
+func linkedinCredentials(creds linkedinCreds, connLabel, connID string) linkedin.Credentials {
 	return linkedin.Credentials{
 		AccessToken:           creds.AccessToken,
 		AccessTokenExpiresAt:  creds.AccessTokenExpiresAt,
@@ -160,7 +164,16 @@ func linkedinCredentials(creds linkedinCreds, connLabel string) linkedin.Credent
 		ClientID:              creds.ClientID,
 		ClientSecret:          creds.ClientSecret,
 		ConnectionName:        connLabel,
+		ConnectionID:          connID,
 	}
+}
+
+// linkedinConnID returns the connection row id, or "" when the resolution produced none.
+func linkedinConnID(res *resolved) string {
+	if res == nil {
+		return ""
+	}
+	return res.connID
 }
 
 // linkedinConfig is the per-platform campaign config the caller passes for LinkedIn
@@ -306,7 +319,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		AdAccountID:      adAccountID,
 	}
 
-	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), runtime, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
 
 	// Release the claim ONLY when result==nil (definitely nothing created). Do NOT
 	// gate on an empty CampaignID: LinkedIn returns a NON-NIL result even on a
@@ -359,7 +372,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		DefaultAccountID: accountID,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
-	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), runtime, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
 	// Provenance BEFORE the mutation, and before the creative-servability question the client
 	// answers below. A campaign id is unique only within an ad account, so a connection
 	// re-pointed since create would address an unrelated campaign — and this path CHANGES
@@ -566,7 +579,7 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	// RuntimeConfig is left ZERO: the accounts finder asks what the TOKEN reaches, so
 	// scoping the client to one of the answers would narrow the response to a subset of
 	// the question. Same rationale as meta's zero AccountConfig.
-	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), linkedin.RuntimeConfig{}, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {
 		// systemScoped like the other three paths, so an expired LF SYSTEM credential is
@@ -676,7 +689,7 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		DefaultAccountID: accountID,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
-	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res)), runtime, d.opts...)
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
 
 	// Prove the persisted campaign belongs to the account this read will be scoped to. The
 	// Ad Analytics finder is scoped by the sponsoredAccount URN built from accountID below,
