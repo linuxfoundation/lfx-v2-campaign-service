@@ -830,6 +830,48 @@ of the `dbtest` package at all. It duplicates `dbtest.UniqueID`'s shape (name pr
 `crypto/rand` suffix) for the same reason `dbtest` uses that shape: the schema is shared and
 never dropped between runs.
 
+**Down migrations are covered by `TestLiveMigrationsGoDownAndUpAgain`, and what makes it
+bind is the SNAPSHOT, not the walk.** The test steps down one version at a time and compares
+the schema against a reference built by migrating a FRESH database UP to that version — the
+strong form, pinning each down file as the exact inverse of its up rather than merely
+asserting it did not error. A down-driven reference would execute the very files under test
+and come back clean.
+
+The snapshot's reach is therefore the test's reach, and each arm was added because the
+previous shape could not see a real defect:
+
+- Columns read `pg_attribute` with `format_type(atttypid, atttypmod)`, not
+  `information_schema.columns`, whose `data_type` strips the modifier — `NUMERIC(14,2)` and
+  `NUMERIC(14,3)` both render as bare `numeric`. `campaigns.budget_amount` is `NUMERIC(14,2)`,
+  and a down restoring it at `(14,3)` once produced a byte-identical snapshot.
+- Defaults join in from `pg_attrdef`, because a dropped DEFAULT changes every subsequent
+  INSERT and the older query selected no default at all.
+- Sequences read `pg_sequences` for the defining parameters, since none of increment, bounds,
+  cache or cycle is observable through the table, column, index or constraint rows.
+  `last_value` is deliberately excluded — it is a runtime position advanced by whatever rows
+  a test inserted, so including it would make the snapshot depend on activity and fail on a
+  correct down file.
+- **Sequence OWNERSHIP joins in from `pg_depend` (`deptype = 'a'`), and the reasoning that
+  once omitted it was wrong in the direction that disarms the test.** The omission was
+  justified on the grounds that ownership is "carried by the column's DEFAULT expression",
+  which the column arm already renders as `nextval('index_outbox_id_seq'::regclass)`. It is
+  not. Postgres records `OWNED BY` as a separate `pg_depend` entry, wholly independent of the
+  DEFAULT: `ALTER SEQUENCE ... OWNED BY NONE` and `OWNED BY <other column>` both leave the
+  DEFAULT byte-identical, so the column arm renders the same string either way. Measured on
+  PG16 — a down file reassigning `index_outbox_id_seq` to `index_outbox.object_id` passed the
+  entire exact-inverse comparison. Ownership is what makes a serial sequence drop with its
+  table, so a down file that detaches one leaves an orphan behind after a rollback. The join
+  is a LEFT JOIN: a standalone `CREATE SEQUENCE` has no owning column, and an inner join
+  would drop it from the snapshot and make an unremoved standalone sequence invisible.
+
+The mutation site for this class is a DOWN file — `schemaAtVersion` builds its reference by
+migrating up, so mutating an UP file moves both sides equally and proves nothing. It must
+also be a down file that runs while the object still exists, and it must not perturb a LATER
+step: detaching `index_outbox_id_seq` outright makes 000010's `DROP TABLE` stop cascading to
+it, so the failure lands at version 10 for a different reason than the one under test.
+Reassigning ownership to another column of the same table keeps the cascade and isolates the
+property.
+
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 
 A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the
