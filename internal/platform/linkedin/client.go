@@ -18,14 +18,24 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 // Client is a standalone LinkedIn Marketing API client. Construct it with
-// NewClient. The client holds no mutable state and its methods are safe to call
-// concurrently, provided the injected RuntimeConfig (its slices/maps) is not
-// mutated by the caller after construction.
+// NewClient. Its methods are safe to call concurrently, provided the injected
+// RuntimeConfig (its slices/maps) is not mutated by the caller after construction.
+//
+// The client holds mutable TOKEN state — the cached access token and its expiry, the
+// rotated refresh token, and the single-flight pointer — all guarded by tokenMu. The
+// injected Credentials value is treated as immutable: rotation is written to the
+// dedicated fields below, never back into creds, because creds is also read WITHOUT
+// tokenMu (validateCredentialShape, the CanRefresh fast path).
+//
+// Lifetime: callers construct a Client per dispatch, so the token cache is per-
+// operation. It coalesces the many calls one dispatch makes; cross-request caching is
+// deliberately out of scope and would belong in a shared token store, not here.
 type Client struct {
 	creds      Credentials
 	cfg        RuntimeConfig
@@ -37,6 +47,46 @@ type Client struct {
 	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
 	// retryBaseDelay const; tests may shrink it to keep runs fast.
 	retryBaseDelay time.Duration
+
+	// tokenURL is LinkedIn's OAuth2 token endpoint. Defaults to oauthTokenURL;
+	// tests point it at an httptest.Server.
+	tokenURL string
+
+	// tokenMu guards the cached access token, its expiry, the adopted rotated
+	// refresh token AND the inflight single-flight pointer. It is held only for the
+	// brief cache read/write and to publish or clear the inflight refresh — NEVER
+	// across the network call (see accessTokenValue), so a slow token endpoint
+	// cannot serialize every concurrent call behind the refresher.
+	tokenMu     sync.Mutex
+	accessToken string
+	tokenExpiry time.Time
+	// refreshToken and refreshExpiry are the MUTABLE refresh state, seeded from creds
+	// in NewClient and updated when LinkedIn rotates the token. They are separate from
+	// c.creds because c.creds is read without the lock elsewhere; every access to these
+	// two is under tokenMu.
+	refreshToken  string
+	refreshExpiry time.Time
+
+	// inflight coalesces concurrent token refreshes so N concurrent callers produce
+	// ONE exchange. The caller that finds the cache empty/expired becomes the leader
+	// and runs the fetch on a detached context; followers wait on the shared
+	// tokenRefresh.done. Mirrors the google-ads and microsoft clients.
+	inflight *tokenRefresh
+	// pastCacheCheck, when non-nil, is called by accessTokenValue immediately after
+	// the fast-path cache read and while tokenMu is still held. Unexported and nil in
+	// production, so it costs one nil check on the token path and nothing else.
+	//
+	// It exists because the single-flight property CANNOT be tested without it. The
+	// test must release the leader's exchange only once every caller has crossed the
+	// cache check; any barrier the test can raise on its own side signals BEFORE the
+	// call, leaving the caller free to be descheduled between the signal and the cache
+	// read. Once the leader is released it populates the cache, so such a straggler
+	// finds a WARM cache, returns without consulting inflight, and a non-coalescing
+	// implementation reports exchanges == 1 — the test passes its own negation. Only a
+	// hook INSIDE the lock, past the read, can order the release after the last
+	// caller's cache check. The alternative is a test whose correctness depends on the
+	// scheduler, which is not a test.
+	pastCacheCheck func()
 }
 
 // Option customizes a Client.
@@ -76,6 +126,31 @@ func WithBaseURL(u string) Option {
 	}
 }
 
+// withTokenURL overrides LinkedIn's OAuth2 token endpoint. Unexported: only tests
+// use it, to point the refresh exchange at an httptest.Server.
+func withTokenURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.tokenURL = u
+		}
+	}
+}
+
+// withPastCacheCheck installs the hook accessTokenValue calls just after its
+// fast-path cache read, with tokenMu held. Unexported: only the single-flight test
+// uses it, to release the leader's exchange strictly after every concurrent caller
+// has crossed the cache check. See Client.pastCacheCheck for why the property is
+// untestable without it.
+//
+// The hook runs UNDER tokenMu, so it must not call back into the Client.
+func withPastCacheCheck(fn func()) Option {
+	return func(c *Client) {
+		if fn != nil {
+			c.pastCacheCheck = fn
+		}
+	}
+}
+
 // WithClock overrides the time source. For tests.
 func WithClock(now func() time.Time) Option {
 	return func(c *Client) {
@@ -104,12 +179,16 @@ func NewClient(creds Credentials, cfg RuntimeConfig, opts ...Option) *Client {
 		httpClient:     &http.Client{Timeout: requestTimeout, CheckRedirect: noFollow},
 		baseURL:        baseURL,
 		apiVersion:     apiVersion,
+		tokenURL:       oauthTokenURL,
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
 	}
+	// Seed the mutable refresh state from the injected credentials.
+	c.refreshToken = strings.TrimSpace(creds.RefreshToken)
+	c.refreshExpiry = creds.RefreshTokenExpiresAt
 	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
 	// the default above. Following a redirect would carry an already-committed
@@ -392,6 +471,17 @@ func isMutatingMethod(m string) bool {
 //     that "may have succeeded" reason, the outcome is ambiguous — not a clean
 //     failure the orchestrator should report as definite (which would invite a
 //     retry that duplicates a paid resource).
+//   - *credentialsExpiredError carrying a mutating method: a 401 is normally read as
+//     "reconnect this connection", and it IS that — but LinkedIn "reserves the right
+//     to revoke Refresh Tokens or Access Tokens at any time", so a revocation can
+//     take effect between LinkedIn committing a create POST and writing its
+//     response. A 401 answering a POST therefore says nothing about whether the
+//     write landed, which is the same position a mutating 5xx leaves the caller in.
+//     Treating it as a definite failure would release the create claim on a campaign
+//     group that may already exist and be billing. The PRE-SEND expiry arms (a
+//     known-past access-token expiry, an expired refresh token, a rejected token
+//     exchange) leave Method zero, so they stay definite failures here — nothing was
+//     sent, so nothing can have landed.
 //
 // The METHOD gate is essential: a GET search that times out, returns a 5xx/3xx/429,
 // or yields an undecodable/oversized 2xx body ran NO POST — nothing was created — so
@@ -417,6 +507,14 @@ func createOutcomeAmbiguous(err error) bool {
 		return (ae.StatusCode >= 300 && ae.StatusCode < 400) ||
 			ae.StatusCode == http.StatusTooManyRequests ||
 			ae.StatusCode >= 500
+	}
+	// A mid-flight token revocation answering a MUTATING request: the create may
+	// already have committed upstream (see the godoc). Gated on the method exactly
+	// like the apiError arm, so a GET 401 and every pre-send expiry (Method == "")
+	// stay definite failures.
+	var ce *credentialsExpiredError
+	if errors.As(err, &ce) {
+		return isMutatingMethod(ce.Method)
 	}
 	return false
 }
@@ -501,8 +599,8 @@ func (c *Client) validateToggleInput(campaignID, status string) (string, error) 
 	// — a padded " token " would otherwise be sent verbatim as `Authorization: Bearer  token `.
 	// (Unreachable in practice: the token comes from the create path, which already rejects
 	// padding; this keeps the two preflights consistent rather than implying a stricter check.)
-	if c.creds.AccessToken == "" || c.creds.AccessToken != strings.TrimSpace(c.creds.AccessToken) {
-		return "", fmt.Errorf("linkedin: access token is required")
+	if err := c.validateCredentialShape(); err != nil {
+		return "", err
 	}
 	campaignID = strings.TrimSpace(campaignID)
 	if campaignID == "" {
@@ -889,7 +987,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			cancel()
 			return nil, fmt.Errorf("new request: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+		// Resolve the bearer token per attempt so a long 429 backoff cannot send a
+		// just-expired token on the resumed attempt. Uses the ATTEMPT context so a
+		// refresh is bounded by the same per-attempt timeout as the request itself.
+		token, err := c.accessTokenValue(attemptCtx)
+		if err != nil {
+			// Fail CLOSED: an unrefreshable credential aborts before the request is sent
+			// rather than degrading into an unauthenticated or knowingly-expired call.
+			cancel()
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("LinkedIn-Version", c.apiVersion)
 		req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
 		if body != nil {
@@ -970,6 +1078,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
 			}
+			// A 401 is classified BEFORE the generic apiError, exactly as the readable-body
+			// arm below does. An unreadable body does not make the 401 any less a 401: the
+			// status alone carries both facts (reconnect this connection; on a mutating
+			// method the outcome is unknowable), and isTokenExpiryResponse treats an
+			// unparseable body as an expiry anyway. Routing it here keeps the cache
+			// invalidation and the ambiguity classification identical on both arms.
+			if ce := c.expiredCredentialsError(resp.StatusCode, "", method); ce != nil {
+				return nil, ce
+			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
 		}
 		if int64(buf.Len()) > maxResponseBytes {
@@ -992,6 +1109,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 			}
+			// Same reasoning as the read-failure arm above: an oversized body does not
+			// un-401 a 401. Classify it here so the cached token is invalidated and a
+			// mutating request stays outcome-ambiguous.
+			if ce := c.expiredCredentialsError(resp.StatusCode, "", method); ce != nil {
+				return nil, ce
+			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 		}
 
@@ -1002,6 +1125,25 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			}
 			_ = resp.Body.Close()
 			cancel()
+			// A 401 means the bearer token was not accepted — expired, revoked, or
+			// invalid. LinkedIn "reserves the right to revoke Refresh Tokens or Access
+			// Tokens at any time", so this can happen mid-flight to a token that was
+			// valid when the request was built, which no expiry timestamp predicts.
+			// Invalidate the cached token so a later call re-exchanges rather than
+			// replaying the rejected one, and surface the actionable expiry error naming
+			// the connection instead of a bare "LinkedIn API ... -> 401".
+			//
+			// Method and StatusCode are carried so the 401 keeps the SECOND fact it
+			// states. A mid-flight revocation can land AFTER LinkedIn committed a create
+			// POST, so a 401 answering a mutating request is outcome-ambiguous in exactly
+			// the way a mutating 5xx is: createOutcomeAmbiguous reads these fields and
+			// classifies a POST 401 as "may exist — verify before recreating", while a GET
+			// 401 (which created nothing) stays a plain expiry. Without them the create
+			// cascade returned nil,err and released the claim on a campaign group that may
+			// already be billing upstream.
+			if ce := c.expiredCredentialsError(resp.StatusCode, text, method); ce != nil {
+				return nil, ce
+			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
 		}
 
@@ -2205,11 +2347,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// network round-trips. A bearer token cannot contain surrounding whitespace,
 	// so a padded value (e.g. " token ") is a configuration error, not something
 	// to silently trim — reject it explicitly.
-	if c.creds.AccessToken == "" || strings.TrimSpace(c.creds.AccessToken) == "" {
-		return nil, fmt.Errorf("linkedin: access token is required")
-	}
-	if c.creds.AccessToken != strings.TrimSpace(c.creds.AccessToken) {
-		return nil, fmt.Errorf("linkedin: access token must not have leading or trailing whitespace")
+	// A connection that CAN refresh needs no access token up front — the refresh
+	// exchange mints one. Only a connection with neither is unusable.
+	if err := c.validateCredentialShape(); err != nil {
+		return nil, err
 	}
 
 	accountID, err := c.resolveAccountID(in.AdAccountID)
@@ -2590,4 +2731,19 @@ func (c *Client) buildResult(accountID, groupName, groupID, campaignName, campai
 		LinkedInURL:       campaignManagerURL(accountID, campaignID),
 		Steps:             steps,
 	}
+}
+
+// validateCredentialShape runs the shared credential preflight for both the create
+// and status-toggle paths: it rejects a connection that can neither present a
+// bearer token nor mint one, and rejects a padded token (a bearer token cannot
+// contain surrounding whitespace, so " token " is a configuration error rather
+// than something to silently trim). It performs no I/O.
+func (c *Client) validateCredentialShape() error {
+	if c.creds.AccessToken != "" && c.creds.AccessToken != strings.TrimSpace(c.creds.AccessToken) {
+		return fmt.Errorf("linkedin: access token must not have leading or trailing whitespace")
+	}
+	if strings.TrimSpace(c.creds.AccessToken) == "" && !c.creds.CanRefresh() {
+		return fmt.Errorf("linkedin: access token is required")
+	}
+	return nil
 }
