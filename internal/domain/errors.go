@@ -216,6 +216,26 @@ var (
 	// hears nothing. This is the operator's page, so it is a 5xx and an ERROR log.
 	ErrSystemConnectionNotUsable = errors.New("the LF system connection is not usable as configured")
 
+	// ErrSystemConnectionMissing marks the LF-owned SYSTEM connection being ABSENT for a
+	// provider while forced-system mode is on — an operator-owned configuration fault, not a
+	// project one.
+	//
+	// It exists because the underlying failure is a plain domain.ErrNotFound, and every
+	// consumer that classifies a credential error checks ErrNotFound FIRST (it is the
+	// "this project has no connection" case, which is genuinely the common one). Without a
+	// distinct marker, a deployment that turned the flag on WITHOUT installing the system row
+	// answers every affected caller "no connection configured for this project — connect it",
+	// which is unfollowable advice: the project's own connection is exactly what forced mode
+	// ignores, so connecting one changes nothing, and the operator who has to install the LF
+	// row is never told. ErrSystemConnectionOrigin does mark these errors, but it is consulted
+	// only INSIDE arms the ErrNotFound arm has already won, so it never gets the chance.
+	//
+	// Wrapped ALONGSIDE ErrNotFound rather than instead of it, so callers that only ask
+	// "was anything found?" are unaffected; the classification arms are what must order this
+	// one first. Distinct from ErrSystemConnectionNotUsable, which is a system row that EXISTS
+	// and is defective — a different repair (fix the row, versus install one).
+	ErrSystemConnectionMissing = errors.New("the LF system connection is not installed for this provider")
+
 	// ErrSystemConnectionOrigin records WHICH ROW the credentials came from, independently
 	// of how the failure is classified. ErrSystemConnectionNotUsable answers a different
 	// question — who has to fix it — and the two do not coincide: a blob that fails
