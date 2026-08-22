@@ -542,8 +542,14 @@ func TestValidateKeywordActions_RejectsDuplicateCriterion(t *testing.T) {
 	}
 }
 
+// The ACTION is still normalised (trimmed and upper-cased): it is a closed enum this package
+// defines, so " pause " and "PAUSE" name the same member and there is no other campaign a
+// mis-normalisation could reach. The IDS are deliberately NOT normalised — they are opaque
+// upstream handles whose padding the Goa pattern already rejects, and trimming them would let
+// a non-HTTP caller in past that contract. So this case passes canonical ids and asserts they
+// survive unchanged alongside the action that does get rewritten.
 func TestValidateKeywordActions_NormalisesAction(t *testing.T) {
-	out, err := ValidateKeywordActions([]KeywordAction{{AdGroupID: " 1 ", CriterionID: " 2 ", Action: " pause "}})
+	out, err := ValidateKeywordActions([]KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: " pause "}})
 	if err != nil {
 		t.Fatalf("ValidateKeywordActions: %v", err)
 	}
@@ -845,7 +851,12 @@ func TestCampaignScopePredicate_RejectsNonNumericIDs(t *testing.T) {
 // get_campaign_test.go pins the same unquoted form for the same field on the single-id path;
 // this is that assertion for the IN list.
 func TestCampaignScopePredicate_RendersAnUnquotedINList(t *testing.T) {
-	got, err := campaignScopePredicate([]string{" 111 ", "222"}, "op")
+	// Both ids are canonical here. This case previously passed " 111 " to pin the old
+	// TrimSpace behaviour; that padding is now REJECTED (see
+	// TestCampaignScopePredicate_RejectsIDsThatCannotNameACampaign), because normalising a
+	// malformed id inside the tenant-boundary predicate can substitute a different real
+	// campaign. This test asserts rendering, so it uses ids that are valid on both sides.
+	got, err := campaignScopePredicate([]string{"111", "222"}, "op")
 	if err != nil {
 		t.Fatalf("campaignScopePredicate: %v", err)
 	}
@@ -1239,6 +1250,51 @@ func TestApplyKeywordActions_UnconfirmedArmsAreStructurallyDetectable(t *testing
 			var u interface{ Unconfirmed() bool }
 			if !errors.As(err, &u) || !u.Unconfirmed() {
 				t.Errorf("errors.As found no Unconfirmed() marker; classifyKeywordActionError matches on exactly this: %v", err)
+			}
+		})
+	}
+}
+
+// campaignScopePredicate builds the TENANT BOUNDARY for the two account-wide keyword reads,
+// so what it accepts decides which project's rows come back. It normalised each id with
+// strings.TrimSpace BEFORE the digits-only class check, which admitted three shapes that
+// cannot name a campaign: whitespace padding, a leading-zero spelling, and a digit string
+// past math.MaxInt64. canonicalCampaignID's own doc names the reason trimming is wrong here —
+// it converts "this value is malformed" into "this value is campaign 123" — and that
+// substitution is made against the predicate that keeps one project from reading another's.
+func TestCampaignScopePredicate_RejectsIDsThatCannotNameACampaign(t *testing.T) {
+	for _, bad := range []string{" 123 ", "123 ", " 123", "000123", "0", "99999999999999999999", "9999999999999999999"} {
+		if _, err := campaignScopePredicate([]string{"111", bad}, "op"); err == nil {
+			t.Errorf("campaignScopePredicate accepted %q for the tenant-boundary predicate; "+
+				"an id that cannot name a positive int64 campaign must fail closed rather than "+
+				"be normalised into a different real campaign", bad)
+		}
+	}
+	// The canonical spellings must still pass, or the fix has closed the endpoint entirely.
+	if _, err := campaignScopePredicate([]string{"111", strconv.FormatInt(math.MaxInt64, 10)}, "op"); err != nil {
+		t.Errorf("campaignScopePredicate rejected canonical ids: %v", err)
+	}
+}
+
+// The Goa contract pins Pattern(`^[0-9]+$`) on ad_group_id and criterion_id (design/brief.go),
+// so an HTTP caller sending " 333 " is rejected by the generated decoder before any handler
+// runs. ValidateKeywordActions trimmed first and validated second, so the SAME value was
+// accepted from a non-HTTP caller and silently rewritten to "333" — the published input
+// contract and the runtime backstop disagreeing about what a valid request is.
+func TestValidateKeywordActions_RejectsWhitespacePaddedIDs(t *testing.T) {
+	for _, tc := range []struct{ name, adGroup, criterion string }{
+		{"padded criterion", "176216228", " 305729261 "},
+		{"padded ad group", " 176216228 ", "305729261"},
+		{"trailing newline on criterion", "176216228", "305729261\n"},
+		{"tab-padded ad group", "\t176216228", "305729261"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ValidateKeywordActions([]KeywordAction{
+				{AdGroupID: tc.adGroup, CriterionID: tc.criterion, Action: "PAUSE"},
+			}); err == nil {
+				t.Fatalf("ValidateKeywordActions accepted adGroup=%q criterion=%q; the Goa "+
+					"pattern ^[0-9]+$ rejects these, so trimming lets a non-HTTP caller bypass "+
+					"the published ID validation", tc.adGroup, tc.criterion)
 			}
 		})
 	}

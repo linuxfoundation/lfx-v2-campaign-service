@@ -305,9 +305,17 @@ func campaignScopePredicate(campaignIDs []string, op string) (string, error) {
 	// arises: every value has already been proven to be nothing but digits.
 	ids := make([]string, 0, len(campaignIDs))
 	for _, raw := range campaignIDs {
-		id := strings.TrimSpace(raw)
-		if !customerIDRE.MatchString(id) {
-			return "", fmt.Errorf("%s: campaign id %q must be digits only", op, raw)
+		// canonicalCampaignID on the RAW value, deliberately without TrimSpace. Trimming here
+		// would normalise a malformed stored id into a DIFFERENT real campaign before the
+		// check ran — and this predicate is the tenant boundary for two otherwise
+		// account-wide reads, so that substitution decides whose rows come back.
+		// canonicalCampaignID is also stricter than the digits-only class in the way that
+		// matters: "0", "000123" and a digit string past math.MaxInt64 are all injection-safe
+		// and none of them names a campaign. campaign_lookup.go:128 states the same rule for
+		// the same reason; reusing it is what keeps the two surfaces from drifting.
+		id := canonicalCampaignID(raw)
+		if id == "" {
+			return "", fmt.Errorf("%s: campaign id %q must be the canonical base-10 spelling of a positive int64", op, raw)
 		}
 		ids = append(ids, id)
 	}
@@ -630,8 +638,12 @@ func ValidateKeywordActions(actions []KeywordAction) ([]KeywordAction, error) {
 	out := make([]KeywordAction, 0, len(actions))
 	seen := map[string]struct{}{}
 	for i, a := range actions {
-		adGroupID := strings.TrimSpace(a.AdGroupID)
-		criterionID := strings.TrimSpace(a.CriterionID)
+		// The raw values, NOT trimmed: design/brief.go pins Pattern(`^[0-9]+$`) on both ids, so
+		// the generated decoder rejects " 333 " for every HTTP caller. Trimming here would
+		// silently accept and rewrite exactly those values for non-HTTP callers, letting the
+		// dispatcher bypass the published input contract that the transport layer enforces.
+		adGroupID := a.AdGroupID
+		criterionID := a.CriterionID
 		// Digits-only, for the same reason customerIDRE guards the metrics query: both ids
 		// are concatenated into a resource name that is sent upstream.
 		if !customerIDRE.MatchString(adGroupID) {
