@@ -97,6 +97,25 @@ var BadRequestError = Type("bad-request-error", func() {
 	errorAttrs("400", "The request was invalid.")
 })
 
+// PayloadTooLargeError is the 413 body for a request whose payload exceeded
+// constants.MaxRequestBodyBytes and was refused by middleware.MaxBodyBytes before (or
+// part-way through) being read.
+//
+// It is declared here even though no HANDLER ever returns it: the 413 is produced by
+// middleware that sits outside the mux, so it never passes through a Goa encoder. What
+// the declaration buys is the CLIENT half of the contract. Without it the generated
+// client has no decode case for 413 and reports an ordinary oversized upload as
+// ErrInvalidResponse — an unknown-status failure rather than the actionable "your
+// payload is too large" — and the OpenAPI documents omit the behaviour entirely, so a
+// consumer generating from the spec cannot know the endpoint can answer it.
+//
+// A SEPARATE type from BadRequestError for the reason given on UnauthorizedError: Goa
+// keys a method's error encoder on the error NAME, so one type mapped to two statuses
+// cannot be told apart on the wire.
+var PayloadTooLargeError = Type("payload-too-large-error", func() {
+	errorAttrs("413", "The request payload was too large.")
+})
+
 // UnauthorizedError is the 401 body for a token JWTAuth refused: absent, expired,
 // wrongly signed, or accepted by the verifier without naming a principal.
 //
@@ -246,6 +265,9 @@ func commonConnectionRequired() {
 func authErrors() {
 	Error("BadRequest", BadRequestError, "Bad request")
 	Error("Unauthorized", UnauthorizedError, "Unauthorized")
+	// Declared on every method, not only the body-bearing ones: MaxBodyBytes is global
+	// middleware, so any route can answer 413 if a caller sends an oversized body to it.
+	Error("PayloadTooLarge", PayloadTooLargeError, "Payload too large")
 }
 
 // connectionAuthErrorResponses maps the pair authErrors declares. The Header call maps
@@ -256,6 +278,7 @@ func connectionAuthErrorResponses() {
 	Response("Unauthorized", StatusUnauthorized, func() {
 		Header("www_authenticate:WWW-Authenticate")
 	})
+	Response("PayloadTooLarge", StatusRequestEntityTooLarge)
 }
 
 // ─── Per-provider method helper ───

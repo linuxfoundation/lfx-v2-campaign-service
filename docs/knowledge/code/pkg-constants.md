@@ -27,4 +27,17 @@ check inside the service. `charts/.../parity_test.go` fails if a constant declar
 never injected by the chart, which is what makes "declared but never supplied" a test
 failure rather than a silently disabled feature.
 
+`MaxRequestBodyBytes` (in `http.go`) is not an environment variable but a security
+ceiling: it bounds how many bytes the server reads from ANY request body before answering
+`413`, and `middleware.MaxBodyBytes` applies it on every route (see
+[internal/middleware](internal-middleware.md)). It exists because a Goa `MaxLength` does
+not bound the wire — the generated validator tests the already-base64-DECODED slice, which
+it sees only after the JSON decoder has read the whole body. The value is derived from the
+creative-asset upload's 30-MiB `MaxLength`: base64 expands by 4/3, so a maximum-size image
+is 40 MiB of base64 exactly, plus the JSON envelope, which is why the cap is 42 MiB and not
+40. **Raising `MaxLength` in `design/` requires raising this constant in the same change**,
+or maximum-size uploads begin failing with `413`. Note the chart parity test does not cover
+it — that test extracts only `Env…` constants from `constants.go` — so this documentation is
+the only place the lockstep obligation is recorded outside the constant's own comment.
+
 See [pkg/constants](../../../pkg/constants).

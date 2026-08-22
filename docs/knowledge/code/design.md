@@ -98,4 +98,34 @@ than `""`, which is the distinction a form being pre-filled actually needs.
 parameter it lands verbatim in access logs, proxy logs and browser history at every hop;
 as a body parameter it does not. That outweighs the idempotency `GET` would advertise.
 
+`upload-creative-asset` (`POST .../briefs/{brief_id}/creative-assets`, LFXV2-3295) is the
+briefs service's image-upload method, backing the Meta single-image creative. It is
+SYNCHRONOUS — unlike `create-campaigns`, which returns a job — because it only validates and
+stores bytes and touches no ad platform. The `bytes` attribute is Goa's `Bytes` type (`[]byte`
+in Go, a base64 string in the JSON body): the transport choice is Goa-native with no multipart
+machinery, and `MinLength(1)`/`MaxLength(31457280)` put the accepted size in the OpenAPI
+document and the generated validator applies them before the handler runs — `MinLength(1)`
+rejects an empty upload and the 30-MiB `MaxLength` is a hard ceiling at Meta's documented
+single-image maximum. These bound the DECODED image and NOT the wire: the validator sees that
+slice only after the JSON decoder has read the entire body and base64-decoded it, so `MaxLength`
+alone leaves the server buffering whatever a caller chooses to send. The inbound bound is
+`constants.MaxRequestBodyBytes` (42 MiB), applied by `middleware.MaxBodyBytes` across every route
+and sized from this ceiling: base64 expands by 4/3, so a maximum-size 30-MiB image is 40 MiB of
+base64 exactly, plus the JSON envelope — which is why the cap is not 40 MiB, and why raising
+`MaxLength` requires raising it in step. Every brief and connection method also declares a
+`PayloadTooLarge` error mapped to `413`. No handler returns it — `middleware.MaxBodyBytes` sits
+outside the mux and never reaches a Goa encoder — but declaring it is what gives the generated
+CLIENT a decode case (without it an ordinary oversized upload surfaces as `ErrInvalidResponse`,
+an unknown-status failure) and what puts the status in the OpenAPI documents. It is declared on
+every method, not just the body-bearing ones, because the cap is global middleware.
+
+`content_type` is an `Enum("image/png", "image/jpeg")`, but
+the enum only constrains the DECLARED value — the handler re-sniffs the bytes and stores the
+verified type (see [internal/service](internal-service.md)). It responds `201` with NO ETag:
+creative assets are insert-only and carry no version, so there is no optimistic-concurrency
+handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
+uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,
+because the asset is bound to a campaign later by its own id and the id is never stamped into a
+campaign name.
+
 See [design](../../../design).

@@ -151,6 +151,19 @@ func EncodeCreateGoogleAdsError(encoder func(context.Context, http.ResponseWrite
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateGoogleAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -274,6 +287,19 @@ func EncodeGetGoogleAdsError(encoder func(context.Context, http.ResponseWriter) 
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -424,6 +450,19 @@ func EncodeUpdateGoogleAdsError(encoder func(context.Context, http.ResponseWrite
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateGoogleAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -570,6 +609,19 @@ func EncodeDeleteGoogleAdsError(encoder func(context.Context, http.ResponseWrite
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteGoogleAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -692,6 +744,19 @@ func EncodeTestGoogleAdsError(encoder func(context.Context, http.ResponseWriter)
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestGoogleAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -833,6 +898,19 @@ func EncodeSetCredentialGoogleAdsError(encoder func(context.Context, http.Respon
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialGoogleAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -985,6 +1063,19 @@ func EncodeCreateLinkedinAdsError(encoder func(context.Context, http.ResponseWri
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateLinkedinAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -1108,6 +1199,19 @@ func EncodeGetLinkedinAdsError(encoder func(context.Context, http.ResponseWriter
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetLinkedinAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -1258,6 +1362,19 @@ func EncodeUpdateLinkedinAdsError(encoder func(context.Context, http.ResponseWri
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateLinkedinAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -1404,6 +1521,19 @@ func EncodeDeleteLinkedinAdsError(encoder func(context.Context, http.ResponseWri
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteLinkedinAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -1526,6 +1656,19 @@ func EncodeTestLinkedinAdsError(encoder func(context.Context, http.ResponseWrite
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestLinkedinAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -1668,6 +1811,19 @@ func EncodeSetCredentialLinkedinAdsError(encoder func(context.Context, http.Resp
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialLinkedinAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -1820,6 +1976,19 @@ func EncodeCreateMetaAdsError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateMetaAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -1943,6 +2112,19 @@ func EncodeGetMetaAdsError(encoder func(context.Context, http.ResponseWriter) go
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetMetaAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -2093,6 +2275,19 @@ func EncodeUpdateMetaAdsError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateMetaAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -2239,6 +2434,19 @@ func EncodeDeleteMetaAdsError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteMetaAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -2361,6 +2569,19 @@ func EncodeTestMetaAdsError(encoder func(context.Context, http.ResponseWriter) g
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestMetaAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -2501,6 +2722,19 @@ func EncodeSetCredentialMetaAdsError(encoder func(context.Context, http.Response
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialMetaAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -2653,6 +2887,19 @@ func EncodeCreateRedditAdsError(encoder func(context.Context, http.ResponseWrite
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateRedditAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -2776,6 +3023,19 @@ func EncodeGetRedditAdsError(encoder func(context.Context, http.ResponseWriter) 
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -2926,6 +3186,19 @@ func EncodeUpdateRedditAdsError(encoder func(context.Context, http.ResponseWrite
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateRedditAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -3072,6 +3345,19 @@ func EncodeDeleteRedditAdsError(encoder func(context.Context, http.ResponseWrite
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteRedditAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -3194,6 +3480,19 @@ func EncodeTestRedditAdsError(encoder func(context.Context, http.ResponseWriter)
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestRedditAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -3335,6 +3634,19 @@ func EncodeSetCredentialRedditAdsError(encoder func(context.Context, http.Respon
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialRedditAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -3487,6 +3799,19 @@ func EncodeCreateTwitterAdsError(encoder func(context.Context, http.ResponseWrit
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateTwitterAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -3610,6 +3935,19 @@ func EncodeGetTwitterAdsError(encoder func(context.Context, http.ResponseWriter)
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetTwitterAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -3760,6 +4098,19 @@ func EncodeUpdateTwitterAdsError(encoder func(context.Context, http.ResponseWrit
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateTwitterAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -3906,6 +4257,19 @@ func EncodeDeleteTwitterAdsError(encoder func(context.Context, http.ResponseWrit
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteTwitterAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -4028,6 +4392,19 @@ func EncodeTestTwitterAdsError(encoder func(context.Context, http.ResponseWriter
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestTwitterAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -4169,6 +4546,19 @@ func EncodeSetCredentialTwitterAdsError(encoder func(context.Context, http.Respo
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialTwitterAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -4321,6 +4711,19 @@ func EncodeCreateMicrosoftAdsError(encoder func(context.Context, http.ResponseWr
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateMicrosoftAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -4444,6 +4847,19 @@ func EncodeGetMicrosoftAdsError(encoder func(context.Context, http.ResponseWrite
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetMicrosoftAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -4594,6 +5010,19 @@ func EncodeUpdateMicrosoftAdsError(encoder func(context.Context, http.ResponseWr
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateMicrosoftAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -4740,6 +5169,19 @@ func EncodeDeleteMicrosoftAdsError(encoder func(context.Context, http.ResponseWr
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteMicrosoftAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -4862,6 +5304,19 @@ func EncodeTestMicrosoftAdsError(encoder func(context.Context, http.ResponseWrit
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestMicrosoftAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -5005,6 +5460,19 @@ func EncodeSetCredentialMicrosoftAdsError(encoder func(context.Context, http.Res
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialMicrosoftAdsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -5157,6 +5625,19 @@ func EncodeCreateHubspotError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusInternalServerError)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateHubspotPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -5280,6 +5761,19 @@ func EncodeGetHubspotError(encoder func(context.Context, http.ResponseWriter) go
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetHubspotPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -5430,6 +5924,19 @@ func EncodeUpdateHubspotError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateHubspotPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "PreconditionFailed":
 			var res *lfxv2campaignserviceconnections.PreconditionFailedError
 			errors.As(v, &res)
@@ -5576,6 +6083,19 @@ func EncodeDeleteHubspotError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteHubspotPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -5698,6 +6218,19 @@ func EncodeTestHubspotError(encoder func(context.Context, http.ResponseWriter) g
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestHubspotPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -5839,6 +6372,19 @@ func EncodeSetCredentialHubspotError(encoder func(context.Context, http.Response
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetCredentialHubspotPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -5963,6 +6509,19 @@ func EncodeListGoogleAdsAccountsError(encoder func(context.Context, http.Respons
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsAccountsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -6085,6 +6644,19 @@ func EncodeListMetaAdsAccountsError(encoder func(context.Context, http.ResponseW
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdsAccountsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -6210,6 +6782,19 @@ func EncodeListLinkedinAdsAccountsError(encoder func(context.Context, http.Respo
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAccountsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
 			errors.As(v, &res)
@@ -6334,6 +6919,19 @@ func EncodeListMicrosoftAdsAccountsError(encoder func(context.Context, http.Resp
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsAccountsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError
@@ -6462,6 +7060,19 @@ func EncodeListHubspotEmailsError(encoder func(context.Context, http.ResponseWri
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListHubspotEmailsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return enc.Encode(body)
 		case "Unauthorized":
 			var res *lfxv2campaignserviceconnections.UnauthorizedError

@@ -123,6 +123,7 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 // CreateGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -141,6 +142,7 @@ func (c *Client) CreateGoogleAds(ctx context.Context, p *CreateGoogleAdsPayload)
 // GetGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -159,6 +161,7 @@ func (c *Client) GetGoogleAds(ctx context.Context, p *GetGoogleAdsPayload) (res 
 // UpdateGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -179,6 +182,7 @@ func (c *Client) UpdateGoogleAds(ctx context.Context, p *UpdateGoogleAdsPayload)
 // DeleteGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -193,6 +197,7 @@ func (c *Client) DeleteGoogleAds(ctx context.Context, p *DeleteGoogleAdsPayload)
 // TestGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -211,6 +216,7 @@ func (c *Client) TestGoogleAds(ctx context.Context, p *TestGoogleAdsPayload) (re
 // SetCredentialGoogleAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -225,6 +231,7 @@ func (c *Client) SetCredentialGoogleAds(ctx context.Context, p *SetCredentialGoo
 // CreateLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -243,6 +250,7 @@ func (c *Client) CreateLinkedinAds(ctx context.Context, p *CreateLinkedinAdsPayl
 // GetLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -261,6 +269,7 @@ func (c *Client) GetLinkedinAds(ctx context.Context, p *GetLinkedinAdsPayload) (
 // UpdateLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -281,6 +290,7 @@ func (c *Client) UpdateLinkedinAds(ctx context.Context, p *UpdateLinkedinAdsPayl
 // DeleteLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -295,6 +305,7 @@ func (c *Client) DeleteLinkedinAds(ctx context.Context, p *DeleteLinkedinAdsPayl
 // TestLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -313,6 +324,7 @@ func (c *Client) TestLinkedinAds(ctx context.Context, p *TestLinkedinAdsPayload)
 // SetCredentialLinkedinAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -327,6 +339,7 @@ func (c *Client) SetCredentialLinkedinAds(ctx context.Context, p *SetCredentialL
 // CreateMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -345,6 +358,7 @@ func (c *Client) CreateMetaAds(ctx context.Context, p *CreateMetaAdsPayload) (re
 // GetMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -363,6 +377,7 @@ func (c *Client) GetMetaAds(ctx context.Context, p *GetMetaAdsPayload) (res *Met
 // UpdateMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -383,6 +398,7 @@ func (c *Client) UpdateMetaAds(ctx context.Context, p *UpdateMetaAdsPayload) (re
 // DeleteMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -397,6 +413,7 @@ func (c *Client) DeleteMetaAds(ctx context.Context, p *DeleteMetaAdsPayload) (er
 // TestMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -415,6 +432,7 @@ func (c *Client) TestMetaAds(ctx context.Context, p *TestMetaAdsPayload) (res *C
 // SetCredentialMetaAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -429,6 +447,7 @@ func (c *Client) SetCredentialMetaAds(ctx context.Context, p *SetCredentialMetaA
 // CreateRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -447,6 +466,7 @@ func (c *Client) CreateRedditAds(ctx context.Context, p *CreateRedditAdsPayload)
 // GetRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -465,6 +485,7 @@ func (c *Client) GetRedditAds(ctx context.Context, p *GetRedditAdsPayload) (res 
 // UpdateRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -485,6 +506,7 @@ func (c *Client) UpdateRedditAds(ctx context.Context, p *UpdateRedditAdsPayload)
 // DeleteRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -499,6 +521,7 @@ func (c *Client) DeleteRedditAds(ctx context.Context, p *DeleteRedditAdsPayload)
 // TestRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -517,6 +540,7 @@ func (c *Client) TestRedditAds(ctx context.Context, p *TestRedditAdsPayload) (re
 // SetCredentialRedditAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -531,6 +555,7 @@ func (c *Client) SetCredentialRedditAds(ctx context.Context, p *SetCredentialRed
 // CreateTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -549,6 +574,7 @@ func (c *Client) CreateTwitterAds(ctx context.Context, p *CreateTwitterAdsPayloa
 // GetTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -567,6 +593,7 @@ func (c *Client) GetTwitterAds(ctx context.Context, p *GetTwitterAdsPayload) (re
 // UpdateTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -587,6 +614,7 @@ func (c *Client) UpdateTwitterAds(ctx context.Context, p *UpdateTwitterAdsPayloa
 // DeleteTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -601,6 +629,7 @@ func (c *Client) DeleteTwitterAds(ctx context.Context, p *DeleteTwitterAdsPayloa
 // TestTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -619,6 +648,7 @@ func (c *Client) TestTwitterAds(ctx context.Context, p *TestTwitterAdsPayload) (
 // SetCredentialTwitterAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -633,6 +663,7 @@ func (c *Client) SetCredentialTwitterAds(ctx context.Context, p *SetCredentialTw
 // CreateMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -651,6 +682,7 @@ func (c *Client) CreateMicrosoftAds(ctx context.Context, p *CreateMicrosoftAdsPa
 // GetMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -669,6 +701,7 @@ func (c *Client) GetMicrosoftAds(ctx context.Context, p *GetMicrosoftAdsPayload)
 // UpdateMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -689,6 +722,7 @@ func (c *Client) UpdateMicrosoftAds(ctx context.Context, p *UpdateMicrosoftAdsPa
 // DeleteMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -703,6 +737,7 @@ func (c *Client) DeleteMicrosoftAds(ctx context.Context, p *DeleteMicrosoftAdsPa
 // TestMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -721,6 +756,7 @@ func (c *Client) TestMicrosoftAds(ctx context.Context, p *TestMicrosoftAdsPayloa
 // SetCredentialMicrosoftAds may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -735,6 +771,7 @@ func (c *Client) SetCredentialMicrosoftAds(ctx context.Context, p *SetCredential
 // CreateHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -753,6 +790,7 @@ func (c *Client) CreateHubspot(ctx context.Context, p *CreateHubspotPayload) (re
 // GetHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -771,6 +809,7 @@ func (c *Client) GetHubspot(ctx context.Context, p *GetHubspotPayload) (res *Hub
 // UpdateHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
@@ -791,6 +830,7 @@ func (c *Client) UpdateHubspot(ctx context.Context, p *UpdateHubspotPayload) (re
 // DeleteHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -805,6 +845,7 @@ func (c *Client) DeleteHubspot(ctx context.Context, p *DeleteHubspotPayload) (er
 // TestHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -823,6 +864,7 @@ func (c *Client) TestHubspot(ctx context.Context, p *TestHubspotPayload) (res *C
 // SetCredentialHubspot may return the following errors:
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -838,6 +880,7 @@ func (c *Client) SetCredentialHubspot(ctx context.Context, p *SetCredentialHubsp
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -856,6 +899,7 @@ func (c *Client) ListGoogleAdsAccounts(ctx context.Context, p *ListGoogleAdsAcco
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -874,6 +918,7 @@ func (c *Client) ListMetaAdsAccounts(ctx context.Context, p *ListMetaAdsAccounts
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -892,6 +937,7 @@ func (c *Client) ListLinkedinAdsAccounts(ctx context.Context, p *ListLinkedinAds
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
@@ -910,6 +956,7 @@ func (c *Client) ListMicrosoftAdsAccounts(ctx context.Context, p *ListMicrosoftA
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error

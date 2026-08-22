@@ -805,6 +805,16 @@ type CreateGoogleAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateGoogleAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type CreateGoogleAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateGoogleAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -855,6 +865,16 @@ type GetGoogleAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetGoogleAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetGoogleAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetGoogleAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -899,6 +919,16 @@ type UpdateGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateGoogleAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UpdateGoogleAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -975,6 +1005,16 @@ type DeleteGoogleAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteGoogleAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteGoogleAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteGoogleAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1025,6 +1065,16 @@ type TestGoogleAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestGoogleAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type TestGoogleAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // TestGoogleAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1069,6 +1119,16 @@ type SetCredentialGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialGoogleAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialGoogleAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1128,6 +1188,16 @@ type CreateLinkedinAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateLinkedinAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type CreateLinkedinAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateLinkedinAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1178,6 +1248,16 @@ type GetLinkedinAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetLinkedinAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetLinkedinAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetLinkedinAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1222,6 +1302,16 @@ type UpdateLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UpdateLinkedinAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1298,6 +1388,16 @@ type DeleteLinkedinAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteLinkedinAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteLinkedinAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteLinkedinAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1348,6 +1448,16 @@ type TestLinkedinAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestLinkedinAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type TestLinkedinAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // TestLinkedinAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1392,6 +1502,16 @@ type SetCredentialLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialLinkedinAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialLinkedinAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1451,6 +1571,16 @@ type CreateMetaAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type CreateMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateMetaAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1501,6 +1631,16 @@ type GetMetaAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMetaAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1545,6 +1685,16 @@ type UpdateMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UpdateMetaAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1621,6 +1771,16 @@ type DeleteMetaAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteMetaAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1671,6 +1831,16 @@ type TestMetaAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type TestMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // TestMetaAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1715,6 +1885,16 @@ type SetCredentialMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialMetaAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1774,6 +1954,16 @@ type CreateRedditAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateRedditAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type CreateRedditAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateRedditAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1824,6 +2014,16 @@ type GetRedditAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetRedditAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetRedditAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetRedditAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1868,6 +2068,16 @@ type UpdateRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UpdateRedditAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1944,6 +2154,16 @@ type DeleteRedditAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteRedditAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteRedditAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteRedditAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1994,6 +2214,16 @@ type TestRedditAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestRedditAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type TestRedditAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // TestRedditAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2038,6 +2268,16 @@ type SetCredentialRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialRedditAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialRedditAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2097,6 +2337,16 @@ type CreateTwitterAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateTwitterAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type CreateTwitterAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateTwitterAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2147,6 +2397,16 @@ type GetTwitterAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetTwitterAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetTwitterAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetTwitterAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2191,6 +2451,16 @@ type UpdateTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UpdateTwitterAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2267,6 +2537,16 @@ type DeleteTwitterAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteTwitterAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteTwitterAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteTwitterAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2317,6 +2597,16 @@ type TestTwitterAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestTwitterAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type TestTwitterAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // TestTwitterAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2361,6 +2651,16 @@ type SetCredentialTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialTwitterAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialTwitterAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2420,6 +2720,16 @@ type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateMicrosoftAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type CreateMicrosoftAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateMicrosoftAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -2470,6 +2780,16 @@ type GetMicrosoftAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetMicrosoftAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMicrosoftAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2514,6 +2834,16 @@ type UpdateMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type UpdateMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type UpdateMicrosoftAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2590,6 +2920,16 @@ type DeleteMicrosoftAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteMicrosoftAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type DeleteMicrosoftAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteMicrosoftAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -2640,6 +2980,16 @@ type TestMicrosoftAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// TestMicrosoftAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type TestMicrosoftAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // TestMicrosoftAdsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -2684,6 +3034,16 @@ type SetCredentialMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMicrosoftAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialMicrosoftAdsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2743,6 +3103,16 @@ type CreateHubspotInternalServerErrorResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateHubspotPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateHubspotPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateHubspotUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -2793,6 +3163,16 @@ type GetHubspotNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetHubspotPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetHubspotPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetHubspotUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -2837,6 +3217,16 @@ type UpdateHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateHubspotPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2913,6 +3303,16 @@ type DeleteHubspotNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteHubspotPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type DeleteHubspotPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteHubspotUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -2957,6 +3357,16 @@ type TestHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type TestHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestHubspotPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type TestHubspotPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -3013,6 +3423,16 @@ type SetCredentialHubspotNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// SetCredentialHubspotPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SetCredentialHubspotPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // SetCredentialHubspotUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -3057,6 +3477,16 @@ type ListGoogleAdsAccountsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
 // endpoint HTTP response body for the "NotFound" error.
 type ListGoogleAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListGoogleAdsAccountsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -3113,6 +3543,16 @@ type ListMetaAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMetaAdsAccountsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMetaAdsAccountsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -3157,6 +3597,16 @@ type ListLinkedinAdsAccountsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
 // endpoint HTTP response body for the "NotFound" error.
 type ListLinkedinAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListLinkedinAdsAccountsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -3213,6 +3663,16 @@ type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMicrosoftAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMicrosoftAdsAccountsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMicrosoftAdsAccountsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -3257,6 +3717,16 @@ type ListHubspotEmailsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "NotFound" error.
 type ListHubspotEmailsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListHubspotEmailsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ListHubspotEmailsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -4054,6 +4524,17 @@ func NewCreateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewCreateGoogleAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateGoogleAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateGoogleAdsPayloadTooLargeResponseBody {
+	body := &CreateGoogleAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "create-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4109,6 +4590,17 @@ func NewGetGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.No
 	return body
 }
 
+// NewGetGoogleAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetGoogleAdsPayloadTooLargeResponseBody {
+	body := &GetGoogleAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetGoogleAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "get-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4158,6 +4650,17 @@ func NewUpdateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateGoogleAdsNotFoundResponseBody {
 	body := &UpdateGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateGoogleAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateGoogleAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateGoogleAdsPayloadTooLargeResponseBody {
+	body := &UpdateGoogleAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4241,6 +4744,17 @@ func NewDeleteGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 	return body
 }
 
+// NewDeleteGoogleAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "delete-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteGoogleAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteGoogleAdsPayloadTooLargeResponseBody {
+	body := &DeleteGoogleAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteGoogleAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "delete-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4296,6 +4810,17 @@ func NewTestGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewTestGoogleAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "test-google-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestGoogleAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestGoogleAdsPayloadTooLargeResponseBody {
+	body := &TestGoogleAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewTestGoogleAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "test-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4345,6 +4870,17 @@ func NewSetCredentialGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaign
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialGoogleAdsNotFoundResponseBody {
 	body := &SetCredentialGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialGoogleAdsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "set-credential-google-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialGoogleAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialGoogleAdsPayloadTooLargeResponseBody {
+	body := &SetCredentialGoogleAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4407,6 +4943,17 @@ func NewCreateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 	return body
 }
 
+// NewCreateLinkedinAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateLinkedinAdsPayloadTooLargeResponseBody {
+	body := &CreateLinkedinAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "create-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4462,6 +5009,17 @@ func NewGetLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.
 	return body
 }
 
+// NewGetLinkedinAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetLinkedinAdsPayloadTooLargeResponseBody {
+	body := &GetLinkedinAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetLinkedinAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "get-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4511,6 +5069,17 @@ func NewUpdateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateLinkedinAdsNotFoundResponseBody {
 	body := &UpdateLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateLinkedinAdsPayloadTooLargeResponseBody {
+	body := &UpdateLinkedinAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4594,6 +5163,17 @@ func NewDeleteLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnectio
 	return body
 }
 
+// NewDeleteLinkedinAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "delete-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteLinkedinAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteLinkedinAdsPayloadTooLargeResponseBody {
+	body := &DeleteLinkedinAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "delete-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4649,6 +5229,17 @@ func NewTestLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 	return body
 }
 
+// NewTestLinkedinAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestLinkedinAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestLinkedinAdsPayloadTooLargeResponseBody {
+	body := &TestLinkedinAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewTestLinkedinAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "test-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4698,6 +5289,17 @@ func NewSetCredentialLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campai
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialLinkedinAdsNotFoundResponseBody {
 	body := &SetCredentialLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialLinkedinAdsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "set-credential-linkedin-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialLinkedinAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialLinkedinAdsPayloadTooLargeResponseBody {
+	body := &SetCredentialLinkedinAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4760,6 +5362,17 @@ func NewCreateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewCreateMetaAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateMetaAdsPayloadTooLargeResponseBody {
+	body := &CreateMetaAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateMetaAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "create-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4815,6 +5428,17 @@ func NewGetMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotF
 	return body
 }
 
+// NewGetMetaAdsPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "get-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMetaAdsPayloadTooLargeResponseBody {
+	body := &GetMetaAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMetaAdsUnauthorizedResponseBody builds the HTTP response body from the
 // result of the "get-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4864,6 +5488,17 @@ func NewUpdateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateMetaAdsNotFoundResponseBody {
 	body := &UpdateMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateMetaAdsPayloadTooLargeResponseBody {
+	body := &UpdateMetaAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -4947,6 +5582,17 @@ func NewDeleteMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewDeleteMetaAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "delete-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteMetaAdsPayloadTooLargeResponseBody {
+	body := &DeleteMetaAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteMetaAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "delete-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5002,6 +5648,17 @@ func NewTestMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.Not
 	return body
 }
 
+// NewTestMetaAdsPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "test-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestMetaAdsPayloadTooLargeResponseBody {
+	body := &TestMetaAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewTestMetaAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "test-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5051,6 +5708,17 @@ func NewSetCredentialMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMetaAdsNotFoundResponseBody {
 	body := &SetCredentialMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMetaAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "set-credential-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialMetaAdsPayloadTooLargeResponseBody {
+	body := &SetCredentialMetaAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5113,6 +5781,17 @@ func NewCreateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewCreateRedditAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateRedditAdsPayloadTooLargeResponseBody {
+	body := &CreateRedditAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateRedditAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "create-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5168,6 +5847,17 @@ func NewGetRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.No
 	return body
 }
 
+// NewGetRedditAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetRedditAdsPayloadTooLargeResponseBody {
+	body := &GetRedditAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetRedditAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "get-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5217,6 +5907,17 @@ func NewUpdateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateRedditAdsNotFoundResponseBody {
 	body := &UpdateRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateRedditAdsPayloadTooLargeResponseBody {
+	body := &UpdateRedditAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5300,6 +6001,17 @@ func NewDeleteRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 	return body
 }
 
+// NewDeleteRedditAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "delete-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteRedditAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteRedditAdsPayloadTooLargeResponseBody {
+	body := &DeleteRedditAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteRedditAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "delete-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5355,6 +6067,17 @@ func NewTestRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewTestRedditAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestRedditAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestRedditAdsPayloadTooLargeResponseBody {
+	body := &TestRedditAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewTestRedditAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "test-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5404,6 +6127,17 @@ func NewSetCredentialRedditAdsInternalServerErrorResponseBody(res *lfxv2campaign
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialRedditAdsNotFoundResponseBody {
 	body := &SetCredentialRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialRedditAdsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "set-credential-reddit-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialRedditAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialRedditAdsPayloadTooLargeResponseBody {
+	body := &SetCredentialRedditAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5466,6 +6200,17 @@ func NewCreateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewCreateTwitterAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateTwitterAdsPayloadTooLargeResponseBody {
+	body := &CreateTwitterAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateTwitterAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "create-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5521,6 +6266,17 @@ func NewGetTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewGetTwitterAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetTwitterAdsPayloadTooLargeResponseBody {
+	body := &GetTwitterAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetTwitterAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "get-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5570,6 +6326,17 @@ func NewUpdateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateTwitterAdsNotFoundResponseBody {
 	body := &UpdateTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateTwitterAdsPayloadTooLargeResponseBody {
+	body := &UpdateTwitterAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5653,6 +6420,17 @@ func NewDeleteTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnection
 	return body
 }
 
+// NewDeleteTwitterAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "delete-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteTwitterAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteTwitterAdsPayloadTooLargeResponseBody {
+	body := &DeleteTwitterAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteTwitterAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "delete-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5708,6 +6486,17 @@ func NewTestTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.
 	return body
 }
 
+// NewTestTwitterAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestTwitterAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestTwitterAdsPayloadTooLargeResponseBody {
+	body := &TestTwitterAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewTestTwitterAdsUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "test-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5757,6 +6546,17 @@ func NewSetCredentialTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaig
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialTwitterAdsNotFoundResponseBody {
 	body := &SetCredentialTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialTwitterAdsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "set-credential-twitter-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialTwitterAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialTwitterAdsPayloadTooLargeResponseBody {
+	body := &SetCredentialTwitterAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -5819,6 +6619,17 @@ func NewCreateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 	return body
 }
 
+// NewCreateMicrosoftAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateMicrosoftAdsPayloadTooLargeResponseBody {
+	body := &CreateMicrosoftAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "create-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5874,6 +6685,17 @@ func NewGetMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 	return body
 }
 
+// NewGetMicrosoftAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMicrosoftAdsPayloadTooLargeResponseBody {
+	body := &GetMicrosoftAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "get-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -5923,6 +6745,17 @@ func NewUpdateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateMicrosoftAdsNotFoundResponseBody {
 	body := &UpdateMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateMicrosoftAdsPayloadTooLargeResponseBody {
+	body := &UpdateMicrosoftAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -6006,6 +6839,17 @@ func NewDeleteMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnecti
 	return body
 }
 
+// NewDeleteMicrosoftAdsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "delete-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMicrosoftAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteMicrosoftAdsPayloadTooLargeResponseBody {
+	body := &DeleteMicrosoftAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "delete-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6061,6 +6905,17 @@ func NewTestMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnection
 	return body
 }
 
+// NewTestMicrosoftAdsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMicrosoftAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestMicrosoftAdsPayloadTooLargeResponseBody {
+	body := &TestMicrosoftAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewTestMicrosoftAdsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "test-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6110,6 +6965,17 @@ func NewSetCredentialMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campa
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMicrosoftAdsNotFoundResponseBody {
 	body := &SetCredentialMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMicrosoftAdsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "set-credential-microsoft-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMicrosoftAdsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialMicrosoftAdsPayloadTooLargeResponseBody {
+	body := &SetCredentialMicrosoftAdsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -6172,6 +7038,17 @@ func NewCreateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewCreateHubspotPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateHubspotPayloadTooLargeResponseBody {
+	body := &CreateHubspotPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateHubspotUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "create-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6227,6 +7104,17 @@ func NewGetHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotF
 	return body
 }
 
+// NewGetHubspotPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "get-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetHubspotPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetHubspotPayloadTooLargeResponseBody {
+	body := &GetHubspotPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetHubspotUnauthorizedResponseBody builds the HTTP response body from the
 // result of the "get-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6276,6 +7164,17 @@ func NewUpdateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateHubspotNotFoundResponseBody {
 	body := &UpdateHubspotNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *UpdateHubspotPayloadTooLargeResponseBody {
+	body := &UpdateHubspotPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -6359,6 +7258,17 @@ func NewDeleteHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 	return body
 }
 
+// NewDeleteHubspotPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "delete-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteHubspotPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *DeleteHubspotPayloadTooLargeResponseBody {
+	body := &DeleteHubspotPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteHubspotUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "delete-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6408,6 +7318,17 @@ func NewTestHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewTestHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestHubspotNotFoundResponseBody {
 	body := &TestHubspotNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestHubspotPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "test-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestHubspotPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *TestHubspotPayloadTooLargeResponseBody {
+	body := &TestHubspotPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -6469,6 +7390,17 @@ func NewSetCredentialHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnec
 	return body
 }
 
+// NewSetCredentialHubspotPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "set-credential-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialHubspotPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SetCredentialHubspotPayloadTooLargeResponseBody {
+	body := &SetCredentialHubspotPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewSetCredentialHubspotUnauthorizedResponseBody builds the HTTP response
 // body from the result of the "set-credential-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6518,6 +7450,17 @@ func NewListGoogleAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaigns
 // "lfx-v2-campaign-service-connections" service.
 func NewListGoogleAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListGoogleAdsAccountsNotFoundResponseBody {
 	body := &ListGoogleAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsAccountsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-google-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListGoogleAdsAccountsPayloadTooLargeResponseBody {
+	body := &ListGoogleAdsAccountsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -6579,6 +7522,17 @@ func NewListMetaAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnect
 	return body
 }
 
+// NewListMetaAdsAccountsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-meta-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMetaAdsAccountsPayloadTooLargeResponseBody {
+	body := &ListMetaAdsAccountsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMetaAdsAccountsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "list-meta-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6628,6 +7582,17 @@ func NewListLinkedinAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaig
 // "lfx-v2-campaign-service-connections" service.
 func NewListLinkedinAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListLinkedinAdsAccountsNotFoundResponseBody {
 	body := &ListLinkedinAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAccountsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-accounts" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListLinkedinAdsAccountsPayloadTooLargeResponseBody {
+	body := &ListLinkedinAdsAccountsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -6689,6 +7654,17 @@ func NewListMicrosoftAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewListMicrosoftAdsAccountsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-accounts" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMicrosoftAdsAccountsPayloadTooLargeResponseBody {
+	body := &ListMicrosoftAdsAccountsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMicrosoftAdsAccountsUnauthorizedResponseBody builds the HTTP response
 // body from the result of the "list-microsoft-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6738,6 +7714,17 @@ func NewListHubspotEmailsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewListHubspotEmailsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListHubspotEmailsNotFoundResponseBody {
 	body := &ListHubspotEmailsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListHubspotEmailsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListHubspotEmailsPayloadTooLargeResponseBody {
+	body := &ListHubspotEmailsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

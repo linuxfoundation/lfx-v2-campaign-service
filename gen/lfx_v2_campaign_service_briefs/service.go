@@ -33,6 +33,13 @@ type Service interface {
 	// Fetch an event page and extract its details, for pre-filling a brief. Does
 	// not create anything.
 	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
+	// Upload an image asset for a brief so a Meta ad creative can reference it by
+	// id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored,
+	// then the asset id is returned. Re-uploading identical bytes to the same
+	// brief returns the existing asset (idempotent). This does not touch any ad
+	// platform; the account-scoped Meta image_hash is resolved later, at campaign
+	// dispatch.
+	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// Create campaigns across the selected platforms (async -> job).
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
@@ -123,7 +130,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [17]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [18]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -364,6 +371,25 @@ type CreateCampaignsPayload struct {
 	// Brief UUID
 	BriefID string
 	Input   *CampaignCreateInput
+}
+
+// CreativeAsset is the result type of the lfx-v2-campaign-service-briefs
+// service upload-creative-asset method.
+type CreativeAsset struct {
+	// Creative asset UUID
+	ID string
+	// Owning project
+	ProjectID string
+	// Parent brief
+	BriefID string
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string
+	// Size of the stored image in bytes
+	ByteSize int64
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string
 }
 
 // DeleteBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -639,6 +665,22 @@ type UpdateCampaignPayload struct {
 	Campaign *CampaignUpdateInput
 }
 
+// UploadCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service upload-creative-asset method.
+type UploadCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
+	// server-side and must match; the stored mime_type is the verified one.
+	ContentType string
+	// Raw image bytes, base64-encoded in the JSON request body.
+	Bytes []byte
+}
+
 type BadRequestError struct {
 	// HTTP status code
 	Code string
@@ -671,6 +713,13 @@ type InternalServerError struct {
 }
 
 type NotFoundError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+}
+
+type PayloadTooLargeError struct {
 	// HTTP status code
 	Code string
 	// Error message
@@ -783,6 +832,23 @@ func (e *NotFoundError) ErrorName() string {
 // GoaErrorName returns "not-found-error".
 func (e *NotFoundError) GoaErrorName() string {
 	return "NotFound"
+}
+
+// Error returns an error description.
+func (e *PayloadTooLargeError) Error() string {
+	return ""
+}
+
+// ErrorName returns "payload-too-large-error".
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *PayloadTooLargeError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns "payload-too-large-error".
+func (e *PayloadTooLargeError) GoaErrorName() string {
+	return "PayloadTooLarge"
 }
 
 // Error returns an error description.

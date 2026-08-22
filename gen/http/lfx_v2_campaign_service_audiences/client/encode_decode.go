@@ -81,6 +81,7 @@ func EncodeCreateAudienceRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceaudiences.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -190,6 +191,20 @@ func DecodeCreateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "create-audience", err)
 			}
 			return nil, NewCreateAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "create-audience", err)
+			}
+			err = ValidateCreateAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "create-audience", err)
+			}
+			return nil, NewCreateAudiencePayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateAudienceUnauthorizedResponseBody
@@ -281,6 +296,7 @@ func EncodeGetAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceaudiences.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -390,6 +406,20 @@ func DecodeGetAudienceResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "get-audience", err)
 			}
 			return nil, NewGetAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "get-audience", err)
+			}
+			err = ValidateGetAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "get-audience", err)
+			}
+			return nil, NewGetAudiencePayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetAudienceUnauthorizedResponseBody
@@ -479,6 +509,7 @@ func EncodeListAudiencesRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceaudiences.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListAudiencesResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -581,6 +612,20 @@ func DecodeListAudiencesResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "list-audiences", err)
 			}
 			return nil, NewListAudiencesNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListAudiencesPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "list-audiences", err)
+			}
+			err = ValidateListAudiencesPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "list-audiences", err)
+			}
+			return nil, NewListAudiencesPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListAudiencesUnauthorizedResponseBody
@@ -680,6 +725,7 @@ func EncodeUpdateAudienceRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceaudiences.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceaudiences.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceaudiences.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
@@ -791,6 +837,20 @@ func DecodeUpdateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "update-audience", err)
 			}
 			return nil, NewUpdateAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "update-audience", err)
+			}
+			err = ValidateUpdateAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "update-audience", err)
+			}
+			return nil, NewUpdateAudiencePayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateAudiencePreconditionFailedResponseBody
@@ -908,6 +968,7 @@ func EncodeBuildAudienceRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceaudiences.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceaudiences.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeBuildAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1017,6 +1078,20 @@ func DecodeBuildAudienceResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
 			}
 			return nil, NewBuildAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body BuildAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudiencePayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body BuildAudienceUnauthorizedResponseBody

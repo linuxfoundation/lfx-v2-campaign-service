@@ -162,20 +162,7 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	// closes; the tracker is waited on between the forced Close and cont.Close.
 	inflight := middleware.NewInflightTracker()
 
-	var handler http.Handler = mux
-	handler = middleware.RequestIDMiddleware()(handler)
-	if cfg.Debug {
-		handler = debug.HTTP()(handler)
-	}
-	handler = otelhttp.NewHandler(handler, "lfx-v2-campaign-service",
-		otelhttp.WithFilter(func(r *http.Request) bool { return shouldTrace(r.URL.Path) }),
-	)
-	// Wrap the inflight tracker OUTERMOST (applied last), so a request is counted
-	// from the instant it enters the handler chain — before the request-ID / debug /
-	// OTel wrappers. If it were inner, a handler that has started but not yet reached
-	// the inner wrapper would be invisible to Wait, and shutdown could observe zero,
-	// close the pool, and let that straggler touch a closing pool.
-	handler = inflight.Middleware()(handler)
+	handler := buildHandler(mux, cfg, inflight)
 
 	srv := &http.Server{
 		Addr:              cfg.ServerAddress(),
@@ -186,6 +173,39 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	}
 
 	return runServerWithContext(ctx, srv, cont, inflight)
+}
+
+// buildHandler wraps the mounted mux in the service's middleware chain. It is a seam
+// for the same reason buildMux is one: the chain contains a security control — the
+// inbound body cap — whose presence is invisible to any test that exercises the mux
+// directly, and standing up a full container just to prove a request is bounded is not
+// something a unit test can do. Extracting it lets a test drive the REAL chain.
+//
+// Order, innermost (applied first) to outermost (applied last):
+//
+//   - MaxBodyBytes wraps the mux directly. The Goa decoders live behind the mux and are
+//     exactly what would otherwise buffer and base64-decode an unbounded body, so the
+//     cap has to be inside every other wrapper but outside the mux (see
+//     constants.MaxRequestBodyBytes).
+//   - RequestID and, when enabled, debug/OTel sit OUTSIDE it, so a request refused with
+//     413 still carries a request id and is still traced — an operator investigating a
+//     rejection needs it correlated like any other response.
+//   - The inflight tracker is OUTERMOST, so a request is counted from the instant it
+//     enters the chain. If it were inner, a handler that has started but not yet reached
+//     the inner wrapper would be invisible to Wait, and shutdown could observe zero,
+//     close the pool, and let that straggler touch a closing pool.
+func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker) http.Handler {
+	handler := mux
+	handler = middleware.MaxBodyBytes(constants.MaxRequestBodyBytes)(handler)
+	handler = middleware.RequestIDMiddleware()(handler)
+	if cfg.Debug {
+		handler = debug.HTTP()(handler)
+	}
+	handler = otelhttp.NewHandler(handler, "lfx-v2-campaign-service",
+		otelhttp.WithFilter(func(r *http.Request) bool { return shouldTrace(r.URL.Path) }),
+	)
+	handler = inflight.Middleware()(handler)
+	return handler
 }
 
 // inflightWaiter is the subset of middleware.InflightTracker the shutdown path

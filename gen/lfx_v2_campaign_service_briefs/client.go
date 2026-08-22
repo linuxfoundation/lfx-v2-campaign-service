@@ -22,6 +22,7 @@ type Client struct {
 	ApproveBriefEndpoint         goa.Endpoint
 	DeleteBriefEndpoint          goa.Endpoint
 	FetchEventURLEndpoint        goa.Endpoint
+	UploadCreativeAssetEndpoint  goa.Endpoint
 	CreateCampaignsEndpoint      goa.Endpoint
 	AdoptCampaignEndpoint        goa.Endpoint
 	GetCampaignEndpoint          goa.Endpoint
@@ -36,7 +37,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -45,6 +46,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		ApproveBriefEndpoint:         approveBrief,
 		DeleteBriefEndpoint:          deleteBrief,
 		FetchEventURLEndpoint:        fetchEventURL,
+		UploadCreativeAssetEndpoint:  uploadCreativeAsset,
 		CreateCampaignsEndpoint:      createCampaigns,
 		AdoptCampaignEndpoint:        adoptCampaign,
 		GetCampaignEndpoint:          getCampaign,
@@ -67,6 +69,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) CreateBrief(ctx context.Context, p *CreateBriefPayload) (res *Brief, err error) {
 	var ires any
@@ -86,6 +89,7 @@ func (c *Client) CreateBrief(ctx context.Context, p *CreateBriefPayload) (res *B
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) FindBrief(ctx context.Context, p *FindBriefPayload) (res *Brief, err error) {
 	var ires any
@@ -105,6 +109,7 @@ func (c *Client) FindBrief(ctx context.Context, p *FindBriefPayload) (res *Brief
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GetBrief(ctx context.Context, p *GetBriefPayload) (res *Brief, err error) {
 	var ires any
@@ -124,6 +129,7 @@ func (c *Client) GetBrief(ctx context.Context, p *GetBriefPayload) (res *Brief, 
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
@@ -145,6 +151,7 @@ func (c *Client) UpdateBrief(ctx context.Context, p *UpdateBriefPayload) (res *B
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
@@ -166,6 +173,7 @@ func (c *Client) ApproveBrief(ctx context.Context, p *ApproveBriefPayload) (res 
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) DeleteBrief(ctx context.Context, p *DeleteBriefPayload) (err error) {
 	_, err = c.DeleteBriefEndpoint(ctx, p)
@@ -181,6 +189,7 @@ func (c *Client) DeleteBrief(ctx context.Context, p *DeleteBriefPayload) (err er
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) FetchEventURL(ctx context.Context, p *FetchEventURLPayload) (res *EventDetails, err error) {
 	var ires any
@@ -189,6 +198,26 @@ func (c *Client) FetchEventURL(ctx context.Context, p *FetchEventURLPayload) (re
 		return
 	}
 	return ires.(*EventDetails), nil
+}
+
+// UploadCreativeAsset calls the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// UploadCreativeAsset may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) UploadCreativeAsset(ctx context.Context, p *UploadCreativeAssetPayload) (res *CreativeAsset, err error) {
+	var ires any
+	ires, err = c.UploadCreativeAssetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CreativeAsset), nil
 }
 
 // CreateCampaigns calls the "create-campaigns" endpoint of the
@@ -200,6 +229,7 @@ func (c *Client) FetchEventURL(ctx context.Context, p *FetchEventURLPayload) (re
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload) (res *JobCreateResponse, err error) {
 	var ires any
@@ -219,6 +249,7 @@ func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload)
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) AdoptCampaign(ctx context.Context, p *AdoptCampaignPayload) (res *Campaign, err error) {
 	var ires any
@@ -238,6 +269,7 @@ func (c *Client) AdoptCampaign(ctx context.Context, p *AdoptCampaignPayload) (re
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GetCampaign(ctx context.Context, p *GetCampaignPayload) (res *Campaign, err error) {
 	var ires any
@@ -257,6 +289,7 @@ func (c *Client) GetCampaign(ctx context.Context, p *GetCampaignPayload) (res *C
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GetCampaignMetrics(ctx context.Context, p *GetCampaignMetricsPayload) (res *CampaignMetrics, err error) {
 	var ires any
@@ -276,6 +309,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, p *GetCampaignMetricsPa
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GetBriefMetrics(ctx context.Context, p *GetBriefMetricsPayload) (res *BriefMetrics, err error) {
 	var ires any
@@ -295,6 +329,7 @@ func (c *Client) GetBriefMetrics(ctx context.Context, p *GetBriefMetricsPayload)
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GenerateEmailCopy(ctx context.Context, p *GenerateEmailCopyPayload) (res *EmailCopy, err error) {
 	var ires any
@@ -314,6 +349,7 @@ func (c *Client) GenerateEmailCopy(ctx context.Context, p *GenerateEmailCopyPayl
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
@@ -335,6 +371,7 @@ func (c *Client) UpdateCampaign(ctx context.Context, p *UpdateCampaignPayload) (
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
@@ -356,6 +393,7 @@ func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStat
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
 //   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
@@ -373,6 +411,7 @@ func (c *Client) DeleteCampaign(ctx context.Context, p *DeleteCampaignPayload) (
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - error: internal error
 func (c *Client) GetJob(ctx context.Context, p *GetJobPayload) (res *JobPollResponse, err error) {
 	var ires any

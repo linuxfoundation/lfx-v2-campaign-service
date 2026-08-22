@@ -64,6 +64,11 @@ type backendSetter interface {
 // signature) so the retry path can wire both.
 type briefBackendSetter interface {
 	SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator)
+	// SetCreativeAssetRepo is on this interface, not folded into SetBackend, so the cold-start
+	// path binds it in the SAME step it binds the brief repos. Omitting it there would leave
+	// UploadCreativeAsset serving 503 forever on a cold-started pod while every other route
+	// worked — the same silent gap that pulled SetBriefRepo/SetBuilder onto audienceBackendSetter.
+	SetCreativeAssetRepo(domain.CreativeAssetRepository)
 }
 
 // audienceBackendSetter late-binds the audience repo after a cold-start retry.
@@ -706,6 +711,27 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 		"registered", len(dispatchers))
 }
 
+// bindBriefLiveBackends binds EVERY pool-backed collaborator the brief service needs, and is the
+// single place either startup path may do so.
+//
+// It exists because the two bindings are one obligation that was expressible as two independent
+// statements. Deleting the creative-asset line from either path compiled and left the whole suite
+// green, while in production every upload answered 503 forever on that pod — the brief routes
+// would be live and only the upload silently dead. The repo-injection contract cannot catch that:
+// briefBackendSetter forces the METHOD to exist, not the call to be made, and the handler's 503
+// is deliberately indistinguishable from the no-database mode's, so no black-box assertion can
+// tell a mis-wired live container from a correctly wired 503 one.
+//
+// Routing both paths through one function makes the coupling structural instead of remembered: a
+// future pool-backed dependency added here lands on both paths at once, and neither path can bind
+// the brief repos while forgetting the rest, because there is no longer a separate statement to
+// forget. This is the same reasoning that put SetOrchestrator behind the backendSetter interface
+// rather than a direct cast — one declared contract, both injection sites.
+func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) {
+	bb.SetBackend(briefs, campaigns, jobs, orch)
+	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+}
+
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
 	c.Connections = c.newConnectionService(repo, enc)
@@ -735,7 +761,9 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// declared contract and a signature change breaks both at compile time rather than
 	// leaving this one silently behind.
 	c.Connections.(backendSetter).SetOrchestrator(orch)
-	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	briefSvc := c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch)
+	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
@@ -813,7 +841,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
 			c.orch = orch
-			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
+			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch)
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)
