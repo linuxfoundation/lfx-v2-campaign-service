@@ -79,7 +79,15 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 	name := strings.ReplaceAll(dbtest.UniqueID(t, "down"), "-", "_")
 	// CREATE DATABASE cannot be parameterised, and the name is built from UniqueID
 	// rather than from any input, so interpolation here is not a user-data path.
-	if _, err := admin.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q", name)); err != nil {
+	//
+	// TEMPLATE template0 explicitly. Without it Postgres clones template1, which is an
+	// ORDINARY database a developer or another tool may have added objects to — and this
+	// test asserts a fully-empty public schema at version zero after the down migrations
+	// run. A stray table in template1 would fail that baseline even though every down
+	// migration is correct, and the failure would point at the migrations rather than at
+	// the template. template0 is guaranteed pristine, so the assertion measures only what
+	// the migrations did.
+	if _, err := admin.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q TEMPLATE template0", name)); err != nil {
 		t.Fatalf("create scratch database: %v", err)
 	}
 	t.Cleanup(func() {

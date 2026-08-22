@@ -40,17 +40,26 @@ func newAESGCM(t *testing.T) *crypto.AESGCM {
 	return enc
 }
 
-// gcmSizes returns the nonce and tag lengths that crypto.AESGCM's output carries, read
-// off a cipher.AEAD constructed exactly as crypto.NewAESGCM constructs its own (AES with
-// credentialKey, wrapped in NewGCM) rather than hard-coded as 12 and 16.
+// gcmSizes returns the nonce and tag lengths of a SEPARATE cipher.AEAD built the way
+// crypto.NewAESGCM builds its own today: AES with credentialKey, wrapped in cipher.NewGCM.
 //
-// Reading them beats pinning literals because the numbers are load-bearing in an assertion
-// about the PRODUCTION encryptor's output shape: if crypto.AESGCM ever moved to a
-// different nonce length, a pinned 12 would turn a correct blob into a test failure, and a
-// pinned expectation recomputed to match would be an assertion that agrees with itself.
-// It also beats exporting NonceSize/TagSize from the crypto package: that would widen the
-// production API for a test's benefit, which is the move this ticket's knowledge log
-// already records as the wrong instinct.
+// Be precise about what this does and does not buy, because the distinction decides what a
+// failure here means. It reads the sizes off a real AEAD rather than writing 12 and 16 as
+// literals, which keeps the two numbers consistent with each other and self-describing. It
+// does NOT read the AEAD that crypto.AESGCM actually uses — there is no accessor for it —
+// so it is still PINNING cipher.NewGCM's defaults, just constructing them instead of
+// spelling them out.
+//
+// The consequence: if production moved to cipher.NewGCMWithNonceSize, this helper would go
+// on reporting 12 and the size assertions would fail against a correct blob. That is the
+// same failure a hard-coded 12 would produce, and this construction does not prevent it.
+// What it does prevent is the two numbers drifting apart from each other or from the cipher
+// they describe.
+//
+// Exporting NonceSize/TagSize from the crypto package would close the gap properly, and is
+// deliberately not done: it widens the production API for a test's benefit, which this
+// ticket's knowledge log already records as the wrong instinct. The gap is accepted and
+// named here rather than papered over.
 func gcmSizes(t *testing.T) (nonceSize, tagSize int) {
 	t.Helper()
 	block, err := aes.NewCipher(credentialKey)
@@ -209,10 +218,16 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 
 	// (3) The bytes survived storage intact.
 	if !bytes.Equal(got.EncryptedCredentials, sealed) {
-		t.Fatalf("credentials column did not round-trip: stored %d bytes, read back %d; "+
-			"GCM authentication cannot survive this, so a decrypt failure here would be "+
-			"reported against the encryptor when the defect is in the column",
-			len(sealed), len(got.EncryptedCredentials))
+		// Length AND digest. Lengths alone cannot describe the failure this assertion most
+		// needs to report: a column that returns the right NUMBER of bytes with different
+		// CONTENT — an encoding round-trip, a truncating-then-padding driver — prints two
+		// identical numbers and reads like a passing run that somehow failed. The digests
+		// differ whenever the bytes do, at any length, and neither reveals key material.
+		t.Fatalf("credentials column did not round-trip: stored %d bytes sha256=%x, read "+
+			"back %d bytes sha256=%x; GCM authentication cannot survive this, so a decrypt "+
+			"failure here would be reported against the encryptor when the defect is in the column",
+			len(sealed), sha256.Sum256(sealed),
+			len(got.EncryptedCredentials), sha256.Sum256(got.EncryptedCredentials))
 	}
 
 	// (2) The NEGATIVE assertion. A broken encryptor that stored cleartext would
@@ -242,8 +257,10 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 	// The expected size comes from gcmSizes, which reads NonceSize()/Overhead() off a
 	// cipher.AEAD built the same way crypto.AESGCM builds its own — not from a hard-coded
 	// 54, and not from a new exported constant on the production package. A test does not
-	// get to widen the production API, and pinning the literal would silently retune the
-	// assertion to whatever the code did on the day it was written.
+	// get to widen the production API. See gcmSizes for what that construction does and does
+	// NOT guarantee: it keeps the nonce and tag sizes consistent with the cipher they
+	// describe, but it still pins cipher.NewGCM's defaults rather than reading production's
+	// own AEAD, which has no accessor.
 	nonceSize, tagSize := gcmSizes(t)
 	wantSealed := nonceSize + len(plaintext) + tagSize
 	if len(got.EncryptedCredentials) != wantSealed {
