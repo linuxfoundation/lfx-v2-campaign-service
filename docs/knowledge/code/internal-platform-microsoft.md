@@ -381,10 +381,12 @@ the one delegated to the file.
 "set to expire 15 minutes… however, you should not depend on a fixed duration"), so it is
 re-fetched on every refresh and never cached — only the PARSED map is, under `geoCacheTTL`
 (24h) with a leader/follower single-flight that mirrors the token refresh, so concurrent callers
-sharing a client trigger ONE multi-MiB download. Note the SCOPE: `MicrosoftDispatcher` builds a
-new client per `Dispatch`, so this coalesces within a create rather than across jobs — a
-cross-job cache needs a longer-lived owner injected into the dispatcher, and claiming one here
-would be false. The download is a plain GET that deliberately carries
+sharing a client trigger ONE multi-MiB download. Note the SCOPE: the cache lives on the Client, so
+its reach is the lifetime of the client that owns it. As of LFXV2-3033 `MicrosoftDispatcher`
+caches its clients, so one parsed map is reused ACROSS creates for the same connection until the
+credential rotates or the entry is evicted — previously the dispatcher built a new client per
+`Dispatch` and this coalesced only within a create. It is still not process-wide: separate
+connections, and the same connection after a rotation, each re-fetch. The download is a plain GET that deliberately carries
 **no** developer token or bearer: the URL is pre-signed storage on another host, and the size
 cap is applied to the DECOMPRESSED stream so a compressed file cannot expand without bound.
 

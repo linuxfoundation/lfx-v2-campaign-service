@@ -891,21 +891,76 @@ poison a project-owned entry.
 **The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
 platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
 the token however cheap the credential lookup became — measured at five token-endpoint hits across
-five resolves. `GoogleAdsDispatcher` therefore also caches the built `*googleads.Client`
-(`clientCache`), keyed and validated by the same (row id, version) identity as the credential, so a
-rotation invalidates the client in the same step. A client is exactly as stale as the credential it
-was built from; validating it any more loosely would let a revoked credential keep authenticating
-inside a cached token. The discovery path is deliberately excluded (it builds an account-agnostic
-client with an empty CustomerID), as is adoption's owned-connection path, which is a one-shot
-rather than the polling loop this exists for. `Dispatch` also builds its client directly: it makes
-roughly twenty calls on the one instance, so its token is already amortised across them, and the
-locals it validates inline would become redundant.
+five resolves. `GoogleAdsDispatcher`, `RedditDispatcher` and `MicrosoftDispatcher` therefore also
+cache the built client (`clientCache`), keyed and validated by the same (row id, version) identity
+as the credential, so a rotation invalidates the client in the same step. A client is exactly as
+stale as the credential it was built from; validating it any more loosely would let a revoked
+credential keep authenticating inside a cached token. Discovery paths are deliberately excluded —
+Google Ads' builds an account-agnostic client with an empty CustomerID, and Microsoft's
+`ListAccounts` builds a ZERO `AccountConfig` (no account AND no customer, because naming either
+narrows the answer discovery exists to give), so caching it under the connection's identity would
+let a discovery call and a dispatch call serve each other's client. Google Ads' adoption
+owned-connection path is likewise excluded as a one-shot rather than the polling loop this exists
+for.
+
+**"Wired" is a claim about a provider; the bypasses are per-PATH, and Google Ads' CREATE path is
+one of them.** `GoogleAdsDispatcher.Dispatch` builds its client inline with `googleads.NewClient`
+rather than through `cachedGoogleAdsClient`, so a Google Ads dispatch burst re-mints an OAuth token
+per campaign and gets no reuse at all. Google Ads is genuinely wired — but only on the
+toggle/metrics entry point (`resolveGoogleAdsClient`, serving `ToggleStatus` and `ReadMetrics`).
+Microsoft's create path is the opposite: `MicrosoftDispatcher.Dispatch` DOES go through
+`cachedMicrosoftClient`. That asymmetry between the two providers is what made this omission
+plausible for two tickets, and both behaviours are now pinned by tests —
+`TestClientCache_GoogleAdsDispatchBypassesTheCache` and
+`TestClientCache_MicrosoftDispatchUsesTheCachedClient` — so wiring the Google Ads create path fails
+the first test and forces this paragraph and `clientCache`'s roster comment to be updated in the
+same change. The full set of Google Ads `googleads.NewClient` construction sites is three:
+`Dispatch` (bypass), `googleAdsClientFor` (reached BOTH through `cachedGoogleAdsClient`, which is
+the cached toggle/metrics path, and directly through `resolveOwnedGoogleAdsClient`, which is the
+adoption bypass), and `resolveGoogleAdsDiscoveryClient` (bypass).
+
+**Sharing one client instance across concurrent callers is a per-client property, verified per
+provider rather than inherited.** All three cached clients guard everything they write after
+construction with a mutex and stash no per-call state on the receiver, so the instance is safe to
+share. For Google Ads and Reddit that is the token cache plus its in-flight refresh handle, under
+one mutex. Microsoft has TWO locks and the count matters: `tokenMu` for the token cache and its
+refresh handle, and the separate `geo.mu` for the parsed geo-locations snapshot and its in-flight
+fetch — separate because a token refresh is a small JSON round trip while a locations refresh is a
+multi-MiB download, and one lock would let a slow file fetch stall every token read. Caching the
+client is also what made that geo cache SHARED state: it now spans creates for one connection
+rather than living and dying with a single `Dispatch`. Microsoft needed the check most: it is the client with multi-customer discovery, so a
+`CustomerID` mutated per call would have made a shared instance serve one caller against another's
+customer — it does not, because the customer id travels as a per-call argument
+(`doCustomerRequest` / `accountsInfoForCustomer`) rather than on the receiver. A future provider
+whose client stashes per-call state must NOT be wired to this cache without changing the client
+first.
+
+**LinkedIn, Meta and X/Twitter are not yet wired** — a deliberate partial rollout under LFXV2-3033,
+deferred only because open PRs owned those files at the time (cs#148, cs#152, cs#158). They still
+rebuild per resolve and still re-mint a token per operation; wiring them is a follow-up that
+should follow this same pattern rather than inventing a second mechanism.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
 mints its own token from its own instance cache — measured at 16 exchanges across 16 concurrent
 callers, i.e. a cold key behaved as though there were no cache at all. That is the shape a
 dashboard produces when several panels load at once or a pod restarts.
+
+**Three properties of these tests were asserted before they were exercised, and each needed a
+compiling mutation to expose.** They are recorded here because the shapes recur:
+
+* A probe reached a base URL the fixture did not stub. `microsoft.Client` splits its API across
+  three hosts, an un-overridden origin falls back to the PRODUCTION default rather than failing,
+  and the probes discard their API error — so the Microsoft cache tests dialled
+  `reporting.api.bingads.microsoft.com` on every run while passing, with the cache assertions
+  resting on a live network error. The guard is a dialler that refuses non-loopback addresses, not
+  a timing assertion.
+* A bookkeeping mutex held across the probe (`mu.Lock(); defer mu.Unlock()` before the call) made
+  the 16-caller `-race` burst run strictly serially. Deleting the production-side locking from
+  `reddit.Client.refreshToken` left it passing; the lock must cover only the shared appends.
+* The cache tests all drove `resolveMicrosoftClient`, so `Dispatch`'s own construction line was
+  unbound — reverting it to a direct `microsoft.NewClient` kept the whole suite green. The binding
+  assertion is the token COUNT across two dispatches of an unchanged connection.
 
 **The TTL bounds memory residency, not staleness.** Correctness comes from the id+version check;
 the 5-minute TTL and 512-entry LRU cap exist because entries hold plaintext, and an unbounded cache
@@ -921,8 +976,9 @@ version)` — the same four components the cache entry is validated on, so a bur
 rotation OR a reconnect cannot be served the other's plaintext — so
 N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
 receives its own clone and builds its own client, and the access token is cached on the client
-INSTANCE, so collapsing the token exchange is the separate job of the client cache below (wired
-today only into Google Ads; Reddit and Microsoft still rebuild per resolve and still re-mint).
+INSTANCE, so collapsing the token exchange is the separate job of the client cache above (wired
+into Google Ads, Reddit and Microsoft; LinkedIn, Meta and X/Twitter still rebuild per resolve and
+still re-mint).
 The version in that
 key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
 pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of

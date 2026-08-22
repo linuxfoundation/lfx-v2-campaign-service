@@ -796,10 +796,11 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 	// exchange: every caller receives its own clone() below, each builds its own platform
 	// client, and the OAuth token is cached on the client INSTANCE — so coalescing the decrypt
 	// changes nothing downstream by itself. Collapsing the token exchange takes a separate
-	// cache of the built CLIENT, which today exists only for Google Ads (clientCache, whose
-	// buildOnce coalesces construction); Reddit and Microsoft still rebuild per resolve and
-	// still re-mint. An earlier version of this comment claimed the token saving here, which
-	// was the same conflation the PR's original decrypt-count measurement rested on.
+	// cache of the built CLIENT (clientCache, whose buildOnce coalesces construction), and it
+	// is wired per dispatcher rather than everywhere — clientCache's own doc comment is where
+	// that roster lives, deliberately in ONE place so wiring the next provider does not have to
+	// find this sentence. An earlier version of this comment claimed the token saving here,
+	// which was the same conflation the PR's original decrypt-count measurement rested on.
 	shared, err := s.cache.decryptOnce(key, conn.ID, conn.Version, func() (*resolved, error) {
 		return s.decryptConn(ctx, key, projectID, conn, provider)
 	})
