@@ -268,6 +268,43 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 	Required("rule", "priority", "campaign_id", "platform", "issue", "action")
 })
 
+// CampaignSettingsField is one setting in a settings readback: what the campaign row
+// RECORDED, what the platform currently HOLDS, and the verdict comparing them.
+//
+// Both value sides are OPTIONAL, and that is the type's whole point. A side that could not
+// be read is ABSENT rather than zero or empty — a `0` standing in for an unread budget is
+// indistinguishable from a campaign that really has none, and the two mean opposite things
+// to an operator deciding whether to intervene.
+var CampaignSettingsField = Type("campaign-settings-field", func() {
+	Attribute("field", String, "The setting's name in this service's own vocabulary, matching the campaign row's column names rather than the platform's field names. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`; `status`, `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict, because no column on the campaign row expresses them. `advertising_channel_type` is compared rather than upstream-only because the dispatch config's channel IS persisted in the campaign's config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.", func() { Example("budget_amount") })
+	Attribute("recorded", String, "What the campaign row records — what this dispatch ASKED FOR. Absent when the row records nothing for this field.", func() { Example("500.00") })
+	Attribute("upstream", String, "What the platform currently holds, read live. Absent when the platform did not return the field — never a zero standing in for one.", func() { Example("750.00") })
+	Attribute("comparison", String, "The verdict. `match` and `diverged` both require BOTH sides to have been read; `unknown` means the comparison could not be made and is deliberately NOT folded into `match`.", settingsComparisonEnum)
+	Required("field", "comparison")
+})
+
+// CampaignSettingsReadback is a live, read-only comparison of what a campaign row recorded
+// against what the platform currently holds.
+//
+// It is never persisted and is never written back onto the campaign row: the row means
+// "what this dispatch asked for", and overwriting it with an observation would destroy the
+// only record of the request and let one transient bad read stand in for it permanently.
+// Divergence is information an operator acts on, not state this service reconciles.
+//
+// There is deliberately no campaign-level "in sync" flag and no stored status: a status
+// that goes stale is worse than none, this service polls nothing, and a single boolean
+// could only exist by collapsing `unknown` into agreement or disagreement.
+var CampaignSettingsReadback = Type("campaign-settings-readback", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform_campaign_id", String, "The id the PLATFORM echoed back for this campaign, not the one requested.", func() { Example("21398765432") })
+	Attribute("platform", String, "The channel that runs this campaign.", func() { Example("google-ads") })
+	Attribute("read_at", String, "When the platform was read (RFC3339, UTC). A readback is a point-in-time observation and says nothing about the campaign after this instant.", func() { Format(FormatDateTime) })
+	Attribute("fields", ArrayOf(CampaignSettingsField), "Every setting compared, in a stable order, INCLUDING the ones that could not be compared — a field missing from this list would be indistinguishable from one this service does not know about.")
+	Attribute("diverged_count", Int, "How many fields carry the `diverged` verdict.", func() { Example(1) })
+	Attribute("unknown_count", Int, "How many fields were NOT COMPARED — either because the field has no counterpart on the campaign row (the upstream-only observations, and `status`, which is never compared) or because a side could not be read. Reported separately from diverged_count rather than folded into it: \"2 differ\" reads very differently next to \"and 5 were not compared\". NOT a read-failure count: on a fully healthy readback most fields are unknown by construction, so a consumer watching this for failures would see a constant floor. Use each field's `comparison` to see which is which.", func() { Example(7) })
+	Required("campaign_id", "platform_campaign_id", "platform", "read_at", "fields", "diverged_count", "unknown_count")
+})
+
 // BriefMetricsRow is one campaign's slot in the brief-wide metrics read.
 //
 // Every campaign on the brief gets a row, INCLUDING the ones that could not be read. That is
@@ -671,6 +708,25 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("get-campaign-settings", func() {
+		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree because nothing pushes the recorded config upstream. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: a campaign whose platform has no settings-readback dispatcher wired returns 400 — Google Ads is the only one today, because adoption (which is what lets the recorded request and the live campaign disagree) exists only there.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(CampaignSettingsReadback)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/settings")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
 	Method("get-brief-metrics", func() {
 		Description("Read live performance metrics for EVERY campaign on a brief in one request, by calling each campaign's platform directly. A pure read — never persisted. Unlike get-campaign-metrics, a failure on one campaign does not fail the request: each row carries its own status, and a row that could not be read carries NO counters rather than zeroes, so a consumer can distinguish a campaign that served nothing from one that could not be measured. Rows are returned for every campaign on the brief, including unreadable ones. There is no cross-channel cost total: cost is denominated in each platform's own currency and this service performs no FX conversion.")
 		Payload(func() {
@@ -821,6 +877,17 @@ func campaignIDAttr() {
 // can't represent (or vice versa) would silently diverge otherwise.
 func metricsWindowEnum() {
 	Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
+}
+
+// settingsComparisonEnum is the per-field verdict vocabulary for a settings readback,
+// applied to CampaignSettingsField's `comparison` attribute (model.SettingsComparison).
+//
+// `unknown` is a first-class value rather than an absence, and keeping it separate from
+// `match` is the point of the whole capability: a field that could not be read on one side
+// has NOT been shown to agree, and reporting it as a match would be a fabricated
+// "they match" — agreement asserted from an observation nobody made.
+func settingsComparisonEnum() {
+	Enum("match", "diverged", "unknown")
 }
 
 // briefMetricsRowStatusEnum is the per-row outcome vocabulary for a brief-wide metrics read.

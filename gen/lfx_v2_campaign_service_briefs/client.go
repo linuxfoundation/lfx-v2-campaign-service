@@ -26,6 +26,7 @@ type Client struct {
 	AdoptCampaignEndpoint        goa.Endpoint
 	GetCampaignEndpoint          goa.Endpoint
 	GetCampaignMetricsEndpoint   goa.Endpoint
+	GetCampaignSettingsEndpoint  goa.Endpoint
 	GetBriefMetricsEndpoint      goa.Endpoint
 	GenerateEmailCopyEndpoint    goa.Endpoint
 	UpdateCampaignEndpoint       goa.Endpoint
@@ -36,7 +37,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -49,6 +50,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		AdoptCampaignEndpoint:        adoptCampaign,
 		GetCampaignEndpoint:          getCampaign,
 		GetCampaignMetricsEndpoint:   getCampaignMetrics,
+		GetCampaignSettingsEndpoint:  getCampaignSettings,
 		GetBriefMetricsEndpoint:      getBriefMetrics,
 		GenerateEmailCopyEndpoint:    generateEmailCopy,
 		UpdateCampaignEndpoint:       updateCampaign,
@@ -265,6 +267,25 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, p *GetCampaignMetricsPa
 		return
 	}
 	return ires.(*CampaignMetrics), nil
+}
+
+// GetCampaignSettings calls the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// GetCampaignSettings may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetCampaignSettings(ctx context.Context, p *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error) {
+	var ires any
+	ires, err = c.GetCampaignSettingsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CampaignSettingsReadback), nil
 }
 
 // GetBriefMetrics calls the "get-brief-metrics" endpoint of the

@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -58,6 +60,10 @@ const (
 	// translate between two spellings of the same idea.
 	googleAdsChannelSearch    = "search"
 	googleAdsChannelDemandGen = "demand-gen"
+	// Google's own advertising_channel_type enum spellings, the vocabulary the settings
+	// readback compares in. googleAdsVariantForChannelType maps these back the other way.
+	googleAdsChannelTypeSearch    = "SEARCH"
+	googleAdsChannelTypeDemandGen = "DEMAND_GEN"
 )
 
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
@@ -434,10 +440,17 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	// with whatever budget and settings it was created with, and this path deliberately
 	// creates no budget and no ad group (see the Steps below). So the row records the
 	// request while the platform keeps its own state, and the two can legitimately
-	// disagree. Nothing reconciles them today: ReadMetrics returns impressions, clicks,
-	// cost and CTR, none of which describe the campaign's configuration, so it cannot
-	// close this gap however it is read. A readback of the upstream settings is a
-	// separate capability and is not in this service (LFXV2-3067).
+	// disagree. ReadMetrics cannot close that gap however it is read — it returns
+	// impressions, clicks, cost and CTR, none of which describe the campaign's
+	// configuration.
+	//
+	// ReadSettings (LFXV2-3067) is the capability that can: it reads the live campaign
+	// config and reports, per field, where it diverges from what this row recorded. It
+	// does NOT reconcile them, and deliberately so — it never writes back onto this row,
+	// because these columns mean "what this dispatch asked for" and an observation
+	// written over them would destroy the only record of the request. Divergence is
+	// surfaced for an operator to act on, on demand; nothing polls, and no status is
+	// stored.
 	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
 	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
 	// later read/toggle against a DIFFERENT customer, and treats an absent one as
@@ -1083,16 +1096,111 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 // leave that campaign type's real slot open for a duplicate.
 func googleAdsVariantForChannelType(channelType string) (string, error) {
 	switch strings.ToUpper(strings.TrimSpace(channelType)) {
-	case "SEARCH":
+	case googleAdsChannelTypeSearch:
 		// Search is this platform's default slot: an absent channel and an explicit
 		// "search" both dispatch the same campaign, and both normalise to VariantDefault.
 		return model.VariantDefault, nil
-	case "DEMAND_GEN":
+	case googleAdsChannelTypeDemandGen:
 		return model.NormalizeVariant(googleAdsChannelDemandGen), nil
 	case "":
 		return "", fmt.Errorf("google ads: the campaign lookup returned no advertising channel type, so which campaign type this is cannot be established; refusing to adopt rather than assume")
 	default:
 		return "", fmt.Errorf("google ads: campaign type %q is not one this service creates, so it has no slot to adopt into", channelType)
+	}
+}
+
+// googleAdsRecordedChannelType recovers the advertising channel type this service ASKED for
+// from the row's ConfigSnapshot, expressed in Google's own enum vocabulary so it can be
+// compared against campaign.advertising_channel_type as read from the platform.
+//
+// The snapshot is the googleAdsConfig marshalled whole by applyCampaignConfig, on both the
+// create and the adoption path, so Channel is recorded for every row either path wrote.
+//
+// An ABSENT Channel maps to SEARCH, not to nil — but ONLY once the snapshot has been
+// confirmed to be one this adapter wrote. That qualification is the whole of the fix here,
+// and without it the default is a fabrication.
+//
+// `json.Unmarshal` into a `Channel string` cannot tell three different things apart. An
+// omitted `"channel"` key, an explicit `"channel": null`, and a config object carrying no
+// Google Ads fields whatsoever all decode to `""`, and all three were then reported as a
+// recorded SEARCH. Only the FIRST of those means "a legacy caller who meant Search". The
+// other two are snapshots that say nothing about the channel at all, and `UpdateCampaign`
+// persists arbitrary caller-supplied `config` JSON into this column, so both are reachable
+// from an untrusted request rather than only from this service's own writes. Defaulting them
+// manufactured a match or a divergence against a value nobody recorded, breaking the rule
+// this readback rests on: report agreement only when BOTH sides were actually read.
+//
+// So "recognisable" is decided BEFORE the default is applied, and it is decided on a property
+// this adapter guarantees and a caller is unlikely to reproduce by accident:
+// `applyCampaignConfig` marshals the `googleAdsConfig` STRUCT VALUE whole, on both the create
+// (googleads.go:391) and the adoption (:454) path, and no field on that struct carries
+// `omitempty` — so a snapshot this adapter wrote ALWAYS contains the `"channel"` key, even
+// when the value is `""`. Presence of the key is therefore exactly equivalent to "written by
+// this adapter", which is the population the legacy default was reasoned about.
+//
+// Absence still means what it always meant. The default was never "an empty string means
+// Search"; it was "a caller who predates the field means Search", and such a caller's row was
+// written by applyCampaignConfig and so HAS the key with an empty value. That row still reads
+// SEARCH. What changes is that a snapshot which never carried the key — something this
+// adapter did not write — no longer borrows a default that was justified for a different
+// population. It reports `unknown`, which is the accurate statement: nothing was recorded.
+//
+// nil is returned wherever nothing was genuinely recorded or the record cannot be trusted:
+// a row with no snapshot at all (a legacy row, or one whose marshal failed and was logged),
+// a snapshot that is not a JSON object, an object with no `"channel"` key, a `"channel"` that
+// is not a JSON string (an explicit null, a number, an object), or a Channel value outside the
+// closed set this service creates. That last case is not a divergence to report — it is a row
+// this code cannot interpret, and claiming `diverged` from an uninterpretable recorded value
+// would be a fabricated finding rather than an observed one.
+func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign) *string {
+	if len(campaign.ConfigSnapshot) == 0 {
+		return nil
+	}
+	// Decoded into RawMessage first, so presence and JSON type survive the decode. Decoding
+	// straight into googleAdsConfig collapses "absent", "null" and "wrong type" onto the same
+	// zero value, which is precisely the distinction this function needs to keep.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(campaign.ConfigSnapshot, &raw); err != nil {
+		// Not an error for the caller: the readback still reports every other field. The row
+		// simply cannot say what was asked for, which is exactly what `unknown` means.
+		slog.WarnContext(ctx, "google ads config snapshot could not be decoded; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID, "error", err)
+		return nil
+	}
+	rawChannel, ok := raw["channel"]
+	if !ok {
+		// Not a snapshot this adapter wrote — applyCampaignConfig always emits the key. The
+		// legacy SEARCH default was justified for rows this service wrote and must not be
+		// extended to a config blob some caller supplied through UpdateCampaign.
+		slog.WarnContext(ctx, "google ads config snapshot carries no channel key; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return nil
+	}
+	// An explicit JSON null is checked SEPARATELY, before the decode. json.Unmarshal of
+	// `null` into a string SUCCEEDS in Go, leaving the zero value untouched — so a decode
+	// error alone does not catch it, and `{"channel": null}` would take the SEARCH default
+	// by the very route this function exists to close.
+	var channel string
+	if strings.TrimSpace(string(rawChannel)) == "null" {
+		slog.WarnContext(ctx, "google ads config snapshot channel is explicitly null; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return nil
+	}
+	if err := json.Unmarshal(rawChannel, &channel); err != nil {
+		// Present but not a JSON string: an explicit null, a number, an object. The key being
+		// there does not make its value a recorded channel, and coercing it to "" would
+		// resurrect the same fabricated SEARCH by a different route.
+		slog.WarnContext(ctx, "google ads config snapshot channel is not a string; advertising_channel_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "", googleAdsChannelSearch:
+		return strPtr(googleAdsChannelTypeSearch)
+	case googleAdsChannelDemandGen:
+		return strPtr(googleAdsChannelTypeDemandGen)
+	default:
+		return nil
 	}
 }
 
@@ -1141,4 +1249,405 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 		return "", ""
 	}
 	return blob.AdGroupID, blob.AdID
+}
+
+// ---------------------------------------------------------------------------
+// Settings readback (LFXV2-3067)
+// ---------------------------------------------------------------------------
+
+// Field names used in the settings readback, in THIS SERVICE's vocabulary rather than
+// Google's. They match the campaign row's own column names, because the whole report is
+// "what this row records" against "what the platform holds", and naming the row's side in
+// Google's spelling would make the comparison harder to read, not easier.
+// googleAdsDateTimeLayout is the shape Google returns campaign.start_date_time /
+// end_date_time in: 'yyyy-MM-dd HH:mm:ss', in the ad account's timezone. Parsing against it
+// in full is what stops a malformed value being silently truncated into a plausible date.
+const googleAdsDateTimeLayout = "2006-01-02 15:04:05"
+
+const (
+	settingsFieldBudgetAmount = "budget_amount"
+	settingsFieldBudgetType   = "budget_type"
+	settingsFieldName         = "campaign_name"
+	settingsFieldStatus       = "status"
+	settingsFieldStartDate    = "start_date"
+	settingsFieldEndDate      = "end_date"
+	// Budget delivery method, explicit budget sharing and bidding strategy are OBSERVED but
+	// never compared: nothing in a Google Ads dispatch config expresses them, so each is
+	// reported with an absent recorded side and therefore an `unknown` verdict. They are
+	// reported anyway because the operator's question is "what is this campaign actually set
+	// to upstream", and a budget that reads as expected while being ACCELERATED or shared
+	// across campaigns is exactly the state that explains a spend anomaly the compared fields
+	// cannot.
+	//
+	// Channel type is NOT one of them and is listed here only because it is grouped with them
+	// in the readback: it IS recorded, recovered from ConfigSnapshot and compared, so it can
+	// return a real match or divergence. Which of these fields has a recorded counterpart is
+	// decided at the call site that builds rb.Fields, where each pair is written out — read
+	// the nil recorded sides there rather than trusting any list kept here, since a config
+	// that later learns to express one of these would falsify a list but not the call site.
+	settingsFieldBudgetDelivery  = "budget_delivery_method"
+	settingsFieldBudgetShared    = "budget_explicitly_shared"
+	settingsFieldChannelType     = "advertising_channel_type"
+	settingsFieldBiddingStrategy = "bidding_strategy_type"
+)
+
+// googleAdsBudgetTypeFromPeriod maps Google's campaign_budget.period into this service's
+// model.BudgetType vocabulary, which is the only way the two sides of the budget-type
+// comparison can be compared at all.
+//
+// The mapping is stated once, here, because the vocabularies are NOT the same and the
+// difference is easy to get wrong: Google's v23 BudgetPeriodEnum has DAILY and
+// CUSTOM_PERIOD (plus UNKNOWN/UNSPECIFIED). It has NO `LIFETIME` value, even though
+// model.BudgetLifetime spells that idea "lifetime" — CUSTOM_PERIOD is the thing that
+// corresponds to it.
+//
+// Anything outside the two real values returns "", which the caller turns into an ABSENT
+// upstream side and therefore an `unknown` verdict. That is deliberate and is the
+// fail-closed choice: UNKNOWN literally means "a value this API version cannot name", and
+// mapping it to either budget type would manufacture a match or a divergence out of a
+// value Google explicitly declined to state.
+//
+// The match is on the EXACT enum spelling, with no trimming, and that is the half that is
+// easy to get wrong. blankToNil in the client deliberately stops normalising these strings
+// so a malformed field reaches its consumer malformed; trimming here would undo precisely
+// that, turning a " DAILY " Google never sent into a well-formed DAILY and reporting
+// `match` against a recorded daily budget. A padded value is not a value this function can
+// name, so it takes the same fail-closed path as UNKNOWN: an absent upstream side and an
+// `unknown` verdict. googleAdsDateOnly does exactly the same for dates: a value that does
+// not parse against the documented layout yields an absent upstream side rather than a raw
+// string that could compare equal to the recorded date.
+func googleAdsBudgetTypeFromPeriod(period string) model.BudgetType {
+	switch period {
+	case "DAILY":
+		return model.BudgetDaily
+	case "CUSTOM_PERIOD":
+		return model.BudgetLifetime
+	default:
+		return ""
+	}
+}
+
+// googleAdsUpstreamBudgetAmount renders the upstream budget as a whole-currency-unit
+// string comparable with the row's budget_amount, and reports whether it could be read.
+//
+// Google reports the budget in MICROS, in one of two mutually exclusive fields:
+// amount_micros for a DAILY budget, total_amount_micros for a CUSTOM_PERIOD one. Reading
+// only the first would report a lifetime-budget campaign as having no budget at all —
+// an absence that is not true, and one that would quietly suppress a real divergence.
+//
+// The two sides are compared as whole units rather than micros because that is what the
+// row stores; the conversion happens here, once, rather than in the comparison.
+//
+// A budget carrying SUB-CENT micros is rendered at full precision instead of at the row's two
+// decimal places, and that exception is the whole point of this function's care. The row's
+// column is NUMERIC(14,2), so rounding an upstream 10.004 to "10.00" would make it compare
+// EQUAL to a recorded 10.00 and report `match` for two budgets that genuinely differ — a
+// fabricated agreement manufactured by the formatter rather than by a nil, which is precisely
+// the defect this readback exists to make impossible. Sub-cent values cannot come from this
+// service's own create path (it rounds to micros from a 2dp amount), but they can and do come
+// from campaigns ADOPTED from outside it — exactly the population a readback is for.
+func googleAdsUpstreamBudgetAmount(s *googleads.CampaignSettings) *string {
+	if s == nil {
+		return nil
+	}
+	micros := s.BudgetAmountMicros
+	if micros == nil {
+		micros = s.BudgetTotalAmountMicros
+	}
+	if micros == nil {
+		return nil
+	}
+	// Exact integer arithmetic, never float division: at 2^53 micros float64 stops being able
+	// to represent every value, and a budget comparison must not depend on that boundary.
+	if *micros%microsPerCent != 0 {
+		return strPtr(formatSubCentBudgetUnits(*micros))
+	}
+	return strPtr(formatBudgetUnits(float64(*micros) / microsPerBudgetUnit))
+}
+
+// formatSubCentBudgetUnits renders micros that do not divide evenly into cents, keeping every
+// digit the platform reported. The trailing zeroes are trimmed so the value reads as a number
+// rather than as padding, but nothing significant is dropped: this string exists to be shown
+// beside the recorded amount and to compare UNEQUAL to it.
+func formatSubCentBudgetUnits(micros int64) string {
+	neg := micros < 0
+	if neg {
+		micros = -micros
+	}
+	whole := micros / int64(microsPerBudgetUnit)
+	frac := micros % int64(microsPerBudgetUnit)
+	out := strconv.FormatInt(whole, 10) + "." + fmt.Sprintf("%06d", frac)
+	out = strings.TrimRight(out, "0")
+	if neg {
+		out = "-" + out
+	}
+	return out
+}
+
+// Budget rendering constants for the settings readback.
+const (
+	// microsPerBudgetUnit converts Google's micros to whole currency units. Deliberately a
+	// third spelling of the same idea: googleads.microsPerUnit and service.microsToUnits are
+	// both package-private to packages this one cannot import, so a bare literal was the
+	// only thing that compiled. Naming it here at least makes the three greppable together.
+	microsPerBudgetUnit = 1_000_000.0
+	// budgetDecimalPlaces matches the campaigns.budget_amount column, NUMERIC(14,2).
+	budgetDecimalPlaces = 2
+	// microsPerCent is the divisor that decides whether an upstream budget is expressible at
+	// the row's two decimal places. A remainder means rendering it at 2dp would round it into
+	// a value the platform never reported — and, worse, possibly into the recorded one.
+	microsPerCent = 10_000
+)
+
+// formatBudgetUnits renders a budget amount the same way on both sides of the comparison.
+//
+// Both sides go through this function, which is what makes the comparison meaningful: a row
+// holding 500 and a platform holding 500.00 are the same budget, and formatting them
+// differently would report a divergence that does not exist.
+func formatBudgetUnits(v float64) string {
+	return strconv.FormatFloat(v, 'f', budgetDecimalPlaces, 64)
+}
+
+// googleAdsDateOnly reduces Google's 'yyyy-MM-dd HH:mm:ss' campaign date-time to the
+// YYYY-MM-DD the campaign row stores, so the two sides are comparable at all.
+//
+// Only the date part is kept, deliberately: the row's start_date/end_date are DATEs with no
+// time component, so comparing a full timestamp against them would report a divergence for
+// every campaign that actually agrees. The time is dropped rather than reconciled because
+// Google returns it in the ad ACCOUNT's timezone, which this client does not know — any
+// instant it computed would be a guess.
+//
+// The time component is stripped ONLY when the whole value parses as Google's documented
+// 'yyyy-MM-dd HH:mm:ss'. Splitting on the first space unconditionally would turn
+// "2026-08-01 garbage" into "2026-08-01" and let it compare EQUAL to a recorded 2026-08-01 —
+// a fabricated agreement manufactured out of a malformed response, which is the one outcome
+// this readback exists to make impossible.
+//
+// A value that does NOT parse yields an ABSENT upstream side, exactly as
+// googleAdsBudgetTypeFromPeriod does for a period it cannot name. Returning the raw string
+// instead — which this helper used to do — was the same defect wearing the opposite
+// disguise. The reasoning behind that passthrough was that an unparseable value "can only
+// read as a divergence, never as a match", and for "2026-08-01 garbage" that is true. But
+// it is FALSE for the one malformed shape Google is most likely to send: a date-only
+// "2026-08-01" with the required time component missing fails this strict parse and was
+// then returned VERBATIM — byte-equal to the recorded side, which this readback formats to
+// exactly that YYYY-MM-DD layout. The comparison then reported `match` for a value this
+// code could not validate at all. A passthrough is only safe where the two sides cannot
+// share a spelling, and here they share it precisely.
+//
+// So an unparseable value is withheld rather than shown: `unknown` says "this was not
+// comparable", which is the honest reading, whereas `match` would be a claim of agreement
+// derived from a value that never parsed. The strict layout is what makes the distinction
+// meaningful, and dropping the raw string is the cost of not being able to fabricate one.
+func googleAdsDateOnly(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	t, err := time.Parse(googleAdsDateTimeLayout, *s)
+	if err != nil {
+		return nil
+	}
+	return strPtr(t.Format(campaignDateLayout))
+}
+
+// boolToStrPtr renders an optional bool for the readback, preserving absence: a nil stays
+// nil rather than becoming "false", which would be a claim the platform never made.
+func boolToStrPtr(b *bool) *string {
+	if b == nil {
+		return nil
+	}
+	return strPtr(strconv.FormatBool(*b))
+}
+
+// strPtr returns a pointer to s. Used to build the readback's optional sides, where the
+// difference between a nil and a pointer-to-empty is the difference between "not read"
+// and "read as empty".
+func strPtr(s string) *string { return &s }
+
+// ReadSettings implements service.SettingsReader for Google Ads: it reads the campaign's
+// live configuration and compares it against what the campaign row recorded.
+//
+// STRICTLY READ-ONLY. The only upstream call is googleads.GetCampaignSettings, a GAQL
+// search. Nothing here mutates the platform, and nothing here writes to the campaign row:
+// the readback is returned to the caller and discarded. The row keeps meaning "what this
+// dispatch asked for", which is what makes the divergence legible at all — an
+// observation written back would erase the very thing being compared against.
+//
+// It resolves the same connection ReadMetrics does and enforces the account-identity
+// invariant, for the same reason: the stored PlatformCampaignID is unique only within the
+// customer it was created under, so querying it under a re-pointed connection can return
+// ANOTHER account's campaign. Here that would mean reporting a divergence between this
+// campaign's recorded budget and a different campaign's actual one.
+//
+// It enforces that invariant more strictly than ReadMetrics and ToggleStatus do: absent
+// provenance FAILS CLOSED here rather than being waved through, and is refused BEFORE the
+// connection is resolved so a broken connection cannot mask it. See the guards below.
+func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	// Provenance is checked in TWO arms, and both are load-bearing. They are SPLIT around the
+	// client resolution because they rest on different kinds of fact, and only one of them
+	// needs a client at all.
+	//
+	// ABSENCE first, and BEFORE the resolve. A row that records no creating customer is not a
+	// row that MATCHES the current connection — it is a row nothing has established anything
+	// about, and treating the empty string as "matches" is the same absent-value-read-as-
+	// agreement defect this readback exists to prevent everywhere else in its comparisons. The
+	// stored PlatformCampaignID is unique only WITHIN a customer, so querying it under an
+	// unverified account can, on an id collision, return ANOTHER account's campaign — and this
+	// endpoint would then report a divergence between this campaign's recorded budget and a
+	// different campaign's actual one. That the endpoint never writes back bounds the blast
+	// radius to a misleading report, but a confidently wrong report about somebody else's
+	// account is the precise outcome a readback must not produce.
+	//
+	// Asked before the client is consulted because absent provenance is a purely LOCAL fact
+	// about the row, and no answer Google could give would change it. Ordering is the whole
+	// point: resolveGoogleAdsClient immediately calls resolveExisting, which resolves and
+	// DECRYPTS the project (or system) connection, so an unstamped row read while that
+	// connection is disconnected, undecodable or simply down surfaced the transient upstream
+	// failure — a 404/500/different 409 — instead of this deterministic one. That inversion
+	// hides the only remedy that works: there is nothing to retry, the row must be
+	// re-dispatched to write its provenance. This is the identical correction the HubSpot
+	// email metrics guard already carries, where the same guard was moved above the portal
+	// lookup for the same reason; see the comment on that guard.
+	//
+	// ErrCampaignProvenanceUnknown is JOINED with ErrCampaignAccountMismatch, never returned
+	// alone, so existing errors.Is(err, ErrCampaignAccountMismatch) callers keep matching
+	// while the handler's dedicated 409 arm — which until now no supported provider could
+	// reach on this endpoint — can tell the two apart. The remedy differs: there is no
+	// original account to reconnect to, so the row must be re-dispatched.
+	created := googleAdsCreationCustomerID(campaign)
+	if created == "" {
+		return nil, fmt.Errorf("read google ads campaign settings: campaign %s does not record which customer it was created under, so its id cannot be resolved against any account: %w",
+			campaign.PlatformCampaignID, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	}
+
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
+	if err != nil {
+		return nil, err
+	}
+	// MISMATCH second, and necessarily AFTER the resolve: unlike absence, this arm is a
+	// comparison against the account the connection currently resolves to, so it cannot be
+	// answered without a client. A RECORDED customer that disagrees with the project's current
+	// connection is a different failure with a different remedy.
+	if created != client.CustomerID() {
+		return nil, fmt.Errorf("read google ads campaign settings: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+	}
+
+	settings, err := client.GetCampaignSettings(ctx, campaign.PlatformCampaignID)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads campaign settings: %w", err)
+	}
+	if settings == nil {
+		// The platform answered and holds no such campaign. Reported as an absent PLATFORM
+		// CAMPAIGN rather than as an empty readback: every field would otherwise come back
+		// `unknown`, which says "we could not read these" when the truth is far more
+		// specific and far more urgent — the campaign this row tracks is not there.
+		return nil, fmt.Errorf("%w: google-ads campaign %s", domain.ErrPlatformCampaignAbsent, campaign.PlatformCampaignID)
+	}
+
+	rb := &model.CampaignSettingsReadback{
+		CampaignID: campaign.ID,
+		// The id the PLATFORM echoed, not the one requested. GetCampaignSettings refuses a
+		// response whose id filter was not honoured, so these agree on every response that
+		// gets this far; taking it from the response is what keeps that true by construction.
+		PlatformCampaignID: settings.CampaignID,
+		Platform:           platform,
+		ReadAt:             time.Now().UTC(),
+	}
+
+	// Budget amount. The recorded side is nil when the row holds no budget — which is an
+	// ordinary state, not a defect: applyCampaignConfig deliberately leaves budget_amount
+	// NULL for a zero budget and for one too large for the column.
+	var recordedBudget *string
+	if campaign.BudgetAmount != nil {
+		recordedBudget = strPtr(formatBudgetUnits(*campaign.BudgetAmount))
+	}
+	// Budget type. Google's period is translated into this service's vocabulary rather than
+	// the row's being translated into Google's, so the report speaks one language throughout.
+	var recordedBudgetType *string
+	if campaign.BudgetType != nil {
+		recordedBudgetType = strPtr(string(*campaign.BudgetType))
+	}
+	var upstreamBudgetType *string
+	if settings.BudgetPeriod != nil {
+		if bt := googleAdsBudgetTypeFromPeriod(*settings.BudgetPeriod); bt != "" {
+			upstreamBudgetType = strPtr(string(bt))
+		}
+	}
+	// Campaign name. Recorded as a plain column, so an empty one is treated as unrecorded
+	// rather than compared as "" — comparing an empty string against a real name would
+	// report a divergence for a row that simply never captured the name.
+	//
+	// TrimSpace DETECTS the all-blank legacy value; it does not produce the compared one.
+	// Trimming into `recordedName` fabricated agreement: a row holding `" name "` compared
+	// equal to an upstream `"name"` and was reported as a MATCH, when the two sides plainly
+	// differ and Google is showing the operator a name this service did not record. That
+	// padded row is reachable — UpdateCampaign assigns `p.Campaign.CampaignName` verbatim
+	// (internal/service/brief.go) with no whitespace validation in the service layer, the
+	// design, or the column.
+	//
+	// This is the same defect fixed on the budget period a moment ago, in a sibling field:
+	// a normalisation applied to only ONE side of a comparison reports agreement the data
+	// does not support. The recorded value is therefore carried VERBATIM, and any
+	// difference — including one that is only whitespace — is a divergence, which is the
+	// honest answer for a readback whose whole job is to say whether the two sides agree.
+	var recordedName *string
+	if strings.TrimSpace(campaign.CampaignName) != "" {
+		recordedName = strPtr(campaign.CampaignName)
+	}
+
+	// Flight dates. The RECORDED side is always nil for Google Ads today —
+	// googleAdsConfig carries no start/end date, so applyCampaignConfig is called with
+	// empty strings and the columns stay NULL — which makes these `unknown` rather than a
+	// divergence. They are compared rather than reported upstream-only because the columns
+	// EXIST and a future config that populates them must start diverging without anyone
+	// having to remember to wire the comparison. Both sides are formatted to the row's
+	// YYYY-MM-DD, never compared as raw strings: Google returns 'yyyy-MM-dd HH:mm:ss' in
+	// the ad account's timezone, so a raw comparison would report a divergence for every
+	// campaign that agrees.
+	var recordedStart, recordedEnd *string
+	if campaign.StartDate != nil {
+		recordedStart = strPtr(campaign.StartDate.UTC().Format(campaignDateLayout))
+	}
+	if campaign.EndDate != nil {
+		recordedEnd = strPtr(campaign.EndDate.UTC().Format(campaignDateLayout))
+	}
+
+	// Advertising channel type. This one IS recorded, unlike the four genuine upstream-only
+	// observations below: googleAdsConfig.Channel is marshalled whole into ConfigSnapshot by
+	// applyCampaignConfig on BOTH the create and the adoption path. Passing nil here would
+	// discard a request this service holds and report `unknown` forever, so a campaign
+	// recorded as demand-gen could never be shown as diverging from an upstream SEARCH —
+	// which is a real misconfiguration, and one of the few this endpoint exists to surface.
+	//
+	// The recorded side is translated INTO Google's vocabulary rather than the upstream side
+	// into ours, because the upstream value is the one an operator will recognise from the
+	// Google Ads UI, and because googleAdsVariantForChannelType already refuses any channel
+	// this service cannot create — mapping the other way would have to invent a slot for
+	// PERFORMANCE_MAX to compare against.
+	recordedChannelType := googleAdsRecordedChannelType(ctx, campaign)
+
+	rb.Fields = []model.CampaignSettingsField{
+		model.CompareSettingsField(settingsFieldBudgetAmount, recordedBudget, googleAdsUpstreamBudgetAmount(settings)),
+		model.CompareSettingsField(settingsFieldBudgetType, recordedBudgetType, upstreamBudgetType),
+		model.CompareSettingsField(settingsFieldName, recordedName, settings.Name),
+		// Status is deliberately NOT compared. The row's Status is this service's own
+		// lifecycle vocabulary (created/failed/...) and Google's is ENABLED/PAUSED/REMOVED —
+		// a different axis, exactly as model.PlatformCampaignRef documents. Comparing them
+		// would report a permanent, meaningless divergence on every campaign ever created.
+		// The upstream value is still reported, with no recorded counterpart, so an operator
+		// can SEE that the campaign is paused upstream without this service pretending the
+		// two are the same field.
+		model.CompareSettingsField(settingsFieldStatus, nil, settings.Status),
+		model.CompareSettingsField(settingsFieldStartDate, recordedStart, googleAdsDateOnly(settings.StartDateTime)),
+		model.CompareSettingsField(settingsFieldEndDate, recordedEnd, googleAdsDateOnly(settings.EndDateTime)),
+		// Upstream-only observations: no row column expresses these. advertising_channel_type
+		// is deliberately NOT among them — see recordedChannelType above.
+		model.CompareSettingsField(settingsFieldBudgetDelivery, nil, settings.BudgetDeliveryMethod),
+		model.CompareSettingsField(settingsFieldBudgetShared, nil, boolToStrPtr(settings.BudgetExplicitlyShared)),
+		model.CompareSettingsField(settingsFieldChannelType, recordedChannelType, settings.AdvertisingChannelType),
+		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, settings.BiddingStrategyType),
+	}
+	rb.SummariseSettings()
+	return rb, nil
 }

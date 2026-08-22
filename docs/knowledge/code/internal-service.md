@@ -237,6 +237,14 @@ ambiguous mutation to protect, so there is no UNCONFIRMED classification here. T
 bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
 fail fast rather than hold a request open).
 
+Every synchronous call timeout is bounded ABOVE by `constants.DefaultWriteTimeout` (60s), the
+server's write timeout: a platform call permitted to outlive it cannot have its result written
+to the response it was issued for. That relationship is what the timeout tests assert against —
+NOT the call-timeout constant itself. A test that brackets the observed deadline against the
+same constant the code reads proves only that the deadline was derived from it, and stays green
+when that constant is widened past the write timeout; the bound has to be pinned against the
+independent constant the contract is actually defined in terms of.
+
 The `window` query parameter is a closed, platform-agnostic vocabulary
 (`model.MetricsWindow`: `today`, `yesterday`, `last_7_days`, `last_14_days`,
 `last_30_days` [default], `this_month`, `last_month`) — never a platform's own dialect
