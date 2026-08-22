@@ -1275,6 +1275,41 @@ func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 	}
 }
 
+// Meta has no scalar campaign-level conversions field: the Insights edge reports conversions
+// inside the `actions` array as {action_type, value} objects. Reducing that to one number
+// requires deciding WHICH action types count as a conversion for this advertiser, which this
+// service has no input for — so the count stays absent.
+//
+// The fixture deliberately CARRIES an actions array in Meta's published shape. A zero here
+// would be a fabricated measurement, and this test fails if a future change starts summing
+// those values or defaulting the field, either of which would make every Meta campaign
+// report a conversion count this service cannot actually justify.
+func TestMeta_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"1000","clicks":"40","spend":"25.00",`+
+			`"actions":[{"action_type":"offsite_conversion.fb_pixel_purchase","value":"12"},`+
+			`{"action_type":"lead","value":"3"}]}]}`)
+	}))
+	defer srv.Close()
+
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v for Meta, which exposes no scalar campaign-level "+
+			"conversion count; a number derived here would be this service inventing an "+
+			"attribution policy it was never given", *m.Conversions)
+	}
+	// The rest of the read must be unaffected — absence is not a failure.
+	if m.Impressions != 1000 || m.Clicks != 40 {
+		t.Errorf("got %+v", m)
+	}
+}
+
 // TestMeta_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance guard
 // on the TOGGLE path. Meta campaign ids are unique only WITHIN an ad account, so once a
 // project's connection is re-pointed the stored id addressed against the new account can
