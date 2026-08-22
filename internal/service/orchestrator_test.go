@@ -18,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // fakeJobRepo records job status transitions.
@@ -2824,10 +2825,39 @@ func TestOrchestrator_ReadCampaignSettings_BoundsTheCall(t *testing.T) {
 	o := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
 	camp := &model.Campaign{ID: "c1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "ga-1"}
-	if _, err := o.ReadCampaignSettings(context.Background(), "p1", model.ProviderGoogleAds, camp); err != nil {
+
+	// Bracket the call itself, not just the assertion, so the tolerance window covers exactly
+	// the wall-clock span the deadline could have been derived from — the same discipline the
+	// metrics timeout test applies.
+	beforeCall := time.Now()
+	_, err := o.ReadCampaignSettings(context.Background(), "p1", model.ProviderGoogleAds, camp)
+	afterCall := time.Now()
+	if err != nil {
 		t.Fatalf("ReadCampaignSettings: %v", err)
 	}
+
 	if disp.gotDeadline.IsZero() {
 		t.Error("ReadSettings was called with no deadline; a synchronous platform read must be bounded")
+	}
+
+	// Assert the deadline is approximately settingsCallTimeout after the call, not merely that
+	// SOME deadline exists. A regression widening settingsCallTimeout past the server's write
+	// timeout would leave the existence check green while defeating the bound this test pins.
+	expectedMinDeadline := beforeCall.Add(settingsCallTimeout)
+	expectedMaxDeadline := afterCall.Add(settingsCallTimeout)
+	if disp.gotDeadline.Before(expectedMinDeadline) || disp.gotDeadline.After(expectedMaxDeadline) {
+		t.Errorf("deadline %v not within [%v, %v] (beforeCall/afterCall + settingsCallTimeout)",
+			disp.gotDeadline, expectedMinDeadline, expectedMaxDeadline)
+	}
+
+	// And pin the bound that actually matters, against a constant this test does NOT derive
+	// from settingsCallTimeout. The check above brackets the deadline against the very
+	// constant under test, so widening settingsCallTimeout moves the expectation with it and
+	// the regression survives. The contract is that a synchronous read completes inside the
+	// server's write timeout — exceed it and the platform call outlives the response it was
+	// read for, which is the failure this test exists to prevent.
+	if settingsCallTimeout >= constants.DefaultWriteTimeout {
+		t.Errorf("settingsCallTimeout %v must be strictly less than the server write timeout %v; a read that outlives the response cannot be returned",
+			settingsCallTimeout, constants.DefaultWriteTimeout)
 	}
 }

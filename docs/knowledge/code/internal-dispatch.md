@@ -338,9 +338,10 @@ caller can interpret, and comparing `""` against a recorded value would report a
 the platform never showed. It does NOT trim the value it keeps, and that half is the one
 that is easy to get wrong: it runs BEFORE every consumer that validates these strings, so
 trimming would hand them a well-formed value the platform never sent. `googleAdsDateOnly`
-parses with a strict layout and passes an unparseable value through WHOLE, so an upstream
-`"2026-08-01 "` trimmed to `"2026-08-01"` becomes byte-equal to a recorded `YYYY-MM-DD` and
-reports `match` for a value that never parsed; `googleAdsBudgetTypeFromPeriod` has the same
+parses with a strict layout and WITHHOLDS an unparseable value, returning nil so the field
+carries an `unknown` verdict; were it to pass the value through whole, an upstream
+`"2026-08-01 "` trimmed to `"2026-08-01"` would become byte-equal to a recorded `YYYY-MM-DD`
+and report `match` for a value that never parsed. `googleAdsBudgetTypeFromPeriod` has the same
 shape with `" DAILY "`. Normalisation upstream of validation manufactures exactly the
 agreement this readback exists to make impossible. Tests that call those helpers with a
 literal cannot catch it — they never exercise the decode step — so the guard is pinned at the

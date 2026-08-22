@@ -1474,7 +1474,7 @@ func strPtr(s string) *string { return &s }
 // It enforces that invariant more strictly than ReadMetrics and ToggleStatus do: absent
 // provenance FAILS CLOSED here rather than being waved through. See the guard below.
 func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return nil, err
 	}
