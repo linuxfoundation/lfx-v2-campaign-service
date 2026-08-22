@@ -613,9 +613,15 @@ func validatedLoginCustomerID(res *resolved) (string, error) {
 }
 
 // resolveGoogleAdsClient resolves + validates the project's connection and builds a client
-// for the TOGGLE path (see validateGoogleAdsConnection for the shared rules).
-func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+// for the TOGGLE and METRICS paths (see validateGoogleAdsConnection for the shared rules).
+//
+// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting,
+// which follows the customer id the campaign was CREATED under (googleAdsCreationCustomerID)
+// rather than recomputing one from current config. The campaign's customer id is fixed at
+// creation and the provenance guard refuses to address it under any other account — including
+// when the forced-system flag made that creating account the LF system one.
+func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*googleads.Client, error) {
+	res, err := d.creds.resolveExisting(ctx, projectID, platform, googleAdsCreationCustomerID(campaign))
 	if err != nil {
 		return nil, err
 	}
@@ -878,7 +884,7 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 	}
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return err
 	}
@@ -956,7 +962,7 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 	if err != nil {
 		return nil, fmt.Errorf("read google ads metrics: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 	}
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return nil, err
 	}
@@ -1240,7 +1246,13 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 	if err != nil {
 		return nil, fmt.Errorf("read google ads keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 	}
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	// nil campaign: this read is scoped by a SET of campaigns, not one, so there is no single
+	// recorded creation account to resolve against. An empty recorded id is the documented
+	// "unknown, proceed" case (see credsSource.resolveExisting), which resolves the ordinary
+	// project-then-system account — the behaviour the comment above already describes. The
+	// per-campaign account identity is then enforced downstream by googleAdsScopeForCustomer,
+	// which drops or refuses entries whose recorded customer is not the resolved one.
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1285,7 +1297,13 @@ func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectI
 	if err != nil {
 		return nil, fmt.Errorf("read google ads audience insights: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 	}
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	// nil campaign: this read is scoped by a SET of campaigns, not one, so there is no single
+	// recorded creation account to resolve against. An empty recorded id is the documented
+	// "unknown, proceed" case (see credsSource.resolveExisting), which resolves the ordinary
+	// project-then-system account — the behaviour the comment above already describes. The
+	// per-campaign account identity is then enforced downstream by googleAdsScopeForCustomer,
+	// which drops or refuses entries whose recorded customer is not the resolved one.
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1361,7 +1379,14 @@ func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 		}
 	}
 
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	// `campaign`, not nil: this operates on an ALREADY-CREATED campaign, so the account to
+	// authenticate as is the one the campaign RECORDS being created under, exactly as
+	// ToggleStatus and ReadMetrics resolve it. Passing nil would resolve the project's own
+	// connection and the identity guard immediately below would then refuse every campaign
+	// created while LFX_FORCE_SYSTEM_ADS_ACCOUNT was on for a project that has a connection
+	// of its own — stranding those campaigns on the one path that can stop their keywords
+	// from serving. See credsSource.resolveExisting for both directions of that failure.
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return nil, err
 	}

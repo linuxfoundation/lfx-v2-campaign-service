@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -97,6 +97,136 @@ as "may exist", so callers require verification before a manual retry. A definit
 4xx is NOT UNCONFIRMED — Reddit
 received and REJECTED the request, so nothing was created and the caller gets a
 clean failure.
+
+## Authoring a promoted post (brief -> servable ad)
+
+`CreateCampaign` can create the ad's creative itself, so a caller can go from a
+brief to a servable ad without first hand-making a post in Reddit Ads Manager —
+the parity path with the Google/Meta clients (which author their own creatives).
+There are two ways an ad gets a creative, and an explicit post always wins:
+
+- **`PostURL` supplied**: the given post is validated (`extractRedditPostID`) and
+  promoted as-is. `ImageURL`/`CallToAction` are ignored.
+- **`ImageURL` supplied, no `PostURL`**: the client AUTHORS an IMAGE post via
+  `POST /profiles/{accountID}/posts`, then attaches its `t3_` id as the ad's
+  `post_id`. Reddit's profile id IS the ad-account id (`t2_...`). Reddit marks
+  this endpoint **legacy** (superseded by the structured-post job flow); not
+  migrated, recorded so the next editor knows.
+
+Reddit has NO LINK post type and will not auto-fetch an image from the
+destination, so authoring requires an image URL; Reddit INGESTS that image at
+post-create time and re-hosts it to `i.redd.it` (there is no separate
+media-upload step). The post body is
+`{"data":{"type":"IMAGE","headline":..,"allow_comments":false,"content":[{"media_url":..,"call_to_action":..,"destination_url":..}]}}`.
+
+**`allow_comments:false` disables comments, and that is ALL Reddit documents it to
+do.** An earlier version of this page said it marked the post promoted-only and
+kept it out of feeds. That is two claims and both fail: the causal one is
+**contradicted** (a separate PATCH exists purely to flip `allow_comments` on an
+existing post — if it governed dark status, that PATCH would toggle a live ad
+between hidden and public), and "the endpoint inherently creates promoted-only
+posts" is **undocumented** (no visibility, publication or distribution field
+exists on the create body or the GET that reads a post back). Reddit's "promoted
+posts are only placed in feeds" wording belongs to the SELF-SERVE
+promote-an-existing-post flow and does not transfer. Nothing in the client relies
+on the post being invisible; see the ordering note below.
+
+`call_to_action` must be one of Reddit's title-case labels (e.g.
+"Learn More", "Sign Up", "Buy Tickets"); the client accepts a case-insensitive
+value and resolves it to Reddit's exact label against `redditCTAs` (captured live
+from the API; a caller typo fails locally with the accepted set named).
+`destination_url` is the SAME UTM'd click URL the ad's `click_url` uses
+(`buildRedditUTMURL`), so the post and ad agree on the landing URL. The headline
+is the first ad variant's headline, else the event name, capped at
+`maxRedditHeadlineRunes` (300).
+
+The authored post's image URL, CTA, and headline are validated UP FRONT (before
+any mutating call), so a bad value fails fast rather than after paid resources
+exist. The post itself is created BEFORE the paid campaign (`Step 1.5`), and the
+argument for that ordering is the **billing asymmetry**, not invisibility: an
+unattached post carries no spend of its own while a campaign does, so a
+post-authoring FAILURE degrades to a campaign + ad group with NO ad rather than
+orphaning a PAID resource. Because a stray post's visibility is undocumented
+rather than known-benign, it is treated as a stray to REMOVE: every arm where a
+post may exist tells the operator to DELETE a post not attached to an ad, which is
+correct whether or not the post is distributed.
+
+A caller context cancellation during authoring is fatal, but only in conjunction
+with ambiguity: `ctx.Err() != nil && createOutcomeAmbiguous(err)` returns a
+name-carrying PARTIAL result so `Dispatch` RETAINS the claim (release keys on
+`result == nil` alone, and the request layer wraps ctx errors as `transportError`
+because a ctx error from `Do` can fire after the POST reached Reddit — so
+`(nil, err)` there released the claim on a post that may exist and a retry
+duplicated it). A non-ambiguous cancellation still aborts with `(nil, err)`.
+Every NON-cancellation failure, including a plain 5xx, stays non-fatal and
+degrades. The degrade step reports ONLY the HTTP status, never the error body
+— a reflective Reddit validation error can echo the `destination_url` (which
+carries the caller's permitted secret-bearing query params).
+
+That degraded outcome is NOT the same as the missing-`PostURL` state, and must not
+be recorded as one. With no `PostURL` and no `ImageURL` the caller never asked for
+an ad, so `AdWarning` stays empty and the campaign is a clean `created`. When
+`ImageURL` WAS supplied, an ad was requested and does not exist, so authoring sets
+`AdWarning` (seeding the same field the ad-create path uses) and the dispatch
+adapter persists `created_degraded`. Leaving it empty made a no-ad campaign
+persist as a clean success, and because `created` is terminal the orchestrator's
+idempotency check then refused to re-dispatch it — the campaign was permanently
+ad-less while every status an operator could see said it had succeeded.
+
+Authoring classifies its failure with the SAME three-way rule **and the same arm
+order** as the ad-create path, so an operator is never told to take a manual action
+that could duplicate a post Reddit already holds. `createOutcomeAmbiguous(err)` is
+asked FIRST; `errors.As(err, &apiErr)` is used only to EXTRACT the status for the
+message, never to select the arm. The order is load-bearing because the two are not
+disjoint: `createOutcomeAmbiguous` returns true for an `*apiError` carrying a 5xx or
+a mutating 3xx, so testing the type first swallows both into the "Reddit rejected
+it" arm and tells the operator to author a post that may already exist.
+
+**`Steps` is read as a RUNBOOK, so its arms must not contradict each other.** Three
+defects on this path were one surface: (1) Step 4's generic ad guidance still fired
+after an authoring failure — on the ambiguous arm it said "create the ads" while
+`AdWarning` said the post may exist and to verify first, and its "No ad variants or
+post URL provided" wording was false whenever `Variants` were supplied; (2) the
+definite-failure arms omitted the campaign/ad-group context, so an operator
+following them literally builds a SECOND campaign while the first sits PAUSED and
+orphaned; (3) nothing said to delete a stray post. Step 4 now emits nothing when
+`postWarning != ""` (guarded at the variant-LISTING level, which is the arm that
+actually fired), and the ambiguous arms say DELETE.
+
+**The campaign-state context is DEFERRED, not stated at Step 1.5.** Fixing (2) by
+writing "campaign + ad group created (PAUSED)" into the Step 1.5 arms replaced a
+missing-context defect with a premature-claim one — the same class, since Step 1.5
+runs BEFORE the campaign POST (Step 2) and the ad-group POST (Step 3). The claim
+became true only when both creates went on to succeed; on an ambiguous campaign
+create the persisted runbook asserted both resources existed directly above
+`"a PAUSED campaign may exist"`, and told the operator to attach an ad to a campaign
+that may never have been created.
+
+So the Step 1.5 arms confine themselves to the POST that actually happened
+("continuing without an ad"), and a single step naming the real ids
+(`Campaign <id> and ad group <id> were created (PAUSED)…`) plus an `AdWarning`
+suffix are appended at **Step 4**, under `postWarning != ""`. Reaching Step 4 is
+the proof the claim holds: every path between the campaign POST and it returns
+early — ambiguous partial, malformed 2xx, definite failure, and the ad-group
+equivalents — so control arrives only when both ids are decoded non-empty and both
+resources are PAUSED. **A runbook sentence must be emitted from a point where its
+claim is already known, not from where it is convenient to write.**
+
+  - **UNCONFIRMED** — anything `createOutcomeAmbiguous` accepts: a `transportError`
+    from an in-flight failure, a 2xx whose body carried no `data.id` (which
+    `createPromotedPost` wraps as one precisely because the post may exist), or an
+    `*apiError` with a 5xx / mutating 3xx. Verify BEFORE authoring again.
+  - **FAILED** — an `*apiError` that is not ambiguous, i.e. a definite 4xx. Reddit
+    received and rejected it, so no post exists and the operator can remediate
+    directly.
+  - **Pre-send** — the `default` arm (token refresh, body encode, request build, a
+    refused/unresolvable dial). A new non-`apiError` shape must be checked against
+    `createOutcomeAmbiguous` before it lands here.
+
+The dispatch adapter SANITIZES
+both `PostURL` and `ImageURL` (query/fragment stripped) before snapshotting the
+config, since a signed image URL can carry a secret and `config_snapshot` is
+stored unencrypted.
 
 ## Campaign status toggle
 

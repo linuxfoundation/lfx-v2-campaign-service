@@ -229,9 +229,14 @@ func validateTwitterConnection(projectID string, res *resolved) (creds twitterCr
 }
 
 // resolveTwitterClient resolves + validates the project's connection and builds an X Ads
-// client for the TOGGLE path (see validateTwitterConnection for the shared rules).
-func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID string, platform model.Provider) (*twitter.Client, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+// client for the TOGGLE and METRICS paths (see validateTwitterConnection for the shared rules).
+//
+// Both callers operate on an ALREADY-CREATED campaign, so it resolves via resolveExisting,
+// which follows the account the campaign was CREATED under (twitterCreationAccountID) — the
+// project's, or the LF system one when the forced-system flag governed its creation.
+// verifyTwitterAccountMatch would refuse a campaign addressed under any other account.
+func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*twitter.Client, error) {
+	res, err := d.creds.resolveExisting(ctx, projectID, platform, twitterCreationAccountID(campaign))
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +366,7 @@ func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, 
 	if err != nil {
 		return err
 	}
-	client, err := d.resolveTwitterClient(ctx, projectID, platform)
+	client, err := d.resolveTwitterClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return err
 	}
@@ -423,7 +428,7 @@ func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	if err != nil {
 		return nil, err
 	}
-	client, err := d.resolveTwitterClient(ctx, projectID, platform)
+	client, err := d.resolveTwitterClient(ctx, projectID, platform, campaign)
 	if err != nil {
 		return nil, err
 	}

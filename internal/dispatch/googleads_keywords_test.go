@@ -17,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // scopeOf builds a campaign scope carrying NO provenance, the legacy shape: rows written
@@ -571,5 +572,67 @@ func TestGoogleAdsKeywordActions_UnconfirmedOutcomeSurvivesTheDispatcher(t *test
 	if !errors.As(err, &unconfirmed) || !unconfirmed.Unconfirmed() {
 		t.Errorf("the dispatcher dropped the unconfirmed marker; the service will report this "+
 			"possibly-applied batch as a definite failure and invite a retry: %v", err)
+	}
+}
+
+// TestGoogleAdsKeywordActions_PostCutoverCampaignResolvesItsCreationAccount is the
+// keyword-mutate half of the invariant TestForcedSystemStillPausesAPreCutoverCampaign
+// pins for the toggle path: an operation on an EXISTING campaign must resolve the account
+// that campaign RECORDS being created under, not whatever the project's own connection
+// resolves to today.
+//
+// ApplyKeywordActions already compares the recorded creating customer against
+// client.CustomerID() and refuses on a difference, so the two halves are coupled: resolve
+// the wrong account and the guard turns a legitimate pause into ErrCampaignAccountMismatch.
+// That is the POST-cutover direction of the failure — the campaign was created on the
+// SYSTEM account because creation is forced, the project has a connection of its own, and
+// plain project-then-fallback resolution therefore strands exactly the campaigns the flag
+// just created. Here it strands them on a REMOVE/pause path, where the campaign keeps
+// serving and keeps spending while every attempt to act on its keywords 409s.
+//
+// The fixture makes the two accounts differ, which is what gives the assertion teeth: the
+// project resolves customer 1234567890 and the campaign was created under 7777777777, the
+// system row's customer. Passing no campaign to the resolver yields the project's account
+// and the guard fires; passing the campaign yields the system account and the mutate runs.
+func TestGoogleAdsKeywordActions_PostCutoverCampaignResolvesItsCreationAccount(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+
+	// Two upstream calls happen on the happy path and both must be answered, or the mutate
+	// never runs and the test would pass on the wrong step. googleAds:search resolves the
+	// criterion TYPE (the guard that refuses anything that is not a positive keyword); the
+	// mutate then applies the pause. `negative` is deliberately OMITTED from the search row:
+	// protobuf JSON drops a default-valued scalar, so that absence IS the positive keyword.
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, ":search") {
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777"},"adGroup":{"id":"333"}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/7777777777/adGroupCriteria/333~777"}]}`)
+	})
+
+	// The project has its own usable connection on customer 1234567890 — the case that
+	// makes this the mirror-image bug rather than the pre-cutover one. The system row is
+	// on 7777777777, and the campaign records having been created there.
+	projectConn := activeGoogleAdsConn(goodGoogleAdsCreds)
+	systemConn := activeGoogleAdsConn(goodGoogleAdsCreds)
+	systemConn.AccountID = "7777777777"
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"p1":                  projectConn,
+		model.SystemProjectID: systemConn,
+	}}
+	d := NewGoogleAdsDispatcher(repo, identityEncryptor{}, opts...)
+
+	campaign := provisionedGoogleAdsCampaign("7777777777")
+	outcomes, err := d.ApplyKeywordActions(context.Background(), "p1", model.ProviderGoogleAds, campaign, pauseAction("333", "777"))
+	if err != nil {
+		t.Fatalf("a campaign created under the system account must be actionable through its "+
+			"recorded creation account; it keeps spending while this path refuses: %v", err)
+	}
+	if !*reached {
+		t.Error("the platform was never contacted, so nothing was actually paused")
+	}
+	if len(outcomes) != 1 {
+		t.Errorf("expected 1 outcome, got %d", len(outcomes))
 	}
 }
