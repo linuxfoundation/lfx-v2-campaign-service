@@ -192,14 +192,19 @@ func Evaluate(in Input) []ActionItem {
 	// THREE gates, and each one exists because without it the rule fires on missing data
 	// rather than on a finding:
 	//
-	//   - in.Conversions != nil gates the whole rule on the platform being able to measure
-	//     conversions AT ALL. Four of the seven adapters (Meta, X, Reddit, HubSpot) cannot,
-	//     for reasons that are properties of those APIs rather than gaps here — see
-	//     model.CampaignMetrics.Conversions. On those platforms every campaign would
-	//     otherwise present as 0 conversions and every one would be flagged, forever, which
-	//     is the exact "fires because data is missing" failure that trains operators to
-	//     ignore an alert. This is the same shape of gate BillsPerDelivery gives
-	//     zero_delivery: a rule that is meaningless on a channel does not fire there.
+	//   - in.Conversions != nil gates the whole rule on the READ having produced a complete
+	//     conversion measurement — which is what nil means per model.CampaignMetrics.
+	//     Conversions, and it covers two cases that must both be excluded here. Four of the
+	//     seven adapters (Meta, X, Reddit, HubSpot) cannot report a campaign-level count at
+	//     all, for reasons that are properties of those APIs rather than gaps here; on those
+	//     platforms every campaign would otherwise present as 0 conversions and every one
+	//     would be flagged, forever. But a conversion-CAPABLE channel also reaches nil when
+	//     its response was incomplete — LinkedIn when a returned element omitted the metric,
+	//     Microsoft on a blank ConversionsQualified cell — and firing there would raise
+	//     no_conversions against a campaign that may well have converted. Both are the same
+	//     "fires because data is missing" failure that trains operators to ignore an alert.
+	//     This is the same shape of gate BillsPerDelivery gives zero_delivery: a rule that
+	//     cannot be evaluated on the data in hand does not fire.
 	//   - minClicksForConversions is the delivery floor, the direct analogue of
 	//     minImpressionsForCTR on the rule above. A campaign with four clicks and no
 	//     conversions has not yet earned enough traffic for zero to mean anything.

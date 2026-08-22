@@ -295,8 +295,22 @@ type CampaignMetrics struct {
 	Ctr float64
 	// Conversions is the count of desired actions attributed to this campaign over Window,
 	// and is a POINTER because "this platform cannot tell us" and "this platform measured
-	// zero" are different facts that a plain int64 cannot hold apart. nil means the channel
-	// does not report a campaign-level conversion count at all; a non-nil 0 is a measurement.
+	// zero" are different facts that a plain int64 cannot hold apart.
+	//
+	// nil means THIS READ PRODUCED NO COMPLETE CONVERSION MEASUREMENT; a non-nil 0 is a
+	// measurement. Two distinct situations reach nil, and a consumer must treat them the
+	// same way, which is why the contract is stated over the READ rather than the platform:
+	//
+	//   - the channel reports no campaign-level conversion count at all (Meta, X, Reddit,
+	//     HubSpot — see the four entries below), and
+	//   - a conversion-capable channel returned a response this client could not complete:
+	//     LinkedIn when any element it returned omitted externalWebsiteConversions (one
+	//     omission withdraws the whole total), and Microsoft when the ConversionsQualified
+	//     cell is blank because the account has no Universal Event Tracking.
+	//
+	// Reading nil as "this platform cannot measure conversions" would therefore be wrong for
+	// the second group, and a consumer that special-cased the channel on that basis would
+	// misclassify a LinkedIn campaign whose response was merely incomplete.
 	//
 	// Only three of the seven adapters set it, and which three is a statement about the
 	// VENDOR APIS, verified field by field against each vendor's published reference rather
