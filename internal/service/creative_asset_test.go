@@ -178,7 +178,7 @@ func TestBriefService_UploadCreativeAsset_ValidationGuards(t *testing.T) {
 
 // TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum binds the two values the
 // handler DERIVES rather than accepts. The checksum is the idempotency key for the whole feature —
-// UNIQUE (brief_id, checksum) in migration 000026 — and nothing at this layer pinned it.
+// UNIQUE (brief_id, checksum) in migration 000028 — and nothing at this layer pinned it.
 func TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

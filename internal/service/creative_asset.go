@@ -129,8 +129,11 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// IHDR chunk passes it while being unrecoverable image data. Storing that yields a corrupt
 	// asset that fails much later at dispatch, far from the upload that caused it, so the bytes
 	// are proven decodable HERE. This is the allocating step, which is exactly why stage 2 runs
-	// first: the buffer it may allocate is now bounded by the pixel cap, not by what the header
-	// claims. The decoded image itself is discarded — only the verdict matters.
+	// first: the buffer it may allocate is now bounded by the DECODED-BYTE budget, not by what
+	// the header claims. Byte budget rather than pixel count deliberately — the bound that
+	// matters is bytes allocated, and a 16-bit image costs 8 bytes per pixel where an 8-bit one
+	// costs 4, so a pixel-only cap admits twice the memory it appears to for 16-bit uploads.
+	// The decoded image itself is discarded — only the verdict matters.
 	if _, _, err := image.Decode(bytes.NewReader(p.Bytes)); err != nil {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image data is incomplete or corrupt"}
 	}

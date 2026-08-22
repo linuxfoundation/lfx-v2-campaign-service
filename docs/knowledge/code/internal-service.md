@@ -161,7 +161,10 @@ dimensions decoding to gigabytes, and the check spends only the header read. **S
 in FULL and discards the result, because stage 1 proves only that a HEADER parses — a PNG
 truncated immediately after its IHDR passes `DecodeConfig` while carrying no recoverable pixel
 data, and storing it yields a corrupt asset that fails much later at dispatch. Stage 2 exists so
-that stage 3's allocation is bounded by the pixel cap rather than by whatever the header claims;
+that stage 3's allocation is bounded by the DECODED-BYTE budget rather than by whatever the
+header claims — a byte budget, not a pixel count, because a 16-bit image decodes at 8 bytes per
+pixel against an 8-bit image's 4, so a pixel-only cap silently admits twice the memory for a
+16-bit upload;
 running the decode first would make the gate worthless, since the allocation IS the attack. The set of registered decoders (`image/png`,
 `image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
 allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.
