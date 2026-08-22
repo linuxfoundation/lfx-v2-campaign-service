@@ -246,6 +246,27 @@ func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.P
 	return []model.MarketingEmail{}, nil
 }
 
+func (d upstreamCapableDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordPerformance{}, nil
+}
+
+func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceInsights{}, nil
+}
+
+func (d upstreamCapableDispatcher) ApplyKeywordActions(context.Context, string, model.Provider, *model.Campaign, []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return []model.KeywordActionOutcome{}, nil
+}
+
 func (d upstreamCapableDispatcher) LookupCampaign(context.Context, string, model.Provider, string) (*model.PlatformCampaignRef, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -304,6 +325,30 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			name: "read keywords",
+			op:   opReadKeywords,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadKeywordPerformance(ctx, "p1", platform, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "read audience",
+			op:   opReadAudience,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadAudienceInsights(ctx, "p1", platform, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "keyword actions",
+			op:   opKeywordActions,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ApplyKeywordActions(ctx, "p1", platform, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}})
+				return err
+			},
+		},
+		{
 			name: "lookup campaign",
 			op:   opLookupCampaign,
 			call: func(ctx context.Context, o *Orchestrator) error {
@@ -324,7 +369,11 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 		} {
 			t.Run(tc.name+"/"+arm.name, func(t *testing.T) {
 				rec := &recordingMetrics{}
-				orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				// A non-empty campaign scope: the two insight reads answer an empty scope
+				// WITHOUT an upstream call, so with the default fake they would record
+				// nothing and this instrumentation assertion would fail for the right
+				// reason but the wrong cause.
+				orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 					platform: upstreamCapableDispatcher{err: arm.platformErr},
 				})
 				orch.SetMetrics(rec)

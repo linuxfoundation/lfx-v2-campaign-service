@@ -350,6 +350,45 @@ side is unknown; on LinkedIn, Reddit and X that arm is unreachable (each resolve
 account-less connection with `domain.ErrAccountNotSelected` first) and says so rather than
 depending on an unpinned precondition.
 
+**The Google Ads insight reads apply the same invariant to a SCOPE rather than to one campaign,
+and fail closed on a PARTIAL mismatch** (`googleAdsScopeForCustomer`, LFXV2-2641). The keyword
+and audience reads are confined to the project's own campaign ids, because Google Ads is one
+customer shared across foundations. Each id is checked against the customer the connection NOW
+resolves to; entries with NO recorded provenance are still KEPT (unknown cannot prove a
+mismatch, and a misleading read is recoverable where an irreversible `REMOVE` is not — the
+documented asymmetry against `ApplyKeywordActions`). But if ANY entry has CONFLICTING
+provenance, the WHOLE read fails with `domain.ErrCampaignAccountMismatch` rather than returning
+the matching subset. Dropping the mismatched entries would return a silent partial result: both
+endpoints report success and NEITHER response carries an omitted-campaign signal, so a caller
+cannot distinguish a filtered project from one that genuinely has no other campaigns — and an
+audience distribution computed over half a project's campaigns looks exactly like a complete
+one. The service maps the sentinel to a 409, so no contract field was added — but the REMEDY
+the 409 carries had to change with it, and that is easy to miss when only the failure mode is
+widened. Failing closed on ANY mismatch makes the MIXED case the common one: some campaigns
+under the account the connection now resolves to, others under an older one. "Reconnect the
+original account" — correct on the single-campaign paths, where exactly one account is in
+play — is actively wrong advice there, because reconnecting merely swaps WHICH subset
+mismatches and breaks the campaigns that currently work. `classifyInsightsError` therefore
+tells the caller to reconcile or re-dispatch the mismatched campaign ROWS onto the connected
+account, offering the reconnect only for the case where one account owns every campaign in
+scope. **Widening a guard from "all" to "any" changes who the remedy is addressed to**; the
+message has to be re-read against the new condition, not carried over with the sentinel.
+
+**Which resolver each Google Ads keyword path uses is decided by whether it names ONE campaign**
+(LFXV2-2641 x LFXV2-3324). `resolveGoogleAdsClient` takes a `*model.Campaign` and forwards
+`googleAdsCreationCustomerID(campaign)` to `credsSource.resolveExisting`. The two insight READS
+pass `nil`: they are scoped by a SET of campaigns, so there is no single recorded creation
+account, and `nil` yields the empty id that resolveExisting documents as "unknown, proceed" —
+ordinary project-then-system resolution, with per-campaign identity enforced downstream by
+`googleAdsScopeForCustomer` as described above. `ApplyKeywordActions` passes the CAMPAIGN,
+because it operates on one already-created campaign and then compares that campaign's recorded
+creating customer against `client.CustomerID()`. Those two steps are coupled: resolving the
+project's own account there would make the guard refuse every campaign created while
+`LFX_FORCE_SYSTEM_ADS_ACCOUNT` was on for a project holding a connection of its own — the
+POST-cutover stranding `resolveExisting` exists to prevent, arriving on the path that stops
+keywords from serving. All three call sites state which case they are in, because the argument
+that merely type-checks is not the argument that is correct.
+
 ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
 narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item
 check, and LinkedIn's creative-servability check (which lives INSIDE the client call, so

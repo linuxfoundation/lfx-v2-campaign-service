@@ -64,6 +64,14 @@ type ToggleCampaignStatusRequestBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 }
 
+// ApplyKeywordActionsRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP request body.
+type ApplyKeywordActionsRequestBody struct {
+	// The keyword mutations to apply, all-or-nothing.
+	Actions []*KeywordActionInputRequestBody `form:"actions,omitempty" json:"actions,omitempty" xml:"actions,omitempty"`
+}
+
 // CreateBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP response body.
 type CreateBriefResponseBody struct {
@@ -410,6 +418,20 @@ type ToggleCampaignStatusResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+}
+
+// ApplyKeywordActionsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body.
+type ApplyKeywordActionsResponseBody struct {
+	// The campaign whose keywords were acted on
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// One entry per requested action, in request order. All applied, or the
+	// request failed and none were.
+	Results []*KeywordActionResultResponseBody `form:"results" json:"results" xml:"results"`
+	// How many actions were applied. Always equal to the number requested — a
+	// partial application is not a possible outcome.
+	AppliedCount int `form:"applied_count" json:"applied_count" xml:"applied_count"`
 }
 
 // GetJobResponseBody is the type of the "lfx-v2-campaign-service-briefs"
@@ -1450,6 +1472,69 @@ type ToggleCampaignStatusUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ApplyKeywordActionsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "BadRequest" error.
+type ApplyKeywordActionsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ApplyKeywordActionsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "Conflict" error.
+type ApplyKeywordActionsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ApplyKeywordActionsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ApplyKeywordActionsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ApplyKeywordActionsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ApplyKeywordActionsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ApplyKeywordActionsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "NotFound" error.
+type ApplyKeywordActionsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ApplyKeywordActionsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ApplyKeywordActionsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1692,6 +1777,19 @@ type CampaignActionItemResponseBody struct {
 	Action string `form:"action" json:"action" xml:"action"`
 }
 
+// KeywordActionResultResponseBody is used to define fields on response body
+// types.
+type KeywordActionResultResponseBody struct {
+	// The ad group that was addressed
+	AdGroupID string `form:"ad_group_id" json:"ad_group_id" xml:"ad_group_id"`
+	// The criterion that was addressed
+	CriterionID string `form:"criterion_id" json:"criterion_id" xml:"criterion_id"`
+	// The action that was applied
+	Action string `form:"action" json:"action" xml:"action"`
+	// The criterion resource name Google returned for the applied mutation
+	ResourceName string `form:"resource_name" json:"resource_name" xml:"resource_name"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -1745,6 +1843,19 @@ type CampaignUpdateInputRequestBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Campaign configuration snapshot
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// KeywordActionInputRequestBody is used to define fields on request body types.
+type KeywordActionInputRequestBody struct {
+	// The ad group the criterion belongs to. Digits only, and the canonical
+	// base-10 spelling of a positive int64.
+	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
+	// The keyword's ad-group criterion id, as returned by the keywords read.
+	// Digits only, and the canonical base-10 spelling of a positive int64.
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+	// What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion
+	// cannot be re-enabled, only re-created with a new id.
+	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
 }
 
 // NewCreateBriefResponseBody builds the HTTP response body from the result of
@@ -2039,6 +2150,29 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsResponseBody builds the HTTP response body from the
+// result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsResponseBody(res *lfxv2campaignservicebriefs.KeywordActions) *ApplyKeywordActionsResponseBody {
+	body := &ApplyKeywordActionsResponseBody{
+		CampaignID:   res.CampaignID,
+		AppliedCount: res.AppliedCount,
+	}
+	if res.Results != nil {
+		body.Results = make([]*KeywordActionResultResponseBody, len(res.Results))
+		for i, val := range res.Results {
+			if val == nil {
+				body.Results[i] = nil
+				continue
+			}
+			body.Results[i] = marshalLfxv2campaignservicebriefsKeywordActionResultToKeywordActionResultResponseBody(val)
+		}
+	} else {
+		body.Results = []*KeywordActionResultResponseBody{}
 	}
 	return body
 }
@@ -3157,6 +3291,73 @@ func NewToggleCampaignStatusUnauthorizedResponseBody(res *lfxv2campaignservicebr
 	return body
 }
 
+// NewApplyKeywordActionsBadRequestResponseBody builds the HTTP response body
+// from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ApplyKeywordActionsBadRequestResponseBody {
+	body := &ApplyKeywordActionsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsConflictResponseBody builds the HTTP response body
+// from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ApplyKeywordActionsConflictResponseBody {
+	body := &ApplyKeywordActionsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ApplyKeywordActionsServiceUnavailableResponseBody {
+	body := &ApplyKeywordActionsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ApplyKeywordActionsInternalServerErrorResponseBody {
+	body := &ApplyKeywordActionsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsNotFoundResponseBody builds the HTTP response body
+// from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ApplyKeywordActionsNotFoundResponseBody {
+	body := &ApplyKeywordActionsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ApplyKeywordActionsUnauthorizedResponseBody {
+	body := &ApplyKeywordActionsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteCampaignBadRequestResponseBody builds the HTTP response body from
 // the result of the "delete-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3495,6 +3696,26 @@ func NewToggleCampaignStatusPayload(body *ToggleCampaignStatusRequestBody, proje
 	return v
 }
 
+// NewApplyKeywordActionsPayload builds a lfx-v2-campaign-service-briefs
+// service apply-keyword-actions endpoint payload.
+func NewApplyKeywordActionsPayload(body *ApplyKeywordActionsRequestBody, projectID string, briefID string, campaignID string, bearerToken *string) *lfxv2campaignservicebriefs.ApplyKeywordActionsPayload {
+	v := &lfxv2campaignservicebriefs.ApplyKeywordActionsPayload{}
+	v.Actions = make([]*lfxv2campaignservicebriefs.KeywordActionInput, len(body.Actions))
+	for i, val := range body.Actions {
+		if val == nil {
+			v.Actions[i] = nil
+			continue
+		}
+		v.Actions[i] = unmarshalKeywordActionInputRequestBodyToLfxv2campaignservicebriefsKeywordActionInput(val)
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewDeleteCampaignPayload builds a lfx-v2-campaign-service-briefs service
 // delete-campaign endpoint payload.
 func NewDeleteCampaignPayload(projectID string, briefID string, campaignID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.DeleteCampaignPayload {
@@ -3620,6 +3841,28 @@ func ValidateToggleCampaignStatusRequestBody(body *ToggleCampaignStatusRequestBo
 	return
 }
 
+// ValidateApplyKeywordActionsRequestBody runs the validations defined on
+// Apply-Keyword-ActionsRequestBody
+func ValidateApplyKeywordActionsRequestBody(body *ApplyKeywordActionsRequestBody) (err error) {
+	if body.Actions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("actions", "body"))
+	}
+	if len(body.Actions) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.actions", body.Actions, len(body.Actions), 1, true))
+	}
+	if len(body.Actions) > 60 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.actions", body.Actions, len(body.Actions), 60, false))
+	}
+	for _, e := range body.Actions {
+		if e != nil {
+			if err2 := ValidateKeywordActionInputRequestBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
 // ValidateBriefInputRequestBody runs the validations defined on
 // brief-inputRequestBody
 func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
@@ -3667,6 +3910,42 @@ func ValidateCampaignUpdateInputRequestBody(body *CampaignUpdateInputRequestBody
 	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	return
+}
+
+// ValidateKeywordActionInputRequestBody runs the validations defined on
+// keyword-action-inputRequestBody
+func ValidateKeywordActionInputRequestBody(body *KeywordActionInputRequestBody) (err error) {
+	if body.AdGroupID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_group_id", "body"))
+	}
+	if body.CriterionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criterion_id", "body"))
+	}
+	if body.Action == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action", "body"))
+	}
+	if body.AdGroupID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.ad_group_id", *body.AdGroupID, "^[0-9]+$"))
+	}
+	if body.AdGroupID != nil {
+		if utf8.RuneCountInString(*body.AdGroupID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.ad_group_id", *body.AdGroupID, utf8.RuneCountInString(*body.AdGroupID), 19, false))
+		}
+	}
+	if body.CriterionID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.criterion_id", *body.CriterionID, "^[0-9]+$"))
+	}
+	if body.CriterionID != nil {
+		if utf8.RuneCountInString(*body.CriterionID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.criterion_id", *body.CriterionID, utf8.RuneCountInString(*body.CriterionID), 19, false))
+		}
+	}
+	if body.Action != nil {
+		if !(*body.Action == "PAUSE" || *body.Action == "REMOVE") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.action", *body.Action, []any{"PAUSE", "REMOVE"}))
+		}
 	}
 	return
 }

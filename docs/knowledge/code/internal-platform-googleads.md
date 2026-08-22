@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; and geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); and project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -849,3 +849,170 @@ The REST binding is GET (not the POST used by `:search` and `:mutate`), it takes
 body at all, and it is sent with `idempotent=true` — a pure read, so retrying a 429 cannot
 double-apply anything.
 
+
+## Keyword and audience insights, and keyword actions (LFXV2-2641)
+
+`keywords.go` adds two GAQL reads and one mutation. None of them creates a keyword — criterion
+creation remains GA-4's `createAdGroupTargeting`.
+
+**The reads are scoped to the caller's own CAMPAIGNS, not to the connected account, and that
+distinction is the authorization boundary.** An earlier version scoped them only to the client's
+customer id, on the reasoning that "the connection IS the scope". That reasoning does not hold
+here: Google Ads is ONE customer shared across every foundation (see `docs/architecture.md`,
+"Account Tenancy"), so a connection-scoped query returns every project's keyword text, campaign
+ids, spend and demographic distribution to any `campaign_manager`. Both reads now take the
+`platform_campaign_id`s the service holds for the project — read with `project_id` in the SQL
+WHERE clause, never filtered in Go after an unscoped read — and render them into a
+`campaign.id IN (...)` predicate via `campaignScopePredicate`.
+
+`campaignScopePredicate` REFUSES an empty list rather than returning an empty string, because an
+empty predicate concatenated into the query silently restores the account-wide read — and it does
+so for the input most likely to occur, a project that has dispatched nothing. The orchestrator
+answers that case earlier still, returning an empty result WITHOUT issuing any upstream query;
+the adapter's refusal is defence in depth for a future caller in another package. Ids are
+validated digits-only for the same reason `GetCampaignMetrics` validates its campaign id: GAQL
+has no parameterized queries and these values reach the string by concatenation.
+
+The consequence worth stating plainly is a BEHAVIOUR CHANGE: a campaign created outside this
+service, or claimed but not yet dispatched, has no dispatched row and is therefore not in scope,
+so its keywords and demographics no longer appear.
+
+**The narrowing has to be swept across every surface that DESCRIBES these reads, not only the
+one that performs them.** The scope predicate landed with the type godocs, method godocs, test
+rationales, the API catalog row and this file still calling the results "account-wide", "the
+account's keywords" or "the whole account's spend" — a published boundary WIDER than the one
+the code enforces. That is not a cosmetic lag. A consumer reading `AudienceInsights` as the
+account's audience presents another foundation's demographics under this project's name; a
+future author reading `campaignIDs` as a filter rather than as the tenant boundary drops it as
+an optimisation; and a test whose stated reason is "an ACCOUNT-WIDE read returns keywords this
+service never created" rests on a premise that is now false, even where its conclusion survives
+(adopted campaigns and UI edits reach the same place). The rule is that whoever narrows a read
+adopts every claim about it they leave standing.
+
+The distinction to preserve while sweeping: a comment saying these reads WOULD be account-wide
+without the predicate is TRUE and load-bearing — `campaignScopePredicate`'s own refusal, the
+orchestrator's empty-scope early return and the dispatcher's post-filter guard are all written
+that way on purpose. What must go is any claim that the RESULT is account-wide.
+
+**The keyword read is capped, and says so.** `GetKeywordPerformance` orders by impressions
+descending and asks for `maxKeywordRows+1` rows; the extra row is dropped and reported as
+`Truncated`. That probe is the whole mechanism: without it a caller receiving exactly the cap
+cannot distinguish a small result set from a truncated large one, and would total the slice as
+the project's whole spend. The status predicate is an ALLOW-LIST (`ENABLED`, `PAUSED`), not an exclusion of `REMOVED`:
+`AdGroupCriterionStatus` also carries `UNSPECIFIED` and `UNKNOWN`, and an omitted proto field
+decodes to `""` — all three survive `!= 'REMOVED'` and would be offered as actionable rows
+carrying a pause/remove that cannot apply. `status` and `match_type` are additionally
+NORMALISED onto the closed vocabularies the API contract declares. That is not cosmetic: Goa
+emits response validation in the generated CLIENT, not the server, so one out-of-enum value
+makes a client reject the ENTIRE response. Unrecognised values fold onto `UNKNOWN` rather than
+dropping the row, following this package's existing reading — a caller must be able to tell
+"Google said something we don't handle" from "Google said nothing". A row missing
+its criterion or ad-group id is a hard error rather than a returned row, because the
+keyword-actions endpoint needs BOTH ids to address a criterion.
+
+**Audience is three queries, and partial success is not an outcome.** Age and gender are
+criterion views (`age_range_view`, `gender_view`); device is a SEGMENT of the `campaign`
+resource, which is why it selects `segments.device FROM campaign` while the others select a
+criterion field from a `*_view`. Because the device query segments campaigns, it returns one
+row per (campaign, device) pair, so buckets are AGGREGATED by value rather than assumed unique
+— taking the last row per device would report a single campaign's numbers as the whole
+SCOPE's, i.e. as every campaign the project owns. (Never as the ACCOUNT's: both reads in this
+file are campaign-scoped, which is what `campaignScopePredicate` is for.)
+CTR is computed after aggregation, never averaged per row. A failure in any one breakdown
+fails the whole read: each dimension independently covers the same traffic, and a caller shown
+two of three cannot tell the third is missing rather than empty. Google's
+`UNDETERMINED`/`UNKNOWN` buckets are returned as-is, since they are real unattributed traffic
+and dropping them makes the buckets silently under-sum.
+
+**Keyword actions are atomic and can only reduce delivery.** `PAUSE` and `REMOVE` are the only
+supported actions; there is deliberately no `ENABLE`, because re-enabling a keyword restarts
+spend and this surface exists to reduce what serves. `partialFailure` is never set, so one
+rejected operation rolls the whole batch back — a caller pausing eight keywords to stop a
+budget leak is never told that five were paused and left to work out which three still spend.
+`PAUSE` is an update carrying `updateMask: "status"`; without that mask Google ignores the
+field and the keyword keeps serving while the call reports success. `REMOVE` is a `remove`
+operation, and it is IRREVERSIBLE upstream — a removed criterion cannot be re-enabled, only
+re-created with a new id.
+
+`ValidateKeywordActions` is split out from `ApplyKeywordActions` so the batch can be rejected
+before any credential work happens. Both ids must be digits-only, for the same reason
+`customerIDRE` guards the metrics query: they are concatenated into a resource name. A batch
+naming the same criterion twice is REFUSED rather than de-duplicated — unlike the create
+path's dedupe, two entries can carry different actions and there is no defensible way to pick
+one.
+
+Every result is verified against the operation that produced it: `adGroupCriterionID` rejects a
+resource name whose customer id is not this client's, and a returned criterion that does not
+match the one addressed is reported UNCONFIRMED rather than as success. A short or malformed
+mutate response is UNCONFIRMED for the same reason — the mutations may have been applied, and
+this path changes spend, so the caller is told to verify in Google Ads rather than to assume
+nothing happened.
+
+**Every criterion's TYPE is resolved before the mutate, and only a POSITIVE KEYWORD is
+actionable** (`resolveKeywordCriteria`, LFXV2-2641). Matching the ad group is not sufficient: an
+ad group also holds the userList criteria GA-4 creates, and NEGATIVE keywords share the
+`adGroupCriteria` resource family and the same `adGroupId~criterionId` handle. Acting on either
+through this endpoint would PAUSE or REMOVE an EXCLUSION, which WIDENS delivery and spend —
+the opposite of the endpoint's guarantee, and irreversible for `REMOVE`. The type is established
+with the same mechanism the READ path uses rather than a second one: a `keyword_view` query,
+Google's type-scoped resource, which is exactly why `GetKeywordPerformance` needs no type
+predicate. `ad_group_criterion.negative` is selected on top of it because `keyword_view` carries
+both polarities. **An UNRESOLVABLE id FAILS CLOSED; an OMITTED `negative` field does not** —
+these are different facts and conflating them broke the happy path. `negative` is a proto bool,
+so protobuf JSON omits it whenever it is false: the omission IS the positive answer, and every
+ordinary positive keyword arrives that way. Absence already means "false" in this wire format, so
+reading it as "unknown polarity" gives absence a second meaning it cannot carry and refuses every
+keyword the read path just handed the caller — a re-read produces the identical omission and
+cannot repair it. Only an explicit `negative: true` is refused as an exclusion. An id the view
+returns NO ROW for is still refused, which is the guard's whole purpose (a userList criterion
+returns no row): refusing costs a caller one re-read, while admitting one risks an irreversible
+removal of an exclusion. The
+sentinel is `ErrKeywordCriterionNotPositiveKeyword`, which the dispatcher folds onto
+`domain.ErrKeywordActionInvalid` — a permanent 400, since no retry turns an audience criterion
+into a keyword.
+
+**The type-resolution query carries the READ path's status ALLOW-LIST (`ENABLED`, `PAUSED`),
+and it is load-bearing on a mutating path in a way it is not on a read.** `keyword_view` DOES
+return `REMOVED` criteria, and Google rejects a pause or removal of an already-removed
+criterion as permanently unmutable. Without the predicate such a row resolved as an ordinary
+positive keyword, the mutate was sent, and that PERMANENT rejection came back through the
+transport-error path as a RETRYABLE 503 — a stale handle advertised as "try again", which no
+number of retries can repair. Excluded by the allow-list the row is simply absent, so the
+fail-closed `!ok` arm answers `ErrKeywordCriterionNotPositiveKeyword` (a 400) before anything
+is mutated. Enumerating the live states rather than excluding `REMOVED` also default-denies
+`UNSPECIFIED`, `UNKNOWN` and the `""` an omitted proto field decodes to — the same reasoning
+`GetKeywordPerformance` documents. Asserting only that a query lacks `!= 'REMOVED'` does not
+pin this: a predicate-free query satisfies that assertion, which is the trap the settings
+readback's REMOVED test fell into.
+
+**Both ids are PARSED as positive `int64`s, not merely length-capped**
+(`ValidateKeywordActions` calls `canonicalCampaignID`). Digits-only bounds the character
+class; it does not bound the VALUE, and neither does a digit count. `math.MaxInt64` has
+NINETEEN digits, so a twenty-digit id is digits-only, injection-safe, within a
+twenty-digit cap, and still incapable of naming a criterion that exists — and so are
+`"9999999999999999999"` (nineteen digits, above `math.MaxInt64`), `"0"`, and the
+leading-zero spelling `"0305729261"`. A cap of 20 was the first attempt here and it
+admitted every one of those. Left unrefused they were interpolated into the
+type-resolution request, and Google's PERMANENT rejection came back through the read arm
+that classifies as a RETRYABLE 503 — a handle no number of retries can make valid,
+advertised as "try again". `canonicalCampaignID` is REUSED rather than reimplemented, so
+the two surfaces cannot drift, and its round-trip through `ParseInt`/`FormatInt` collapses
+every spelling to one — which is also what makes the `adGroupID+"~"+criterionID` keys
+compare criteria rather than text. `maxKeywordIDLen` is now 19 and exists only to keep the
+design's `MaxLength` honest so Goa refuses the clearly-impossible ids before a handler
+runs; the design was corrected from 20 in the same change. Two general rules meet here:
+**a non-HTTP validation backstop must mirror every design constraint, not only the
+character class** — whatever it lets through becomes an upstream error this code then has
+to classify, and a permanent upstream fault reached by a request we should have refused
+reads as transient — and **a proxy for a constraint is not the constraint: if the real
+rule is "names a positive int64", check that, because a digit count only approximates it
+and the gap is where the invalid ids live.**
+
+**Ambiguous outcomes are marked STRUCTURALLY, not just in prose.** `unconfirmedKeywordError`
+implements `Unconfirmed() bool`, the behavioural interface `IsOutcomeUnconfirmed` and the
+service's `classifyKeywordActionError` match with `errors.As`. This matters because the two 2xx
+arms (malformed/short response, mismatched resource name) carry NO underlying error for
+`createOutcomeAmbiguous` to classify — labelling them "UNCONFIRMED" in the message alone left
+them falling through to the DEFINITE-failure 503 ("could not be applied"), telling a caller to
+retry a batch Google may already have run. The dispatcher preserves the marker rather than
+returning the client error raw, mirroring the status-toggle path.

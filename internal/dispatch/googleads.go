@@ -1142,3 +1142,315 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	}
 	return blob.AdGroupID, blob.AdID
 }
+
+// googleAdsScopeForCustomer reduces the project's campaign scope to the ids that are
+// meaningful under customerID, and is the insight reads' half of the account-identity
+// invariant ReadMetrics and ApplyKeywordActions already enforce.
+//
+// The need is the same one ReadMetrics documents: a platform_campaign_id is a bare numeric
+// unique only WITHIN its customer, and UpdateGoogleAds can re-point a project's connection
+// between create and read. An id carried over from the old customer either matches nothing
+// (an empty read that looks like a campaign with no activity) or, on a numeric collision,
+// selects ANOTHER account's campaign — which on a customer shared across every foundation
+// means reporting a different project's keyword text and spend as this project's own.
+//
+// Entries with NO recorded provenance are KEPT, deliberately. That matches
+// googleAdsCreationCustomerID's documented contract ("an empty return means unknown, and the
+// caller must treat that as permission to proceed") and the two sibling read paths: a row
+// written before provenance tracking existed cannot prove a mismatch, and dropping every such
+// row would silently empty the results of projects whose campaigns all predate it. The
+// asymmetry against ApplyKeywordActions — which fails CLOSED on unknown provenance — is the
+// one this branch already reasons about: a misleading read is recoverable, an irreversible
+// REMOVE is not.
+//
+// A scope that is non-empty on the way in but empty after filtering is an ERROR, never an
+// empty id list. Passing an empty list on would make campaignScopePredicate refuse anyway,
+// but relying on that would put the account-wide read one dropped guard away; refusing here
+// states the intent where the filtering happens.
+//
+// A scope that mismatches only PARTLY is likewise an ERROR rather than a reduced id list —
+// see the reasoning at the check itself. The two cases answer the same way for the same
+// reason: this function returns the ids for a read that promises to cover the project's
+// campaigns, and it has no way to say "these, but not those".
+func googleAdsScopeForCustomer(scope []model.ProjectCampaignScope, customerID, op string) ([]string, error) {
+	ids := make([]string, 0, len(scope))
+	skipped := 0
+	for _, s := range scope {
+		created := googleAdsCreationCustomerID(&model.Campaign{Result: s.Result})
+		if created != "" && created != customerID {
+			skipped++
+			continue
+		}
+		ids = append(ids, s.PlatformCampaignID)
+	}
+	// ANY mismatch fails the whole read, not just a read left with nothing.
+	//
+	// Dropping only the mismatched entries looks like the graceful option and is the worse
+	// one. A project with campaigns under both its old and its current customer would get the
+	// current-account subset returned as though it were the project's whole picture: both
+	// endpoints report success, and neither response has any field that could disclose an
+	// omission — no omitted count, no partial-coverage flag, no per-campaign breakdown. The
+	// caller cannot tell a project whose other campaigns were silently dropped from one that
+	// genuinely has no other campaigns. For the audience read that is the more damaging of the
+	// two, because a demographic distribution computed over half a project's campaigns looks
+	// exactly like a complete one and is what a re-targeting decision is then made on.
+	//
+	// Between the two remedies the finding offers — fail closed, or extend the contract with a
+	// partial-coverage signal — this takes fail-closed DELIBERATELY, and not merely because it
+	// is the smaller change:
+	//
+	//   - It needs no new field, so design/, gen/ and the published OpenAPI are untouched and
+	//     no consumer has to learn a new flag to keep reading these endpoints safely.
+	//   - The state is already representable and already handled: ErrCampaignAccountMismatch
+	//     maps to a 409 with an actionable remedy (reconnect the original account), which is
+	//     the SAME remedy the all-mismatched case has always returned. Widening the existing
+	//     arm keeps one answer for one cause rather than splitting it in two.
+	//   - It is the conservative direction. A partial-coverage flag is only as good as the
+	//     consumers that read it; every one that ignores it silently regains today's defect,
+	//     whereas a refusal cannot be misread as complete data.
+	//   - It matches how this file already resolves the same tension on the mutate side, where
+	//     an unprovable tenant refuses rather than proceeds.
+	//
+	// A partial-coverage field remains the richer long-term answer and is a contract change
+	// worth making deliberately; it is not landed here, where the choice is between silently
+	// wrong data and an honest refusal.
+	if skipped > 0 {
+		return nil, fmt.Errorf("%s: %d of this project's %d campaigns were created under a different customer than the one its connection now resolves to (%s); returning only the rest would report a partial result as complete: %w",
+			op, skipped, len(scope), customerID, domain.ErrCampaignAccountMismatch)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%s: this project has no campaigns that can be read under the customer its connection resolves to (%s): %w",
+			op, customerID, domain.ErrCampaignAccountMismatch)
+	}
+	return ids, nil
+}
+
+// ReadKeywordPerformance implements service.KeywordInsightsReader for Google Ads.
+//
+// Confined to campaignIDs, the upstream campaigns the calling project owns. An earlier version
+// of this read was scoped only by the connection, on the reasoning that "the connection IS the
+// scope, exactly as it is for ListAccounts". That reasoning does not hold on this platform:
+// Google Ads is ONE customer shared across every foundation (docs/architecture.md, "Account
+// Tenancy"), so a connection-scoped GAQL query returns every project's keyword text, campaign
+// ids and spend. The campaign ids are read from this service's own rows, scoped by project_id
+// in SQL, and are what make the read answer only for the caller.
+//
+// It still resolves the ordinary client, which accepts the LF system fallback, and that remains
+// correct: the call names no upstream id the caller chose, and once the query is campaign-scoped
+// a fallback project reads only its own campaigns rather than the whole LF account.
+func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
+	// Translate and validate the window BEFORE resolving credentials: an unsupported window
+	// is a permanent input fault regardless of connection state, so it must produce the same
+	// 400 either way rather than being masked by a contingent connection failure.
+	gaWindow, err := googleads.WindowFor(window)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	// nil campaign: this read is scoped by a SET of campaigns, not one, so there is no single
+	// recorded creation account to resolve against. An empty recorded id is the documented
+	// "unknown, proceed" case (see credsSource.resolveExisting), which resolves the ordinary
+	// project-then-system account — the behaviour the comment above already describes. The
+	// per-campaign account identity is then enforced downstream by googleAdsScopeForCustomer,
+	// which drops or refuses entries whose recorded customer is not the resolved one.
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, nil)
+	if err != nil {
+		return nil, err
+	}
+	campaignIDs, err := googleAdsScopeForCustomer(scope, client.CustomerID(), "read google ads keyword performance")
+	if err != nil {
+		return nil, err
+	}
+	kp, err := client.GetKeywordPerformance(ctx, gaWindow, campaignIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]model.KeywordRow, 0, len(kp.Rows))
+	for _, r := range kp.Rows {
+		rows = append(rows, model.KeywordRow{
+			CriterionID: r.CriterionID,
+			AdGroupID:   r.AdGroupID,
+			CampaignID:  r.CampaignID,
+			Text:        r.Text,
+			MatchType:   r.MatchType,
+			Status:      r.Status,
+			Impressions: r.Impressions,
+			Clicks:      r.Clicks,
+			CostMicros:  r.CostMicros,
+			Ctr:         r.Ctr,
+		})
+	}
+	return &model.KeywordPerformance{
+		// The REQUEST window, not the client's echoed GAQL literal: the API contract is the
+		// platform-agnostic vocabulary, and translating back would reintroduce the dialect.
+		Window:    window,
+		Rows:      rows,
+		Truncated: kp.Truncated,
+	}, nil
+}
+
+// ReadAudienceInsights implements service.KeywordInsightsReader for Google Ads. Same
+// campaign-scoping and same window-first ordering as ReadKeywordPerformance — the demographic
+// queries aggregate the whole customer without it, which on a shared account means every other
+// project's targeting distribution.
+func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
+	gaWindow, err := googleads.WindowFor(window)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads audience insights: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	// nil campaign: this read is scoped by a SET of campaigns, not one, so there is no single
+	// recorded creation account to resolve against. An empty recorded id is the documented
+	// "unknown, proceed" case (see credsSource.resolveExisting), which resolves the ordinary
+	// project-then-system account — the behaviour the comment above already describes. The
+	// per-campaign account identity is then enforced downstream by googleAdsScopeForCustomer,
+	// which drops or refuses entries whose recorded customer is not the resolved one.
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, nil)
+	if err != nil {
+		return nil, err
+	}
+	campaignIDs, err := googleAdsScopeForCustomer(scope, client.CustomerID(), "read google ads audience insights")
+	if err != nil {
+		return nil, err
+	}
+	ai, err := client.GetAudienceInsights(ctx, gaWindow, campaignIDs)
+	if err != nil {
+		return nil, err
+	}
+	buckets := make([]model.AudienceBucket, 0, len(ai.Buckets))
+	for _, b := range ai.Buckets {
+		buckets = append(buckets, model.AudienceBucket{
+			Dimension:   b.Dimension,
+			Value:       b.Value,
+			Impressions: b.Impressions,
+			Clicks:      b.Clicks,
+			CostMicros:  b.CostMicros,
+			Ctr:         b.Ctr,
+		})
+	}
+	return &model.AudienceInsights{Window: window, Buckets: buckets}, nil
+}
+
+// ApplyKeywordActions implements service.KeywordActioner for Google Ads.
+//
+// This MUTATES a live paid campaign, so it carries the full guard set the status toggle
+// uses, in the same order and for the same reasons:
+//
+//  1. The batch is validated locally first. A malformed batch is a permanent fault and must
+//     be refused before credentials are decrypted or Google is contacted.
+//  2. The campaign must be provisioned — an empty PlatformCampaignID means there is nothing
+//     upstream to act on, and an empty ad group id means GA-4's targeting step never ran, so
+//     the criteria this batch names cannot belong to this campaign.
+//  3. The campaign's creation account must match the account the project's connection NOW
+//     resolves to. Criterion ids are bare numerics unique only within their customer, and
+//     UpdateGoogleAds can re-point a connection between create and action — so on an id
+//     collision this mutate would pause or REMOVE another account's keywords. This is the
+//     same invariant ToggleStatus enforces, and it matters at least as much here because
+//     REMOVE is irreversible.
+//
+// Every one of those refusals happens before the platform is contacted.
+func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	in := make([]googleads.KeywordAction, 0, len(actions))
+	for _, a := range actions {
+		in = append(in, googleads.KeywordAction{AdGroupID: a.AdGroupID, CriterionID: a.CriterionID, Action: a.Action})
+	}
+	// Validate BEFORE resolving the connection, so a batch that can never succeed is refused
+	// without decrypting credentials — and so a permanent input fault masks any contingent
+	// connection fault rather than the other way round.
+	validated, err := googleads.ValidateKeywordActions(in)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrKeywordActionInvalid, err)
+	}
+
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return nil, fmt.Errorf("%w: google ads campaign has no platform campaign id, so it has no keywords to act on", domain.ErrCampaignNotProvisioned)
+	}
+	adGroupID, _ := googleAdsChildIDs(campaign)
+	if strings.TrimSpace(adGroupID) == "" {
+		return nil, fmt.Errorf("%w: google ads campaign %s has no provisioned ad group, so it has no keyword criteria to act on", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	// Every criterion must belong to THIS campaign's ad group. Without this a caller holding
+	// a criterion id from any campaign in the shared account could pause or remove it through
+	// a campaign they do own — the path is permission-evaluated on the campaign, so the
+	// campaign is what bounds it. The keywords read returns ad_group_id precisely so a caller
+	// can satisfy this.
+	for i, a := range validated {
+		if a.AdGroupID != adGroupID {
+			return nil, fmt.Errorf("%w: keyword action %d names ad group %s, which does not belong to campaign %s",
+				domain.ErrKeywordActionInvalid, i, a.AdGroupID, campaign.PlatformCampaignID)
+		}
+	}
+
+	// `campaign`, not nil: this operates on an ALREADY-CREATED campaign, so the account to
+	// authenticate as is the one the campaign RECORDS being created under, exactly as
+	// ToggleStatus and ReadMetrics resolve it. Passing nil would resolve the project's own
+	// connection and the identity guard immediately below would then refuse every campaign
+	// created while LFX_FORCE_SYSTEM_ADS_ACCOUNT was on for a project that has a connection
+	// of its own — stranding those campaigns on the one path that can stop their keywords
+	// from serving. See credsSource.resolveExisting for both directions of that failure.
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
+	if err != nil {
+		return nil, err
+	}
+	// Same identity invariant ToggleStatus and ReadMetrics enforce — but this path FAILS
+	// CLOSED on an unrecorded tenant, where those two proceed.
+	//
+	// The asymmetry is deliberate and rests on what the operation costs when it is wrong.
+	// Google Ads is ONE customer shared across every foundation (docs/architecture.md,
+	// "Account Tenancy"), and ad-group/criterion ids are account-scoped bare numerics. A
+	// legacy row that records no creating customer therefore cannot prove the criteria it
+	// names belong to the campaign the caller addressed; if the connection was re-pointed, a
+	// numeric collision aims this mutate at ANOTHER project's keyword. Reading the wrong
+	// numbers is recoverable and REMOVE is not — Google cannot re-enable a removed criterion,
+	// only create a new one with a new id — so a read may proceed on an unknown tenant and a
+	// destructive mutation may not.
+	//
+	// ErrCampaignProvenanceUnknown is the sentinel for exactly this state, and the remedy it
+	// carries is the honest one: there is no tenant to reconnect to, so the row must be
+	// re-dispatched. Checked BEFORE the mismatch arm below, which would otherwise report
+	// "reconnect the original account" about an account that was never recorded.
+	created := googleAdsCreationCustomerID(campaign)
+	if created == "" {
+		return nil, fmt.Errorf("apply google ads keyword actions: campaign %s does not record which ad account it was created under, so its keyword criteria cannot be resolved safely: %w",
+			campaign.PlatformCampaignID, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	}
+	if created != client.CustomerID() {
+		return nil, fmt.Errorf("apply google ads keyword actions: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+	}
+
+	// `validated`, not `in`: the ownership loop above checked the NORMALISED batch, so sending
+	// the raw one would mean the guard and the request operate on different values. The client
+	// re-validates internally and validation is idempotent, so this is not a live defect — but
+	// the guard's correctness should not depend on a detail of the callee it does not state.
+	outcomes, err := client.ApplyKeywordActions(ctx, validated)
+	if err != nil {
+		// A criterion that is not a POSITIVE KEYWORD is a permanent input fault, not an
+		// upstream failure: the client resolved its type and refused before mutating, and no
+		// retry turns a negative keyword or a userList criterion into a keyword. Folded onto
+		// ErrKeywordActionInvalid so the service answers 400 with the same "these actions are
+		// not valid" remedy the other permanent batch faults get, rather than a 503 inviting a
+		// retry that can never succeed.
+		if errors.Is(err, googleads.ErrKeywordCriterionNotPositiveKeyword) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrKeywordActionInvalid, err)
+		}
+		// Classify the ambiguous outcomes the way the toggle path at ToggleStatus does. Without
+		// this the client's structural marker is the only thing carrying the ambiguity, and any
+		// client arm that reports it through createOutcomeAmbiguous alone (a 5xx, a timeout, a
+		// mutating 429) would reach the service as an unclassified error and be answered as a
+		// DEFINITE failure — telling the caller to retry a batch Google may already have run,
+		// which for an irreversible REMOVE is the one wrong answer.
+		if googleads.IsOutcomeUnconfirmed(err) {
+			return nil, &unconfirmedToggleError{err: err}
+		}
+		return nil, err
+	}
+	out := make([]model.KeywordActionOutcome, 0, len(outcomes))
+	for _, o := range outcomes {
+		out = append(out, model.KeywordActionOutcome{
+			AdGroupID:    o.AdGroupID,
+			CriterionID:  o.CriterionID,
+			Action:       o.Action,
+			ResourceName: o.ResourceName,
+		})
+	}
+	return out, nil
+}
