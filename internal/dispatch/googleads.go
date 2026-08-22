@@ -1271,12 +1271,20 @@ const (
 	settingsFieldStatus       = "status"
 	settingsFieldStartDate    = "start_date"
 	settingsFieldEndDate      = "end_date"
-	// The four below have NO counterpart on the campaign row: nothing in a Google Ads
-	// dispatch config can express them, so they are always reported upstream-only with an
-	// `unknown` verdict. They are reported anyway because the operator's question is "what
-	// is this campaign actually set to upstream", and a budget that reads as expected while
-	// being ACCELERATED or shared across campaigns is exactly the state that explains a
-	// spend anomaly the compared fields cannot.
+	// Budget delivery method, explicit budget sharing and bidding strategy are OBSERVED but
+	// never compared: nothing in a Google Ads dispatch config expresses them, so each is
+	// reported with an absent recorded side and therefore an `unknown` verdict. They are
+	// reported anyway because the operator's question is "what is this campaign actually set
+	// to upstream", and a budget that reads as expected while being ACCELERATED or shared
+	// across campaigns is exactly the state that explains a spend anomaly the compared fields
+	// cannot.
+	//
+	// Channel type is NOT one of them and is listed here only because it is grouped with them
+	// in the readback: it IS recorded, recovered from ConfigSnapshot and compared, so it can
+	// return a real match or divergence. Which of these fields has a recorded counterpart is
+	// decided at the call site that builds rb.Fields, where each pair is written out — read
+	// the nil recorded sides there rather than trusting any list kept here, since a config
+	// that later learns to express one of these would falsify a list but not the call site.
 	settingsFieldBudgetDelivery  = "budget_delivery_method"
 	settingsFieldBudgetShared    = "budget_explicitly_shared"
 	settingsFieldChannelType     = "advertising_channel_type"
@@ -1472,28 +1480,34 @@ func strPtr(s string) *string { return &s }
 // campaign's recorded budget and a different campaign's actual one.
 //
 // It enforces that invariant more strictly than ReadMetrics and ToggleStatus do: absent
-// provenance FAILS CLOSED here rather than being waved through. See the guard below.
+// provenance FAILS CLOSED here rather than being waved through, and is refused BEFORE the
+// connection is resolved so a broken connection cannot mask it. See the guards below.
 func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
-	if err != nil {
-		return nil, err
-	}
-	// Provenance is checked in TWO arms, and both are load-bearing.
+	// Provenance is checked in TWO arms, and both are load-bearing. They are SPLIT around the
+	// client resolution because they rest on different kinds of fact, and only one of them
+	// needs a client at all.
 	//
-	// ABSENCE first. A row that records no creating customer is not a row that MATCHES the
-	// current connection — it is a row nothing has established anything about, and treating
-	// the empty string as "matches" is the same absent-value-read-as-agreement defect this
-	// readback exists to prevent everywhere else in its comparisons. The stored
-	// PlatformCampaignID is unique only WITHIN a customer, so querying it under an
-	// unverified account can, on an id collision, return ANOTHER account's campaign — and
-	// this endpoint would then report a divergence between this campaign's recorded budget
-	// and a different campaign's actual one. That the endpoint never writes back bounds the
-	// blast radius to a misleading report, but a confidently wrong report about somebody
-	// else's account is the precise outcome a readback must not produce.
+	// ABSENCE first, and BEFORE the resolve. A row that records no creating customer is not a
+	// row that MATCHES the current connection — it is a row nothing has established anything
+	// about, and treating the empty string as "matches" is the same absent-value-read-as-
+	// agreement defect this readback exists to prevent everywhere else in its comparisons. The
+	// stored PlatformCampaignID is unique only WITHIN a customer, so querying it under an
+	// unverified account can, on an id collision, return ANOTHER account's campaign — and this
+	// endpoint would then report a divergence between this campaign's recorded budget and a
+	// different campaign's actual one. That the endpoint never writes back bounds the blast
+	// radius to a misleading report, but a confidently wrong report about somebody else's
+	// account is the precise outcome a readback must not produce.
 	//
-	// This mirrors what the HubSpot metrics read already does for an unrecorded portal, and
-	// it is checked BEFORE the client is consulted for the same reason: absent provenance is
-	// a purely LOCAL fact, and no answer Google could give would change it.
+	// Asked before the client is consulted because absent provenance is a purely LOCAL fact
+	// about the row, and no answer Google could give would change it. Ordering is the whole
+	// point: resolveGoogleAdsClient immediately calls resolveExisting, which resolves and
+	// DECRYPTS the project (or system) connection, so an unstamped row read while that
+	// connection is disconnected, undecodable or simply down surfaced the transient upstream
+	// failure — a 404/500/different 409 — instead of this deterministic one. That inversion
+	// hides the only remedy that works: there is nothing to retry, the row must be
+	// re-dispatched to write its provenance. This is the identical correction the HubSpot
+	// email metrics guard already carries, where the same guard was moved above the portal
+	// lookup for the same reason; see the comment on that guard.
 	//
 	// ErrCampaignProvenanceUnknown is JOINED with ErrCampaignAccountMismatch, never returned
 	// alone, so existing errors.Is(err, ErrCampaignAccountMismatch) callers keep matching
@@ -1505,8 +1519,15 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		return nil, fmt.Errorf("read google ads campaign settings: campaign %s does not record which customer it was created under, so its id cannot be resolved against any account: %w",
 			campaign.PlatformCampaignID, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
-	// MISMATCH second, retained unchanged: a RECORDED customer that disagrees with the
-	// project's current connection is a different failure with a different remedy.
+
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
+	if err != nil {
+		return nil, err
+	}
+	// MISMATCH second, and necessarily AFTER the resolve: unlike absence, this arm is a
+	// comparison against the account the connection currently resolves to, so it cannot be
+	// answered without a client. A RECORDED customer that disagrees with the project's current
+	// connection is a different failure with a different remedy.
 	if created != client.CustomerID() {
 		return nil, fmt.Errorf("read google ads campaign settings: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
 			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)

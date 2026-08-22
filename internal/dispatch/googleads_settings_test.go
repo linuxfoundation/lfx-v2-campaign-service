@@ -1038,3 +1038,45 @@ func TestGoogleAds_ReadSettings_RecordedProvenanceStillReads(t *testing.T) {
 		t.Fatal("readback is nil for a row whose recorded customer matches the connection")
 	}
 }
+
+// TestGoogleAds_ReadSettings_AbsentProvenanceOutranksAnUnusableConnection pins the
+// ERROR PRECEDENCE between two failures that can hold at the same time.
+//
+// Absent provenance is a purely LOCAL fact about the row: it records no creating customer,
+// so its bare-numeric PlatformCampaignID cannot be resolved against any account, and no
+// answer the platform could give would change that. A broken connection is an UPSTREAM,
+// transient fact. When both hold, the local one must win, because only it names the remedy
+// that actually works: re-dispatch the row. Reporting the connection failure instead sends
+// the operator to retry a read that will never succeed, hiding the real defect behind an
+// unrelated outage — the identical inversion the HubSpot email guard was moved above its
+// portal lookup to fix.
+//
+// The connection here is UNUSABLE, not healthy: with a healthy one, resolution succeeds and
+// the guard is reached no matter where it sits, so a healthy fixture cannot discriminate
+// between the guard running before or after the resolve. This one can.
+func TestGoogleAds_ReadSettings_AbsentProvenanceOutranksAnUnusableConnection(t *testing.T) {
+	connErr := errors.New("google ads connection is not usable")
+	d := NewGoogleAdsDispatcher(fakeConnReader{err: connErr}, identityEncryptor{})
+
+	// No Result blob at all: the row records no creating customer.
+	camp := &model.Campaign{ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+
+	_, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err == nil {
+		t.Fatal("expected an error for an unstamped row")
+	}
+	// The documented deterministic answer, asserted against the domain sentinels rather than
+	// against any string the guard itself builds.
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("err = %v, want ErrCampaignProvenanceUnknown (the local, deterministic fact must outrank the upstream one)", err)
+	}
+	// Joined, never returned alone, so existing account-mismatch callers keep matching.
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("err = %v, want it JOINED with ErrCampaignAccountMismatch", err)
+	}
+	// The independent bound: the connection failure must NOT be what surfaced. This is the
+	// assertion that fails when the guard sits after the resolve.
+	if errors.Is(err, connErr) {
+		t.Fatalf("err = %v, but the transient connection failure outranked the absent-provenance guard; the operator is sent to retry a read that can never succeed", err)
+	}
+}
