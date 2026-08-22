@@ -951,6 +951,28 @@ func isPreSendDialError(err error) bool {
 	return false
 }
 
+// uploadStageError marks a variant failure that happened during the /adimages upload,
+// BEFORE any adcreative or ad request was attempted.
+//
+// The distinction is about which object the ambiguity applies to. createOutcomeAmbiguous asks
+// "may this request have been applied?", and for the upload the honest answer is yes — but the
+// object it may have applied to is a library IMAGE, not an ad. The upload is content-addressed
+// and idempotent, so a re-dispatch re-derives the same hash and a landed image costs nothing.
+// The ad and creative, by contrast, are definitely absent at this point.
+//
+// It deliberately does NOT implement the ambiguity interface: the caller checks for this type
+// FIRST and words the step for the stage that actually failed.
+type uploadStageError struct {
+	variant int
+	err     error
+}
+
+func (e *uploadStageError) Error() string {
+	return fmt.Sprintf("upload image for variant %d: %v", e.variant, e.err)
+}
+
+func (e *uploadStageError) Unwrap() error { return e.err }
+
 // createOutcomeAmbiguous reports whether a failed mutating request MAY have been
 // applied by Meta despite the error — i.e. the request plausibly reached the
 // server and its outcome is unknowable. It is the single source of truth shared
@@ -3320,6 +3342,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// keeps the definite failure wording. Mirrors how the reddit client words
 			// UNCONFIRMED vs FAILED ad outcomes. Per-variant behavior is unchanged:
 			// record in Steps and continue.
+			// Upload-stage first: the failure is definite about the ad and the creative
+			// (neither request was sent) even when it is ambiguous about the library image,
+			// so it must not inherit the ad-focused UNCONFIRMED wording below.
+			var upErr *uploadStageError
+			if errors.As(verr, &upErr) {
+				msg := fmt.Sprintf("Ad %d failed: image upload did not complete, so no creative or ad was created for variant %d: %s",
+					i+1, i+1, scrubURLFromErr(verr, variant.ImageURL, 300))
+				if createOutcomeAmbiguous(upErr.err) {
+					// Only the IMAGE is in doubt, and it is content-addressed: a re-dispatch
+					// re-derives the same hash, so a landed image needs no cleanup. Say so,
+					// rather than leaving the operator to guess whether it must be removed.
+					msg += " (the library image upload may have landed; it is content-addressed, so re-dispatching reuses it rather than duplicating it)"
+				}
+				steps = append(steps, msg)
+				continue
+			}
 			if createOutcomeAmbiguous(verr) {
 				if creativeID != "" {
 					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(verr, variant.ImageURL, 300)))
@@ -3546,12 +3584,22 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 			apiErr.FBTraceID = env.Error.FBTraceID
 			apiErr.Message = env.Error.Message
 		case readErr == nil:
-			// Non-Graph or malformed error body: surface a redacted, truncated snippet so
-			// the reason is not lost. REDACT FIRST — a reflected request could echo the
-			// Bearer token (see do()'s matching branch).
-			if snippet := strings.TrimSpace(string(raw)); snippet != "" {
-				apiErr.Message = truncate(c.redactSecrets(snippet), 300)
-			}
+			// The raw body is deliberately WITHHELD on this path, unlike do()'s matching
+			// branch which surfaces a redacted snippet.
+			//
+			// This request is MULTIPART and its first part is the caller's image. A proxy or
+			// gateway that reflects the request — the very case do()'s comment contemplates —
+			// puts those bytes inside the first 300 characters, well before any Graph JSON
+			// would appear. redactSecrets removes the Bearer token and known credentials; it
+			// has no way to recognise image bytes, so it would pass them straight through.
+			// This APIError is copied into CampaignResult.Steps and persisted, so the snippet
+			// would carry binary creative content into stored operator-facing output.
+			//
+			// Only the Graph envelope above is trusted to describe an upload failure. When
+			// Meta did not send one, the status line plus the flag below is what the operator
+			// gets: strictly less detail, and none of it derived from a body that may be the
+			// request echoed back.
+			apiErr.EnvelopeUnreadable = true
 		default:
 			// Body unread: a missing Code means "we never read it", not "Meta sent none" —
 			// mark it so callers do not read a bare status as a clean rejection.
@@ -3622,7 +3670,14 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	if len(variant.ImageBytes) > 0 {
 		if imageHash, err = c.uploadImage(ctx, variant.ImageBytes, variant.ImageMIME); err != nil {
 			// No bytes, size, or checksum in the message — only which variant failed.
-			return "", "", "", fmt.Errorf("upload image for variant %d: %w", i+1, err)
+			//
+			// Wrapped as an uploadStageError so the caller can tell WHICH stage failed. A 5xx
+			// or transport failure here is ambiguous about the IMAGE, but it is definite about
+			// the ad and the creative: neither request has been sent yet. Reporting it with the
+			// generic "it may have been created — verify before recreating" wording would send
+			// an operator to look for an ad that certainly does not exist, and simultaneously
+			// tell them not to recreate the one thing that would make the variant run.
+			return "", "", "", &uploadStageError{variant: i + 1, err: err}
 		}
 	}
 
