@@ -1163,7 +1163,7 @@ asset resolution land in the two follow-on PRs, and the repo is wired into the c
 
 `CreateAsset` runs a single statement:
 `INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
-checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>`. Four things
+checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>`. Five things
 are doing work here and each has a failure mode if changed:
 
 - **The `WHERE EXISTS` gate is the parent-brief check, in SQL, not in Go.** The row is inserted
