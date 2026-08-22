@@ -1183,7 +1183,16 @@ are doing work here and each has a failure mode if changed:
   UPDATE` treatment is reserved for `CreateAudienceForApprovedBrief`, where losing the race
   creates REAL HubSpot lists from a brief that is no longer approved. Storing an image under a
   just-archived brief has no external side effect: the bytes sit unreferenced, the archived
-  brief refuses every subsequent operation, and a later dispatch cannot reach them. Dropping the
+  brief refuses every subsequent operation, and a later dispatch cannot reach them. **That last
+  clause is the whole justification, and it is a property of the READ path rather than of this
+  insert** — which is why the gate has been re-raised in review repeatedly by readers who could
+  see the unlocked statement but not the thing making its claim true. `getCreativeAssetQuery`'s
+  `EXISTS` on a non-archived parent is that thing, and
+  `TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant`'s "an archived parent brief makes
+  the asset unreadable" subtest fails when it is removed. Both the insert's comment and that
+  subtest now name each other, so weakening the read cannot silently retire the insert's
+  justification — the author's own escape clause names exactly that change ("a path that reads
+  assets without re-checking the parent") as the trigger for locking this insert. Dropping the
   clause, by contrast, does not merely widen an error path — it lets a
   caller scoped to project A attach an asset to project B's brief, so it is a tenant boundary.
   `TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief` asserts each of the three

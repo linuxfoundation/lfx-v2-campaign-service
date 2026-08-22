@@ -2300,18 +2300,37 @@ func TestMeta_ResolveVariantAssetsDedupesByAssetID(t *testing.T) {
 // config naming more DISTINCT asset bytes than one dispatch may hold, and that it refuses
 // BEFORE retaining them. Distinct ids defeat dedupe, so this is the case the byte budget
 // (not the dedupe) has to catch.
+//
+// The fixture carries TEN assets to bound a NINE-asset refusal, and that gap is the point.
+// 30 MiB each against the 240 MiB (8-asset) ceiling means the ninth read is the one that
+// trips it, so a correct implementation stops there having read exactly 9. An earlier
+// version of this test built only 9 variants and asserted `callCount() > 9`, which the
+// fixture's own shape made unreachable — the loop could not produce a tenth call, so the
+// assertion held no matter what the code did, including an implementation that read every
+// asset before checking the total. Supplying a tenth asset is what gives "it stops AT the
+// ceiling" something to fail against.
 func TestMeta_ResolveVariantAssetsBoundsAggregateBytes(t *testing.T) {
-	// Nine assets of 30 MiB each = 270 MiB, past the 240 MiB (8-asset) ceiling. The
-	// buffers are allocated by the fake, not by the code under test; what is asserted is
-	// that resolution REFUSES rather than accumulating them into its own result.
+	// Ten assets of 30 MiB each = 300 MiB, past the 240 MiB (8-asset) ceiling, which the
+	// running total crosses at the NINTH. The buffers are allocated by the fake, not by the
+	// code under test; what is asserted is that resolution REFUSES rather than accumulating
+	// them into its own result.
 	const perAsset = 30 << 20
+	const wantReads = 9 // the read whose running total first exceeds maxVariantAssetBytes
 	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{}}
 	var in []meta.AdVariant
-	for i := 0; i < 9; i++ {
+	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("%08d-1111-1111-1111-111111111111", i)
 		assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, perAsset), MimeType: "image/png"}
 		in = append(in, meta.AdVariant{ImageAssetID: id})
 	}
+	// Pin the premise rather than trusting the arithmetic: if the ceiling or the per-asset
+	// maximum moves, the read count below is no longer nine and this says so directly
+	// instead of failing as a mysterious off-by-one.
+	if int64(wantReads)*perAsset <= maxVariantAssetBytes || int64(wantReads-1)*perAsset > maxVariantAssetBytes {
+		t.Fatalf("fixture no longer trips the ceiling at read %d: %d assets of %d bytes against a %d-byte ceiling",
+			wantReads, len(in), perAsset, maxVariantAssetBytes)
+	}
+
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
 	d.SetCreativeAssetRepo(assets)
 
@@ -2325,9 +2344,13 @@ func TestMeta_ResolveVariantAssetsBoundsAggregateBytes(t *testing.T) {
 	if !strings.Contains(err.Error(), "distinct creative assets") {
 		t.Errorf("error = %v, want the aggregate-bytes refusal", err)
 	}
-	// It must stop AT the ceiling rather than reading every asset first.
-	if n := assets.callCount(); n > 9 {
-		t.Errorf("GetAsset called %d times, want at most 9", n)
+	// It must stop AT the ceiling rather than reading every asset first. Asserted as an
+	// EQUALITY: reading fewer than nine would mean it refused before the budget was actually
+	// exceeded, and reading ten means the check happens after the whole set is in memory —
+	// which is precisely the unbounded retention the ceiling exists to prevent.
+	if n := assets.callCount(); n != wantReads {
+		t.Errorf("GetAsset called %d times, want exactly %d — resolution must stop at the read that "+
+			"crosses the ceiling, not buffer every named asset first", n, wantReads)
 	}
 }
 
@@ -2358,5 +2381,101 @@ func TestMeta_ResolveVariantAssetsAcceptsRealisticCampaign(t *testing.T) {
 		if len(out[i].ImageBytes) != realistic {
 			t.Errorf("variant %d did not receive its bytes", i+1)
 		}
+	}
+}
+
+// TestMeta_ConfigFieldsReachTheWire pins the metaConfig -> meta.CampaignInput hop for the
+// Instagram identity and the two EU DSA disclosures, by observing the REQUEST BODIES the
+// dispatcher actually produces.
+//
+// This seam had no coverage. The client-level tests in internal/platform/meta start BELOW
+// it — they assert the payload given a CampaignInput — so deleting
+// `InstagramUserID: cfg.InstagramUserID` from the struct literal in meta.go, or transposing
+// the two DSA fields, left the whole dispatch package green. Either mutation ships an ad
+// that is created, spends nothing, and sits unpublishable in Ads Manager ("Please add
+// Instagram account"), which is the exact failure this branch exists to remove.
+//
+// It drives Dispatch through an httptest server rather than re-deriving the mapping: a test
+// that builds its own CampaignInput from the same cfg would assert `x == x` and pass against
+// a meta.go that dropped the field entirely.
+//
+// The input is real JSON, so the `json:"..."` tags are pinned too — they are the public
+// request contract (docs/api-catalog.md) and a typo there decodes to a silent zero value.
+// The three values are DISTINCT so a transposition is observable.
+func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
+	var mu sync.Mutex
+	bodies := map[string]map[string]any{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if b, err := io.ReadAll(r.Body); err == nil && len(b) > 0 {
+			_ = json.Unmarshal(b, &body)
+		}
+		mu.Lock()
+		switch {
+		case strings.Contains(r.URL.Path, "/adsets"):
+			bodies["adset"] = body
+		case strings.Contains(r.URL.Path, "/adcreatives"):
+			bodies["creative"] = body
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// A single-segment path is the account preflight (GET /act_<id>?fields=...);
+		// url.URL.Path excludes the query string, so the preflight arrives here as the
+		// bare "/act_<id>". It needs a currency — CreateCampaign derives the minor-unit
+		// offset from it and fails before any mutating call if it is absent. Everything
+		// else is a nested edge (/act_<id>/adsets, /<id>/adcreatives) and just needs an id.
+		if strings.Count(strings.Trim(r.URL.Path, "/"), "/") == 0 {
+			_, _ = io.WriteString(w, `{"currency":"USD","id":"23847290"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"23847290"}`)
+	}))
+	defer srv.Close()
+
+	// The config is an ENVELOPE with a metaConfig key, not a bare metaConfig — matching
+	// docs/api-catalog.md and unmarshalPlatformConfig's contract.
+	cfg := []byte(`{"metaConfig": {
+		"budget": 100,
+		"startDate": "2098-09-01",
+		"endDate": "2098-09-30",
+		"objective": "traffic",
+		"instagramUserId": "17841400000000000",
+		"dsaBeneficiary": "The Linux Foundation",
+		"dsaPayor": "LF Projects, LLC",
+		"variants": [{"Headline": "Join us", "PrimaryText": "An open source event"}]
+	}}`)
+
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL),
+		meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	mu.Lock()
+	adset, creative := bodies["adset"], bodies["creative"]
+	mu.Unlock()
+
+	if adset == nil {
+		t.Fatal("no /adsets request was made; the dispatch did not reach the ad set step")
+	}
+	if got := adset["dsa_beneficiary"]; got != "The Linux Foundation" {
+		t.Errorf("dsa_beneficiary on the wire = %v, want the BENEFICIARY; a value of "+
+			"'LF Projects, LLC' means beneficiary and payor are transposed in meta.go", got)
+	}
+	if got := adset["dsa_payor"]; got != "LF Projects, LLC" {
+		t.Errorf("dsa_payor on the wire = %v, want the PAYOR; a value of "+
+			"'The Linux Foundation' means beneficiary and payor are transposed in meta.go", got)
+	}
+	if creative == nil {
+		t.Fatal("no /adcreatives request was made; the dispatch did not reach the creative step")
+	}
+	if got := creative["instagram_user_id"]; got != "17841400000000000" {
+		t.Errorf("instagram_user_id on the wire = %v, want the configured IGSID. Absent means "+
+			"the metaConfig -> CampaignInput mapping in meta.go dropped it, and Meta will refuse "+
+			"to publish with \"Please add Instagram account\"", got)
 	}
 }

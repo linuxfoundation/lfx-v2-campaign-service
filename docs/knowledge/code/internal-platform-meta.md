@@ -449,6 +449,50 @@ dropping it answers "your token reaches no ad accounts" about an account sitting
 The decision to REFUSE a campaign on such an account stays in that preflight, where it
 already is. `Status == 0` means Meta omitted the field, not that the account is disabled.
 
+## Publishability: Instagram identity and DSA disclosure
+
+`CreateCampaign` builds an API-accepted hierarchy, but two additional fields decide
+whether Meta will let a human PUBLISH the resulting ad. Both are optional
+`CampaignInput` fields, trimmed once in `CreateCampaign` and attached only when
+non-empty (so Facebook-only / non-regulated flows are unchanged and Meta never
+receives an empty string it would reject):
+
+- **`InstagramUserID`** (config `instagramUserId`) — the Instagram account (IGSID)
+  bound to the ad creative as the top-level `instagram_user_id` adcreative field,
+  SIBLING to `object_story_spec`, not nested inside it. The default placements
+  include Instagram Feed, and an ad that requests an Instagram placement without this
+  field is flagged "Please add Instagram account" and cannot be published — even
+  though the Page's connected Instagram account shows pre-selected in the editor. The
+  legacy Graph field name is `instagram_actor_id`. A SUPPLIED value must be a numeric
+  IGSID (`numericIDRE`, the same gate `PageID` and `PixelID` get); a malformed one is
+  rejected before the first mutating call, because the field is otherwise consumed only
+  at the creative POST — which runs after the campaign and ad set exist and treats a 4xx
+  as a non-fatal per-variant failure, leaving a `created_degraded` billable campaign with
+  no publishable ad. An EMPTY value stays valid: that is a Facebook-only campaign.
+- **`DSABeneficiary` / `DSAPayor`** (config `dsaBeneficiary` / `dsaPayor`) — the EU
+  Digital Services Act advertiser/payer disclosures set on the ad set as
+  `dsa_beneficiary` / `dsa_payor`. Meta blocks publish ("Please add Advertiser" /
+  "Please add Payer") for regulated locations until both are present. The two attach
+  independently, so exactly one could otherwise be sent; a ONE-SIDED pair is rejected
+  before any mutating call, since Meta requires both to publish a regulated ad set and
+  the incompleteness is knowable at validation time rather than only after a billable
+  campaign exists. BOTH ABSENT remains valid — that is the ordinary non-regulated flow.
+
+These live in the per-campaign config (like `pixelId`) rather than the connection's
+persisted `providerConfig`, so no new stored column is required; a launch-ready
+config must supply all three when the ad set uses Instagram placement and/or targets
+a regulated location.
+
+The distinction these guards draw is between a PERMANENT input fault and Meta's own
+publish-time requirements. Whether a disclosure is REQUIRED at all depends on the
+targeted location, which this client does not evaluate, so PRESENCE is still not
+validated locally and a genuinely missing disclosure surfaces as an async publish block
+on Meta. What IS validated is what is deterministically knowable here: a malformed IGSID
+and a one-sided DSA pair are unpublishable regardless of targeting, so they fail
+pre-create rather than after a paid resource exists. Both rejections are plain errors
+returned with a `nil` result, which is what the dispatch adapter keys on to mark them
+`NoUpstreamCreate` so the orchestrator RELEASES the claim (see below).
+
 ## Dispatch adapter (internal/dispatch)
 
 The `internal/dispatch` meta adapter (see [internal/dispatch](internal-dispatch.md))
@@ -460,7 +504,10 @@ CurrencyOffset.
 
 It implements `StatusToggler` and CASCADES: its create PAUSES the campaign, ad set, and
 ads, so `UpdateCampaignAndChildrenStatus` POSTs the status to the campaign, the persisted
-ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta persists the ad set id
-but not the individual ad ids). It needs only the access token, not the page id.
+ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads`. Since LFXV2-3295 the result blob
+also records the created ad ids (`CampaignResult.Ads`, one entry per successfully-created ad),
+so the discovery is a deliberate choice rather than a necessity: the live enumeration also
+covers ads added to the ad set after dispatch, and still works for rows written before that
+field existed. It needs only the access token, not the page id.
 
 See [internal/platform/meta](../../../internal/platform/meta).

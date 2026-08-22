@@ -1101,8 +1101,13 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // toggle. CreateCampaign PAUSES the campaign, ad set, and every ad, so toggling only the
 // campaign to ACTIVE would leave the ad set/ads PAUSED and the campaign would not serve.
 //
-// Meta persists the ad set id (in the campaign result) but NOT the individual ad ids, so the
-// ads are DISCOVERED via GET /{adSetID}/ads and each is POSTed to ACTIVE/PAUSED. Meta gates a
+// The ads are DISCOVERED via GET /{adSetID}/ads and each is POSTed to ACTIVE/PAUSED. Since
+// LFXV2-3295 the campaign result ALSO records the created ad ids (CampaignResult.Ads), so this
+// discovery is now a deliberate choice rather than a necessity: the persisted list names only
+// the ads THIS service created at dispatch, while the live enumeration also picks up ads added
+// to the ad set afterwards — and an ad left serving because the toggle never knew about it is
+// exactly the partial activation this cascade exists to prevent. Discovery is also self-healing
+// against a result blob written by an older version, which carries no Ads at all. Meta gates a
 // child's serving by its parent's status ("all the objects below it automatically inherit"
 // a paused/archived parent), so ordering is STATUS-DEPENDENT to avoid a partial activation
 // leaving paid delivery running:
@@ -2429,6 +2434,20 @@ type CampaignInput struct {
 	EndDate        string // YYYY-MM-DD
 	Placements     Placement
 	PixelID        string
+	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. It
+	// is REQUIRED for an ad set that requests any Instagram placement (the default
+	// placements include Instagram Feed): without it Meta flags the ad "Please add
+	// Instagram account" and refuses to publish, even though the Page's connected
+	// Instagram account shows pre-selected in the editor. Sent only when supplied, so
+	// Facebook-only flows are unchanged. (Legacy Graph field name: instagram_actor_id.)
+	InstagramUserID string
+	// DSABeneficiary and DSAPayor are the EU Digital Services Act "advertiser" and
+	// "payer" disclosures set on the ad set. Meta holds the ad set unpublishable
+	// ("Please add Advertiser" / "Please add Payer") for regulated locations until both
+	// are present. Both are sent only when supplied, so flows that target no regulated
+	// location are unchanged.
+	DSABeneficiary string
+	DSAPayor       string
 	HSToken        string
 	Variants       []AdVariant
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
@@ -2693,6 +2712,40 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// pass validation yet be concatenated un-trimmed into the creative click URL,
 	// producing a malformed parse. Trim once here, ahead of both consumers.
 	in.RegistrationURL = strings.TrimSpace(in.RegistrationURL)
+
+	// Trim the disclosure/identity fields once here so the "sent only when supplied"
+	// guards below treat a whitespace-only value as absent (not as a blank string that
+	// Meta would reject) and every consumer sees the same normalized value.
+	in.InstagramUserID = strings.TrimSpace(in.InstagramUserID)
+	in.DSABeneficiary = strings.TrimSpace(in.DSABeneficiary)
+	in.DSAPayor = strings.TrimSpace(in.DSAPayor)
+
+	// A SUPPLIED InstagramUserID must be well-formed. It is optional (an empty value
+	// is a legitimate Facebook-only campaign and stays allowed), but when present it
+	// is only consumed at the CREATIVE POST — which runs after the campaign and ad set
+	// already exist, and where a 4xx is treated as a non-fatal per-variant failure.
+	// A malformed IGSID would therefore surface as a created_degraded campaign with no
+	// publishable ad: a billable resource that can never serve. The value is knowable-
+	// bad here, so reject it before the first mutating call, the same gate PageID and
+	// PixelID already get (Meta object ids are decimal strings).
+	if in.InstagramUserID != "" && !numericIDRE.MatchString(in.InstagramUserID) {
+		return nil, fmt.Errorf("instagramUserId %q is malformed: Meta Instagram account IDs (IGSID) are numeric strings", in.InstagramUserID)
+	}
+
+	// The two EU DSA disclosures are attached to the ad set independently, so exactly
+	// one could otherwise be sent. Meta requires BOTH to publish an ad set targeting a
+	// regulated location (docs/api-catalog.md), so a one-sided pair is deterministically
+	// incomplete: it either gets the ad set rejected after the campaign exists, or leaves
+	// it unpublishable. Unlike Meta's other publish-time requirements, one-sidedness is
+	// knowable HERE, so reject it before any mutating call. Both absent remains valid —
+	// that is the ordinary non-regulated flow and must not break.
+	if (in.DSABeneficiary == "") != (in.DSAPayor == "") {
+		supplied, missing := "dsaBeneficiary", "dsaPayor"
+		if in.DSABeneficiary == "" {
+			supplied, missing = "dsaPayor", "dsaBeneficiary"
+		}
+		return nil, fmt.Errorf("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
+	}
 
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never
@@ -3108,6 +3161,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if promotedObject != nil {
 		adSetBody["promoted_object"] = promotedObject
+	}
+
+	// EU DSA advertiser/payer disclosure. Attached only when supplied: Meta rejects an
+	// empty string, and a flow that targets no regulated location does not need them.
+	// When targeting DOES include a regulated location, Meta blocks publish until both
+	// are present ("Please add Advertiser" / "Please add Payer"), so a launch-ready
+	// config must set them.
+	if in.DSABeneficiary != "" {
+		adSetBody["dsa_beneficiary"] = in.DSABeneficiary
+	}
+	if in.DSAPayor != "" {
+		adSetBody["dsa_payor"] = in.DSAPayor
 	}
 
 	if in.LifetimeBudget {
@@ -3561,11 +3626,21 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		}
 	}
 
-	var creativeResp createResponse
-	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/adcreatives", map[string]any{
+	creativeBody := map[string]any{
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash),
-	}, &creativeResp); err != nil {
+	}
+	// Bind the Instagram identity so an ad set requesting an Instagram placement (the
+	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add
+	// Instagram account" and blocks publish. instagram_user_id is a top-level adcreative
+	// field, sibling to object_story_spec — not nested inside it. Sent only when
+	// configured so Facebook-only creatives are unchanged.
+	if in.InstagramUserID != "" {
+		creativeBody["instagram_user_id"] = in.InstagramUserID
+	}
+
+	var creativeResp createResponse
+	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/adcreatives", creativeBody, &creativeResp); err != nil {
 		return "", "", imageHash, err
 	}
 	if creativeResp.ID == "" {

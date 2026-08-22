@@ -475,11 +475,10 @@ func TestDimensionsWithinLimits(t *testing.T) {
 		{"4K UHD at 16-bit still fits", 3840, 2160, color.NRGBA64Model, true},
 		{"exactly at the per-side limit", maxCreativeDimension, 1, color.NRGBAModel, true},
 		{"one past the per-side limit", maxCreativeDimension + 1, 1, color.NRGBAModel, false},
-		// The bit-depth correction: identical dimensions, opposite verdicts. At 4 bytes/pixel
-		// 8000x5000 = 160 MiB exactly (admitted); at 8 bytes/pixel it is 320 MiB (refused).
 		// The bit-depth correction, stated as an asymmetry: identical dimensions, opposite
-		// verdicts. 16M pixels is 61 MiB at 4 bytes/pixel (admitted) and 122 MiB at 8
-		// (refused). A pixel-only bound cannot express this.
+		// verdicts. 4000x4000 is 16M pixels — 61 MiB at 4 bytes/pixel (admitted against the
+		// 80 MiB maxCreativeDecodedBytes budget) and 122 MiB at 8 (refused). A pixel-only
+		// bound cannot express this, which is the whole reason the gate prices by colour model.
 		{"16M pixels in 8-bit", 4000, 4000, color.NRGBAModel, true},
 		{"the same image in 16-bit is twice the memory", 4000, 4000, color.NRGBA64Model, false},
 		{"16-bit gray is also wide", 4000, 4000, color.Gray16Model, false},
@@ -536,8 +535,8 @@ func TestBytesPerPixelFor_ChargesWideModelsEightBytes(t *testing.T) {
 //
 // The fixture is a REAL 16-bit PNG (colour type 6, bit depth 16) whose declared dimensions the
 // OLD 20M-pixel bound admitted — 4000x4000 = 16M pixels, comfortably under it — but which Go
-// decodes to *image.NRGBA64 at 8 bytes per pixel, i.e. 256 MiB of pixel buffer. That is past the
-// 160 MiB budget, so it must now be refused BEFORE the decode allocates anything.
+// decodes to *image.NRGBA64 at 8 bytes per pixel, i.e. 122 MiB of pixel buffer. That is past the
+// 80 MiB maxCreativeDecodedBytes budget, so it must be refused BEFORE the decode allocates anything.
 //
 // Premises are asserted rather than assumed, because a fixture that failed for an unrelated
 // reason would prove nothing — the same trap as the earlier vacuous chunked-body fixture. The
@@ -576,7 +575,7 @@ func TestBriefService_UploadCreativeAsset_RefusesWideBitDepthBomb(t *testing.T) 
 	if !errors.As(uerr, &badReq) {
 		t.Fatalf("err = %T (%v), want *briefs.BadRequestError", uerr, uerr)
 	}
-	// The DIMENSION message specifically: anything else means the 256 MiB allocation happened.
+	// The DIMENSION message specifically: anything else means the 122 MiB allocation happened.
 	if !strings.Contains(badReq.Message, "dimensions exceed") {
 		t.Errorf("message = %q, want the dimension refusal — anything else means a 16-bit bomb reached the decoder", badReq.Message)
 	}
