@@ -315,8 +315,23 @@ func schemaObjects(ctx context.Context, t *testing.T, dsn string) []string {
 	// above. `last_value` is deliberately NOT selected: it is the sequence's runtime
 	// position, advanced by whatever rows a test inserted, so including it would make the
 	// snapshot depend on activity rather than on schema and fail on a correct down file.
-	// Ownership is likewise omitted; it is carried by the column's DEFAULT expression,
-	// which the column arm already renders as `nextval('index_outbox_id_seq'::regclass)`.
+	// Ownership IS selected, joined in from pg_depend. An earlier version of this comment
+	// claimed ownership was "carried by the column's DEFAULT expression, which the column
+	// arm already renders as nextval('index_outbox_id_seq'::regclass)" — that is false, and
+	// it is false in the direction that disarms the test. Postgres records OWNED BY as a
+	// separate pg_depend entry (deptype 'a', the auto-dependency from sequence to column),
+	// entirely independent of the DEFAULT. `ALTER SEQUENCE ... OWNED BY NONE` and
+	// `OWNED BY <other column>` both leave the DEFAULT byte-identical, so the column arm
+	// renders exactly the same string either way. Measured on PG16: with 000011's down file
+	// reassigning index_outbox_id_seq to index_outbox.object_id, the whole exact-inverse
+	// comparison PASSED before this join was added. Ownership is what makes a serial
+	// sequence get dropped with its table, so a down file that detaches one leaves an
+	// orphan sequence behind after a rollback — precisely the class this test exists for.
+	//
+	// LEFT JOIN, not JOIN: a standalone CREATE SEQUENCE has no owning column, and an inner
+	// join would drop it from the snapshot entirely, making an unremoved standalone
+	// sequence invisible. Unowned renders as ' OWNED BY NONE', which is also the string
+	// that differs from an owned one.
 	rows, err := conn.Query(ctx, `
 		SELECT 'table:' || tablename
 		FROM pg_tables
@@ -346,15 +361,28 @@ func schemaObjects(ctx context.Context, t *testing.T, dsn string) []string {
 		WHERE c.connamespace = 'public'::regnamespace
 		  AND c.conrelid::regclass::text <> 'schema_migrations'
 		UNION ALL
-		SELECT 'sequence:' || sequencename || ' ' || data_type ||
-		       ' START ' || start_value ||
-		       ' MIN ' || min_value ||
-		       ' MAX ' || max_value ||
-		       ' INCREMENT ' || increment_by ||
-		       ' CACHE ' || cache_size ||
-		       CASE WHEN cycle THEN ' CYCLE' ELSE ' NO CYCLE' END
-		FROM pg_sequences
-		WHERE schemaname = 'public'
+		SELECT 'sequence:' || s.sequencename || ' ' || s.data_type ||
+		       ' START ' || s.start_value ||
+		       ' MIN ' || s.min_value ||
+		       ' MAX ' || s.max_value ||
+		       ' INCREMENT ' || s.increment_by ||
+		       ' CACHE ' || s.cache_size ||
+		       CASE WHEN s.cycle THEN ' CYCLE' ELSE ' NO CYCLE' END ||
+		       ' OWNED BY ' || COALESCE(o.owner, 'NONE')
+		FROM pg_sequences s
+		LEFT JOIN (
+		        SELECT d.objid,
+		               a.attrelid::regclass::text || '.' || a.attname AS owner
+		        FROM pg_depend d
+		        JOIN pg_attribute a
+		          ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+		        WHERE d.classid = 'pg_class'::regclass
+		          AND d.refclassid = 'pg_class'::regclass
+		          AND d.deptype = 'a'
+		          AND d.refobjsubid > 0
+		) o ON o.objid = (quote_ident(s.schemaname) || '.' ||
+		                  quote_ident(s.sequencename))::regclass
+		WHERE s.schemaname = 'public'
 		ORDER BY 1`)
 	if err != nil {
 		t.Fatalf("read the schema: %v", err)
