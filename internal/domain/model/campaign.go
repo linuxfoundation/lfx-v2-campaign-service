@@ -123,8 +123,39 @@ type Campaign struct {
 	// and it means "not recorded", never "nobody".
 	CreatedBy *Actor
 	UpdatedBy *Actor
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// RanOnSystemAccount records WHICH AD ACCOUNT paid for this campaign: the project's
+	// own connection, or the LF-owned system account it falls back to when the project
+	// has none (model.SystemProjectID). internal/dispatch learns this while resolving
+	// credentials and stamps it on the campaign it returns; the orchestrator persists it
+	// unchanged.
+	//
+	// A pointer for the same reason CreatedBy is: the column has THREE states and a bool
+	// can only carry two.
+	//   nil   = provenance NOT RECORDED — nothing captured which account served this row.
+	//   false = known to have run on the project's OWN connection.
+	//   true  = known to have run on the LF system account.
+	//
+	// nil is NOT an age signal. Rows written before migration 000027 do have it, but so
+	// does every write that cannot know the answer: AdoptCampaign binds a campaign that
+	// already exists upstream — created outside this service's dispatch path, possibly by
+	// hand in the platform's UI — and deliberately omits the column, so a campaign adopted
+	// TODAY reads back nil. Reading nil as "old row" would date a fresh adoption to before
+	// the migration.
+	//
+	// nil is NOT false. Code totalling system-account spend must exclude nil as unknown
+	// rather than folding it into "the project paid" — see the migration for why a
+	// backfilled false would understate what the foundation actually paid.
+	//
+	// A HISTORICAL FACT, fixed at creation. It is never recomputed from whether the
+	// project has its own connection TODAY: a project connecting its own account later
+	// does not change who paid for a campaign already created. The column is WRITE-ONCE
+	// in the repository: UpsertCampaign's conflict arm fills it only while the stored
+	// value is NULL, so the first write after the dispatch claim stamps it and every
+	// later update or status toggle leaves it alone. A stored false is frozen just as a
+	// stored true is — it is not upgradable by a later write carrying true.
+	RanOnSystemAccount *bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Campaign.Status is a plain string that carries TWO kinds of value: a provisioning state
