@@ -1846,3 +1846,99 @@ func TestMeta_ConfigSnapshotSanitizeDoesNotMutateCallerConfig(t *testing.T) {
 		t.Errorf("the caller's variant ImageURL was mutated to %q; Meta must still receive the full signed URL %q", got, full)
 	}
 }
+
+// TestMeta_ConfigFieldsReachTheWire pins the metaConfig -> meta.CampaignInput hop for the
+// Instagram identity and the two EU DSA disclosures, by observing the REQUEST BODIES the
+// dispatcher actually produces.
+//
+// This seam had no coverage. The client-level tests in internal/platform/meta start BELOW
+// it — they assert the payload given a CampaignInput — so deleting
+// `InstagramUserID: cfg.InstagramUserID` from the struct literal in meta.go, or transposing
+// the two DSA fields, left the whole dispatch package green. Either mutation ships an ad
+// that is created, spends nothing, and sits unpublishable in Ads Manager ("Please add
+// Instagram account"), which is the exact failure this branch exists to remove.
+//
+// It drives Dispatch through an httptest server rather than re-deriving the mapping: a test
+// that builds its own CampaignInput from the same cfg would assert `x == x` and pass against
+// a meta.go that dropped the field entirely.
+//
+// The input is real JSON, so the `json:"..."` tags are pinned too — they are the public
+// request contract (docs/api-catalog.md) and a typo there decodes to a silent zero value.
+// The three values are DISTINCT so a transposition is observable.
+func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
+	var mu sync.Mutex
+	bodies := map[string]map[string]any{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if b, err := io.ReadAll(r.Body); err == nil && len(b) > 0 {
+			_ = json.Unmarshal(b, &body)
+		}
+		mu.Lock()
+		switch {
+		case strings.Contains(r.URL.Path, "/adsets"):
+			bodies["adset"] = body
+		case strings.Contains(r.URL.Path, "/adcreatives"):
+			bodies["creative"] = body
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// A single-segment path is the account preflight (GET /act_<id>?fields=...);
+		// url.URL.Path excludes the query string, so the preflight arrives here as the
+		// bare "/act_<id>". It needs a currency — CreateCampaign derives the minor-unit
+		// offset from it and fails before any mutating call if it is absent. Everything
+		// else is a nested edge (/act_<id>/adsets, /<id>/adcreatives) and just needs an id.
+		if strings.Count(strings.Trim(r.URL.Path, "/"), "/") == 0 {
+			_, _ = io.WriteString(w, `{"currency":"USD","id":"23847290"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"23847290"}`)
+	}))
+	defer srv.Close()
+
+	// The config is an ENVELOPE with a metaConfig key, not a bare metaConfig — matching
+	// docs/api-catalog.md and unmarshalPlatformConfig's contract.
+	cfg := []byte(`{"metaConfig": {
+		"budget": 100,
+		"startDate": "2098-09-01",
+		"endDate": "2098-09-30",
+		"objective": "traffic",
+		"instagramUserId": "17841400000000000",
+		"dsaBeneficiary": "The Linux Foundation",
+		"dsaPayor": "LF Projects, LLC",
+		"variants": [{"Headline": "Join us", "PrimaryText": "An open source event"}]
+	}}`)
+
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL),
+		meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	mu.Lock()
+	adset, creative := bodies["adset"], bodies["creative"]
+	mu.Unlock()
+
+	if adset == nil {
+		t.Fatal("no /adsets request was made; the dispatch did not reach the ad set step")
+	}
+	if got := adset["dsa_beneficiary"]; got != "The Linux Foundation" {
+		t.Errorf("dsa_beneficiary on the wire = %v, want the BENEFICIARY; a value of "+
+			"'LF Projects, LLC' means beneficiary and payor are transposed in meta.go", got)
+	}
+	if got := adset["dsa_payor"]; got != "LF Projects, LLC" {
+		t.Errorf("dsa_payor on the wire = %v, want the PAYOR; a value of "+
+			"'The Linux Foundation' means beneficiary and payor are transposed in meta.go", got)
+	}
+	if creative == nil {
+		t.Fatal("no /adcreatives request was made; the dispatch did not reach the creative step")
+	}
+	if got := creative["instagram_user_id"]; got != "17841400000000000" {
+		t.Errorf("instagram_user_id on the wire = %v, want the configured IGSID. Absent means "+
+			"the metaConfig -> CampaignInput mapping in meta.go dropped it, and Meta will refuse "+
+			"to publish with \"Please add Instagram account\"", got)
+	}
+}

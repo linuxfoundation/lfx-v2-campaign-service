@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"goa.design/goa/v3/security"
@@ -15,6 +17,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // JWTAuth verifies the bearer token and records the authenticated actor in the
@@ -161,11 +164,153 @@ func rejectSystemScope(projectID string) error {
 	return nil
 }
 
+// forcedSystemAdsAccount reports whether LFX_FORCE_SYSTEM_ADS_ACCOUNT is on, using the same
+// exact-match parse as internal/dispatch/creds.go: only the literal "true" enables it. Read per
+// call rather than cached at construction because this guard is about what the environment is
+// doing RIGHT NOW — a deployment that turns the flag off should stop rejecting writes without a
+// restart, which is the opposite of the dispatch-side field, where a value changing mid-process
+// would make two campaigns in one job resolve different accounts.
+func forcedSystemAdsAccount() bool {
+	return os.Getenv(constants.EnvForceSystemAdsAccount) == "true"
+}
+
+// rejectForcedSystemAccountWrite refuses to persist an ad account id onto a PROJECT's connection
+// row while forced-system mode is on, which is what makes the rollout reversible.
+//
+// While the flag is on, account discovery resolves the LF system credential, so every id the
+// picker can offer names an LF-owned ad account (see internal/dispatch/creds.go's
+// resolveForcedSystem). Storing one of those onto the project's own row outlives the flag: after
+// it is turned off, dispatch resolves the PROJECT's credential again but the row still points at
+// the LF account id — credentials from one account, target from another. Nothing upstream
+// reconciles that, so the connection is silently broken by an operation the operator believed was
+// a rollback, and the spec's promise that the flag is "reversible without a code change" would be
+// false.
+//
+// It rejects the WRITE rather than filtering the discovery response, because the id is not the
+// only way one arrives: the PUT body is caller-supplied and nothing obliges it to have come from
+// the picker. Closing the persistence boundary covers every route to the same row.
+//
+// 400 rather than 409, and the choice is forced rather than stylistic: the update endpoints
+// declare BadRequest but NOT Conflict (design/connection.go's "update-" method block), and Goa
+// maps an undeclared error type to a 500. A 409 here would therefore have reported an operator
+// policy as a server fault. The rejected value is a field in the request body, which is what
+// BadRequest describes anyway.
+//
+// Clearing the account id (the empty string) is deliberately still allowed. PUT is a full
+// replace, so un-selecting is expressed as an absent account_id, and refusing that would trap a
+// connection in whatever state the flag found it in — the opposite of reversible. The other
+// fields on the row (label, provider config, credentials) are untouched by this guard; only the
+// account selection is affected by which account discovery could see.
+//
+// currentAccountID is what the row ALREADY stores, and the guard fires on a CHANGE rather than
+// on presence, which is what makes the paragraph above true rather than aspirational. account_id
+// is Required on LinkedIn, Reddit, X and Microsoft (design/connection.go's Required("account_id")
+// on each config type, generated as a non-pointer string), so a caller editing only the label
+// MUST resend the id it already stored — PUT is a full replace and omitting it is not an option
+// the schema offers. A presence check therefore returned 400 for every update those four
+// providers can express, leaving their update endpoints dead while the flag is on, and forced
+// Google/Meta callers to CLEAR a selection to rename a connection. Worse, it destroyed the very
+// thing it exists to protect: the project's own pre-flag account selection, which a rollback
+// needs, could only be preserved by never touching the connection again.
+//
+// Re-sending the stored value persists nothing — the row ends with the id it started with — so
+// the invariant is untouched by allowing it. What the invariant forbids is a SYSTEM-discovered
+// id ARRIVING on a project row, and every route to that is a change: a new non-empty value, or a
+// different one replacing the old.
+//
+// "Unchanged" is decided against the STORED VALUE, not against recorded provenance, and the
+// choice is forced rather than preferred: model.Connection carries no provenance for the account
+// selection and no column records which credential discovered it, so there is nothing to compare
+// against. Adding one would be a schema change for no gain here — the stored value answers the
+// only question this guard asks, which is whether this write moves the row.
+//
+// It is scoped to PAID-ADS providers, and the scoping is load-bearing rather than tidy.
+// model.Connection.AccountID is a SHARED field: HubSpot's required account_id (its list/audience
+// id) is copied into the very same struct field by CreateHubspot and UpdateHubspot. A guard
+// reading that field without asking which provider owns it rejects every HubSpot create and
+// update while the flag is on, blocking CRM connection setup entirely — and the id it would be
+// refusing is a HubSpot list id, which no ad-account discovery ever produced and which the flag
+// cannot strand. The forced path itself gates on Provider.IsPaidAds() (internal/dispatch/
+// creds.go's resolve) precisely so HubSpot/email is never redirected, so rejecting HubSpot here
+// would contradict FR-003.
+//
+// The provider is taken as a PARAMETER rather than checked at the two call sites, so the
+// compiler enforces the pairing: a future provider cannot reach this guard without its own
+// classification travelling with the account id. Asking IsPaidAds() rather than
+// `provider != ProviderHubSpot` follows Kind()'s own guidance — an unclassified provider added
+// later answers false and is left alone, rather than inheriting a paid-ads policy by default.
+// forcedSystemGuardApplies is the guard's SCOPE, named once so the two places that need it cannot
+// drift apart. rejectForcedSystemAccountWrite asks it whether to inspect the id at all; updateConn
+// asks it whether to READ the current row, which is a database round-trip whose result the guard
+// would otherwise discard. Duplicating the expression at the call site was the obvious
+// alternative and is the shape that lets one copy be edited and the other left behind — costing
+// either a guard that silently stops firing or a read nothing consumes.
+func forcedSystemGuardApplies(provider model.Provider) bool {
+	return provider.IsPaidAds() && forcedSystemAdsAccount()
+}
+
+func rejectForcedSystemAccountWrite(provider model.Provider, accountID, currentAccountID string) error {
+	if !forcedSystemGuardApplies(provider) {
+		return nil
+	}
+	// The comparison is on the TRIMMED values, and both sides are trimmed for the same reason
+	// the guard trims at all: " 8666746580" and "8666746580" name one account, so treating
+	// them as a change would reject a resubmission that alters nothing, while treating a
+	// trim-only edit as unchanged persists no different account either way.
+	//
+	// It is EXACT beyond that trim, deliberately not internal/dispatch's matchesAccount, and the
+	// difference is not stylistic. That helper answers "may this credential act on this
+	// campaign", so it is permissive by design in two ways this guard must not be: an empty
+	// creation id returns true (here, empty→non-empty is precisely the newly-set case that must
+	// be refused), and it folds Meta's "act_" prefix so act_123 and 123 compare equal. Meta's
+	// account_id is pinned to the canonical act_<digits> form (design/connection.go's Pattern),
+	// so accepting a bare-digit variant as "unchanged" would wave through a write that DOES
+	// change the stored value into a shape the schema rejects. A write either leaves the column
+	// byte-identical or it does not, and only the first is a no-op.
+	incoming := strings.TrimSpace(accountID)
+	// Unchanged, including the both-empty case, so clearing an already-clear selection is a
+	// no-op rather than a rejection.
+	if incoming == strings.TrimSpace(currentAccountID) {
+		return nil
+	}
+	// Clearing a selection stays allowed (spec, "Clearing a selection stays allowed"): PUT is
+	// a full replace, so un-selecting is expressed as an absent/empty account_id, and refusing
+	// it would trap a connection in whatever state the flag found it in.
+	if incoming == "" {
+		return nil
+	}
+	return &conn.BadRequestError{
+		Code: "400",
+		Message: "ad account selection is temporarily disabled: this deployment runs paid-ads campaigns " +
+			"on the shared LF ad account, so the accounts visible to this project are not its own and " +
+			"must not be saved onto its connection",
+	}
+}
+
 // createConn encrypts credentials, persists a new connection, and returns the
 // generic domain result. Adapters build the *model.Connection (minus
 // credentials) and pass the plaintext credential JSON separately.
 func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection, creds any) (*model.Connection, error) {
 	if err := rejectSystemScope(c.ProjectID); err != nil {
+		return nil, err
+	}
+	// Create is guarded as well as update: a connection can be created WITH an account id in
+	// one call, so guarding only the PUT would leave the same LF id persistable by a different
+	// verb. Create declares BadRequest too, so the status maps identically.
+	//
+	// The current value passed is "" and that is not a placeholder — it is the accurate answer.
+	// Create has no prior row by construction (the repository answers ErrConflict if one
+	// exists), so there is no stored selection to preserve and every non-empty id in the body
+	// is by definition NEWLY set. Create therefore keeps rejecting on presence, which is the
+	// same rule as update's, evaluated against an empty current value.
+	//
+	// The consequence is deliberate and worth stating: while the flag is on, LinkedIn, Reddit,
+	// X and Microsoft cannot be CONNECTED at all, because account_id is Required on their
+	// create bodies too. That is the invariant working, not a second instance of the update
+	// defect — the id would be landing fresh on a project row, which is exactly the write that
+	// outlives the flag. Update differs only because a value already sitting on the row is not
+	// something this write is putting there.
+	if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID, ""); err != nil {
 		return nil, err
 	}
 	repo, enc, err := s.resolveBackend()
@@ -195,6 +340,13 @@ func (s *ConnectionService) getConn(ctx context.Context, projectID string, p mod
 		return nil, err
 	}
 	c, gerr := repo.Get(ctx, projectID, p)
+	if gerr == nil && c == nil {
+		// (nil, nil) is a shape domain.ConnectionReader permits. Returning it verbatim would
+		// hand the adapters a nil connection with a nil error, which they marshal as a
+		// success — a 200 describing a connection that does not exist. Render it as the
+		// absence it is, matching the ErrNotFound arm mapErr already produces.
+		return nil, mapErr(domain.ErrNotFound)
+	}
 	return c, mapErr(gerr)
 }
 
@@ -210,6 +362,48 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 	version, err := parseIfMatch(ifMatch)
 	if err != nil {
 		return nil, err
+	}
+	// The forced-system guard needs the CURRENT selection to tell a changed account id from a
+	// merely resent one, so the row is read before the write — but ONLY when that answer can
+	// change the outcome. Gating on forcedSystemGuardApplies — the guard's OWN first line — keeps
+	// the ordinary deployment (flag off, which is the default and every environment today)
+	// byte-for-byte on the path it had before this guard existed: one statement, and a missing
+	// row still surfacing through repo.Update's error rather than through a read that now
+	// precedes the version check. An unconditional read would have made every connection update
+	// on every deployment pay for a policy that is off.
+	//
+	// Ordering within the guarded branch is deliberate on both sides: AFTER parseIfMatch, so a
+	// caller who omitted If-Match still gets 428 rather than paying for a read; and BEFORE
+	// repo.Update, because a rejected write must not reach the database.
+	//
+	// A read error is returned as-is rather than being treated as "no current selection".
+	// Defaulting to "" on failure would be the reverse of fail-closed: an unreadable row would
+	// make every incoming id look newly set and turn a transient database fault into a 400
+	// blaming the caller's body. mapErr renders a genuinely absent row as the 404 the update
+	// would have produced anyway, and the version conflict is still the repository's to decide.
+	if forcedSystemGuardApplies(c.Provider) {
+		current, gerr := repo.Get(ctx, c.ProjectID, c.Provider)
+		// `current == nil` is checked ALONGSIDE the error, not instead of it.
+		// domain.ConnectionReader (internal/domain/port.go) does not forbid a (nil, nil)
+		// return, so a reader that reports absence that way would panic here and take down
+		// connection updates for every paid-ads provider while the flag is on. The same
+		// branch already defends against exactly this shape in internal/dispatch/creds.go's
+		// systemCreated (`err != nil || conn == nil`); treating the contract as reachable in
+		// one new call site and unreachable in the other is the drift worth closing.
+		//
+		// A nil row is rendered as the absence it is (domain.ErrNotFound → the 404 the update
+		// would have produced anyway), NOT as an empty current selection. Defaulting to "" on
+		// an unreadable row is the reverse of fail-closed: it would make every incoming id
+		// look newly set and turn the absence into a 400 blaming the caller's body.
+		if gerr != nil {
+			return nil, mapErr(gerr)
+		}
+		if current == nil {
+			return nil, mapErr(domain.ErrNotFound)
+		}
+		if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID, current.AccountID); err != nil {
+			return nil, err
+		}
 	}
 	updated, uerr := repo.Update(ctx, c, version)
 	return updated, mapErr(uerr)
@@ -268,6 +462,11 @@ func (s *ConnectionService) testConn(ctx context.Context, projectID string, p mo
 	c, err := repo.Get(ctx, projectID, p)
 	if err != nil {
 		return nil, mapErr(err)
+	}
+	// HasCredentials reads c.EncryptedCredentials, so a (nil, nil) read panics here rather
+	// than reporting the absence the caller asked about.
+	if c == nil {
+		return nil, mapErr(domain.ErrNotFound)
 	}
 	msg := "connection found; upstream verification not yet implemented"
 	return &conn.ConnectionTestResult{OK: c.HasCredentials(), Message: &msg}, nil

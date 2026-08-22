@@ -1120,6 +1120,199 @@ snake_case wire form. The config an adapter refuses to create without (LinkedIn 
 `page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
 existing columns MERGED with the flags, since `Update` rewrites every config column.
 
+## Forced-primary mode: the system account as the account of record
+
+The section above is the DEFAULT — the system row is a fallback, used only when a project has no
+connection of its own. `LFX_FORCE_SYSTEM_ADS_ACCOUNT` (`constants.EnvForceSystemAdsAccount`,
+exactly `"true"` to enable, default off) inverts that for paid ads: every paid-ads campaign
+authenticates as the LF marketing-ops account regardless of any per-project connection, so the
+system row becomes the PRIMARY credential source, not the fallback. It is read once in
+`newCredsSource` from the environment — mirroring the dispatch-layer `REDDIT_METRICS_ENABLED`
+flag — rather than threaded through the seven `New*Dispatcher` constructors (191 call sites) and
+`Config`, since `credsSource` is the only consumer. Per-environment enablement is an ArgoCD
+overlay flip like the cutover flags; the branch stays dormant until an operator opts in. See
+[specs/006-force-system-ads-account](../../../specs/006-force-system-ads-account/spec.md).
+
+### The flag governs CREATION; an existing campaign follows its CREATION ACCOUNT
+
+`credsSource` has three entry points, and which one a caller uses decides which account answers:
+
+| Entry point | Callers | Account resolved |
+| --- | --- | --- |
+| `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
+| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
+| `resolveOwned` | adoption | project only (never forced, never fell back) |
+
+The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
+account", and the difference is the whole point: those two agree for a campaign created before the
+cutover and disagree for every campaign the cutover itself creates.
+
+Campaign ids on every platform here are scoped to an ad ACCOUNT, which is why each adapter carries
+a provenance guard (`verifyMetaAccountMatch` and its four siblings) refusing to address a stored
+campaign id under an account it was not created in. Resolve the wrong account for a pause and the
+guard fires, the service returns 409 to the one operation that must never be unavailable, and the
+campaign keeps serving and keeps spending. **Both directions of that failure are real**, and
+neither has a fix-forward:
+
+- a PRE-cutover campaign (created on the project's account) resolved to the SYSTEM account — the
+  original bug, from sharing one resolver between creation and everything else.
+- a POST-cutover campaign (created on the SYSTEM account, because creation is forced) resolved to
+  the PROJECT's account whenever the project has a connection of its own — the mirror-image bug,
+  which plain project-then-fallback resolution reintroduces. It is the worse of the two, because it
+  strands exactly the campaigns the flag just created.
+
+The account a campaign was created under is a HISTORICAL FACT read from the campaign's persisted
+result (`metaCreationAccountID` and its four siblings) — the same model the provenance guards
+already encode. `resolveExisting` therefore takes that recorded id as a PARAMETER and does not
+consult the flag at all: it resolves the project scope, and when that is not the creating account
+it tries the system row before giving up. Keying on the row rather than on flag state is what keeps
+a cutover-created campaign stoppable **after the flag is turned back off** — a flag-conditional
+rule would strand those campaigns at the moment an operator retired the flag, which is precisely
+when it will be retired.
+
+An EMPTY recorded id means the row predates the explicit account field ("unknown, proceed", as
+every `*CreationAccountID` sibling documents) and falls back to ordinary project-then-system
+resolution — the behaviour those rows had before the flag existed.
+
+The recorded account governs the **failure** arm too, not only the success arm. Project-scope
+resolution can fail outright — the project DISCONNECTED its own connection (a disconnect is a
+statement, so `systemConn` refuses the ordinary fallback and `resolveWithFallback` returns
+`ErrNotFound`), or its row is present but unusable. Neither says anything about the system
+account the campaign records. Returning the project's error immediately therefore strands a
+system-created campaign exactly as the mirror-image bug above did: pause and metrics fail while
+the campaign keeps spending. `resolveExisting` consequently attempts the system resolution and
+matches it against the recorded id on that arm as well, and returns the project's error only when
+the system row is unavailable or is not the creating account.
+
+Two preconditions gate that extra lookup, both structural rather than conventional:
+
+- `IsPaidAds()` — `resolveForcedSystem` is the LF-system redirect, so email must never reach it
+  (FR-003). Every caller of `resolveExisting` today is a paid-ads dispatcher, but asking here
+  makes it a property of the function rather than a fact about its call sites.
+- a NON-EMPTY recorded id — a legacy row makes no system claim, so reaching for the system row on
+  its behalf would address its campaign id in a namespace it does not belong to.
+
+Which failure is REPORTED keys on the recorded account too, and this is a third place the same
+invariant applies rather than a separate rule. `internal/service/brief.go` and
+`internal/service/connection.go` branch on the system sentinels to decide whose repair it is, so
+the choice decides whether the caller is told to reconnect their own connection (409/404) or an
+operator is paged to repair the LF row (500).
+
+Two arms face it: both scopes failing, and the project resolving a DIFFERENT account while the
+system row is broken. Neither can be answered by "which resolution failed", because both
+readings are correct for one case and wrong for its sibling:
+
+- a PROJECT-created campaign whose project disconnected or re-pointed its connection. The
+  project's error is right; substituting the system error pages the platform operator for a
+  repair the project has to make.
+- a SYSTEM-created campaign whose system row has since broken. The project's error is wrong: it
+  names a connection that never created this campaign and could not address it if repaired, so
+  the project receives an unfollowable remedy while the campaign keeps spending.
+
+`systemCreated` separates them on the recorded fact. It reads the system row's `AccountID`
+COLUMN directly rather than going through `resolveForcedSystem`, because that function loads,
+validates and DECRYPTS and returns an error INSTEAD of a value — so at the moment the system row
+is broken, which is exactly when the routing decision matters, its account id is unavailable.
+The column is readable whether or not the credentials validate.
+
+It returns `known=false` when the question cannot be settled — no recorded provenance, a system
+row that is absent, nameless, or unreadable — and callers keep the project-owned default. The
+asymmetry is deliberate: claiming system creation pages an operator, so an unproven claim must
+not be guessed in that direction.
+
+**An ABSENT row is one of those unsettled cases, and acting on it separately was a regression.**
+A version of this code reported absence as a third value and used it to return the system fault
+when the recorded account matched neither scope. The reasoning — nothing reachable can address
+the campaign, so page an operator — answered the wrong question. Two questions are in play:
+
+- *"can anything address this campaign right now?"* — absence is evidence for this.
+- *"who CREATED this campaign?"* — absence is evidence for **nothing** here.
+
+Only the second decides who is paged, and a missing row proves only that the row is missing
+**now**. A PROJECT-created campaign whose project later re-pointed its connection presents
+identically: the recorded account differs from the current one and no system row exists. Acting
+on absence therefore sent a 500 for a repair the project makes itself by reconnecting, inverting
+the pre-branch behaviour. `TestAbsentSystemRowKeepsTheProjectFault` pins that case.
+
+Provenance keeps exactly ONE discriminator: `systemIsTheCreator`, true only on a **positive
+match** against the system row's recorded account id.
+
+### `ConnectionReader.Get` may return `(nil, nil)`
+
+The interface does not forbid a nil row with a nil error, so **every** call site treats that as
+the same absence `ErrNotFound` expresses. This is not defensive padding: `resolveConn`'s first
+act is to read `conn.ID` for the credential-cache key, so an unguarded nil panics rather than
+failing closed. All nine call sites are guarded — five in `internal/dispatch/creds.go`
+(`systemCreated`, `resolve`, `resolveForcedSystem`, `resolveOwned`, `systemConn`), three in
+`internal/service/connection_handler.go` (`getConn`, `updateConn`, `testConn`), and one in
+`internal/bootstrap/sysacct.go`. Each renders the nil as the absence its own arm already
+handles, so the sentinels and fallbacks stay identical to the `ErrNotFound` path — notably
+`resolve`, where a nil project row must still earn the LF system fallback.
+
+Passing the id as a parameter is deliberate: it makes the omission a COMPILE ERROR. The bug being
+fixed here was a `resolveExisting` that took only `(ctx, projectID, provider)` and so could not
+consult the campaign even though every caller already held one. `credsResolver` remains the
+function type for adapters whose credential helper serves BOTH kinds of caller
+(`resolveMetaCredentials`, `resolveLinkedInCredentials`, `resolveRedditClient`); those call sites
+bind the recorded id with `existingResolver(<platform>CreationAccountID(campaign))`, so the
+creation-path signature stays free of a campaign argument it has no value for.
+
+### The forced path itself
+
+A guard at the top of `credsSource.resolve` routes to `resolveForcedSystem` when the flag is on,
+the provider `IsPaidAds()`, and the request is not already at `model.SystemProjectID`. All three
+matter:
+
+- **Gated on `IsPaidAds()`** — HubSpot/email is NEVER forced, the same trade the fallback's
+  `systemConn` refuses: forcing a project's audience build onto the system HubSpot row would write
+  its contacts into the LF portal. The default path still handles email exactly as before.
+- **`SystemProjectID` short-circuits** — a request already in the reserved scope drops to the
+  ordinary path; forcing it would re-issue the identical lookup, and there is no project
+  connection to override.
+- **Unconditional, unlike the fallback** — `resolveForcedSystem` does NOT consult
+  `Disconnected`. Forcing overrides a project's own choice by design, so a project that explicitly
+  disconnected its account is still dispatched on the system account. That is the deliberate
+  difference from the fallback, whose whole safety argument is that a disconnect is a statement it
+  must honour.
+
+It loads the system row directly (`Get(SystemProjectID, provider)` → `resolveConn`), holds it to
+the same validate-and-decrypt standard as any connection, marks the result `fromSystem = true`,
+and `systemOrigin`-tags every failure — so a system row that is missing or unusable **fails
+closed** with a not-created, system-origin error rather than falling through to the project
+connection the flag means to ignore. `resolveOwned` (adoption) is untouched: it never forced and
+never fell back.
+
+A MISSING system row additionally carries `domain.ErrSystemConnectionMissing`, wrapped
+**alongside** `ErrNotFound` rather than instead of it. Every consumer that classifies a credential
+error checks `ErrNotFound` first — it is the ordinary "this project has no connection" case — so
+without a distinct marker a deployment that enabled the flag WITHOUT installing the system row
+answers every caller "no connection configured for this project; connect it". That advice cannot
+work: the project's own connection is exactly what forced mode ignores, and the operator who must
+install the LF row is never paged. The sentinel is ordered ABOVE the `ErrNotFound` arm at
+`classifyDiscoveryError`, both `brief.go` credential switches, `classifyBriefMetricsErr`, and the
+async dispatch log in `orchestrator.go`; each answers 500 + an ERROR log, matching the treatment
+`ErrSystemConnectionNotUsable` already gets. It is distinct from that sentinel because the repair
+differs: install a row, versus fix the row that is there.
+
+### Reversibility
+
+While the flag is on, no **paid-ads** account id may be **persisted onto a project's connection
+row** (`rejectForcedSystemAccountWrite`, guarding both `createConn` and `updateConn`). The
+provider is a PARAMETER, and that is load-bearing: `model.Connection.AccountID` is shared by every
+provider, and HubSpot's Required `account_id` (a list/audience id) is copied into the same field,
+so a provider-blind guard rejected every HubSpot create and update while the flag was on —
+blocking CRM connection setup over an id no ad-account discovery ever produced, and contradicting
+FR-003. Taking the provider as an argument makes the compiler enforce the pairing at both call
+sites. Discovery resolves
+the system credential while forcing is active, so every id the picker can offer names an LF-owned
+account; storing one outlives the flag, leaving the project's row pointing at an LF account it has
+no credentials for once the flag is off. The guard rejects the WRITE rather than filtering the
+discovery response, because the id is caller-supplied and need not have come from the picker.
+CLEARING a selection stays allowed — PUT is a full replace and un-selecting is an absent
+`account_id`, so refusing it would trap a connection in whatever state the flag found it in. It
+answers **400, not 409**: the update endpoints declare `BadRequest` but not `Conflict`
+(`design/connection.go`), and Goa renders an undeclared error type as a 500.
+
 ## `CampaignAdopter` (optional capability)
 
 `CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
