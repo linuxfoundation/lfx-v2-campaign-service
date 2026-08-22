@@ -5,7 +5,10 @@ package dbtest_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -27,7 +30,7 @@ import (
 //   - same provider, second project      -> project_id must exclude it
 //   - same project, different provider   -> platform must exclude it
 //   - same project+provider, deleted     -> status <> 'deleted' must exclude it
-//   - same project+provider, empty id    -> the <> ” guard must exclude it
+//   - same project+provider, empty id    -> the platform_campaign_id <> '' guard must exclude it
 //   - same project+provider, NULL id     -> the IS NOT NULL guard must exclude it
 //   - two live rows, one with NULL result and one with provenance JSON -> both returned,
 //     and the nullable scan must not error
@@ -59,6 +62,24 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 	briefUnderTest := newBrief(projectID)
 	briefOther := newBrief(otherProject)
 
+	// Platform ids are MINTED PER RUN, not hardcoded. uq_campaigns_platform_campaign_live is
+	// UNIQUE on (platform, platform_campaign_id) for live google-ads rows and does NOT include
+	// project_id, so a fixed id is globally unique across the whole database: one row left
+	// behind by an earlier run (the campaign cleanup below tolerates failure) makes the next
+	// seed fail with 23505 BEFORE any tenant-scope assertion runs. Sibling live tests mint
+	// theirs for the same reason.
+	//
+	// numericID keeps them digits-only — platform_campaign_id is an upstream numeric handle and
+	// the scope predicate this test's data feeds requires the canonical spelling — and the
+	// `n` prefix digit keeps the ORDER BY ASC order equal to the declaration order, so the
+	// positional assertions below still mean what they say.
+	idFor := func(n int) string { return numericID(t, n) }
+	idProvenance := idFor(1)
+	idNullResult := idFor(2)
+	idDeleted := idFor(3)
+	idOtherProvider := idFor(4)
+	idOtherProject := idFor(5)
+
 	// platformCampaignID is a *string so the NULL case is representable and distinct from "".
 	seed := []struct {
 		name       string
@@ -70,13 +91,13 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 		platformID *string
 		result     []byte
 	}{
-		{"live google row with provenance", briefUnderTest, projectID, model.ProviderGoogleAds, model.VariantDefault, "created", ptr("1111111111"), []byte(`{"customer_id":"9876543210"}`)},
-		{"live google row with NULL result", briefUnderTest, projectID, model.ProviderGoogleAds, "demand-gen", "created", ptr("2222222222"), nil},
-		{"deleted google row", briefUnderTest, projectID, model.ProviderGoogleAds, "deleted-variant", "deleted", ptr("3333333333"), nil},
+		{"live google row with provenance", briefUnderTest, projectID, model.ProviderGoogleAds, model.VariantDefault, "created", ptr(idProvenance), []byte(`{"customer_id":"9876543210"}`)},
+		{"live google row with NULL result", briefUnderTest, projectID, model.ProviderGoogleAds, "demand-gen", "created", ptr(idNullResult), nil},
+		{"deleted google row", briefUnderTest, projectID, model.ProviderGoogleAds, "deleted-variant", "deleted", ptr(idDeleted), nil},
 		{"empty platform id", briefUnderTest, projectID, model.ProviderGoogleAds, "empty-variant", "created", ptr(""), nil},
 		{"null platform id", briefUnderTest, projectID, model.ProviderGoogleAds, "null-variant", "created", nil, nil},
-		{"same project, other provider", briefUnderTest, projectID, model.ProviderLinkedInAds, model.VariantDefault, "created", ptr("4444444444"), nil},
-		{"other project, same provider", briefOther, otherProject, model.ProviderGoogleAds, model.VariantDefault, "created", ptr("5555555555"), []byte(`{"customer_id":"9876543210"}`)},
+		{"same project, other provider", briefUnderTest, projectID, model.ProviderLinkedInAds, model.VariantDefault, "created", ptr(idOtherProvider), nil},
+		{"other project, same provider", briefOther, otherProject, model.ProviderGoogleAds, model.VariantDefault, "created", ptr(idOtherProject), []byte(`{"customer_id":"9876543210"}`)},
 	}
 	for _, s := range seed {
 		if _, err := pool.Exec(ctx, `
@@ -94,7 +115,7 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 
 	// Assert the exact ID SET, not a count: a count of two is also what you get from the
 	// wrong two rows, which is precisely the cross-tenant failure this boundary prevents.
-	wantIDs := []string{"1111111111", "2222222222"}
+	wantIDs := []string{idProvenance, idNullResult}
 	if len(got) != len(wantIDs) {
 		t.Fatalf("got %d scope rows %v, want exactly %v — every other seeded row is excluded by "+
 			"one clause of the tenant boundary", len(got), idsOf(got), wantIDs)
@@ -106,14 +127,14 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 		}
 	}
 	for _, g := range got {
-		if g.PlatformCampaignID == "5555555555" {
+		if g.PlatformCampaignID == idOtherProject {
 			t.Error("another project's campaign id entered this project's GAQL scope — the " +
 				"project_id predicate is the only thing preventing a cross-tenant keyword read")
 		}
-		if g.PlatformCampaignID == "4444444444" {
+		if g.PlatformCampaignID == idOtherProvider {
 			t.Error("a LinkedIn campaign id entered a google-ads scope; the platform predicate did not bind")
 		}
-		if g.PlatformCampaignID == "3333333333" {
+		if g.PlatformCampaignID == idDeleted {
 			t.Error("a soft-deleted campaign entered the scope")
 		}
 		if g.PlatformCampaignID == "" {
@@ -130,7 +151,7 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 	for _, g := range got {
 		byID[g.PlatformCampaignID] = g
 	}
-	withProv, ok := byID["1111111111"]
+	withProv, ok := byID[idProvenance]
 	if !ok {
 		t.Fatalf("the provenance-bearing row is missing from %v", idsOf(got))
 	}
@@ -144,7 +165,7 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 		t.Errorf("provenance customer_id = %q, want %q — the caller compares this against the "+
 			"connection's current customer to reject a re-pointed connection", blob.CustomerID, "9876543210")
 	}
-	nullProv, ok := byID["2222222222"]
+	nullProv, ok := byID[idNullResult]
 	if !ok {
 		t.Fatalf("the NULL-result row is missing from %v", idsOf(got))
 	}
@@ -156,6 +177,21 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// numericID mints a digits-only platform campaign id that is unique to this test run.
+//
+// It cannot be dbtest.UniqueID directly: that emits [a-z0-9-], and platform_campaign_id feeds a
+// scope predicate that requires the canonical base-10 spelling of a positive int64. So the
+// run-unique suffix is derived by hashing UniqueID's output down to digits, and `slot` is
+// prefixed so the ids sort in declaration order — the positional assertions depend on
+// ORDER BY platform_campaign_id ASC matching the order the wanted ids are listed in.
+func numericID(t *testing.T, slot int) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(dbtest.UniqueID(t, "pcid")))
+	// 12 digits of run entropy, well inside int64 once the single-digit slot prefix is added.
+	run := binary.BigEndian.Uint64(sum[:8]) % 1_000_000_000_000
+	return fmt.Sprintf("%d%012d", slot, run)
+}
 
 func idsOf(rows []model.ProjectCampaignScope) []string {
 	out := make([]string, 0, len(rows))
