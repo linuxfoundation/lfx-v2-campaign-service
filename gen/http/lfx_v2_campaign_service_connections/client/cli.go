@@ -1492,6 +1492,27 @@ func BuildListMicrosoftAdsAccountsPayload(lfxV2CampaignServiceConnectionsListMic
 	return v, nil
 }
 
+// BuildListTwitterAdsAccountsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-twitter-ads-accounts endpoint from
+// CLI flags.
+func BuildListTwitterAdsAccountsPayload(lfxV2CampaignServiceConnectionsListTwitterAdsAccountsProjectID string, lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerToken string) (*lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListHubspotEmailsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-hubspot-emails endpoint from CLI
 // flags.

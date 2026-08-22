@@ -241,6 +241,11 @@ func ListMicrosoftAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID strin
 	return fmt.Sprintf("/projects/%v/connection-microsoft-ads/accounts", projectID)
 }
 
+// ListTwitterAdsAccountsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-twitter-ads-accounts HTTP endpoint.
+func ListTwitterAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-twitter-ads/accounts", projectID)
+}
+
 // ListHubspotEmailsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-hubspot-emails HTTP endpoint.
 func ListHubspotEmailsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-hubspot/emails", projectID)

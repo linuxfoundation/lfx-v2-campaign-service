@@ -755,6 +755,13 @@ type ListMicrosoftAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
 }
 
+// ListTwitterAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body.
+type ListTwitterAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
+}
+
 // ListHubspotEmailsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body.
@@ -3217,6 +3224,56 @@ type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ListMicrosoftAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListTwitterAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListTwitterAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListTwitterAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListTwitterAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListTwitterAdsAccountsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -7155,6 +7212,84 @@ func NewListMicrosoftAdsAccountsUnauthorized(body *ListMicrosoftAdsAccountsUnaut
 	return v
 }
 
+// NewListTwitterAdsAccountsResultOK builds a
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint result from a HTTP "OK" response.
+func NewListTwitterAdsAccountsResultOK(body *ListTwitterAdsAccountsResponseBody) *lfxv2campaignserviceconnections.ListTwitterAdsAccountsResult {
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsAccountsResult{}
+	v.Accounts = make([]*lfxv2campaignserviceconnections.AccessibleAccount, len(body.Accounts))
+	for i, val := range body.Accounts {
+		if val == nil {
+			v.Accounts[i] = nil
+			continue
+		}
+		v.Accounts[i] = unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount(val)
+	}
+
+	return v
+}
+
+// NewListTwitterAdsAccountsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint BadRequest error.
+func NewListTwitterAdsAccountsBadRequest(body *ListTwitterAdsAccountsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsAccountsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint ServiceUnavailable error.
+func NewListTwitterAdsAccountsServiceUnavailable(body *ListTwitterAdsAccountsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsAccountsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint InternalServerError error.
+func NewListTwitterAdsAccountsInternalServerError(body *ListTwitterAdsAccountsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsAccountsNotFound builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint NotFound error.
+func NewListTwitterAdsAccountsNotFound(body *ListTwitterAdsAccountsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsAccountsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint Unauthorized error.
+func NewListTwitterAdsAccountsUnauthorized(body *ListTwitterAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListHubspotEmailsResultOK builds a "lfx-v2-campaign-service-connections"
 // service "list-hubspot-emails" endpoint result from a HTTP "OK" response.
 func NewListHubspotEmailsResultOK(body *ListHubspotEmailsResponseBody) *lfxv2campaignserviceconnections.ListHubspotEmailsResult {
@@ -7953,6 +8088,22 @@ func ValidateListLinkedinAdsAccountsResponseBody(body *ListLinkedinAdsAccountsRe
 // ValidateListMicrosoftAdsAccountsResponseBody runs the validations defined on
 // List-Microsoft-Ads-AccountsResponseBody
 func ValidateListMicrosoftAdsAccountsResponseBody(body *ListMicrosoftAdsAccountsResponseBody) (err error) {
+	if body.Accounts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
+	}
+	for _, e := range body.Accounts {
+		if e != nil {
+			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListTwitterAdsAccountsResponseBody runs the validations defined on
+// List-Twitter-Ads-AccountsResponseBody
+func ValidateListTwitterAdsAccountsResponseBody(body *ListTwitterAdsAccountsResponseBody) (err error) {
 	if body.Accounts == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
 	}
@@ -10960,6 +11111,68 @@ func ValidateListMicrosoftAdsAccountsNotFoundResponseBody(body *ListMicrosoftAds
 // ValidateListMicrosoftAdsAccountsUnauthorizedResponseBody runs the
 // validations defined on list-microsoft-ads-accounts_Unauthorized_response_body
 func ValidateListMicrosoftAdsAccountsUnauthorizedResponseBody(body *ListMicrosoftAdsAccountsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsAccountsBadRequestResponseBody runs the validations
+// defined on list-twitter-ads-accounts_BadRequest_response_body
+func ValidateListTwitterAdsAccountsBadRequestResponseBody(body *ListTwitterAdsAccountsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsAccountsServiceUnavailableResponseBody runs the
+// validations defined on
+// list-twitter-ads-accounts_ServiceUnavailable_response_body
+func ValidateListTwitterAdsAccountsServiceUnavailableResponseBody(body *ListTwitterAdsAccountsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsAccountsInternalServerErrorResponseBody runs the
+// validations defined on
+// list-twitter-ads-accounts_InternalServerError_response_body
+func ValidateListTwitterAdsAccountsInternalServerErrorResponseBody(body *ListTwitterAdsAccountsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsAccountsNotFoundResponseBody runs the validations
+// defined on list-twitter-ads-accounts_NotFound_response_body
+func ValidateListTwitterAdsAccountsNotFoundResponseBody(body *ListTwitterAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsAccountsUnauthorizedResponseBody runs the validations
+// defined on list-twitter-ads-accounts_Unauthorized_response_body
+func ValidateListTwitterAdsAccountsUnauthorizedResponseBody(body *ListTwitterAdsAccountsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

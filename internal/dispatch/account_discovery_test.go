@@ -17,15 +17,21 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
-// Both dispatchers must SATISFY the AccountLister interface, or Orchestrator.ReadAccounts
+// These dispatchers must SATISFY the AccountLister interface, or Orchestrator.ReadAccounts
 // type-asserts, misses, and answers ErrAccountsUnsupported — the endpoint would exist and
 // always fail. A compile-time assertion catches that at build rather than at runtime.
+//
+// Every provider claiming discovery belongs in THIS block, including ones whose behavioural
+// tests live in another file, so the set is readable in one place and gaining a provider does
+// not also require editing a count in this comment.
 var (
 	_ service.AccountLister = (*LinkedInDispatcher)(nil)
 	_ service.AccountLister = (*MicrosoftDispatcher)(nil)
+	_ service.AccountLister = (*TwitterDispatcher)(nil)
 )
 
 // requestRecorder captures what the dispatcher actually put on the wire. Asserting on the
@@ -484,4 +490,248 @@ func TestListAccountsReturnsEmptyNotNilWhenUpstreamHasNone(t *testing.T) {
 			t.Errorf("want an empty list, got %+v", accounts)
 		}
 	})
+}
+
+// twitterAccountsServer answers GET /{version}/accounts with a fixed element set. The
+// `next_cursor` key is REQUIRED in the body: the client refuses a response without it
+// rather than reading the zero value as an exhausted cursor, because that would return a
+// truncated account list as a complete one.
+func twitterAccountsServer(t *testing.T, rec *requestRecorder, elements string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[`+elements+`],"next_cursor":null}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// The account-less connection is the state discovery exists to rescue.
+//
+// validateTwitterConnection hard-fails on a missing account id for DISPATCH — correctly,
+// since a client built without one cannot reach the platform — and ListAccounts tolerates
+// exactly that one sentinel. Asserted through a fake server so the test proves the listing
+// COMPLETED rather than merely that some other error came back.
+func TestTwitterListAccountsWorksWithoutASelectedAccount(t *testing.T) {
+	rec := &requestRecorder{}
+	srv := twitterAccountsServer(t, rec, `{"id":"18ce54d4x5t","name":"LF Events","approval_status":"ACCEPTED"}`)
+
+	conn := activeTwitterConn(goodTwitterCreds)
+	conn.AccountID = "" // the state under test
+	d := NewTwitterDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
+
+	accounts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderTwitterAds)
+	if err != nil {
+		t.Fatalf("discovery must work on a connection with no account id — that is the connection it exists to serve: %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ID != "18ce54d4x5t" {
+		t.Fatalf("accounts = %+v, want the one the platform reported", accounts)
+	}
+	if accounts[0].Label != "LF Events" {
+		t.Errorf("label = %q, want the account name", accounts[0].Label)
+	}
+}
+
+// TestTwitterListAccountsWorksWithoutAFundingInstrument pins the OTHER create-only field.
+// funding_instrument_id is required to CREATE a campaign, and Dispatch refuses without it,
+// but an account-less connection has no reason to have chosen one yet — requiring it here
+// would refuse the very connection this endpoint exists to complete. validateTwitterConnection
+// deliberately does not check it; this test is what fails if a future edit moves that check
+// into the shared validator.
+func TestTwitterListAccountsWorksWithoutAFundingInstrument(t *testing.T) {
+	rec := &requestRecorder{}
+	srv := twitterAccountsServer(t, rec, `{"id":"18ce54d4x5t","name":"LF Events"}`)
+
+	conn := activeTwitterConn(goodTwitterCreds)
+	conn.AccountID = ""
+	conn.ProviderConfig = nil // no funding instrument chosen either
+	d := NewTwitterDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
+
+	if _, err := d.ListAccounts(context.Background(), "cncf", model.ProviderTwitterAds); err != nil {
+		t.Fatalf("discovery must not require the create-only funding instrument: %v", err)
+	}
+}
+
+// The request must ask about the CREDENTIAL, not about the stored account.
+//
+// This is the test that catches a discovery client scoped to one account: such a client
+// still returns a plausible non-empty list, so only the outbound request shows the
+// difference. The fixture DOES carry an account id, so there is something that could leak
+// — into the PATH (/12/accounts/{id}, the single-resource form every other call in the
+// client uses) or into the QUERY (X's `account_ids` parameter).
+func TestTwitterListAccountsAsksAboutTheCredentialNotTheAccount(t *testing.T) {
+	rec := &requestRecorder{}
+	srv := twitterAccountsServer(t, rec, `{"id":"18ce54d4x5t","name":"LF Events"}`)
+
+	conn := activeTwitterConn(goodTwitterCreds)
+	conn.AccountID = "8r7gb"
+	d := NewTwitterDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
+
+	if _, err := d.ListAccounts(context.Background(), "cncf", model.ProviderTwitterAds); err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	paths, queries, _ := rec.all()
+	if len(paths) == 0 {
+		t.Fatal("no request was made")
+	}
+	for i := range paths {
+		if paths[i] != "/12/accounts" {
+			t.Errorf("path = %q, want the COLLECTION /12/accounts", paths[i])
+		}
+		if strings.Contains(paths[i], "8r7gb") || strings.Contains(queries[i], "8r7gb") {
+			t.Errorf("the stored account id leaked into the discovery request %q?%q — the client answers a narrower question than was asked",
+				paths[i], queries[i])
+		}
+		if strings.Contains(queries[i], "account_ids") {
+			t.Errorf("query %q sends account_ids, which scopes the answer to a subset", queries[i])
+		}
+	}
+}
+
+// Discovery must reject every connection dispatch rejects, EXCEPT the account-less one.
+// Sharing validateTwitterConnection is what guarantees it; this pins that the sentinel
+// survives, since the endpoint's 400-vs-503 mapping keys on ErrConnectionNotUsable.
+func TestTwitterListAccountsStillRejectsAnUnusableConnection(t *testing.T) {
+	cases := []struct {
+		name string
+		conn func() *model.Connection
+	}{
+		{"inactive", func() *model.Connection {
+			c := activeTwitterConn(goodTwitterCreds)
+			c.Status = model.StatusInactive
+			return c
+		}},
+		{"undecodable credentials", func() *model.Connection { return activeTwitterConn(`{not json`) }},
+		{"incomplete credentials", func() *model.Connection {
+			return activeTwitterConn(`{"ConsumerKey":"ck","ConsumerSecret":"cs"}`)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run("twitter/"+tc.name, func(t *testing.T) {
+			d := NewTwitterDispatcher(fakeConnReader{conn: tc.conn()}, identityEncryptor{})
+			_, err := d.ListAccounts(context.Background(), "cncf", model.ProviderTwitterAds)
+			if err == nil {
+				t.Fatal("discovery accepted a connection dispatch would reject")
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error %v does not carry ErrConnectionNotUsable, so the endpoint cannot map it to the right status", err)
+			}
+		})
+	}
+}
+
+// An upstream that reports zero accounts must produce an EMPTY, non-nil slice.
+// Orchestrator.ReadAccounts rejects a nil result as a contract violation precisely so
+// empty keeps its meaning, and on the wire nil would serialize as null.
+func TestTwitterListAccountsReturnsEmptyNotNilWhenUpstreamHasNone(t *testing.T) {
+	rec := &requestRecorder{}
+	srv := twitterAccountsServer(t, rec, ``)
+
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
+	accounts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderTwitterAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if accounts == nil {
+		t.Fatal("a credential reaching zero accounts is an ANSWER; nil is not distinguishable from \"no answer\" on the wire")
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts = %+v, want empty", accounts)
+	}
+}
+
+// A picker row must say what the account IS. Returning an unusable account unmarked is
+// worse than filtering it out: it looks exactly as selectable as a usable one, and the
+// refusal arrives later at dispatch with no way back to this list.
+func TestTwitterAccountLabelSurfacesWhyAnAccountCannotBeUsed(t *testing.T) {
+	cases := []struct {
+		name string
+		in   twitter.AdAccount
+		want string
+	}{
+		{"plain accepted account renders as its name", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED"}, "LF Events"},
+		{"under review is named", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "UNDER_REVIEW"}, "LF Events — under review"},
+		{"rejected is named", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "REJECTED"}, "LF Events — rejected"},
+		{"deleted is named", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED", Deleted: true}, "LF Events — deleted"},
+		{"both reasons are named", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "REJECTED", Deleted: true}, "LF Events — rejected, deleted"},
+		// A blank row in a picker is unpickable, and the id is what actually gets stored.
+		{"a nameless account falls back to its id", twitter.AdAccount{ID: "18ce54d4x5t"}, "18ce54d4x5t"},
+		{"a whitespace-only name falls back too", twitter.AdAccount{ID: "18ce54d4x5t", Name: "   "}, "18ce54d4x5t"},
+		// X publishes no complete approval_status enum, so an UNRECOGNISED value must not
+		// be rendered as a defect — the label says nothing rather than guessing.
+		{"an unrecognised status is not labelled a defect", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "SOMETHING_NEW"}, "LF Events"},
+		// The timezone is a PROPERTY, not a defect, so it joins the NAME rather than the
+		// notes — the same shape linkedInAccountLabel gives Currency. X reports campaign
+		// schedules and daily budget resets against it, so without this term two accounts
+		// differing only by timezone render identically and the picker cannot tell them
+		// apart. Asserting the full string is what makes that binding: a label that dropped
+		// the timezone would still contain the name.
+		{"the timezone is rendered into the name", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED", Timezone: "America/Los_Angeles"}, "LF Events [America/Los_Angeles]"},
+		{"two accounts differing only by timezone are distinguishable", twitter.AdAccount{ID: "a2", Name: "LF Events", Status: "ACCEPTED", Timezone: "Europe/Berlin"}, "LF Events [Europe/Berlin]"},
+		// The timezone precedes the notes: it qualifies WHICH account this is, while the
+		// notes say why that account may not be usable.
+		{"timezone and a defect note coexist in that order", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "REJECTED", Timezone: "Europe/Berlin"}, "LF Events [Europe/Berlin] — rejected"},
+		// An absent timezone must add no empty brackets.
+		{"an absent timezone adds nothing", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED"}, "LF Events"},
+		{"a whitespace-only timezone adds nothing", twitter.AdAccount{ID: "a1", Name: "LF Events", Status: "ACCEPTED", Timezone: "   "}, "LF Events"},
+		// The id fallback happens BEFORE the timezone is appended, so a nameless account
+		// still renders its id rather than a bare bracketed timezone.
+		{"a nameless account keeps its id in front of the timezone", twitter.AdAccount{ID: "18ce54d4x5t", Timezone: "Asia/Tokyo"}, "18ce54d4x5t [Asia/Tokyo]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := twitterAccountLabel(tc.in); got != tc.want {
+				t.Errorf("twitterAccountLabel = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTwitterListAccountsReturnsUnusableAccountsRatherThanFilteringThem is the
+// dispatcher-level counterpart to the client's picker test, and it exists because a
+// mutation SURVIVED without it: every other fixture in this file returns only ACCEPTED,
+// non-deleted accounts, so a ListAccounts that silently dropped unusable rows removed
+// nothing and the whole suite passed. Filtering here would answer "your credential reaches
+// no ad accounts" about an account sitting right there, sending the operator to hunt a
+// permissions problem that does not exist — and the label test alone cannot catch it,
+// because a filtered row never reaches the labeller.
+func TestTwitterListAccountsReturnsUnusableAccountsRatherThanFilteringThem(t *testing.T) {
+	rec := &requestRecorder{}
+	srv := twitterAccountsServer(t, rec,
+		`{"id":"good1","name":"Usable","approval_status":"ACCEPTED"},`+
+			`{"id":"rev1","name":"Pending","approval_status":"UNDER_REVIEW"},`+
+			`{"id":"rej1","name":"Refused","approval_status":"REJECTED"},`+
+			`{"id":"del1","name":"Gone","approval_status":"ACCEPTED","deleted":true}`)
+
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
+	accounts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderTwitterAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if len(accounts) != 4 {
+		t.Fatalf("accounts = %+v (%d rows), want all 4 — unusable accounts are LABELLED, never dropped", accounts, len(accounts))
+	}
+	byID := map[string]string{}
+	for _, a := range accounts {
+		byID[a.ID] = a.Label
+	}
+	// Each unusable row must arrive AND carry its reason, so the picker can show why.
+	for id, wantNote := range map[string]string{
+		"rev1": "under review",
+		"rej1": "rejected",
+		"del1": "deleted",
+	} {
+		label, ok := byID[id]
+		if !ok {
+			t.Errorf("account %s was dropped; it must be offered with its reason", id)
+			continue
+		}
+		if !strings.Contains(label, wantNote) {
+			t.Errorf("account %s label = %q, want it to carry %q", id, label, wantNote)
+		}
+	}
+	if label := byID["good1"]; label != "Usable" {
+		t.Errorf("usable account label = %q, want the bare name with no note", label)
+	}
 }

@@ -43,18 +43,20 @@ spec:
     # for exactly the base, /test, and /set-credential sub-paths; per-provider
     # /metrics and google-ads/keywords|audience are ruled at the base path only.
     #
-    # google-ads, meta-ads, linkedin-ads and microsoft-ads are spelled out separately
-    # from the rest of the family because they carry one extra ruled sub-path the
-    # others do not have: /accounts (account discovery). Folding /accounts into the
-    # shared alternation would admit it for every provider, and a path the RuleSet
-    # does not rule is a route/rule parity violation.
+    # google-ads, meta-ads, linkedin-ads, microsoft-ads and twitter-ads are spelled out
+    # separately from the rest of the family because they carry one extra ruled
+    # sub-path the others do not have: /accounts (account discovery). Folding /accounts
+    # into the shared alternation would admit it for every provider, and a path the
+    # RuleSet does not rule is a route/rule parity violation.
     #
-    # reddit-ads and twitter-ads remain in the shared branch because neither platform
-    # client has a ListAdAccounts, so their dispatchers do not implement AccountLister
-    # and the endpoint does not exist. When either gains discovery, move it to the
-    # discovery branch here AND add its path to the RuleSet. Only once EVERY provider
-    # in the shared branch has /accounts ruled does collapsing them back into one
-    # alternation become correct.
+    # reddit-ads remains in the shared branch because its platform client has no
+    # ListAdAccounts, so its dispatcher does not implement AccountLister and the
+    # endpoint does not exist. When it gains discovery, move it to the discovery branch
+    # here AND add its path to the RuleSet. Only once EVERY provider in the shared
+    # branch has /accounts ruled does collapsing them back into one alternation become
+    # correct — and with reddit-ads the only member left, "the shared branch" is now a
+    # single provider, so that collapse is one ticket away and must still not be done
+    # early.
     #
     # hubspot is spelled out separately for the same reason, but its extra sub-path is
     # /emails, NOT /accounts: a HubSpot connection is already scoped to the portal its
@@ -65,7 +67,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads)(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails))?|connection-(reddit-ads|twitter-ads)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails))?|connection-reddit-ads(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

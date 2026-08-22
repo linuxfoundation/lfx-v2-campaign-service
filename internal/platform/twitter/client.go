@@ -395,10 +395,84 @@ func defaultNonce() string {
 
 // apiResponse is the loose envelope returned by X Ads endpoints.
 type apiResponse struct {
+	// Data is the raw `data` value. It is nil ONLY when the field was ABSENT: an
+	// explicit `"data":null` decodes to the four literal bytes `null` (non-nil,
+	// len 4), so a nil or length check CANNOT distinguish absent from null from an
+	// empty `[]`. A caller that must tell "no result set" from "an intentionally
+	// empty one" therefore decodes first and inspects the DECODED value — both
+	// absent and null leave a slice nil, while a present `[]` yields a non-nil
+	// empty slice. ListAdAccounts (accounts.go) is the caller that needs that
+	// distinction and makes it that way.
 	Data json.RawMessage `json:"data"`
 	// NextCursor is set on cursor-paginated list endpoints (campaigns,
 	// line_items). Empty when there are no further pages.
 	NextCursor string `json:"next_cursor"`
+	// NextCursorPresent reports whether the `next_cursor` KEY appeared in the body at
+	// all, which NextCursor alone cannot express: X documents exhaustion as an explicit
+	// null ("If less than count entities are returned in the current page of the result
+	// set, the next_cursor value will be null"), and both a null and an absent field
+	// decode to "".
+	//
+	// The difference matters only where a short list is indistinguishable from a
+	// complete one — ListAdAccounts, whose contract is that it returns EVERY account or
+	// an error, so a body that does not carry the field X's contract says it carries
+	// cannot be allowed to terminate the walk. findByName deliberately does NOT consult
+	// it: its cursor loop is bounded by a match it is searching FOR, and it already
+	// treats running out of pages as an error rather than as "not found", so an absent
+	// cursor there costs at most a missed match on a malformed body, which its own page
+	// cap already answers with an error.
+	NextCursorPresent bool `json:"-"`
+	// NextCursorNull reports whether the `next_cursor` key held a literal JSON `null`, as
+	// distinct from an empty string. NextCursor alone cannot express the difference —
+	// `null` and `""` both decode to "" — and NextCursorPresent cannot either, since both
+	// are present.
+	//
+	// The distinction is the one X's contract actually draws. Termination is documented as
+	// an explicit null ("If less than count entities are returned in the current page of
+	// the result set, the next_cursor value will be null"); `""` is not a value the
+	// documentation ever ascribes a meaning to. Treating it as exhaustion means a
+	// malformed body ends the walk and returns the accounts gathered so far AS A COMPLETE
+	// LIST — the same false-absence defect the `data` guard prevents, arriving through the
+	// pagination door, and invisible to the user because a truncated account picker looks
+	// exactly like a full one.
+	//
+	// Consulted only by ListAdAccounts, for the same reason NextCursorPresent is: its
+	// contract is that it returns EVERY account or an error. findByName is bounded by the
+	// match it is searching for and already errors when it runs out of pages, so an empty
+	// cursor there costs at most a missed match its page cap already answers.
+	NextCursorNull bool `json:"-"`
+}
+
+// UnmarshalJSON decodes the envelope and additionally records whether `next_cursor` was
+// present as a KEY. encoding/json cannot express key-presence on a plain string field, and
+// a pointer would change NextCursor's type for every existing caller; this keeps the
+// decoded value identical and adds the one bit that absence carries.
+func (r *apiResponse) UnmarshalJSON(b []byte) error {
+	// A distinct type breaks the recursion into this method.
+	type envelope apiResponse
+	var e envelope
+	if err := json.Unmarshal(b, &e); err != nil {
+		return err
+	}
+	// Decode a second time into a key-presence map. The first pass decodes into a
+	// STRUCT, so it has already rejected every valid-JSON non-object that could carry
+	// no key — a bare array, string, number or bool all fail there and return above,
+	// never reaching this probe. The only non-object that gets this far is a literal
+	// `null`, which both passes accept and which leaves the map nil, so the presence
+	// bit reads false. The error is therefore ignored rather than handled: it is not
+	// reachable for a body the first pass accepted, and the conservative "no key
+	// present" is the correct answer for the one body that does reach it.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err == nil {
+		var raw json.RawMessage
+		raw, e.NextCursorPresent = keys["next_cursor"]
+		// The raw bytes are the only place the null/empty-string difference survives:
+		// both decode to "" in the struct pass above. Compared against the literal
+		// rather than decoded, because decoding is exactly what erases the distinction.
+		e.NextCursorNull = e.NextCursorPresent && string(raw) == "null"
+	}
+	*r = apiResponse(e)
+	return nil
 }
 
 // apiError is a non-2xx response from the X Ads API. It carries status/method/path

@@ -537,9 +537,18 @@ the client will actually use.
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher` and `MicrosoftDispatcher`
-implement it too — four in total, the last two added in LFXV2-3064. Reddit and X do not, because
-their platform clients expose no `ListAdAccounts` for a dispatcher method to call.
+of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher`, `MicrosoftDispatcher` and
+`TwitterDispatcher` implement it too — five in total, two added in LFXV2-3064 and X in
+LFXV2-3319. Reddit does not, because its platform client exposes no `ListAdAccounts` for a
+dispatcher method to call.
+
+`TwitterDispatcher.ListAccounts` shares `validateTwitterConnection` with `Dispatch` and
+`ToggleStatus`, tolerating exactly one of its outcomes — `ErrAccountNotSelected`, the state the
+endpoint serves — and propagating every other sentinel intact so the 400-vs-503 mapping stays
+pinned. That is the MICROSOFT shape rather than the LinkedIn one, and the difference matters:
+X's `Dispatch` calls the shared validator ITSELF rather than validating inline, so discovery and
+create genuinely cannot drift. It also does not require `funding_instrument_id` — a create-only
+field an account-less connection has no reason to have chosen yet.
 
 **Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
 this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
@@ -961,9 +970,33 @@ One arm is NOT shared. A dispatcher with no `EmailSearcher` yields `ErrEmailSear
 a separate sentinel from `ErrAccountsUnsupported`, because the two capabilities are genuinely
 independent: HubSpot searches emails and has no ad accounts, while the ad platforms that
 implement `AccountLister` are the reverse — Google Ads, Meta, LinkedIn and Microsoft as of
-LFXV2-3064. Reddit and X implement neither capability, their clients having no
+LFXV2-3064, plus X as of LFXV2-3319. Reddit implements neither capability, its client having no
 `ListAdAccounts`. Folding the two sentinels into one
 would make "this platform cannot do X" ambiguous about which X.
+
+**The `AccountLister` roster is pinned by a test rather than restated in prose, and the reason is
+worth reading before adding another enumeration.** The set has moved four times (Google Ads, then
+Meta under LFXV2-3062, then LinkedIn and Microsoft under LFXV2-3064, then X under LFXV2-3319), and
+each move left a member list somewhere describing the previous world. `internal/bootstrap/sysacct.go`
+carried a comment that had been "corrected three times, each correction falsified by the next
+ticket"; LFXV2-3319 falsified it a fourth time and simultaneously left
+`docs/knowledge/kubernetes/ruleset.md` naming `twitter-ads` among the providers "whose clients have
+no `ListAdAccounts`" while its companion `httproute.md` was updated.
+
+`TestAccountListerProseMatchesTheInterface` (`internal/dispatch`) derives the roster from
+`service.AccountLister` by type assertion and fails when the HTTPRoute template or `ruleset.md`
+disagrees with it. It also fails if the sentence it binds to disappears, so a doc restructure
+cannot turn it into a check that passes forever.
+
+**What is deliberately NOT derived: the second eligibility half.** `accountDiscoveryProviders` (the
+bootstrap CLI's credentials-first gate) needs both halves — discovery AND a create path that names
+the missing choice with `ErrAccountNotSelected`. The second is a call-graph property, "does
+`Dispatch` itself call the tagging validator", and every dispatcher including Reddit mentions that
+sentinel, so no grep or reflection separates LinkedIn (tagged in a resolver `Dispatch` never calls)
+from X (whose `Dispatch` calls the validator itself). `TestAccountDiscoveryProvidersIsASubsetOfAccountListers`
+therefore pins only the invariant that survives — every member holds the first half — and
+deliberately does not assert equality, because the sets are unequal on purpose and forcing that
+judgement to be relitigated as a test failure is what produced the serial corrections.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"
