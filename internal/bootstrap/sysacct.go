@@ -282,8 +282,10 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //     it completed the pair without any change to the create path. X's toggle and metrics
 //     paths share the same validator and answer synchronously, so unlike Meta the naming is
 //     not log-only there. Its absence from this map is therefore a SEQUENCING decision, not
-//     a missing capability — the same position Microsoft is in, and for the same reason:
-//     adding it changes what this CLI accepts and belongs in its own commit.
+//     a missing capability: adding it changes what this CLI accepts and belongs in its own
+//     commit. It is not the only member in that position — read the map for the current set
+//     rather than trusting this sentence to name the others, which is the mistake the note
+//     below is about.
 //   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
 //     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
 //     inline and answers an empty account id with a bare notCreated, so the create path names
@@ -298,7 +300,24 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //
 // Stating which half is missing matters because the halves are earned separately, and an
 // enumeration of members goes stale silently — this comment described a Google/Meta-only world
-// for two tickets after that stopped being true.
+// for two tickets after that stopped being true, and then said X was "the same position
+// Microsoft is in" as though Microsoft were the only other one.
+//
+// Two tests now carry the load this prose kept dropping, and they are the reason the paragraphs
+// above can afford to describe a RULE instead of a roster:
+//
+//   - TestAccountListerProseMatchesTheInterface (internal/dispatch) derives the FIRST half from
+//     service.AccountLister itself and fails when the chart route or
+//     docs/knowledge/kubernetes/ruleset.md disagrees with the interface.
+//   - TestAccountDiscoveryProvidersIsASubsetOfAccountListers (this package) pins that every
+//     member here holds the first half, without asserting equality — the two sets are unequal on
+//     purpose, and making that a failure is what would force this judgement to be relitigated
+//     every ticket.
+//
+// The SECOND half stays prose because it is a call-graph judgement — whether Dispatch itself
+// calls the validator that tags ErrAccountNotSelected — which no assertion can derive: every
+// dispatcher including Reddit mentions that sentinel. Prefer adding a case to those tests over
+// correcting a member list here a fifth time.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
 	model.ProviderMetaAds:   true,

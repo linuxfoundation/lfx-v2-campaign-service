@@ -974,6 +974,30 @@ LFXV2-3064, plus X as of LFXV2-3319. Reddit implements neither capability, its c
 `ListAdAccounts`. Folding the two sentinels into one
 would make "this platform cannot do X" ambiguous about which X.
 
+**The `AccountLister` roster is pinned by a test rather than restated in prose, and the reason is
+worth reading before adding another enumeration.** The set has moved four times (Google Ads, then
+Meta under LFXV2-3062, then LinkedIn and Microsoft under LFXV2-3064, then X under LFXV2-3319), and
+each move left a member list somewhere describing the previous world. `internal/bootstrap/sysacct.go`
+carried a comment that had been "corrected three times, each correction falsified by the next
+ticket"; LFXV2-3319 falsified it a fourth time and simultaneously left
+`docs/knowledge/kubernetes/ruleset.md` naming `twitter-ads` among the providers "whose clients have
+no `ListAdAccounts`" while its companion `httproute.md` was updated.
+
+`TestAccountListerProseMatchesTheInterface` (`internal/dispatch`) derives the roster from
+`service.AccountLister` by type assertion and fails when the HTTPRoute template or `ruleset.md`
+disagrees with it. It also fails if the sentence it binds to disappears, so a doc restructure
+cannot turn it into a check that passes forever.
+
+**What is deliberately NOT derived: the second eligibility half.** `accountDiscoveryProviders` (the
+bootstrap CLI's credentials-first gate) needs both halves — discovery AND a create path that names
+the missing choice with `ErrAccountNotSelected`. The second is a call-graph property, "does
+`Dispatch` itself call the tagging validator", and every dispatcher including Reddit mentions that
+sentinel, so no grep or reflection separates LinkedIn (tagged in a resolver `Dispatch` never calls)
+from X (whose `Dispatch` calls the validator itself). `TestAccountDiscoveryProvidersIsASubsetOfAccountListers`
+therefore pins only the invariant that survives — every member holds the first half — and
+deliberately does not assert equality, because the sets are unequal on purpose and forcing that
+judgement to be relitigated as a test failure is what produced the serial corrections.
+
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"
 about an email sitting right there. The caller gets `state` and decides — a DRAFT is the case
