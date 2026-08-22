@@ -123,10 +123,14 @@ its first request and re-evaluates the window. Un-deduped, a 30-day window emits
 WARN per refresh-capable operation for a MONTH — a brief-level fan-out alone is one
 per campaign — and thousands of identical lines is not a louder signal than one, it
 is how the line gets filtered out and the credential dies silently anyway. State
-therefore lives at package scope (`refreshExpiryWarned`), keyed on connection label
-PLUS client id and account id, because `ConnectionLabel()` falls back to a shared
-constant for unnamed connections and would let the first one to warn silence every
-other. `LoadOrStore` rather than check-then-set, since concurrent dispatches for one
+therefore lives at package scope (`refreshExpiryWarned`), keyed on the CONNECTION ROW
+ID (`Credentials.ConnectionID`, threaded from `resolved.connID`). The three fields
+available before it each fail to identify a connection: `ConnectionLabel()` falls back
+to a shared constant for unnamed connections, `ClientID` is the OAuth APPLICATION id
+shared by every connection on one MDP app, and the runtime account id is empty on the
+discovery path and CHANGES for one connection once an account is selected — so the
+earlier composite key both MERGED distinct connections (the first to warn silenced the
+others until restart) and SPLIT a single one (it warned twice). A row id does neither. `LoadOrStore` rather than check-then-set, since concurrent dispatches for one
 connection race here. Narrowing the window was rejected (same per-operation shape,
 bought by deleting the notice period the 30 days exist to provide); moving the
 warning to a once-per-process sweep is the better long-term home but has no path to
