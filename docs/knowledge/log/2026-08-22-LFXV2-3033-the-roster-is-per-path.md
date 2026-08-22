@@ -70,12 +70,23 @@ still constructs inline because it splits token and API across two servers,
 which the single-server helper cannot express; it now carries a comment saying
 so and still points all three API origins at its stub.
 
-**A sibling fragment is left as written.**
-`2026-08-20-LFXV2-3033-client-cache-test-binding.md:5` opens its body with plain
+**A sibling fragment was missing its kind marker, and was corrected.**
+`2026-08-20-LFXV2-3033-client-cache-test-binding.md` opened its body with plain
 prose and no bold kind marker, which CLAUDE.md:27-34 requires after the H1
 (`**Update**`, `**Fix**`, `**Creation**`, `**Note**`, `**Verification**` or
-`**Docs**`, followed by an em dash). It is a dated entry and one entry never
-edits another's file, so it stays as it is and the deviation is recorded here
-instead. Worth noting for anyone relying on the gate: `okfvalidate` does NOT
-check the kind marker — it exits 0 on that file — so the rule is enforced by
-review alone, which is why it drifted.
+`**Docs**`, followed by an em dash). It now opens `**Fix** —`, the accurate marker
+for an entry recording four review findings and the fixes that bind them.
+
+The "never edit another entry's file" rule does not protect it: THIS PR adds that
+file, so correcting it here is the only chance to correct it at all — a point raised
+in review, and right. An earlier draft of this section recorded the deviation and left
+the file alone, which would have shipped a knowledge bundle whose own log documented a
+rule its files break.
+
+Worth keeping for anyone relying on the gate: `okfvalidate` does NOT check the kind
+marker — it exits 0 on a file without one — so the rule is enforced by review alone,
+which is how it drifted. Two fragments already on `main`
+(`2026-08-20-LFXV2-2643-a-check-that-cannot-see-what-it-verifies.md` and
+`2026-08-20-LFXV2-2643-assertions-that-can-fail-correct-code.md`) are still missing it;
+those belong to other entries and are left alone, but a validator rule would stop the
+drift rather than relying on a reviewer noticing.
