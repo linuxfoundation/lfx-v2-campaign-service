@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // campaignDateLayout is the wire format for the per-platform config start/end dates
@@ -145,10 +147,37 @@ type credsSource struct {
 	// never be served. See credCache for why the row itself is deliberately NOT cached, and
 	// what that buys across replicas.
 	cache *credCache
+	// forceSystemPaidAds makes the LF-owned system account (model.SystemProjectID) the
+	// PRIMARY credential source for every PAID-ADS provider, so resolve ignores the
+	// project's own connection entirely (see resolve / resolveForcedSystem). Read once
+	// from LFX_FORCE_SYSTEM_ADS_ACCOUNT at construction rather than per call — the value
+	// is process-wide config, not per-request. Default false. It never affects HubSpot:
+	// the forced path gates on Provider.IsPaidAds(), so email resolution is untouched
+	// even with the flag on.
+	forceSystemPaidAds bool
 }
 
 func newCredsSource(repo connReader, enc domain.Encryptor) *credsSource {
-	return &credsSource{repo: repo, enc: enc, cache: sharedCredCache(repo, enc)}
+	// A process-wide toggle read from the environment ONCE HERE, at construction, rather
+	// than threaded through the seven New*Dispatcher signatures and Config for a value only
+	// credsSource consumes. "true" and nothing else turns it on, matching the exact-match
+	// parse REDDIT_METRICS_ENABLED uses.
+	//
+	// The parse is shared with that flag; the LIFECYCLE is deliberately NOT, and the two must
+	// not be described as mirroring each other. REDDIT_METRICS_ENABLED is read PER CALL
+	// (internal/dispatch/reddit.go's metrics path) precisely so it can be flipped without a
+	// restart. This one is captured into forceSystemPaidAds below and read from the struct
+	// thereafter, so changing the environment mid-process does nothing until the service is
+	// restarted. internal/service/connection_handler.go's guard RELIES on that difference —
+	// it reads the force flag live per request while the dispatchers hold the cached copy —
+	// so a future editor who "unifies" the two lifecycles on the strength of a mirroring
+	// comment would silently change when the guard starts and stops firing.
+	return &credsSource{
+		repo:               repo,
+		enc:                enc,
+		cache:              sharedCredCache(repo, enc),
+		forceSystemPaidAds: os.Getenv(constants.EnvForceSystemAdsAccount) == "true",
+	}
 }
 
 // resolved carries a connection's decrypted credential bytes plus the non-secret
@@ -203,12 +232,314 @@ func (r *resolved) systemScoped(err error) error {
 	return fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, err)
 }
 
+// credsResolver is one of credsSource.resolve (creation and discovery — forced-system
+// applies) or a closure over credsSource.resolveExisting (an operation on an already-created
+// campaign — resolution follows the account the campaign was CREATED under). Adapters whose
+// credential helper serves BOTH kinds of caller take one of these rather than reaching for a
+// fixed method, so the choice is made by the caller that knows which it is, and reading the
+// call site tells you which account a given operation authenticates as.
+type credsResolver func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error)
+
+// existingResolver adapts resolveExisting to the credsResolver shape by binding the account
+// the campaign was CREATED under, which the caller reads with its own platform's
+// *CreationAccountID reader.
+//
+// It exists so the adapters whose credential helper serves both creation and existing-campaign
+// callers (meta, linkedin, reddit) can pass an existing-campaign resolver without the
+// credsResolver signature growing a campaign argument that the CREATION callers have no value
+// for. Binding it here — at the call site that holds the campaign — keeps "which account does
+// this operation authenticate as" answerable by reading that one line.
+func (s *credsSource) existingResolver(creationAccountID string) credsResolver {
+	return func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+		return s.resolveExisting(ctx, projectID, provider, creationAccountID)
+	}
+}
+
+// resolveExisting resolves credentials for an operation on an ALREADY-CREATED campaign —
+// toggle-status, read-metrics, and the campaign lookups that address a stored upstream id.
+//
+// It resolves the account the campaign was ACTUALLY CREATED UNDER, which the caller passes as
+// creationAccountID, having read it from the campaign's own persisted result (
+// metaCreationAccountID and its four siblings). That recorded id is the invariant. It is NOT
+// "was this campaign created before or after the cutover": a date or a flag reading is an
+// approximation of the same fact, and the fact itself is already persisted on every row.
+//
+// The distinction is not stylistic; getting it wrong either way makes a live campaign
+// impossible to stop. Every ad platform here scopes campaign ids to an ad ACCOUNT, which is
+// why each adapter carries a provenance guard (verifyMetaAccountMatch and its four siblings)
+// that refuses to address a stored campaign id against an account it was not created under.
+// Resolve the wrong account for a pause and the guard fires, the service returns 409 to the
+// one operation that must never be unavailable, and the campaign keeps serving and keeps
+// spending. Both directions of that failure are real and neither has a fix-forward:
+//
+//   - a campaign created on the PROJECT's account (before the cutover) resolved to the system
+//     account: the original bug, fixed by not forcing this path.
+//   - a campaign created on the SYSTEM account (after the cutover, because creation is forced)
+//     resolved to the project's account whenever the project has a connection of its own:
+//     the mirror-image bug, which project-then-fallback resolution reintroduces. It is the
+//     worse of the two, because it strands exactly the campaigns the flag just created.
+//
+// Reading the recorded account handles both without a flag test, which is why this does not
+// consult forceSystemPaidAds at all. It also keeps a system-created campaign stoppable AFTER
+// the flag is turned back OFF — the row still records the system account, so resolution still
+// follows it. A flag-conditional rule would strand those campaigns the moment the cutover
+// flag was retired, which is precisely when it will be.
+//
+// An EMPTY creationAccountID means the row records no provenance — the pre-existing-row case
+// every *CreationAccountID sibling documents by returning "". There is nothing to match on, so
+// it falls back to ordinary project-then-system resolution, which is the behaviour those rows
+// had before the flag existed and the same "unknown, proceed" the provenance guards apply.
+func (s *credsSource) resolveExisting(ctx context.Context, projectID string, provider model.Provider, creationAccountID string) (*resolved, error) {
+	res, err := s.resolveWithFallback(ctx, projectID, provider)
+	if err != nil {
+		// Project resolution FAILED, but that is not the end of the question. The recorded
+		// creation account is the invariant, and it is just as authoritative on this arm as on
+		// the success arm below — a system-created campaign is addressable by the system row
+		// whether or not the project's own resolution happens to work today.
+		//
+		// Two ordinary states reach here and both would otherwise STRAND a live campaign:
+		//
+		//   - the project DISCONNECTED its own connection after the campaign was created.
+		//     systemConn refuses the fallback for a disconnected project by design (a
+		//     disconnect is a statement, not an absence), so resolveWithFallback returns
+		//     noOwnConnection/ErrNotFound.
+		//   - the project's row is present but UNUSABLE (validation or decrypt failure), so
+		//     resolveConn returns an error.
+		//
+		// In both, creationAccountID already records that the SYSTEM account owns the live
+		// campaign, so the credentials that can address it exist and are reachable. Returning
+		// early here makes pause and read-metrics fail on a campaign that keeps spending —
+		// the same no-fix-forward failure this function exists to prevent, arriving through
+		// the error path instead of the success path.
+		//
+		// Only a recorded provenance justifies the extra lookup: an EMPTY creationAccountID
+		// says the row records nothing, there is no system claim to honour, and the project's
+		// error is the honest answer.
+		// Two preconditions, and both are structural rather than conventional.
+		//
+		// A non-paid provider must never reach resolveForcedSystem: it is the same
+		// LF-system redirect that resolve() gates on IsPaidAds() so HubSpot/email is never
+		// pointed at the LF portal (FR-003, and the tenant-mixing trade systemConn refuses).
+		// Every caller of resolveExisting today is one of the five paid-ads dispatchers, but
+		// that is a fact about call sites; asking here makes it a property of the function.
+		//
+		// An EMPTY creationAccountID says the row records nothing, so there is no system
+		// claim to honour and the project's error is the honest answer.
+		if !provider.IsPaidAds() || strings.TrimSpace(creationAccountID) == "" {
+			return nil, err
+		}
+		sysRes, sysErr := s.resolveForcedSystem(ctx, provider)
+		if sysErr != nil {
+			// BOTH scopes failed, and which error to report is decided by the recorded creation
+			// account, not by which resolution happened to fail. See systemCreated: the two
+			// cases have different owners and only the row's own provenance separates them.
+			return nil, s.faultForCreator(ctx, provider, creationAccountID, err, sysErr)
+		}
+		if matchesAccount(sysRes.accountID, creationAccountID) {
+			return sysRes, nil
+		}
+		// The system row exists but did NOT create this campaign, and the project scope could
+		// not be resolved. Nothing here can address the campaign, so the project's error
+		// stands — it names the connection an operator can actually act on.
+		return nil, err
+	}
+	if matchesAccount(res.accountID, creationAccountID) {
+		return res, nil
+	}
+	// The project scope resolved a DIFFERENT account than the one that created this campaign.
+	// The system row is the only other account this service ever creates campaigns under, so
+	// try it before giving up; if it is the creating account, this is a post-cutover campaign
+	// and the system credentials are the ones that can address it.
+	sysRes, sysErr := s.resolveForcedSystem(ctx, provider)
+	if sysErr != nil {
+		// The system row is missing or unusable, and the project resolved a DIFFERENT account
+		// than the one that created this campaign. Two states reach here with opposite owners,
+		// and returning the project's resolution unconditionally answers for only one of them:
+		//
+		//   - a PROJECT-created campaign whose project merely re-pointed its connection. The
+		//     project's resolution is right: the provenance guard refuses with the actionable
+		//     account-mismatch 409 naming the account to reconnect.
+		//   - a SYSTEM-created campaign whose system row has since broken. Returning the
+		//     project's resolution renders that same project-owned 409 for a fault only an
+		//     operator can repair, and the campaign keeps spending with nobody paged.
+		//
+		// systemCreated separates them on the recorded fact rather than on which resolution
+		// succeeded, so neither case is answered with the other's remedy. Asked through the
+		// same helper as the both-fail arm above, so the rule has ONE home: this PR's repeated
+		// defect has been a rule applied on one arm and not on its sibling.
+		if s.systemIsTheCreator(ctx, provider, creationAccountID) {
+			return nil, sysErr
+		}
+		// NOTHING further is asked here, and specifically NOT whether the system row is
+		// absent. An earlier version of this arm returned sysErr when the row was PROVEN
+		// absent, reasoning that no reachable credential could address the campaign. That
+		// conflated two different questions:
+		//
+		//   - "can anything address this campaign right now?" — absence is evidence for this.
+		//   - "who CREATED this campaign?" — absence is evidence for nothing at all.
+		//
+		// Only the second decides who gets paged, and a missing row proves only that the row
+		// is missing NOW. The bullet directly above is the counterexample it walked into: a
+		// PROJECT-created campaign whose project later re-pointed its connection reaches this
+		// arm with the recorded account differing from the current one and no system row
+		// installed — indistinguishable, by absence alone, from a system-created campaign
+		// whose row was deleted. Paging an operator for that project's own re-point is the
+		// exact misdirection systemCreated's known=false asymmetry exists to prevent, and it
+		// inverted the pre-branch behaviour, which correctly returned the project resolution.
+		//
+		// So provenance keeps its single discriminator: systemIsTheCreator above, which
+		// answers true only on a POSITIVE match against the system row's recorded account.
+		// The `absent` value that systemCreated reports is deliberately not consulted on this
+		// arm; its caller is resolveForcedSystem's own missing-row error, which is a
+		// statement about reachability, not about provenance.
+		return res, nil
+	}
+	if matchesAccount(sysRes.accountID, creationAccountID) {
+		return sysRes, nil
+	}
+	// Neither account created this campaign — the project re-pointed its connection, which is
+	// exactly what the provenance guards exist to catch. Return the project resolution so the
+	// guard renders its mismatch against the account the project currently points at.
+	return res, nil
+}
+
+// faultForCreator picks WHICH failure to report when neither scope resolved, keying on the
+// account the campaign was created under rather than on which resolution failed.
+//
+// Both errors are real here, and reporting the wrong one sends the wrong operator to repair a
+// row that is not the problem. internal/service/brief.go and internal/service/connection.go
+// branch on domain.ErrSystemConnectionMissing / ErrSystemConnectionNotUsable to route the
+// remedy, so this choice decides whether the caller is told to reconnect their own connection
+// (409/404, project-owned) or an operator is paged to repair the LF row (500, operator-owned).
+//
+// A SYSTEM-created campaign is the system row's to answer for: the project's error names a
+// connection that never created this campaign and could not address it if it were repaired.
+// Anything else — project-created, or provenance that cannot be established — keeps the
+// project's error, which is what the caller asked about and the only actionable one. That
+// default is what stops a project that merely disconnected from paging the platform operator.
+func (s *credsSource) faultForCreator(ctx context.Context, provider model.Provider, creationAccountID string, projErr, sysErr error) error {
+	if s.systemIsTheCreator(ctx, provider, creationAccountID) {
+		return sysErr
+	}
+	return projErr
+}
+
+// systemIsTheCreator reports whether the LF system row is PROVABLY the account this campaign
+// was created under. It collapses systemCreated's two results into the single question both
+// arms of resolveExisting ask, so "unproven" and "proven not" cannot be told apart by a caller
+// and accidentally routed differently — the only safe reading of either is the project-owned
+// default.
+func (s *credsSource) systemIsTheCreator(ctx context.Context, provider model.Provider, creationAccountID string) bool {
+	created, known := s.systemCreated(ctx, provider, creationAccountID)
+	return known && created
+}
+
+// systemCreated reports whether creationAccountID names the LF system row's ad account, and
+// whether that question could be answered at all.
+//
+// It exists because the provenance question survives the system row being UNRESOLVABLE, while
+// resolveForcedSystem's answer does not. That function LOADS, VALIDATES and DECRYPTS, and
+// returns an error INSTEAD of a value — so at the very moment the system row is broken, which
+// is exactly when the routing decision matters most, its account id is unavailable and the
+// caller is left inferring provenance from which resolution happened to succeed. That
+// inference is what produced this defect twice: it answers correctly for a project that
+// re-pointed its connection and wrongly for a campaign the system account created.
+//
+// The recorded account id is a plain COLUMN, so it is readable whether or not the credentials
+// validate or decrypt. Reading it directly answers "whose fault is this" for a row that is
+// present but unusable — a missing credential blob, a rotated key — none of which change which
+// account created the campaign.
+//
+// Returns known=false when the question cannot be settled: no recorded provenance on the
+// campaign, a system row that is absent, nameless or unreadable. Callers must treat that as
+// "not established" and keep the project-owned default rather than guessing, since a wrong
+// guess in that direction pages an operator for a project's own repair.
+//
+// An ABSENT row is deliberately one of those cases, and an earlier version of this function
+// reported it separately so a caller could act on it. That distinction is real for the
+// question "can anything address this campaign right now?" — but this function answers a
+// different one, "who CREATED it", and absence is evidence for nothing there: it proves only
+// that the row is missing NOW. A project-created campaign whose project later re-pointed its
+// connection presents identically (recorded account differs from the current one, no system
+// row), so acting on absence paged an operator for that project's own reconnect. Provenance
+// is therefore established ONLY by a positive match against a recorded account id.
+func (s *credsSource) systemCreated(ctx context.Context, provider model.Provider, creationAccountID string) (created, known bool) {
+	if strings.TrimSpace(creationAccountID) == "" {
+		return false, false
+	}
+	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
+	// A nil row is checked ALONGSIDE the error: domain.ConnectionReader does not forbid a
+	// (nil, nil) return, and a reader reporting absence that way would otherwise panic on
+	// the AccountID read below.
+	if err != nil || conn == nil {
+		return false, false
+	}
+	if strings.TrimSpace(conn.AccountID) == "" {
+		// Present but nameless (installed-but-unconfigured). It names no account, so it can
+		// be shown neither to own nor to disown this campaign.
+		return false, false
+	}
+	return matchesAccount(conn.AccountID, creationAccountID), true
+}
+
+// matchesAccount reports whether a resolved account id is the one a campaign was created
+// under. An empty creation id means the row records no provenance ("unknown, proceed", as
+// every *CreationAccountID sibling documents), so it matches anything and keeps ordinary
+// project-then-system resolution.
+//
+// That empty-id arm is a SHORT-CIRCUIT, not a behavioural branch: with it removed, an
+// unrecorded account simply fails to match either candidate and resolveExisting returns the
+// project resolution anyway, which is the same answer. It is kept because it says the rule
+// out loud and skips a system lookup that cannot change the outcome — but a mutation that
+// inverts it is an EQUIVALENT MUTANT and no test can kill it. TestLegacyRowWithoutProvenance-
+// ResolvesTheProjectAccount pins the OUTCOME for such rows, which is the part that matters.
+//
+// Comparison is trimmed and case-insensitive, and tolerates Meta's optional "act_" prefix, so
+// the five platforms' differing account-id vocabularies all compare correctly here. The
+// per-platform provenance guards remain the authority on a genuine mismatch; this only steers
+// WHICH connection is resolved, and a wrong answer here is caught there rather than acted on.
+func matchesAccount(resolvedID, creationAccountID string) bool {
+	created := strings.TrimSpace(creationAccountID)
+	if created == "" {
+		return true
+	}
+	return strings.EqualFold(trimAccountPrefix(resolvedID), trimAccountPrefix(created))
+}
+
+// trimAccountPrefix normalises a Meta-style "act_<digits>" id to its bare digits so a
+// connection row and a persisted result blob compare equal regardless of which form each
+// stored. Every other platform's ids are unaffected.
+func trimAccountPrefix(id string) string {
+	return strings.TrimPrefix(strings.TrimSpace(id), "act_")
+}
+
 // resolve fetches the project's connection for the provider and decrypts its
 // credentials, falling back to the reserved system scope (model.SystemProjectID) when
 // the project has no connection of its own. It returns a NOT-created error (so the
 // orchestrator releases the dispatch claim) when neither scope yields a usable
 // connection — none of those states could have created an upstream campaign.
+//
+// This is the CREATION entry point, and the only one the forced-system flag governs. An
+// operation on an existing campaign must use resolveExisting instead; see the reasoning
+// there for why forcing one of those is unrecoverable.
 func (s *credsSource) resolve(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+	// Forced-primary mode: every PAID-ADS campaign authenticates as the LF-owned system
+	// account, so the project's own connection is not consulted at all. Gated on
+	// IsPaidAds() so HubSpot/email is never redirected to the LF portal (the same trade
+	// systemConn refuses for the fallback). A request already in the system scope drops
+	// through to the normal path below: forcing it would re-issue the identical lookup,
+	// and there is no project connection to override.
+	if s.forceSystemPaidAds && provider.IsPaidAds() && projectID != model.SystemProjectID {
+		return s.resolveForcedSystem(ctx, provider)
+	}
+	return s.resolveWithFallback(ctx, projectID, provider)
+}
+
+// resolveWithFallback is the project-scope-then-system-fallback resolution shared by the
+// creation path (`resolve`, once forcing has declined) and every existing-campaign path
+// (`resolveExisting`). It is the behaviour BOTH had before the forced-system flag existed,
+// lifted into one function so the flag has exactly one place that can bypass it.
+func (s *credsSource) resolveWithFallback(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -238,7 +569,74 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 		}
 		return nil, connLoadFailed(provider, err)
 	}
+	// A (nil, nil) read is an absence the repository chose to report without an error. Treat
+	// it exactly as the ErrNotFound arm above does — including the system fallback, so a
+	// project whose row reads back nil is not denied the LF credential a genuinely absent row
+	// would have earned it. Without this, resolveConn dereferences the nil row and panics.
+	if conn == nil {
+		if sysConn, sysErr := s.systemConn(ctx, projectID, provider); sysErr != nil {
+			return nil, sysErr
+		} else if sysConn != nil {
+			res, rerr := s.resolveConn(ctx, model.SystemProjectID, sysConn, provider)
+			if res != nil {
+				res.fromSystem = true
+			}
+			return res, systemOrigin((&resolved{fromSystem: true}).systemScoped(rerr))
+		}
+		return nil, noOwnConnection(projectID, provider)
+	}
 	return s.resolveConn(ctx, projectID, conn, provider)
+}
+
+// resolveForcedSystem resolves credentials straight from the LF-owned system scope,
+// bypassing the project's own connection. It backs forced-primary mode
+// (LFX_FORCE_SYSTEM_ADS_ACCOUNT) and is reached ONLY for a paid-ads provider on a
+// non-system project — resolve's guard has already checked all three.
+//
+// Unlike the fallback (systemConn), it is UNCONDITIONAL: it does NOT consult Disconnected,
+// because forcing overrides a project's own choice by design — a project that explicitly
+// disconnected its account is still dispatched on the system account. It holds the system
+// row to the same standard as any connection (resolveConn validates + decrypts) and marks
+// the result fromSystem, so a defect an adapter's validator finds later is attributed to
+// the LF row, not to a project connection that does not exist here. Every failure is
+// systemOrigin-tagged and not-created, so a missing or unusable system row FAILS CLOSED:
+// the dispatch never falls through to the project connection the flag means to ignore.
+func (s *credsSource) resolveForcedSystem(ctx context.Context, provider model.Provider) (*resolved, error) {
+	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			// The flag is on but no system row is installed for this provider. Fail closed
+			// with a not-created, system-origin error rather than resolving nothing and
+			// letting a caller retry against a project scope forced mode exists to ignore.
+			// ErrSystemConnectionMissing rides ALONGSIDE ErrNotFound. The absence is real and
+			// callers that only ask "was anything found?" must keep seeing it, but every
+			// classifier checks ErrNotFound first and would otherwise answer "connect your
+			// project" for a fault only an operator can fix — the project's own connection is
+			// precisely what forced mode ignores.
+			return nil, systemOrigin(notCreated(fmt.Errorf(
+				"force-system-account is enabled but no system %s connection is installed: %w: %w",
+				provider, domain.ErrSystemConnectionMissing, domain.ErrNotFound)))
+		}
+		return nil, systemOrigin(connLoadFailed(provider, err))
+	}
+	// A (nil, nil) read is the SAME missing-system condition as ErrNotFound and must produce
+	// the same error, sentinels included. domain.ConnectionReader does not forbid a reader
+	// from reporting absence that way, and resolveConn below reads conn.ID immediately, so an
+	// unguarded nil panics — taking down every forced-mode dispatch instead of failing closed
+	// with the operator-owned fault a missing LF row is supposed to raise.
+	if conn == nil {
+		return nil, systemOrigin(notCreated(fmt.Errorf(
+			"force-system-account is enabled but no system %s connection is installed: %w: %w",
+			provider, domain.ErrSystemConnectionMissing, domain.ErrNotFound)))
+	}
+	res, rerr := s.resolveConn(ctx, model.SystemProjectID, conn, provider)
+	if res != nil {
+		res.fromSystem = true
+	}
+	// Mirror the fallback's tagging so a system row that is present but unusable carries
+	// ErrSystemConnectionNotUsable (systemScoped) under ErrSystemConnectionOrigin
+	// (systemOrigin). On success rerr is nil and both are no-ops.
+	return res, systemOrigin((&resolved{fromSystem: true}).systemScoped(rerr))
 }
 
 // resolveOwned is resolve WITHOUT the system fallback: it consults the project's own scope
@@ -264,6 +662,11 @@ func (s *credsSource) resolveOwned(ctx context.Context, projectID string, provid
 			return nil, noOwnConnection(projectID, provider)
 		}
 		return nil, connLoadFailed(provider, err)
+	}
+	// Same (nil, nil) contract as every other Get call site: absence reported without an
+	// error is still absence, and resolveConn would dereference it.
+	if conn == nil {
+		return nil, noOwnConnection(projectID, provider)
 	}
 	return s.resolveConn(ctx, projectID, conn, provider)
 }
@@ -329,6 +732,12 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 	}
 	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
 	if err == nil {
+		// A (nil, nil) read means there is no system row either. The caller already treats a
+		// nil row as "no fallback available", so returning it is correct — but it must not be
+		// LOGGED as a resolution, which would report a system account that was never found.
+		if conn == nil {
+			return nil, nil
+		}
 		slog.InfoContext(ctx, "project has no connection; using the system account",
 			"project_id", projectID, "provider", string(provider))
 		return conn, nil

@@ -421,6 +421,12 @@ func InstallSystemCredentials(
 	}
 
 	existing, gerr := repo.Get(ctx, model.SystemProjectID, provider)
+	// A (nil, nil) read is the same "no row yet" condition the ErrNotFound arm handles, and
+	// the gerr == nil arm below reads existing.ProviderConfig. Normalise it so the CLI
+	// creates the row instead of panicking.
+	if gerr == nil && existing == nil {
+		gerr = domain.ErrNotFound
+	}
 	switch {
 	case gerr == nil:
 		// ONE version-gated write. Update-then-SetCredential was two, and the order only

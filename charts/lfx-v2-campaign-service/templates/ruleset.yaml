@@ -60,6 +60,19 @@ spec:
     # request lacking OIDC credentials BEFORE OpenFGA can evaluate it, and it is
     # openfga_check that actually rejects the anonymous subject. The pairing also
     # lets the openfga.enabled=false branch fall back to allow_all for local dev.
+    #
+    # :projectId is USUALLY a SLUG (self-serve sends slugs on this API, never
+    # UIDs — see campaign-service.service.ts in lfx-self-serve), but
+    # design/connection.go's projectIDAttr() intentionally also accepts a raw
+    # UUID on this rule's get/update/delete/test/set-credential routes, to
+    # keep historical UUID-keyed connection rows (migration 000003) reachable.
+    # campaign_manager/marketing_ops OpenFGA tuples are seeded on project UID.
+    # project_slug_resolver_contextualizer (lfx-v2-helm, LFXV2-3324) resolves
+    # a slug capture to its UID via lfx-v2-project-service before
+    # openfga_check runs; see the `if:` guards further down for why the
+    # resolver and the openfga_check object differ between the slug and UUID
+    # branches. Gated on openfga.enabled (not its own toggle) because its
+    # only purpose is feeding openfga_check.
     - id: "rule:lfx:lfx-v2-campaign-service:project-api"
       allow_encoded_slashes: 'off'
       match:
@@ -149,7 +162,36 @@ spec:
         - contextualizer: oidc_contextualizer
         {{- end }}
         {{- if .Values.openfga.enabled }}
+        # :projectId may be a project UUID or a slug — design/connection.go's
+        # projectIDAttr() intentionally accepts both on every route this rule
+        # covers, to keep historical UUID-keyed connection rows (migration
+        # 000003) reachable. project_slug_resolver_contextualizer only does
+        # slug lookup and 404s on a UUID, so it must be skipped when the
+        # capture is already a UUID — and openfga_check must take the raw
+        # capture in that branch, never the resolver's Outputs, since a
+        # skipped contextualizer's Outputs are undocumented behavior in
+        # Heimdall and not something to depend on. Hence two mutually
+        # exclusive openfga_check entries below (one per branch) instead of
+        # one entry with a fallback expression.
+        #
+        # The UUID regex below is defined once ($uuidRe) and referenced in all
+        # three if: guards so the slug/UUID branches provably stay exact
+        # negations of each other instead of three hand-maintained copies that
+        # could drift apart.
+        {{- $uuidRe := "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" }}
+        - contextualizer: project_slug_resolver_contextualizer
+          if: '!Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
+          config:
+            values:
+              slug: "{{ "{{- .Request.URL.Captures.projectId -}}" }}"
         - authorizer: openfga_check
+          if: '!Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
+          config:
+            values:
+              relation: campaign_manager
+              object: "project:{{ "{{- .Outputs.project_slug_resolver_contextualizer.uid -}}" }}"
+        - authorizer: openfga_check
+          if: 'Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
           config:
             values:
               relation: campaign_manager
