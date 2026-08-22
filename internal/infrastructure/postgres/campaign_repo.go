@@ -479,7 +479,9 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
 		createdBy, updatedBy, model.NormalizeVariant(c.Variant),
 		// Passed as *bool so a nil stays a SQL NULL ("unknown") rather than collapsing to
-		// false. Only the INSERT arm consumes it; the conflict arm ignores it by design.
+		// false. BOTH arms consume it, and on a normal dispatch it is the CONFLICT arm that
+		// does — the claim already INSERTed the row — where a write-once IS NULL guard stamps
+		// it if and only if the stored value is still unrecorded. See upsertCampaignQuery.
 		c.RanOnSystemAccount,
 	)
 	upserted, err := scanCampaign(row)

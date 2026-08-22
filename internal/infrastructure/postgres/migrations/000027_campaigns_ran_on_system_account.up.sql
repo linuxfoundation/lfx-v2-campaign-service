@@ -25,10 +25,18 @@
 -- and quietly so: a project that connects its own ad account next month did not
 -- retroactively pay for the campaign the LF funded last month. The spend already
 -- happened, on a specific account, and that is not revisable by later configuration.
--- The repository enforces this by OMITTING the column from the upsert's DO UPDATE arm,
--- exactly as created_by is omitted and for the same reason (see upsertCampaignQuery):
--- it is written by the INSERT that creates the row and never rewritten by a later
--- update or status toggle.
+-- The repository enforces this with a WRITE-ONCE GUARD in the upsert's DO UPDATE arm:
+-- ran_on_system_account is assigned only while the STORED value is still NULL, and a
+-- value already there is never revised by a later update or status toggle.
+--
+-- It is NOT enforced by omitting the column, the way created_by is (see
+-- upsertCampaignQuery). That looks like the stronger protection and is in fact no
+-- protection at all: a dispatch always wins ClaimCampaignDispatch first, and that claim
+-- INSERTs the row — so the upsert lands on the CONFLICT arm every time and the INSERT arm
+-- never runs. An omitted column is therefore written on no path at all, which is the
+-- defect that left this column NULL on every campaign the service created. created_by
+-- can be omitted precisely because the claim stamps IT; the claim cannot stamp this one,
+-- since fromSystem is not known until credentials resolve after the claim is won.
 --
 -- NULLABLE, AND DELIBERATELY NOT BACKFILLED. Three states, not two:
 --   NULL  = provenance NOT RECORDED. Nothing captured which account served this row.

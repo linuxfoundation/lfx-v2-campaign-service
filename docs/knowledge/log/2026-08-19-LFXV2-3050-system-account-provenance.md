@@ -63,7 +63,10 @@ would commit us to a wire contract for a column whose consumers are reporting qu
   `TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate` on BOTH arms (rewritten to false;
   erased to NULL).
 - The "safe-looking" `COALESCE(EXCLUDED..., campaigns....)` still fails that test's
-  false case — which is why the omission is bare.
+  false case — which is why the guard is on the STORED value rather than a `COALESCE`
+  on `EXCLUDED`. (A bare OMISSION is not the alternative either; it writes the column on
+  no path at all — see the second paragraph above and
+  `2026-08-19-LFXV2-3050-provenance-never-written`.)
 - `NOT NULL DEFAULT FALSE` on the migration fails the column-shape test on both
   nullability and default, and fails two upserts with SQLSTATE 23502.
 - Dropping the `$17` binding (`(*bool)(nil)`) fails the persistence test on the stored
