@@ -265,6 +265,24 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Makes the LF-owned SYSTEM marketing-ops connection the PRIMARY credential for
+    # every paid-ads provider, instead of the per-project connection. Default off.
+    #
+    # This is not a fallback: while it is "true" a project's own ad account is not
+    # consulted at all, and a project that explicitly DISCONNECTED its account is
+    # still dispatched on the system account. It therefore changes WHICH advertising
+    # account real money is spent from — flip it only with that understood.
+    #
+    # Fails closed in both directions: any value other than "true" is off, so a typo
+    # disables forcing rather than enabling it; and with forcing on, a missing or
+    # unusable system connection is a not-created error rather than a silent
+    # fall-through to the project connection the flag exists to ignore.
+    #
+    # HubSpot is never forced — it is not a paid-ads provider, and forcing it would
+    # write a project's contacts into the LF portal.
+    LFX_FORCE_SYSTEM_ADS_ACCOUNT:
+      value: "false"
+
     # Comma-separated NETWORK-SPECIFIC RFC 6052 NAT64 prefixes for this cluster,
     # e.g. "2001:db8:64::/96". Empty is correct for a cluster with no NAT64, and is
     # the default because a wrong value is worse than none.

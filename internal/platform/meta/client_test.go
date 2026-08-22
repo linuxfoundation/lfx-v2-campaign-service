@@ -477,6 +477,145 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	}
 }
 
+// metaFieldServer stands up an httptest server that captures the ad-set and
+// creative request bodies for the Instagram/DSA field tests below. It mirrors the
+// happy-path handler but only keeps the two bodies those assertions need.
+func metaFieldServer(t *testing.T, adsetCap, creativeCap *bodyCapture) *httptest.Server {
+	t.Helper()
+	var creativeCount, adCount int32
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			creativeCap.set(decodeBody(t, r))
+			n := atomic.AddInt32(&creativeCount, 1)
+			_, _ = io.WriteString(w, `{"id":"creative_`+strconv.Itoa(int(n))+`"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
+			n := atomic.AddInt32(&adCount, 1)
+			_, _ = io.WriteString(w, `{"id":"ad_`+strconv.Itoa(int(n))+`"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func metaFieldInput() CampaignInput {
+	return CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://events.example.org/kubecon",
+		Objective:       "traffic",
+		GeoTargets:      []string{"US"},
+		Budget:          500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	}
+}
+
+// TestCreateCampaignBindsInstagramAndDSAFields verifies that when the launch config
+// supplies the Instagram account and the EU DSA advertiser/payer disclosures, they
+// reach Meta at the right level: instagram_user_id as a top-level adcreative field
+// (sibling to object_story_spec, not nested in it), and dsa_beneficiary/dsa_payor on
+// the ad set. These are exactly the two fields whose absence made the ad
+// unpublishable ("Please add Instagram account" / "Please add Advertiser"/"Payer").
+func TestCreateCampaignBindsInstagramAndDSAFields(t *testing.T) {
+	adsetCap := newBodyCapture()
+	creativeCap := newBodyCapture()
+	srv := metaFieldServer(t, adsetCap, creativeCap)
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
+	)
+
+	in := metaFieldInput()
+	in.InstagramUserID = "  17841400000000000  " // padded: must be trimmed before send
+	in.DSABeneficiary = "The Linux Foundation"
+	in.DSAPayor = "LF Projects, LLC"
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+
+	adsetBody := adsetCap.get()
+	if adsetBody["dsa_beneficiary"] != "The Linux Foundation" {
+		t.Errorf("adset dsa_beneficiary = %v, want 'The Linux Foundation'", adsetBody["dsa_beneficiary"])
+	}
+	if adsetBody["dsa_payor"] != "LF Projects, LLC" {
+		t.Errorf("adset dsa_payor = %v, want 'LF Projects, LLC'", adsetBody["dsa_payor"])
+	}
+	// The two disclosures carry DISTINCT values on purpose. Under the DSA the beneficiary
+	// and the payer are legally different roles and are routinely different entities (an LF
+	// project as beneficiary, LF Projects as payer), so a transposition in the binding is a
+	// real defect that reaches a regulated ad set. With both set to the same literal the
+	// swap is unobservable and this test passes against transposed code.
+	if adsetBody["dsa_beneficiary"] == adsetBody["dsa_payor"] {
+		t.Error("dsa_beneficiary and dsa_payor hold the same value; the fixture must keep them " +
+			"distinct or a beneficiary/payor transposition cannot be detected")
+	}
+
+	creativeBody := creativeCap.get()
+	if creativeBody["instagram_user_id"] != "17841400000000000" {
+		t.Errorf("creative instagram_user_id = %v, want trimmed '17841400000000000'", creativeBody["instagram_user_id"])
+	}
+	// instagram_user_id must be top-level, NOT nested inside object_story_spec.
+	if oss, ok := creativeBody["object_story_spec"].(map[string]any); ok {
+		if _, nested := oss["instagram_user_id"]; nested {
+			t.Errorf("instagram_user_id must not be nested inside object_story_spec")
+		}
+	}
+}
+
+// TestCreateCampaignOmitsInstagramAndDSAWhenUnset verifies the fields are absent from
+// the payloads when not configured, so Facebook-only / non-regulated flows are
+// unchanged and Meta never receives an empty-string value it would reject.
+func TestCreateCampaignOmitsInstagramAndDSAWhenUnset(t *testing.T) {
+	adsetCap := newBodyCapture()
+	creativeCap := newBodyCapture()
+	srv := metaFieldServer(t, adsetCap, creativeCap)
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
+	)
+
+	// InstagramUserID/DSABeneficiary/DSAPayor left as whitespace-only: must be treated
+	// as absent, not sent as blank strings.
+	in := metaFieldInput()
+	in.InstagramUserID = "   "
+	in.DSABeneficiary = "\t"
+	in.DSAPayor = "  "
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+
+	adsetBody := adsetCap.get()
+	if _, ok := adsetBody["dsa_beneficiary"]; ok {
+		t.Errorf("adset dsa_beneficiary present but should be omitted: %v", adsetBody["dsa_beneficiary"])
+	}
+	if _, ok := adsetBody["dsa_payor"]; ok {
+		t.Errorf("adset dsa_payor present but should be omitted: %v", adsetBody["dsa_payor"])
+	}
+	creativeBody := creativeCap.get()
+	if _, ok := creativeBody["instagram_user_id"]; ok {
+		t.Errorf("creative instagram_user_id present but should be omitted: %v", creativeBody["instagram_user_id"])
+	}
+}
+
 // TestCreateCampaignNormalizesEventName verifies that a padded EventName is
 // trimmed for ALL generated names and the UTM term — not just the campaign name
 // (which trims internally). A raw " KubeCon EU " would otherwise leak into the
@@ -3931,6 +4070,130 @@ func TestCreateCampaignRejectsMalformedPixelIDBeforeAnyPost(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "pixelID") || !strings.Contains(err.Error(), "malformed") {
 		t.Fatalf("err = %v, want malformed-pixelID rejection before mutation", err)
+	}
+}
+
+// metaDisclosureInput returns a minimal valid CreateCampaign input for the
+// Instagram/DSA validation tests below. Every field other than the disclosure
+// fields under test is valid, so a rejection can only come from the guard being
+// exercised — not from unrelated input validation failing first.
+func metaDisclosureInput() CampaignInput {
+	return CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	}
+}
+
+// TestCreateCampaignRejectsMalformedInstagramUserIDBeforeAnyPost verifies a non-empty
+// but non-numeric InstagramUserID is rejected before any mutating call. The IGSID is
+// only consumed at the creative POST, which runs AFTER the campaign and ad set exist
+// and treats a 4xx as a non-fatal per-variant failure — so without this gate a
+// malformed value yields a created_degraded campaign with no publishable ad: a
+// billable resource that can never serve. noPostServer fails the test on any POST, so
+// this binds the rejection to "before the first mutating call", not merely "errors".
+func TestCreateCampaignRejectsMalformedInstagramUserIDBeforeAnyPost(t *testing.T) {
+	for _, id := range []string{"IG99", "1784a", "17841/40", "..", "-1", "1.5"} {
+		srv := noPostServer(t)
+		c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "12345", CurrencyOffset: 100},
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+		in := metaDisclosureInput()
+		in.InstagramUserID = id
+		_, err := c.CreateCampaign(context.Background(), in)
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "instagramUserId") || !strings.Contains(err.Error(), "malformed") {
+			t.Fatalf("InstagramUserID %q: err = %v, want malformed-instagramUserId rejection", id, err)
+		}
+	}
+}
+
+// TestCreateCampaignAcceptsValidAndAbsentInstagramUserID verifies the guard does NOT
+// turn an optional field into a required one: a well-formed numeric IGSID is accepted,
+// and so is an empty one (a Facebook-only campaign) and a whitespace-only one (which
+// trims to empty). These run against the full field server, so they must reach the
+// mutating calls and succeed.
+func TestCreateCampaignAcceptsValidAndAbsentInstagramUserID(t *testing.T) {
+	for _, tc := range []struct{ name, id string }{
+		{"valid numeric IGSID", "17841400000000000"},
+		{"empty (Facebook-only)", ""},
+		{"whitespace-only trims to empty", "   "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adsetCap, creativeCap := newBodyCapture(), newBodyCapture()
+			srv := metaFieldServer(t, adsetCap, creativeCap)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "tok"},
+				AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			in := metaFieldInput()
+			in.InstagramUserID = tc.id
+			if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+				t.Fatalf("CreateCampaign error: %v", err)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignRejectsOneSidedDSAPairBeforeAnyPost verifies that supplying exactly
+// one of the two EU DSA disclosures is rejected before any mutating call. Meta requires
+// BOTH to publish an ad set targeting a regulated location (docs/api-catalog.md), so a
+// one-sided pair is deterministically incomplete — it either gets the ad set rejected
+// after the campaign exists or leaves it unpublishable. Unlike Meta's other publish-time
+// requirements, one-sidedness is knowable at validation time. noPostServer binds the
+// rejection to "before the first mutating call".
+func TestCreateCampaignRejectsOneSidedDSAPairBeforeAnyPost(t *testing.T) {
+	for _, tc := range []struct{ name, beneficiary, payor, wantSupplied, wantMissing string }{
+		{"beneficiary only", "The Linux Foundation", "", "dsaBeneficiary", "dsaPayor"},
+		{"payor only", "", "LF Projects, LLC", "dsaPayor", "dsaBeneficiary"},
+		// A whitespace-only counterpart trims to absent, so it is still one-sided and
+		// must be rejected — not smuggled through as a blank string Meta would reject.
+		{"beneficiary with whitespace-only payor", "The Linux Foundation", "  \t ", "dsaBeneficiary", "dsaPayor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := noPostServer(t)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "12345", CurrencyOffset: 100},
+				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			in := metaDisclosureInput()
+			in.DSABeneficiary, in.DSAPayor = tc.beneficiary, tc.payor
+			_, err := c.CreateCampaign(context.Background(), in)
+			if err == nil || !strings.Contains(err.Error(), "EU DSA disclosures are incomplete") {
+				t.Fatalf("err = %v, want one-sided DSA rejection", err)
+			}
+			// The message must name which side was supplied and which is missing; a
+			// transposed message would misdirect the operator to add the field they
+			// already sent. Asserting both names also fails a guard that reported the
+			// pair generically.
+			if !strings.Contains(err.Error(), tc.wantSupplied+" was supplied without "+tc.wantMissing) {
+				t.Errorf("err = %v, want it to name %q supplied without %q", err, tc.wantSupplied, tc.wantMissing)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignAcceptsBothOrNeitherDSADisclosure verifies the guard rejects ONLY the
+// one-sided case: both present is the regulated flow and both absent is the ordinary
+// non-regulated flow, and neither may be broken by this validation. Both run against the
+// full field server, so they must reach the mutating calls and succeed.
+func TestCreateCampaignAcceptsBothOrNeitherDSADisclosure(t *testing.T) {
+	for _, tc := range []struct{ name, beneficiary, payor string }{
+		{"both present (regulated)", "The Linux Foundation", "LF Projects, LLC"},
+		{"both absent (non-regulated)", "", ""},
+		{"both whitespace-only trim to absent", "  ", "\t"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adsetCap, creativeCap := newBodyCapture(), newBodyCapture()
+			srv := metaFieldServer(t, adsetCap, creativeCap)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "tok"},
+				AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			in := metaFieldInput()
+			in.DSABeneficiary, in.DSAPayor = tc.beneficiary, tc.payor
+			if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+				t.Fatalf("CreateCampaign error: %v", err)
+			}
+		})
 	}
 }
 
