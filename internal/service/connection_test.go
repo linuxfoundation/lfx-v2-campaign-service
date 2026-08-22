@@ -30,6 +30,16 @@ type fakeRepo struct {
 	// (as the real repository's RETURNING does), so a retained pointer would report the
 	// post-call state and the assertion would be about the fake, not the handler.
 	gotUpdateCreds []byte
+	// gets counts Get calls. updateConn's current-row read is CONDITIONAL on the
+	// force-system guard applying, and that conditionality is a real behaviour (an extra
+	// database round-trip on every paid-ads update, in every deployment, when the flag is
+	// off) that no assertion on the RESULT can observe — both the guarded and unguarded
+	// shapes return the same connection. Counting the calls is what makes it testable.
+	gets int
+	// nilNilGet makes Get return (nil, nil) — the shape domain.ConnectionReader permits and
+	// does not forbid. A fake that only ever reports absence as ErrNotFound cannot exercise
+	// a caller's nil-row handling, so a missing guard reads as covered.
+	nilNilGet bool
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{store: map[string]*model.Connection{}} }
@@ -37,6 +47,10 @@ func newFakeRepo() *fakeRepo { return &fakeRepo{store: map[string]*model.Connect
 func repoKey(projectID string, p model.Provider) string { return projectID + "|" + string(p) }
 
 func (r *fakeRepo) Get(_ context.Context, projectID string, p model.Provider) (*model.Connection, error) {
+	r.gets++
+	if r.nilNilGet {
+		return nil, nil
+	}
 	if r.getErr != nil {
 		return nil, r.getErr
 	}

@@ -87,8 +87,11 @@ ships either way. (The test skips when `helm` is absent but fails on a render er
 
 Path extraction is SCOPED to the `project-api` rule block (not "any `/projects/` path
 in the RuleSet"), and a separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
-that rule's authorizer is `openfga_check` with relation `campaign_manager` on object
-`project:{projectId}`. This matters because the invariant is not merely "some rule
-matches" but "the campaign_manager rule matches": a path moved into an `allow_all` /
-`deny_all` / differently-scoped rule, or a downgrade of the rule's relation/object,
-must FAIL the security regression test rather than silently satisfy path parity.
+that rule has two `openfga_check` authorizers on relation `campaign_manager`, each
+paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`
+for the slug branch, `project:{{- .Request.URL.Captures.projectId -}}` for the UUID
+branch. This matters because the invariant is not merely "some rule matches" but "the
+campaign_manager rule matches, with each branch's object correctly paired to its
+guard": a path moved into an `allow_all` / `deny_all` / differently-scoped rule, a
+downgrade of the rule's relation, or a swapped guard/object pairing, must FAIL the
+security regression test rather than silently satisfy path parity.
