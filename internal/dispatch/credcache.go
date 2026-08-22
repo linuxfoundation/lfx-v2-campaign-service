@@ -376,9 +376,26 @@ func isComparable(v any) bool {
 // rollout under LFXV2-3033, deferred only because open PRs owned those files at the time (cs#148,
 // cs#152, cs#158); they still rebuild per resolve and still re-mint a token per operation.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
-// one-site edit. Two discovery paths are excluded on purpose: Google Ads' account-agnostic client
-// (empty CustomerID) and Microsoft's ListAccounts client (ZERO AccountConfig) — see
-// cachedMicrosoftClient for why sharing one key with dispatch would cross the two.
+// one-site edit.
+//
+// WIRED IS NOT THE SAME AS "every path on a wired provider". The bypasses below are per-PATH, and
+// this roster is the single source of truth for them, so enumerate them all:
+//
+//   - Google Ads' account-agnostic discovery client (empty CustomerID, resolveGoogleAdsDiscoveryClient)
+//     and Microsoft's ListAccounts client (ZERO AccountConfig) — see cachedMicrosoftClient for why
+//     sharing one key with dispatch would cross the two.
+//   - Google Ads' adoption owned-connection path (resolveOwnedGoogleAdsClient → LookupCampaign): a
+//     rare one-shot rather than the polling loop this exists for.
+//   - **GoogleAdsDispatcher.Dispatch**, which builds its client inline via googleads.NewClient
+//     rather than through cachedGoogleAdsClient. This one is easy to miss and was omitted here for
+//     two tickets: Google Ads is listed as "wired", and it IS — but only on the toggle/metrics
+//     entry point (resolveGoogleAdsClient → ToggleStatus, ReadMetrics). The CREATE path re-mints
+//     an OAuth token per campaign, so a dispatch burst gets no reuse at all. Microsoft's create
+//     path is the opposite (microsoft.go, Dispatch → cachedMicrosoftClient), which is exactly the
+//     asymmetry that made this omission plausible. Both behaviours are pinned:
+//     TestClientCache_GoogleAdsDispatchBypassesTheCache and
+//     TestClientCache_MicrosoftDispatchUsesTheCachedClient — wiring Google Ads' create path will
+//     fail the first, which is the prompt to update this list in the same change.
 //
 // It is a separate type from credCache rather than a generic because the two hold different things
 // with different safety arguments: a *resolved is copied per caller (fromSystem is stamped on it),

@@ -903,6 +903,22 @@ let a discovery call and a dispatch call serve each other's client. Google Ads' 
 owned-connection path is likewise excluded as a one-shot rather than the polling loop this exists
 for.
 
+**"Wired" is a claim about a provider; the bypasses are per-PATH, and Google Ads' CREATE path is
+one of them.** `GoogleAdsDispatcher.Dispatch` builds its client inline with `googleads.NewClient`
+rather than through `cachedGoogleAdsClient`, so a Google Ads dispatch burst re-mints an OAuth token
+per campaign and gets no reuse at all. Google Ads is genuinely wired — but only on the
+toggle/metrics entry point (`resolveGoogleAdsClient`, serving `ToggleStatus` and `ReadMetrics`).
+Microsoft's create path is the opposite: `MicrosoftDispatcher.Dispatch` DOES go through
+`cachedMicrosoftClient`. That asymmetry between the two providers is what made this omission
+plausible for two tickets, and both behaviours are now pinned by tests —
+`TestClientCache_GoogleAdsDispatchBypassesTheCache` and
+`TestClientCache_MicrosoftDispatchUsesTheCachedClient` — so wiring the Google Ads create path fails
+the first test and forces this paragraph and `clientCache`'s roster comment to be updated in the
+same change. The full set of Google Ads `googleads.NewClient` construction sites is three:
+`Dispatch` (bypass), `googleAdsClientFor` (reached BOTH through `cachedGoogleAdsClient`, which is
+the cached toggle/metrics path, and directly through `resolveOwnedGoogleAdsClient`, which is the
+adoption bypass), and `resolveGoogleAdsDiscoveryClient` (bypass).
+
 **Sharing one client instance across concurrent callers is a per-client property, verified per
 provider rather than inherited.** All three cached clients guard everything they write after
 construction with a mutex and stash no per-call state on the receiver, so the instance is safe to

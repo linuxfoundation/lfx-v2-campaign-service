@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 )
@@ -114,16 +115,28 @@ func microsoftProbe(t *testing.T, c *microsoft.Client) {
 }
 
 // newMicrosoftCacheDispatcher builds the dispatcher every Microsoft client-cache test uses,
-// pointing ALL THREE of the client's origins at the stub. It exists so the reporting override
-// cannot be forgotten in one test and silently reintroduce the live call: microsoft.Client splits
-// its API across three hosts (Campaign Management, Customer Management and Reporting), and an
-// un-overridden origin falls back to the production default rather than failing loudly.
-func newMicrosoftCacheDispatcher(repo connReader, srv *httptest.Server) *MicrosoftDispatcher {
-	return NewMicrosoftDispatcher(repo, identityEncryptor{},
-		microsoft.WithTokenURL(srv.URL+"/token"),
+// pointing the token endpoint and ALL THREE of the client's API origins at the stub. It exists so
+// the reporting override cannot be forgotten in one test and silently reintroduce the live call:
+// microsoft.Client splits its API across three hosts (Campaign Management, Customer Management and
+// Reporting), and an un-overridden origin falls back to the production default rather than failing
+// loudly.
+//
+// extra carries per-test options — microsoft.WithHTTPClient, for one — appended AFTER the origin
+// overrides so a test can ADD to them without restating them. That parameter is the whole point:
+// TestClientCache_MicrosoftProbeStaysOnTheStub used to re-spell all four origin options inline
+// purely because it also needed a custom http.Client, which put the one test that exists to CATCH
+// a missing reporting override outside the helper that prevents one. Measured: with
+// WithReportingBaseURL deleted from this helper, that test stayed GREEN while the other Microsoft
+// probes dialled reporting.api.bingads.microsoft.com (the package's Microsoft tests went from 1.3s
+// to 5.0s). Every Microsoft dispatcher in this file goes through here.
+func newMicrosoftCacheDispatcher(repo connReader, srv *httptest.Server, extra ...microsoft.Option) *MicrosoftDispatcher {
+	opts := []microsoft.Option{
+		microsoft.WithTokenURL(srv.URL + "/token"),
 		microsoft.WithBaseURL(srv.URL),
 		microsoft.WithCustomerBaseURL(srv.URL),
-		microsoft.WithReportingBaseURL(srv.URL))
+		microsoft.WithReportingBaseURL(srv.URL),
+	}
+	return NewMicrosoftDispatcher(repo, identityEncryptor{}, append(opts, extra...)...)
 }
 
 // loopbackOnlyClient returns an *http.Client whose dialer REFUSES any address outside loopback,
@@ -170,14 +183,13 @@ func TestClientCache_MicrosoftProbeStaysOnTheStub(t *testing.T) {
 	hc, offBox := loopbackOnlyClient(t)
 
 	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
-	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
-		microsoft.WithTokenURL(srv.URL+"/token"),
-		microsoft.WithBaseURL(srv.URL),
-		microsoft.WithCustomerBaseURL(srv.URL),
-		microsoft.WithReportingBaseURL(srv.URL),
-		microsoft.WithHTTPClient(hc))
+	// Through the helper, NOT inline. This is the test whose entire job is to catch a missing
+	// origin override, so it is the last one that should carry its own copy of them: with the four
+	// options re-spelled here, deleting WithReportingBaseURL from newMicrosoftCacheDispatcher left
+	// this test green while every other Microsoft probe in the file dialled production.
+	d := newMicrosoftCacheDispatcher(repo, srv, microsoft.WithHTTPClient(hc))
 
-	c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -206,7 +218,7 @@ func TestClientCache_RedditReusesClientAndToken(t *testing.T) {
 
 	var first *reddit.Client
 	for i := range 5 {
-		c, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
+		c, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds, d.creds.resolve)
 		if err != nil {
 			t.Fatalf("resolve #%d: %v", i, err)
 		}
@@ -242,7 +254,7 @@ func TestClientCache_RedditRotationForcesRebuild(t *testing.T) {
 	d := NewRedditDispatcher(repo, identityEncryptor{},
 		reddit.WithBaseURL(srv.URL+"/api/v3"), reddit.WithTokenURL(srv.URL+"/token"))
 
-	c1, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
+	c1, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds, d.creds.resolve)
 	if err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -254,7 +266,7 @@ func TestClientCache_RedditRotationForcesRebuild(t *testing.T) {
 	// version, so the new credential arrives as version 2.
 	repo.row = redditCacheConn("conn-1", `{"ClientID":"cid2","ClientSecret":"sec2","RefreshToken":"rt2"}`, "t2_acct", 2)
 
-	c2, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
+	c2, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds, d.creds.resolve)
 	if err != nil {
 		t.Fatalf("post-rotation resolve: %v", err)
 	}
@@ -285,7 +297,7 @@ func TestClientCache_RedditRotationForcesRebuild(t *testing.T) {
 	// account id, because the version mismatch was silently doing the work.
 	repo.row = redditCacheConn("conn-2", goodRedditCreds, "t2_acct", 2)
 
-	c3, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
+	c3, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds, d.creds.resolve)
 	if err != nil {
 		t.Fatalf("post-reconnect resolve: %v", err)
 	}
@@ -329,7 +341,7 @@ func TestClientCache_RedditColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds)
+			c, err := d.resolveRedditClient(context.Background(), "cncf", model.ProviderRedditAds, d.creds.resolve)
 			// The lock covers ONLY the append to the shared slices. It must NOT span the probe:
 			// holding it across redditProbe serialized all 16 callers, so the "concurrent" traffic
 			// this test exists to generate never overlapped and -race had nothing to observe.
@@ -386,7 +398,7 @@ func TestClientCache_MicrosoftReusesClientAndToken(t *testing.T) {
 
 	var first *microsoft.Client
 	for i := range 5 {
-		c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+		c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
 		if err != nil {
 			t.Fatalf("resolve #%d: %v", i, err)
 		}
@@ -415,7 +427,7 @@ func TestClientCache_MicrosoftRotationForcesRebuild(t *testing.T) {
 	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
 	d := newMicrosoftCacheDispatcher(repo, srv)
 
-	c1, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	c1, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
 	if err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -426,7 +438,7 @@ func TestClientCache_MicrosoftRotationForcesRebuild(t *testing.T) {
 	rotated := `{"ClientID":"cid2","ClientSecret":"csec2","DeveloperToken":"dev2","RefreshToken":"rt2"}`
 	repo.row = microsoftCacheConn("conn-1", rotated, "111111", 2)
 
-	c2, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	c2, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
 	if err != nil {
 		t.Fatalf("post-rotation resolve: %v", err)
 	}
@@ -443,7 +455,7 @@ func TestClientCache_MicrosoftRotationForcesRebuild(t *testing.T) {
 	// the rotation above cached version 2, so version alone would already miss.
 	repo.row = microsoftCacheConn("conn-2", goodMicrosoftCreds, "111111", 2)
 
-	c3, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	c3, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
 	if err != nil {
 		t.Fatalf("post-reconnect resolve: %v", err)
 	}
@@ -481,7 +493,7 @@ func TestClientCache_MicrosoftColdKeyConcurrentBuildsAreCoalesced(t *testing.T) 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds)
+			c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
 			// Lock scope: bookkeeping only, never the probe — see the Reddit counterpart for the
 			// mutation that proved a probe inside the critical section makes this test serial and
 			// therefore blind to a missing production mutex.
@@ -560,6 +572,10 @@ func TestClientCache_MicrosoftDispatchUsesTheCachedClient(t *testing.T) {
 	// One dispatcher, one unchanged connection row: the cache key is identical across both calls,
 	// so a cached build is reused and only the FIRST call reaches the token endpoint.
 	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1)}
+	// Two servers here (token counted separately from the API), which is why this one cannot take
+	// newMicrosoftCacheDispatcher's single-server shape. The discipline it enforces still applies:
+	// ALL THREE API origins are pointed at apiSrv, so no un-overridden origin can fall back to a
+	// production Microsoft host.
 	d := NewMicrosoftDispatcher(repo, identityEncryptor{},
 		microsoft.WithTokenURL(tokenSrv.URL),
 		microsoft.WithBaseURL(apiSrv.URL),
@@ -578,5 +594,89 @@ func TestClientCache_MicrosoftDispatchUsesTheCachedClient(t *testing.T) {
 			"— Dispatch is constructing its client directly instead of going through "+
 			"cachedMicrosoftClient, so the create path re-mints an OAuth token per campaign and the "+
 			"client cache does nothing for the burst it exists to collapse", n)
+	}
+}
+
+// TestClientCache_GoogleAdsDispatchBypassesTheCache pins the ROSTER, not a behaviour change.
+//
+// clientCache's doc comment and docs/knowledge/code/internal-dispatch.md are the single source of
+// truth for which Google Ads paths bypass the client cache, and both used to name only two
+// exclusions — the account-agnostic discovery client and adoption's owned-connection path — while
+// GoogleAdsDispatcher.Dispatch has always built its client inline (googleads.go, the
+// googleads.NewClient call inside Dispatch). A reader of either document would conclude that a
+// dispatch burst reuses one cached client and mints one token; it does not.
+//
+// This asserts the CURRENT behaviour so the two documents can state it accurately, and so the day
+// Dispatch is wired to cachedGoogleAdsClient this test fails and forces the rosters to be updated
+// in the same change. It is the mirror image of TestClientCache_MicrosoftDispatchUsesTheCachedClient
+// above: Microsoft's create path IS cached, Google Ads' is not, and the difference between the two
+// providers is exactly what the rosters were silently getting wrong.
+//
+// Two dispatches of ONE unchanged connection: a cached build would mint a single token (as the
+// Microsoft test asserts), a per-call build mints one each.
+func TestClientCache_GoogleAdsDispatchBypassesTheCache(t *testing.T) {
+	var tokenHits atomic.Int64
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			_, _ = io.WriteString(w, `{"results":[]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	// syncConnReader (not fakeConnReader) so the row carries an explicit id and version: those two
+	// are the cache key, and a row without them cannot demonstrate a cache HIT even if one occurred.
+	repo := &syncConnReader{row: googleAdsCacheConn("conn-1", goodGoogleAdsCreds, "1234567890", 1)}
+	d := NewGoogleAdsDispatcher(repo, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL))
+
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	for i := range 2 {
+		if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+			t.Fatalf("Dispatch #%d: %v", i, err)
+		}
+	}
+
+	// 2, not 1. If this ever reads 1, Dispatch has been wired to cachedGoogleAdsClient — which is a
+	// welcome change, and the point of asserting it here is that the change must also update
+	// clientCache's roster comment and docs/knowledge/code/internal-dispatch.md, which currently
+	// describe this path as a bypass.
+	if n := tokenHits.Load(); n != 2 {
+		t.Errorf("token endpoint hit %d times across 2 Google Ads dispatches of one unchanged "+
+			"connection, want 2 — Dispatch builds its client inline rather than through "+
+			"cachedGoogleAdsClient, and the clientCache roster comment plus "+
+			"docs/knowledge/code/internal-dispatch.md must both say so; if this path is now "+
+			"cached, update both rosters in the same change as the wiring", n)
+	}
+}
+
+// googleAdsCacheConn is redditCacheConn for Google Ads: an explicit row id and version, which are
+// what clientCache keys and validates on.
+func googleAdsCacheConn(id, creds, accountID string, version int64) *model.Connection {
+	return &model.Connection{
+		ID:                   id,
+		Version:              version,
+		Provider:             model.ProviderGoogleAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		Status:               model.StatusActive,
 	}
 }
