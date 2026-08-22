@@ -55,6 +55,21 @@ revoked or deleted.
    `unmarshalPlatformConfig`) onto the client's `CampaignInput`. The **Project** name
    segment is stamped from the authenticated `brief.ProjectID`, NOT from caller JSON
    (it's the data pipeline's attribution join key — see docs/api-catalog.md).
+   **Meta additionally RESOLVES creative assets in this step.** A variant may name an
+   `imageAssetId` — a creative image uploaded against the brief. `resolveVariantAssets`
+   loads each referenced asset's bytes through a narrow read-only port
+   (`creativeAssetReader`, `GetAsset` only — a dispatcher must never create an asset),
+   scoped to the dispatching brief's project and id so one brief cannot reference
+   another's asset, and writes them into a COPY of the variants (the caller's config
+   stays pristine, or multi-megabyte bytes would land in the persisted
+   `config_snapshot`). This runs BEFORE the client is constructed and therefore before
+   any upstream call: every failure here — malformed id, unknown or foreign asset, an
+   asset with no stored bytes, an unbound store — is wrapped in `notCreated`, so the
+   (brief, platform) claim is RELEASED rather than stranded. A bad asset must never fall
+   through to a link-only ad: the caller asked for an image, and silently creating an
+   imageless ad spends budget on a creative nobody approved. A variant carrying an image
+   URL instead resolves to nothing here and is attached by the client as
+   `link_data.picture`; supplying BOTH is refused by the client's pre-spend validation.
 3. **Call the client** and map the result → `model.Campaign` (upstream id, name, the
    provider result blob in `Result`, and a status, since the orchestrator does not set
    a status on success and `UpsertCampaign` writes it verbatim). The success status is

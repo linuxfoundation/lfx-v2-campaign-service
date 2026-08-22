@@ -6,10 +6,13 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -62,15 +65,170 @@ type metaConfig struct {
 	CurrencyOffset int64 `json:"currencyOffset"`
 }
 
+// creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
+// stored asset's bytes. It deliberately does not embed domain.CreativeAssetRepository —
+// the dispatcher must be able to READ an asset, never to create one. Least privilege,
+// exactly as the HubSpot dispatcher's audienceReader narrows the audience repository.
+type creativeAssetReader interface {
+	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+}
+
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
 type MetaDispatcher struct {
 	creds *credsSource
-	opts  []meta.Option
+	// creatives resolves a variant's imageAssetId to image bytes at dispatch. Bound by
+	// registerDispatchers on the live and cold-start paths; nil in the direct-construction
+	// tests that create no image-by-asset variants, where it is never read
+	// (resolveVariantAssets touches it only for a variant that references an asset).
+	creatives creativeAssetReader
+	opts      []meta.Option
 }
 
-// NewMetaDispatcher builds the adapter from the connection repo + encryptor.
+// NewMetaDispatcher builds the adapter from the connection repo + encryptor. The
+// creative-asset read path is bound separately via SetCreativeAssetRepo (see
+// BriefService.SetCreativeAssetRepo for the same opt-in shape), so the existing
+// direct-construction tests that create no asset-backed variants stay unchanged.
 func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Option) *MetaDispatcher {
 	return &MetaDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+}
+
+// SetCreativeAssetRepo binds the creative-asset read path so image-referencing variants
+// resolve to bytes at dispatch. registerDispatchers calls it once at construction, before
+// the dispatcher is shared with the orchestrator, so no lock guards it (unlike
+// BriefService, which late-binds across a cold start). A nil argument is ignored —
+// mirroring BriefService.SetCreativeAssetRepo — leaving the dispatcher image-less rather
+// than storing a typed-nil that would panic when a variant referenced an asset.
+func (d *MetaDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
+	if r == nil {
+		return
+	}
+	d.creatives = r
+}
+
+// CreativeAssetRepoIsSet reports whether the creative-asset read path was bound.
+// Exported ONLY so the container's wiring tests can assert the binding directly, for
+// exactly the reason BriefService.CreativeAssetRepoIsSet is (see
+// internal/service/creative_asset.go): the container tests construct dispatchers with
+// all-nil arguments, so deleting registerDispatchers' SetCreativeAssetRepo call
+// COMPILES and leaves the whole suite green — while every asset-backed production
+// dispatch fails with "the creative-asset store is not configured", i.e. no ad at all
+// for a brief whose creative was uploaded successfully.
+//
+// An error-based assertion cannot close this gap: a dispatcher that was never bound
+// and one bound to a repo that cannot find the asset both fail the variant, and the
+// no-database container legitimately produces the unbound state. Only asking the
+// dispatcher directly distinguishes wired from unwired.
+func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != nil }
+
+// maxVariantAssetBytes bounds the total DISTINCT creative-asset bytes one dispatch may
+// hold in memory at once.
+//
+// It is aligned with the caps PR #170 already established rather than inventing a third
+// scheme. Those are all derived from ONE number — the 30 MiB per-asset ceiling declared on
+// the upload (design/brief.go's MaxLength(31457280), itself set at Meta's documented
+// single-image maximum): constants.MaxRequestBodyBytes is 42 MiB (one 30 MiB image
+// base64-expanded by 4/3, plus envelope) and the decode budget is 80 MiB. This is the same
+// ceiling applied to the one code path that holds SEVERAL assets simultaneously.
+//
+// 240 MiB is EIGHT maximum-size (30 MiB) assets. Justified against a legitimate campaign:
+// real Meta creatives are nothing like 30 MiB — Meta's own recommended feed image is
+// 1936x1936, which is a few hundred KiB as PNG or JPEG, so 240 MiB is several hundred
+// realistic creatives. A/B tests in this service run a handful of variants, not hundreds,
+// and a campaign that genuinely needs more distinct artwork than this is better split than
+// dispatched as one job. The bound therefore refuses only configs that are already
+// pathological, while capping what a single dispatch can allocate at a fixed, modest
+// multiple of the largest thing the upload contract admits.
+//
+// Deduplication (below) is what makes the bound meaningful: without it the SAME asset id
+// repeated N times would charge N times over, so the cheapest attack would exhaust the
+// budget using one stored image.
+const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB) assets
+
+// resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
+// the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
+// campaignFromMeta for the degraded-count check and the config snapshot — is not mutated.
+// A variant with no imageAssetId passes through unchanged (a link-only or by-URL creative).
+//
+// Every failure here is a caller/wiring error that MUST fail the dispatch BEFORE any
+// upstream create — the sole call site wraps the returned error in notCreated so the
+// (brief, platform) claim is RELEASED rather than stranded, and the resolution runs before
+// the client is constructed so no credential is used and no Meta call is made:
+//   - a malformed imageAssetId cannot reference a real asset, so it is rejected up front
+//     rather than handed to the UUID primary-key lookup (which would raise an opaque
+//     driver error);
+//   - a nil repo with an image-referencing variant is a wiring defect (registerDispatchers
+//     always binds it) — surfaced as a clear error, not a nil-panic;
+//   - an asset absent for THIS brief (missing, or another brief's/project's) is ErrNotFound
+//     from GetAsset's scoped lookup, reported as a bad reference.
+//
+// A bad asset must NOT fall through to a link-only ad: the caller asked for an image, and
+// silently creating an imageless ad would spend budget on a creative nobody approved.
+func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, error) {
+	out := make([]meta.AdVariant, len(variants))
+	copy(out, variants)
+	// Resolved assets are CACHED BY ID for the duration of this call, which is what makes
+	// the memory bound hold. Nothing caps how many variants a config may carry, and each
+	// asset may be 30 MiB (design/brief.go's MaxLength on the upload), so the earlier
+	// version's one-read-and-one-30-MiB-buffer PER VARIANT was unbounded in both DB reads
+	// and allocation — and the cheapest way to trigger it was the SAME asset id repeated,
+	// which needs no extra stored data at all. De-duplication makes repetition free: N
+	// variants naming one asset now cost one read and one buffer, and the ImageBytes slices
+	// alias that single buffer (they are only ever read, never mutated — the meta client
+	// copies them onto the wire).
+	//
+	// Cost is then bounded by the number of DISTINCT assets, so an aggregate ceiling is
+	// still needed for a config naming many different ones. It is deliberately derived from
+	// the caps PR #170 already set rather than being a third scheme: that PR bounds ONE
+	// request at constants.MaxRequestBodyBytes (42 MiB) and one decode at 80 MiB, both
+	// sized from the same 30 MiB per-asset ceiling. maxVariantAssetBytes applies the same
+	// idea to the one place that holds SEVERAL assets at once.
+	byID := make(map[string][]byte, len(out))
+	mimeByID := make(map[string]string, len(out))
+	var totalBytes int64
+	for i := range out {
+		assetID := strings.TrimSpace(out[i].ImageAssetID)
+		if assetID == "" {
+			continue
+		}
+		if _, perr := uuid.Parse(assetID); perr != nil {
+			return nil, fmt.Errorf("meta variant %d references creative asset %q, which is not a valid asset id", i+1, assetID)
+		}
+		if b, seen := byID[assetID]; seen {
+			// Already resolved for an earlier variant: no second read, no second buffer,
+			// and no second charge against the aggregate budget.
+			out[i].ImageBytes = b
+			out[i].ImageMIME = mimeByID[assetID]
+			continue
+		}
+		if d.creatives == nil {
+			return nil, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+		}
+		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
+		if gerr != nil {
+			if errors.Is(gerr, domain.ErrNotFound) {
+				return nil, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+			}
+			return nil, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+		}
+		// A resolved asset that carries no bytes cannot become a creative. Refuse rather
+		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
+		// variant that asked for an image — a silent downgrade that spends money.
+		if len(asset.Bytes) == 0 {
+			return nil, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+		}
+		// Charged once per DISTINCT asset, and checked BEFORE the buffer is retained so
+		// the ceiling bounds what this call holds rather than reporting after the fact.
+		totalBytes += int64(len(asset.Bytes))
+		if totalBytes > maxVariantAssetBytes {
+			return nil, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+				maxVariantAssetBytes, totalBytes, i+1)
+		}
+		byID[assetID] = asset.Bytes
+		mimeByID[assetID] = asset.MimeType
+		out[i].ImageBytes = asset.Bytes
+		out[i].ImageMIME = asset.MimeType
+	}
+	return out, nil
 }
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
@@ -221,6 +379,19 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		hsToken = bf.HSToken
 	}
 
+	// Resolve every variant's referenced image to BYTES before the client exists. Any
+	// bad reference (malformed id, unknown/foreign asset, an asset with no bytes) fails
+	// the dispatch HERE — notCreated marks it NoUpstreamCreate so the orchestrator
+	// RELEASES the pending (brief, platform) claim instead of stranding it, and because
+	// this runs before meta.NewClient below, no credential is used and no Meta call is
+	// made. A variant that carries an image URL instead resolves to nothing here and is
+	// attached by the client as link_data.picture; the two are mutually exclusive per
+	// variant and the client refuses a variant supplying both.
+	variants, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
+	if verr != nil {
+		return nil, notCreated(verr)
+	}
+
 	in := meta.CampaignInput{
 		EventName: bf.EventName,
 		EventSlug: brief.EventSlug,
@@ -239,7 +410,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		InstagramUserID: cfg.InstagramUserID,
 		DSABeneficiary:  cfg.DSABeneficiary,
 		DSAPayor:        cfg.DSAPayor,
-		Variants:        cfg.Variants,
+		// The RESOLVED variants (image bytes filled in), not cfg.Variants — cfg.Variants
+		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
+		Variants: variants,
 	}
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)
@@ -276,8 +449,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 // see resolveMetaCredentials), builds the client, and CASCADES the status to the campaign,
 // its ad set, and every ad — Meta's create PAUSES all three, so toggling only the campaign
 // to ACTIVE would not serve. campaign is the persisted row; the ad set id is read from its
-// CampaignResult (Meta persists the ad set id but not the individual ad ids, which the
-// client discovers via GET /{adSetID}/ads). status is model.CampaignRunActive or
+// CampaignResult, and the ads are enumerated live via GET /{adSetID}/ads rather than from
+// CampaignResult.Ads (which LFXV2-3295 does persist) — see UpdateCampaignAndChildrenStatus
+// for why discovery is the deliberate choice. status is model.CampaignRunActive or
 // model.CampaignRunPaused. Returns nil only when the platform confirms; an UNCONFIRMED
 // outcome (including a partial cascade) is wrapped so the caller reports "verify before
 // retry" (via the Unconfirmed() behavioral interface).
@@ -297,8 +471,10 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
 	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
-	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
-	// individual ad ids — the client discovers those via GET /{adSetID}/ads).
+	// The ad set id is read from the persisted CampaignResult. The ads are DISCOVERED via
+	// GET /{adSetID}/ads even though CampaignResult.Ads now records the ones this service
+	// created: a live enumeration also covers ads added to the ad set since dispatch, and
+	// works for rows written before that field existed.
 	// Provenance BEFORE the provisioning guard below, deliberately. A campaign id is unique
 	// only within an ad account, so a connection re-pointed since create would address an
 	// unrelated campaign — and this path CHANGES delivery, so a collision pauses or activates
