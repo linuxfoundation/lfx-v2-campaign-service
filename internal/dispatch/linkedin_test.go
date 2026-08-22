@@ -831,7 +831,7 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testin
 func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
 	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":"  padded-token  "}`)}, identityEncryptor{})
 
-	_, creds, err := d.resolveLinkedInCredentials(context.Background(), "proj", model.ProviderLinkedInAds)
+	_, creds, err := d.resolveLinkedInCredentials(context.Background(), "proj", model.ProviderLinkedInAds, d.creds.existingResolver(""))
 	if err != nil {
 		t.Fatalf("resolveLinkedInCredentials: %v", err)
 	}

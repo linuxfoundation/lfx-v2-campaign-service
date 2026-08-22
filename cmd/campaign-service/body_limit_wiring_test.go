@@ -22,6 +22,7 @@ import (
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -142,30 +143,60 @@ func TestUploadRoute_RejectsOversizeChunkedBody(t *testing.T) {
 // oversize bodies would ever notice. The assertion is specifically "not 413": the request is
 // then refused further in for an unrelated reason (no repo bound in this no-database wiring, and
 // no bearer token), which is fine — what matters is that the SIZE gate let it through.
+//
+// BOTH enum values are driven, and that is the point rather than thoroughness for its own sake.
+// content_type is part of the body, so the envelope's size depends on which value it carries:
+// "image/png" yields 41,943,079 bytes and "image/jpeg" — one character longer — yields
+// 41,943,080, which is the TRUE worst legal body and the number pkg/constants/http.go derives.
+// A fixture that sent only PNG could not distinguish a correct cap from one set to 41,943,079:
+// that cap passes a PNG-only test while refusing every maximum-size JPEG, which the contract
+// admits equally (design/brief.go's Enum). The subtest asserting the largest case is what makes
+// the cap's last byte load-bearing.
 func TestUploadRoute_AdmitsMaximumLegalUpload(t *testing.T) {
 	const maxImage = 31457280 // MaxLength on design/brief.go's `bytes` attribute
+	// Encoded once: both subtests differ only in the enum value, and this is 40 MiB of work.
+	encoded := base64.StdEncoding.EncodeToString(make([]byte, maxImage))
 
-	// The real wire shape: the image base64'd into the JSON body Goa decodes.
-	body := fmt.Sprintf(`{"content_type":"image/png","bytes":%q}`, base64.StdEncoding.EncodeToString(make([]byte, maxImage)))
+	// Ordered shortest-envelope first, so the failure message names the smaller case when the
+	// cap is far too low and the larger one when it is off by only the enum's difference.
+	for _, tc := range []struct {
+		contentType string
+		wantSize    int64 // the exact wire size, pinned so a change in encoding is visible here
+	}{
+		{model.MimeTypePNG, 41943079},
+		{model.MimeTypeJPEG, 41943080}, // the worst case the contract admits
+	} {
+		t.Run(tc.contentType, func(t *testing.T) {
+			// The real wire shape: the image base64'd into the JSON body Goa decodes.
+			body := fmt.Sprintf(`{"content_type":%q,"bytes":%q}`, tc.contentType, encoded)
 
-	// Pin the premise rather than trusting the arithmetic: this is the number the constant must
-	// clear, and if Goa ever changed encodings this assertion is what would say so.
-	if int64(len(body)) <= 40<<20 {
-		t.Fatalf("fixture body is %d bytes; expected a max-size upload to exceed 40 MiB after base64", len(body))
-	}
-	if int64(len(body)) > constants.MaxRequestBodyBytes {
-		t.Fatalf("MaxRequestBodyBytes (%d) is below the largest LEGAL upload (%d bytes): every maximum-size image would be refused with 413",
-			constants.MaxRequestBodyBytes, len(body))
-	}
+			// Pin the premise rather than trusting the arithmetic: these are the numbers the
+			// constant must clear, and if Goa ever changed encodings — or a third field were
+			// added to the body — these assertions are what would say so.
+			if int64(len(body)) != tc.wantSize {
+				t.Fatalf("fixture body is %d bytes, want exactly %d: the envelope changed, so the "+
+					"worst case pkg/constants/http.go derives is no longer the one being tested", len(body), tc.wantSize)
+			}
+			if int64(len(body)) <= 40<<20 {
+				t.Fatalf("fixture body is %d bytes; expected a max-size upload to exceed 40 MiB after base64", len(body))
+			}
+			if int64(len(body)) > constants.MaxRequestBodyBytes {
+				t.Fatalf("MaxRequestBodyBytes (%d) is below the largest LEGAL upload (%d bytes, content_type %q): "+
+					"every maximum-size image of that type would be refused with 413",
+					constants.MaxRequestBodyBytes, len(body), tc.contentType)
+			}
 
-	h := realChain(t)
-	req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+			h := realChain(t)
+			req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
 
-	if rec.Code == http.StatusRequestEntityTooLarge {
-		t.Fatalf("a maximum-size legal upload (%d bytes on the wire) was refused with 413; the cap is too small", len(body))
+			if rec.Code == http.StatusRequestEntityTooLarge {
+				t.Fatalf("a maximum-size legal upload (%d bytes on the wire, content_type %q) was refused with 413; the cap is too small",
+					len(body), tc.contentType)
+			}
+		})
 	}
 }
 

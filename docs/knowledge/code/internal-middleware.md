@@ -38,9 +38,15 @@ the `Content-Length` arm the bytes are never read at all.
 The cap is sized from the largest LEGAL upload, not guessed. Base64 expands by exactly 4/3, so the
 30-MiB `MaxLength` on the upload's `bytes` attribute arrives as 41,943,040 characters — 40 MiB to
 the byte. Only `content_type` and `bytes` travel in the body (`project_id` and `brief_id` are path
-parameters), so the JSON envelope adds 39 bytes, for a measured worst-case body of **41,943,079**.
-A 40-MiB cap would therefore reject every maximum-size image by those 39 bytes; 42 MiB clears it
-with ~2 MiB of headroom. Raising the declared `MaxLength` requires raising this constant in step.
+parameters), so the JSON envelope adds 39 bytes for the shorter enum value (`"image/png"`) and 40
+for the longer (`"image/jpeg"`), putting the worst legal body at **41,943,080** — the JPEG case,
+since `content_type` rides in the body and its length therefore counts. A 40-MiB cap would
+reject every maximum-size image by those 40 bytes; 42 MiB clears it with ~2 MiB of headroom.
+Raising the declared `MaxLength` requires raising this constant in step.
+
+Both enum values are driven by `TestUploadRoute_AdmitsMaximumLegalUpload`, and the JPEG case is
+what makes the last byte load-bearing: a cap of 41,943,079 passes a PNG-only fixture while
+refusing every maximum-size JPEG the contract admits.
 
 In the handler chain the cap sits inside the request-ID/debug/OTel wrappers (so a 413 still
 carries a request id and is still traced) but outside the mux, since the Goa decoders behind the

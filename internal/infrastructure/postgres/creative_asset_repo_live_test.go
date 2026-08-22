@@ -543,6 +543,21 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 		// the asset readable while it could no longer be created — the inconsistency GetAudience
 		// documents. The asset is created while the brief is active, then the brief is archived
 		// underneath it, which is the only ordering that can produce this state.
+		//
+		// This subtest ALSO carries createCreativeAssetQuery's locking decision, which is not
+		// obvious from here and is the reason it must not be weakened casually. That insert
+		// gates its parent with an unlocked WHERE EXISTS and does NOT serialize against
+		// archival, so a concurrent ArchiveBrief can strand an asset under a brief that is
+		// archived by the time the row lands. The comment there justifies leaving it unlocked
+		// SOLELY by the consequence — "the consequence here is only a stored blob nothing can
+		// reach" — and names the change that would invalidate it: "a path that reads assets
+		// without re-checking the parent [means] this insert needs the locking treatment".
+		//
+		// The stranded row and the row below are the same row to a reader: both are assets
+		// whose parent is archived. So this assertion is what makes "nothing can reach it"
+		// true, and dropping the EXISTS from getCreativeAssetQuery fails here. Anyone loosening
+		// this is also reopening the locking question in createCreativeAssetQuery, not just
+		// relaxing a read scope.
 		liveBriefID, liveProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 		a := newTestAsset(t, liveProjectID, liveBriefID)
 		created, err := repo.CreateAsset(ctx, a)

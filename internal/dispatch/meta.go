@@ -32,14 +32,24 @@ type metaCreds struct {
 // scale; when zero the client derives it from the account's ISO currency during its
 // preflight.
 type metaConfig struct {
-	Budget         float64          `json:"budget"`
-	LifetimeBudget bool             `json:"lifetimeBudget"`
-	StartDate      string           `json:"startDate"` // YYYY-MM-DD
-	EndDate        string           `json:"endDate"`   // YYYY-MM-DD
-	Objective      string           `json:"objective"` // awareness|traffic|engagement|leads|conversions
-	GeoTargets     []string         `json:"geoTargets"`
-	Placements     meta.Placement   `json:"placements"`
-	PixelID        string           `json:"pixelId"`
+	Budget         float64        `json:"budget"`
+	LifetimeBudget bool           `json:"lifetimeBudget"`
+	StartDate      string         `json:"startDate"` // YYYY-MM-DD
+	EndDate        string         `json:"endDate"`   // YYYY-MM-DD
+	Objective      string         `json:"objective"` // awareness|traffic|engagement|leads|conversions
+	GeoTargets     []string       `json:"geoTargets"`
+	Placements     meta.Placement `json:"placements"`
+	PixelID        string         `json:"pixelId"`
+	// InstagramUserID (IGSID) binds the ad creative to an Instagram account. REQUIRED
+	// when any Instagram placement is used (the default placements include Instagram
+	// Feed) — without it Meta refuses to publish the ad with "Please add Instagram
+	// account". Left empty for Facebook-only campaigns.
+	InstagramUserID string `json:"instagramUserId"`
+	// DSABeneficiary and DSAPayor are the EU DSA advertiser/payer disclosures. Required
+	// for a launch-ready ad set that targets a regulated location; Meta blocks publish
+	// ("Please add Advertiser" / "Please add Payer") until both are set.
+	DSABeneficiary string           `json:"dsaBeneficiary"`
+	DSAPayor       string           `json:"dsaPayor"`
 	Variants       []meta.AdVariant `json:"variants"`
 	// CurrencyOffset is a FALLBACK minor-unit scale (1 for zero-decimal currencies like
 	// JPY, 100 for most), NOT an unconditional override: the client's preflight derives
@@ -77,8 +87,15 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 // /{campaignID}/insights) and never read AccountConfig.AccountID at all, so requiring one
 // there would refuse a perfectly servable pause/metrics-read on a connection whose account
 // selection was later cleared via PUT.
-func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds metaCreds, err error) {
-	res, err = d.creds.resolve(ctx, projectID, platform)
+//
+// resolveCreds selects the credential entry point: d.creds.resolve for creation and discovery
+// (both governed by the forced-system flag) and d.creds.existingResolver(...) for an operation
+// on an already-created campaign, which resolves the account that campaign was CREATED under
+// — the project's, or the LF system one when the flag governed its creation (see
+// resolveExisting). Passed in rather than inferred, because only the caller knows whether it
+// holds a campaign, and only it can read that campaign's recorded creation account.
+func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (res *resolved, creds metaCreds, err error) {
+	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, metaCreds{}, err
 	}
@@ -154,7 +171,7 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 
 // Dispatch implements service.PlatformDispatcher for Meta.
 func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
-	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform, d.creds.resolve)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -219,6 +236,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		EndDate:         cfg.EndDate,
 		Placements:      cfg.Placements,
 		PixelID:         cfg.PixelID,
+		InstagramUserID: cfg.InstagramUserID,
+		DSABeneficiary:  cfg.DSABeneficiary,
+		DSAPayor:        cfg.DSAPayor,
 		Variants:        cfg.Variants,
 	}
 
@@ -266,7 +286,7 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if err != nil {
 		return err
 	}
-	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.existingResolver(metaCreationAccountID(campaign)))
 	if err != nil {
 		return err
 	}
@@ -347,7 +367,7 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 // platform-agnostic window to Meta's own vocabulary via metaMetricsWindow before calling
 // the client.
 func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.existingResolver(metaCreationAccountID(campaign)))
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +604,7 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 // it asks what the TOKEN reaches, so scoping the client to one of the answers would narrow
 // the response to a subset of the question.
 func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
-	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
+	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolve)
 	if err != nil {
 		return nil, err
 	}

@@ -54,6 +54,13 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // assets without re-checking the parent -- this insert needs the locking treatment, not a
 // stronger comment.
 //
+// The second of those triggers is CHECKED rather than left to review. getCreativeAssetQuery's
+// EXISTS on a non-archived parent is what makes "nothing can reach it" true, and
+// TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant's "an archived parent brief makes
+// the asset unreadable" subtest fails if it is dropped. That subtest is therefore load-bearing
+// for THIS decision as well as for its own lifecycle-consistency point, and says so, so that
+// weakening it cannot quietly remove this insert's justification.
+//
 // ON CONFLICT (brief_id, checksum) DO UPDATE — not DO NOTHING — is what makes a repeat upload
 // return the EXISTING asset. DO NOTHING suppresses the RETURNING clause on a conflict (Postgres
 // emits no row for a row it did not touch), so the caller could not tell "stored" from "already
