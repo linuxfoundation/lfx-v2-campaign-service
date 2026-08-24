@@ -1,6 +1,6 @@
 # 2026-08-20 — LFXV2-2643 a schema check that could not see what it verified
 
-Batch of suppressed-review fixes on PR #159. The unifying defect is not any one
+**Fix** — batch of suppressed-review fixes on PR #159. The unifying defect is not any one
 line: three of these are assertions whose STATED guarantee is stronger than the
 thing they actually observe, and the observation is where the strength has to
 live.

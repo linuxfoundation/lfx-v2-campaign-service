@@ -70,8 +70,8 @@ func TestMigrateRefusesAnInvalidIndex(t *testing.T) {
 
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrInvalidIndex) {
-		t.Fatalf("Migrate with an invalid index present: got %v, want ErrInvalidIndex — "+
-			"reporting success here is how a lost UNIQUE constraint goes unnoticed", err)
+		t.Fatalf("Migrate with an invalid index present: got %s, want ErrInvalidIndex — "+
+			"reporting success here is how a lost UNIQUE constraint goes unnoticed", safeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v — an operator has to know which index to drop", idx, err)
@@ -116,9 +116,9 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 	// message used to advise on its own. The version is clean, so this rebuilds nothing.
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-		t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+		t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
 			"succeeding here starts the service with the audience-build race wide open "+
-			"and nothing to report it", idx, err)
+			"and nothing to report it", idx, safeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v", idx, err)
@@ -154,9 +154,9 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-		t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+		t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
 			"succeeding here starts the service with (brief_id, platform) uniqueness gone "+
-			"and concurrent claims free to double-create paid campaigns", idx, err)
+			"and concurrent claims free to double-create paid campaigns", idx, safeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v", idx, err)
@@ -218,9 +218,9 @@ func TestMigrateRefusesARequiredIndexWithTheWrongDefinition(t *testing.T) {
 
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrRequiredIndexMismatch) {
-		t.Fatalf("Migrate with a same-named non-unique index: got %v, want "+
+		t.Fatalf("Migrate with a same-named non-unique index: got %s, want "+
 			"ErrRequiredIndexMismatch — the migration's IF NOT EXISTS skipped, so this "+
-			"schema arbitrates no lease at all while every name-based check passes", err)
+			"schema arbitrates no lease at all while every name-based check passes", safeDSNErr(err))
 	}
 	// The two defects must BOTH be named. A message that stops at the first one sends the
 	// operator to rebuild an index that would still be wrong.
@@ -380,9 +380,9 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 			// and a service that boots with the constraint gone.
 			err := postgres.Migrate(dbtest.DSN())
 			if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-				t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+				t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
 					"succeeding here boots the service against a schema where a second live "+
-					"row for the same key inserts cleanly and nothing reports it", idx, err)
+					"row for the same key inserts cleanly and nothing reports it", idx, safeDSNErr(err))
 			}
 			if !strings.Contains(err.Error(), idx) {
 				t.Errorf("the error does not name %s, so the operator cannot tell WHICH "+
@@ -450,8 +450,8 @@ func TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts(t *testing.T) {
 					rebuild, err)
 			}
 			if err := postgres.Migrate(dbtest.DSN()); err != nil {
-				t.Fatalf("Migrate after following the printed remedy for %s: %v — an "+
-					"operator who does exactly what the error says is still down", idx, err)
+				t.Fatalf("Migrate after following the printed remedy for %s: %s — an "+
+					"operator who does exactly what the error says is still down", idx, safeDSNErr(err))
 			}
 		})
 	}

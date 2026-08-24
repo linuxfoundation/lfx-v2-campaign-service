@@ -50,3 +50,46 @@ func TestVerdict(t *testing.T) {
 		})
 	}
 }
+
+// TestConnectAndMigrateDoesNotEchoTheDSN pins the harness's own leak path.
+//
+// Pool reports setupErr with t.Fatalf, so whatever connectAndMigrate returns is printed
+// verbatim to the build log. On CI that log is visible to more people than the secret
+// store, and TEST_DATABASE_URL there authenticates over TCP with a `user:password@`
+// segment — so the returned error is exactly the string that must not carry it.
+//
+// The leak is reachable through golang-migrate: postgres.Migrate calls database.Open,
+// which parses the URL and returns a *url.Error embedding it in full. That is why this
+// test drives connectAndMigrate with a MALFORMED DSN — the parse failure is the branch
+// that leaks, and it needs no reachable database, so this runs on a laptop with no
+// Postgres at all.
+func TestConnectAndMigrateDoesNotEchoTheDSN(t *testing.T) {
+	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
+	const username = "ciuser"
+
+	// Unclosed IPv6 bracket: golang-migrate's url.Parse rejects it, and no connection
+	// is ever attempted.
+	dsn := "postgres://" + username + ":" + password + "@[::1:5432/campaign_test"
+
+	pool, err := connectAndMigrate(dsn)
+	if err == nil {
+		if pool != nil {
+			pool.Close()
+		}
+		t.Fatalf("connectAndMigrate(%s) succeeded against a malformed DSN; this test no "+
+			"longer exercises the parse-failure branch it guards", EnvDatabaseURL)
+	}
+
+	got := err.Error()
+	if strings.Contains(got, password) {
+		t.Errorf("connectAndMigrate echoed the password into its error: %q", got)
+	}
+	if strings.Contains(got, username) {
+		t.Errorf("connectAndMigrate echoed the user half of the credential: %q", got)
+	}
+	// The env-var NAME must survive: an error that redacts away the identity of the
+	// misconfigured variable tells an operator nothing about what to fix.
+	if !strings.Contains(got, EnvDatabaseURL) {
+		t.Errorf("connectAndMigrate = %q, want it to still name %s", got, EnvDatabaseURL)
+	}
+}

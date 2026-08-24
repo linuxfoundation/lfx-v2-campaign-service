@@ -1,6 +1,6 @@
 # 2026-08-20 — LFXV2-2643 two assertions that could not do what they claimed
 
-Second batch of suppressed-review fixes on PR #159, and the two findings are the
+**Fix** — second batch of suppressed-review fixes on PR #159, and the two findings are the
 same defect pointing in opposite directions: an assertion that can fail CORRECT
 code, and a snapshot that cannot fail INCORRECT code. Both were introduced by
 commits on this very branch that were fixing that exact class elsewhere.

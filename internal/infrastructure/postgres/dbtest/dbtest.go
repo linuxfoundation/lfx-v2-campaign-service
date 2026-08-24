@@ -49,6 +49,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // EnvDatabaseURL names the database the live tests run against.
@@ -130,7 +131,13 @@ func verdict(dsn, ci string) (reason string, fatal bool) {
 
 func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 	if err := postgres.Migrate(dsn); err != nil {
-		return nil, fmt.Errorf("migrate %s: %w", EnvDatabaseURL, err)
+		// The DSN is named, never printed -- and the ERROR has to be redacted for that
+		// discipline to hold. postgres.Migrate reaches golang-migrate's database.Open,
+		// which parses the URL and returns a *url.Error embedding it in full, so a plain
+		// %w here would put TEST_DATABASE_URL (with its CI `user:password@`) into the
+		// build log via Pool's t.Fatalf. redact.URLUserinfo is string-based, so it works
+		// on exactly this path -- where the parse FAILED and there is no *url.URL.
+		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, redact.URLUserinfo(err.Error()))
 	}
 	// 30s covers a cold container that has just passed its health check but is still
 	// warming, which is the slow case on a CI runner. It bounds the POOL open only;
