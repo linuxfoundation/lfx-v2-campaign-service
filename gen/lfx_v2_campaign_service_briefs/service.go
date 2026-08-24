@@ -43,9 +43,10 @@ type Service interface {
 	// (in any project, since several foundations share one upstream ad account) /
 	// the brief lost approval during the read / the project has no ad-platform
 	// connection of its own, and 400 when the platform has no adoption capability
-	// wired. An adopted campaign supports metrics, delete and pause; activation is
-	// refused, because adoption does not verify the targeting the activate guard
-	// requires.
+	// wired. An adopted campaign behaves like any other campaign row on every
+	// per-campaign endpoint - the metrics read, the settings readback, delete and
+	// pause all work on it; activation is the one exception, and is refused
+	// because adoption does not verify the targeting the activate guard requires.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
