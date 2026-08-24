@@ -69,13 +69,26 @@ func TestUploadCreativeAsset_StatusDistinguishesCreationFromRetry(t *testing.T) 
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("unmarshal body: %v", err)
 			}
-			for _, k := range []string{"id", "project_id", "brief_id", "mime_type", "byte_size", "checksum"} {
+			for _, k := range []string{"id", "project_id", "brief_id", "mime_type", "byte_size", "checksum", "created"} {
 				if _, ok := body[k]; !ok {
 					t.Errorf("body is missing %q; the two status arms must carry the same asset shape", k)
 				}
 			}
 			if body["id"] != "a1" {
 				t.Errorf("body id = %v, want a1", body["id"])
+			}
+
+			// The DISCRIMINATOR itself, asserted by VALUE rather than by presence.
+			//
+			// `created` is what selects 201 from 200, so a body that carries the wrong one
+			// contradicts its own status line: a client reading the attribute (rather than the
+			// status) would conclude the opposite of what happened. Checking only that the key
+			// EXISTS leaves that inversion undetected, and checking only the status leaves the
+			// attribute free to drift from it — the two are one contract and are asserted
+			// together here.
+			if body["created"] != tc.created {
+				t.Errorf("body created = %v, want %q — the attribute must agree with the %d status it selected",
+					body["created"], tc.created, tc.want)
 			}
 		})
 	}

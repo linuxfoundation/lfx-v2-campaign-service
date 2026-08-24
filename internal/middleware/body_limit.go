@@ -49,6 +49,28 @@ import (
 // The second arm is why this is not merely a Content-Length check: Content-Length is
 // caller-supplied and a chunked request carries none at all.
 //
+// WHAT THE SECOND ARM DOES NOT DETECT, and why that is not a hole. Because it fires at the READ,
+// it can only fire on bytes someone reads. A caller may therefore send a valid JSON value
+// followed by unbounded trailing bytes: json.Decoder stops at the end of the first complete
+// value, never reads far enough to trip MaxBytesReader, and the request is answered normally
+// with exceeded() still false. The cap did not fire on an over-cap transmission.
+//
+// That is harmless, and the reason is the difference between what is SENT and what is CONSUMED.
+// The bound this middleware provides is on bytes read into this process. Bytes the decoder never
+// requests are never pulled off the socket: they remain in the kernel receive buffer, the
+// handler returns, and net/http closes the connection instead of draining them (the same missing
+// requestTooLarger signal described above means there is no drain to perform). Nothing in this
+// process allocates them, so the memory bound holds no matter how many are offered. Measured:
+// against a 4 KiB cap, trailing payloads of 1 MiB through 512 MiB all left consumption flat at a
+// few hundred KiB of socket buffer, with peak heap unchanged.
+//
+// The shape that WOULD matter is oversized bytes INSIDE the value, since the decoder must read
+// every one of them to produce it — and there this arm fires exactly as designed, refusing with
+// 413 having decoded nothing. Both cases are pinned by tests
+// (TestMaxBodyBytes_TrailingBytesAfterAValidValueAreNeverConsumed and
+// TestMaxBodyBytes_OversizeInsideTheValueStillTrips413), because the distinction is the kind a
+// later reader is likely to mistake for a bypass.
+//
 // Both arms answer 413 with the service's JSON error shape rather than letting the
 // overflow surface as a decode failure. A truncated body reaching the Goa decoder
 // produces "invalid character ... looking for beginning of value" with a 400 — which
