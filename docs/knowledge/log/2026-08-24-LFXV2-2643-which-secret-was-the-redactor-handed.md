@@ -77,7 +77,7 @@ boundaries drew review attention to WHICH identifiers are compared, and one was 
 `pgconn.ParseConfig` puts only the first host in `Config.Host`; a comma-separated multi-host
 DSN parses the rest into `Config.Fallbacks`, and pgx names the host that failed using
 `originalHostname`. Verified before fixing: against
-`postgres://multiuser:multipw@primary.invalid:5432,secondary.invalid:5433,third.invalid:5434/multidb`,
+`postgres://USER:PASS@primary.invalid:5432,secondary.invalid:5433,third.invalid:5434/multidb`,
 the message `failed to connect to host "secondary.invalid": connection refused` returned
 **verbatim** — `dsnIdentifiersPresent` reported false.
 

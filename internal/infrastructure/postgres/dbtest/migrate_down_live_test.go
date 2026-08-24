@@ -1201,7 +1201,7 @@ func TestSafeDSNErrWithholdsFallbackHosts(t *testing.T) {
 
 	// Three hosts: one primary, two fallbacks. .invalid keeps them unresolvable, so this
 	// DSN cannot collide with any harness value. //nolint:gosec // synthetic fixture
-	const dsn = "postgres://multiuser:multipw@primary.invalid:5432," + //nolint:gosec // synthetic fixture
+	const dsn = "postgres://multiuser:multipw@primary.invalid:5432," + //nolint:gosec // secretlint-disable-line -- synthetic multi-host fixture; .invalid hosts are unresolvable
 		"secondary.invalid:5433,third.invalid:5434/multidb?sslmode=disable"
 
 	// Every host in the DSN must be withheld, not just the first.
