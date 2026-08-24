@@ -420,7 +420,7 @@ func TestGoogleAdsReadAudienceInsights_MapsBucketsAndKeepsRequestWindow(t *testi
 		b, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(string(b), "FROM age_range_view") {
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"metrics":{"impressions":"100","clicks":"10","costMicros":"500"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"campaign":{"id":"555"},"metrics":{"impressions":"100","clicks":"10","costMicros":"500"}}]}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"results":[]}`)
@@ -450,11 +450,11 @@ func TestGoogleAdsReadAudienceInsights_DimensionTokensMatchTheModelVocabulary(t 
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(string(b), "FROM age_range_view"):
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"campaign":{"id":"555"},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
 		case strings.Contains(string(b), "FROM gender_view"):
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"gender":{"type":"MALE"}},"metrics":{"impressions":"20","clicks":"2","costMicros":"10"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"gender":{"type":"MALE"}},"campaign":{"id":"555"},"metrics":{"impressions":"20","clicks":"2","costMicros":"10"}}]}`)
 		default:
-			_, _ = io.WriteString(w, `{"results":[{"segments":{"device":"MOBILE"},"metrics":{"impressions":"30","clicks":"3","costMicros":"15"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"segments":{"device":"MOBILE"},"campaign":{"id":"555"},"metrics":{"impressions":"30","clicks":"3","costMicros":"15"}}]}`)
 		}
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)

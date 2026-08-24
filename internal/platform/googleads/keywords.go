@@ -27,9 +27,9 @@ const (
 	// impressions descending and asks for one row beyond the cap, so a full page is
 	// distinguishable from a truncated one — see GetKeywordPerformance.
 	//
-	// A cap is necessary because an account's keyword set is unbounded and this is a
-	// synchronous read feeding a UI table. It is documented in the API contract via the
-	// `truncated` flag rather than hidden: a silently-capped total presented as the
+	// A cap is necessary because the scoped campaign set's keyword count is unbounded and
+	// this is a synchronous read feeding a UI table. It is documented in the API contract via
+	// the `truncated` flag rather than hidden: a silently-capped total presented as the
 	// project's whole spend is a wrong number, not merely an incomplete one.
 	maxKeywordRows = 50
 
@@ -96,9 +96,11 @@ type KeywordRow struct {
 type KeywordPerformance struct {
 	Window MetricsWindow `json:"window"`
 	Rows   []KeywordRow  `json:"rows"`
-	// Truncated reports that the account holds MORE keywords than Rows carries. Without
-	// it a caller receiving exactly maxKeywordRows rows cannot tell a small account from a
-	// truncated large one, and would total the slice as if it were the whole account.
+	// Truncated reports that the SCOPED CAMPAIGNS hold more keywords than Rows carries —
+	// the caller's own campaigns, which is the whole of what this read covers, and never
+	// the shared customer. Without it a caller receiving exactly maxKeywordRows rows cannot
+	// tell a project with few keywords from a truncated large one, and would total the slice
+	// as if it were that project's complete keyword spend.
 	Truncated bool `json:"truncated"`
 }
 
@@ -292,9 +294,18 @@ func normaliseKeywordMatchType(s string) string {
 //
 // Each id is validated digits-only, matching GetCampaignMetrics: these are concatenated into the
 // query string and GAQL has no parameterized queries, so an unvalidated id is an injection vector.
-func campaignScopePredicate(campaignIDs []string, op string) (string, error) {
+//
+// It returns the canonical scope SET alongside the predicate because sending the filter is only
+// half of the boundary. The response is what the caller actually receives, and a filter Google
+// did not honour — a regression upstream, a malformed rewrite, a row injected on a shared
+// customer — hands back another project's rows with a 200. Callers therefore re-check every row
+// against this set (assertCampaignInScope) instead of trusting that the WHERE clause was applied,
+// which is the same rule campaign_lookup.go states for its own id filter. The set and the
+// predicate are built from ONE canonicalisation pass so the filter sent and the membership
+// enforced cannot drift apart.
+func campaignScopePredicate(campaignIDs []string, op string) (string, map[string]struct{}, error) {
 	if len(campaignIDs) == 0 {
-		return "", fmt.Errorf("%s: no campaign ids to scope the query to; an unscoped read would "+
+		return "", nil, fmt.Errorf("%s: no campaign ids to scope the query to; an unscoped read would "+
 			"return every project's data from the shared customer", op)
 	}
 	// The ids are rendered UNQUOTED, exactly as GetCampaign and GetCampaignMetrics render the
@@ -304,6 +315,7 @@ func campaignScopePredicate(campaignIDs []string, op string) (string, error) {
 	// which is the security boundary for two otherwise account-wide reads. No escaping question
 	// arises: every value has already been proven to be nothing but digits.
 	ids := make([]string, 0, len(campaignIDs))
+	scope := make(map[string]struct{}, len(campaignIDs))
 	for _, raw := range campaignIDs {
 		// canonicalCampaignID on the RAW value, deliberately without TrimSpace. Trimming here
 		// would normalise a malformed stored id into a DIFFERENT real campaign before the
@@ -315,11 +327,40 @@ func campaignScopePredicate(campaignIDs []string, op string) (string, error) {
 		// the same reason; reusing it is what keeps the two surfaces from drifting.
 		id := canonicalCampaignID(raw)
 		if id == "" {
-			return "", fmt.Errorf("%s: campaign id %q must be the canonical base-10 spelling of a positive int64", op, raw)
+			return "", nil, fmt.Errorf("%s: campaign id %q must be the canonical base-10 spelling of a positive int64", op, raw)
 		}
 		ids = append(ids, id)
+		scope[id] = struct{}{}
 	}
-	return "campaign.id IN (" + strings.Join(ids, ", ") + ")", nil
+	return "campaign.id IN (" + strings.Join(ids, ", ") + ")", scope, nil
+}
+
+// assertCampaignInScope rejects a response row whose campaign is not one the caller asked for.
+//
+// The GAQL predicate is the filter REQUESTED; this is the filter ENFORCED. Google Ads is one
+// customer shared across every foundation, so if a response carries a campaign outside the
+// requested set the WHERE clause was not honoured and the rows on offer are another project's
+// keywords, spend and demographics. That invalidates the WHOLE response, so this errors rather
+// than skipping the row: skipping would reduce an unhonoured query to "this project has little
+// data", the clean partial answer a caller totals and acts on. Erroring makes a filter
+// regression LOUD, which is the rule campaign_lookup.go already applies to its id filter.
+//
+// The row's id is canonicalised before the comparison for the reason canonicalCampaignID
+// documents: the scope set holds canonical spellings, so comparing raw text would let "007"
+// read as a foreign campaign — or, worse, a non-canonical spelling of an in-scope one read as
+// a match by string equality alone. An id that does not canonicalise is refused outright; it
+// names no campaign and cannot be proven in scope.
+func assertCampaignInScope(rowCampaignID string, scope map[string]struct{}, describe string) error {
+	id := canonicalCampaignID(rowCampaignID)
+	if id == "" {
+		return fmt.Errorf("%s: campaign id %q is not the canonical base-10 spelling of a positive int64; "+
+			"the row cannot be proven to belong to the requested campaigns", describe, rowCampaignID)
+	}
+	if _, ok := scope[id]; !ok {
+		return fmt.Errorf("%s: response carried campaign %s, which is outside the requested campaign scope; "+
+			"the campaign filter was not honoured, refusing to trust this response", describe, id)
+	}
+	return nil
 }
 
 func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow, campaignIDs []string) (*KeywordPerformance, error) {
@@ -327,7 +368,7 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 	if err != nil {
 		return nil, err
 	}
-	scope, err := campaignScopePredicate(campaignIDs, "get keyword performance")
+	scope, inScope, err := campaignScopePredicate(campaignIDs, "get keyword performance")
 	if err != nil {
 		return nil, err
 	}
@@ -376,15 +417,17 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		// keyword-actions endpoint needs BOTH to address a criterion. Returning it would
 		// hand the caller a row whose action button cannot work, so fail loudly instead —
 		// an absent id here means the SELECT and this struct have drifted apart.
-		//
-		// campaign.id is held to the SAME standard, and for the same reason rather than a
-		// weaker one: it is selected by this query, it is Required() on the design type, and
-		// a row carrying campaign_id:"" cannot be associated with any campaign by a caller —
-		// on a read whose whole scope is the project's OWN campaigns. Admitting it would let
-		// exactly the drift rejected for the other two ids through as a success.
-		if strings.TrimSpace(row.AdGroupCriterion.CriterionID) == "" || strings.TrimSpace(row.AdGroup.ID) == "" ||
-			strings.TrimSpace(row.Campaign.ID) == "" {
-			return nil, fmt.Errorf("get keyword performance: row %d is missing its criterion, ad group or campaign id", i)
+		if strings.TrimSpace(row.AdGroupCriterion.CriterionID) == "" || strings.TrimSpace(row.AdGroup.ID) == "" {
+			return nil, fmt.Errorf("get keyword performance: row %d is missing its criterion or ad group id", i)
+		}
+		// campaign.id is held to a STRICTER standard than presence, because presence is not
+		// membership. This read's whole scope is the project's OWN campaigns on a customer
+		// shared with every other foundation, so the question a row must answer is not "does
+		// it name a campaign" but "does it name one of the campaigns asked for". An empty id
+		// fails this too — it does not canonicalise — so the presence check it replaces is
+		// subsumed rather than dropped.
+		if sErr := assertCampaignInScope(row.Campaign.ID, inScope, fmt.Sprintf("get keyword performance: row %d", i)); sErr != nil {
+			return nil, sErr
 		}
 		out = append(out, KeywordRow{
 			CriterionID: row.AdGroupCriterion.CriterionID,
@@ -464,7 +507,7 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 	if err != nil {
 		return nil, err
 	}
-	scope, err := campaignScopePredicate(campaignIDs, "get audience insights")
+	scope, inScope, err := campaignScopePredicate(campaignIDs, "get audience insights")
 	if err != nil {
 		return nil, err
 	}
@@ -473,8 +516,12 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 	for _, aq := range audienceQueries {
 		// Every interpolated value is either a constant from audienceQueries or the
 		// allow-listed window — no caller input reaches the query string.
+		// campaign.id is selected even though no bucket reports it: it is what makes the
+		// scope predicate CHECKABLE on the way back. Without it the response carries no
+		// evidence of which campaign a bucket's impressions and spend came from, so an
+		// unhonoured filter would be indistinguishable from a correct answer.
 		query := fmt.Sprintf(
-			"SELECT %s, metrics.impressions, metrics.clicks, metrics.cost_micros "+
+			"SELECT %s, campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros "+
 				"FROM %s WHERE segments.date DURING %s AND %s",
 			aq.selectField, aq.from, w, scope,
 		)
@@ -498,6 +545,16 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 					Path:   c.customerPath("googleAds:search"),
 					Err:    fmt.Errorf("decode %s row at index %d: %w", aq.dimension, i, uErr),
 				}
+			}
+			// Checked BEFORE the row's metrics are aggregated. Once a foreign row's
+			// impressions are summed into a bucket they are indistinguishable from the
+			// project's own, and the totals a caller reads are another project's spend.
+			rowCampaign, cErr := extractStringPath(generic, []string{"campaign", "id"})
+			if cErr != nil {
+				return nil, fmt.Errorf("get audience insights (%s): row %d: %w", aq.dimension, i, cErr)
+			}
+			if sErr := assertCampaignInScope(rowCampaign, inScope, fmt.Sprintf("get audience insights (%s): row %d", aq.dimension, i)); sErr != nil {
+				return nil, sErr
 			}
 			value, vErr := extractStringPath(generic, aq.jsonPath)
 			if vErr != nil {

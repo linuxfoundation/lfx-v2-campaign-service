@@ -1,6 +1,6 @@
 # 2026-08-24 — a fail-closed guard that skips one of the three Required ids
 
-**Google Ads keywords** — `GetKeywordPerformance` rejects a GAQL row whose criterion id or ad
+**Fix** — Google Ads keywords: `GetKeywordPerformance` rejects a GAQL row whose criterion id or ad
 group id is missing, on the stated reasoning that an absent id means the SELECT and the decode
 struct have drifted apart. `campaign.id` is selected by the same query and is listed in
 `Required("criterion_id", "ad_group_id", "campaign_id", ...)` on the `google-ads-keyword`

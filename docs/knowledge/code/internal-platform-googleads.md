@@ -892,6 +892,38 @@ The consequence worth stating plainly is a BEHAVIOUR CHANGE: a campaign created 
 service, or claimed but not yet dispatched, has no dispatched row and is therefore not in scope,
 so its keywords and demographics no longer appear.
 
+**Sending the filter is only half of the boundary; the response has to be re-checked against
+it.** `campaignScopePredicate` returns the canonical scope SET alongside the predicate string,
+and both scoped reads pass every response row through `assertCampaignInScope` before using it.
+The predicate is the filter REQUESTED; the set is the filter ENFORCED. On a customer shared
+across every foundation, a response carrying a campaign outside the requested set means the
+WHERE clause was not honoured, and the rows on offer are another project's keywords, spend and
+demographics — so the check errors on the whole response rather than skipping the row. Skipping
+would reduce an unhonoured query to "this project has little data", which is the clean partial
+answer a caller totals and acts on. This is the rule `campaign_lookup.go` already applies to its
+own id filter, and the two surfaces are deliberately written the same way.
+
+Presence is NOT membership, and that distinction is the whole finding. An earlier revision
+guarded `campaign.id` only for being non-empty, on the reasoning that an absent id means the
+SELECT and the decode struct have drifted apart. That reasoning is sound and still holds, but it
+answers "does this row name a campaign", not "does it name one of the campaigns asked for" — so
+a row for campaign 999 returned against a request scoped to 555 was admitted as a successful
+read. The set membership check subsumes the presence check rather than replacing it: an empty
+id does not canonicalise and fails the same guard.
+
+The ids are canonicalised on BOTH sides before comparison (`canonicalCampaignID`), so the
+comparison compares campaigns rather than text — otherwise `0555` would read as a foreign
+campaign, and the boundary would depend on how the upstream chose to spell a number.
+
+`GetAudienceInsights` selects `campaign.id` even though no bucket reports it, purely to make
+this check possible: without that column the response carries no evidence of which campaign a
+bucket's impressions and spend came from, so an unhonoured filter is indistinguishable from a
+correct answer. Its check runs BEFORE the row's metrics are aggregated — once a foreign row's
+impressions are summed into a bucket they cannot be told from the project's own. Note that a
+stub server answers whatever fixture a test wrote regardless of the SELECT, so the projection
+needs a test of its own; asserting `campaign.id` appears anywhere in the query text matches the
+WHERE clause and proves nothing about the SELECT.
+
 **The narrowing has to be swept across every surface that DESCRIBES these reads, not only the
 one that performs them.** The scope predicate landed with the type godocs, method godocs, test
 rationales, the API catalog row and this file still calling the results "account-wide", "the

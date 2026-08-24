@@ -38,7 +38,7 @@ func TestGetKeywordPerformance_HappyPath(t *testing.T) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[`+
-			keywordRowJSON("305729261", "176216228", "21234567890", "kubernetes training", "EXACT", "ENABLED", 1000, 40, 25000000)+
+			keywordRowJSON("305729261", "176216228", "555", "kubernetes training", "EXACT", "ENABLED", 1000, 40, 25000000)+
 			`]}`)
 	})
 
@@ -50,7 +50,7 @@ func TestGetKeywordPerformance_HappyPath(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(kp.Rows))
 	}
 	got := kp.Rows[0]
-	if got.CriterionID != "305729261" || got.AdGroupID != "176216228" || got.CampaignID != "21234567890" {
+	if got.CriterionID != "305729261" || got.AdGroupID != "176216228" || got.CampaignID != "555" {
 		t.Errorf("ids = %+v", got)
 	}
 	if got.Text != "kubernetes training" || got.MatchType != "EXACT" || got.Status != "ENABLED" {
@@ -96,7 +96,7 @@ func TestGetKeywordPerformance_HappyPath(t *testing.T) {
 func TestGetKeywordPerformance_TruncatesAndReportsIt(t *testing.T) {
 	rows := make([]string, 0, maxKeywordRows+1)
 	for i := 0; i < maxKeywordRows+1; i++ {
-		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "21234567890", "kw", "BROAD", "ENABLED", 10, 1, 100))
+		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "555", "kw", "BROAD", "ENABLED", 10, 1, 100))
 	}
 	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -111,7 +111,7 @@ func TestGetKeywordPerformance_TruncatesAndReportsIt(t *testing.T) {
 		t.Fatalf("rows = %d, want the cap %d", len(kp.Rows), maxKeywordRows)
 	}
 	if !kp.Truncated {
-		t.Fatalf("Truncated = false, but the account returned more than the cap")
+		t.Fatalf("Truncated = false, but the scoped campaigns returned more than the cap")
 	}
 }
 
@@ -122,7 +122,7 @@ func TestGetKeywordPerformance_TruncatesAndReportsIt(t *testing.T) {
 func TestGetKeywordPerformance_ExactlyCapIsNotTruncated(t *testing.T) {
 	rows := make([]string, 0, maxKeywordRows)
 	for i := 0; i < maxKeywordRows; i++ {
-		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "21234567890", "kw", "BROAD", "ENABLED", 10, 1, 100))
+		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "555", "kw", "BROAD", "ENABLED", 10, 1, 100))
 	}
 	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -235,7 +235,7 @@ func TestGetKeywordPerformance_OmittedZeroMetricsParseAsZero(t *testing.T) {
 	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},`+
-			`"adGroup":{"id":"2"},"campaign":{"id":"3"},"metrics":{}}]}`)
+			`"adGroup":{"id":"2"},"campaign":{"id":"555"},"metrics":{}}]}`)
 	})
 	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
 	if err != nil {
@@ -290,11 +290,11 @@ func TestGetAudienceInsights_ReadsAllThreeBreakdowns(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch n {
 		case 1: // age
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"metrics":{"impressions":"100","clicks":"10","costMicros":"500"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"campaign":{"id":"555"},"metrics":{"impressions":"100","clicks":"10","costMicros":"500"}}]}`)
 		case 2: // gender
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"gender":{"type":"MALE"}},"metrics":{"impressions":"60","clicks":"6","costMicros":"300"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"gender":{"type":"MALE"}},"campaign":{"id":"555"},"metrics":{"impressions":"60","clicks":"6","costMicros":"300"}}]}`)
 		default: // device
-			_, _ = io.WriteString(w, `{"results":[{"segments":{"device":"MOBILE"},"metrics":{"impressions":"80","clicks":"8","costMicros":"400"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"segments":{"device":"MOBILE"},"campaign":{"id":"555"},"metrics":{"impressions":"80","clicks":"8","costMicros":"400"}}]}`)
 		}
 	})
 
@@ -346,8 +346,8 @@ func TestGetAudienceInsights_AggregatesRepeatedBucketsAcrossCampaigns(t *testing
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(string(b), "FROM campaign") {
 			_, _ = io.WriteString(w, `{"results":[`+
-				`{"segments":{"device":"MOBILE"},"metrics":{"impressions":"100","clicks":"10","costMicros":"1000"}},`+
-				`{"segments":{"device":"MOBILE"},"metrics":{"impressions":"300","clicks":"30","costMicros":"3000"}}]}`)
+				`{"segments":{"device":"MOBILE"},"campaign":{"id":"555"},"metrics":{"impressions":"100","clicks":"10","costMicros":"1000"}},`+
+				`{"segments":{"device":"MOBILE"},"campaign":{"id":"555"},"metrics":{"impressions":"300","clicks":"30","costMicros":"3000"}}]}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"results":[]}`)
@@ -400,7 +400,7 @@ func TestGetAudienceInsights_KeepsUndeterminedBucket(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(string(b), "FROM age_range_view") {
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_UNDETERMINED"}},"metrics":{"impressions":"900","clicks":"5","costMicros":"50"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_UNDETERMINED"}},"campaign":{"id":"555"},"metrics":{"impressions":"900","clicks":"5","costMicros":"50"}}]}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"results":[]}`)
@@ -417,6 +417,170 @@ func TestGetAudienceInsights_KeepsUndeterminedBucket(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the UNDETERMINED bucket was dropped: %+v", ai.Buckets)
+	}
+}
+
+// The GAQL predicate is the filter REQUESTED; these two tests pin the filter ENFORCED.
+//
+// Google Ads is ONE customer shared across every foundation, so a response carrying a campaign
+// the caller did not ask for is another project's data. Presence of campaign.id is NOT membership
+// in the requested set: the guard these replace admitted any non-empty id, so a response that did
+// not honour the WHERE clause was returned to the caller as a successful read.
+//
+// Both assert on the ERROR rather than on a filtered-down row set: an unhonoured filter
+// invalidates the whole response, and silently dropping the foreign rows would report another
+// project's read as "this project has little data".
+func TestGetKeywordPerformance_RejectsCampaignOutsideRequestedScope(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Asked for 555; the response names 999 — a campaign belonging to another project.
+		_, _ = io.WriteString(w, `{"results":[`+
+			keywordRowJSON("305729261", "176216228", "999", "rival keyword", "EXACT", "ENABLED", 1000, 40, 25000000)+
+			`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err == nil {
+		t.Fatalf("a row for campaign 999 was accepted on a read scoped to [555]; rows = %+v", kp.Rows)
+	}
+	if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "outside the requested campaign scope") {
+		t.Errorf("error does not name the out-of-scope campaign: %v", err)
+	}
+}
+
+// A non-canonical spelling of an in-scope id must not pass by string equality, and an id that
+// names no campaign at all must not pass either. "0555" is the dangerous one: it is campaign 555
+// to the server and a different string here, so admitting it would make the boundary depend on
+// how the upstream chose to spell the number.
+func TestGetKeywordPerformance_RejectsNonCanonicalCampaignID(t *testing.T) {
+	for _, bad := range []string{"", "0555", "abc", "0"} {
+		t.Run(bad, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+
+					keywordRowJSON("305729261", "176216228", bad, "kw", "EXACT", "ENABLED", 10, 1, 100)+
+					`]}`)
+			})
+			if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+				t.Fatalf("campaign id %q was accepted on a read scoped to [555]", bad)
+			}
+		})
+	}
+}
+
+// The sibling read on the same boundary. Its buckets never REPORT a campaign id, which is
+// exactly why the leak is quiet here: a foreign campaign's impressions and spend are summed
+// into a bucket and become indistinguishable from the project's own. campaign.id is selected
+// solely so this check is possible.
+func TestGetAudienceInsights_RejectsCampaignOutsideRequestedScope(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(b), "FROM age_range_view") {
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},`+
+				`"campaign":{"id":"999"},"metrics":{"impressions":"5000","clicks":"250","costMicros":"77000000"}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+
+	ai, err := c.GetAudienceInsights(context.Background(), WindowLast7Days, []string{"555"})
+	if err == nil {
+		t.Fatalf("a bucket from campaign 999 was accepted on a read scoped to [555]; buckets = %+v", ai.Buckets)
+	}
+	if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "outside the requested campaign scope") {
+		t.Errorf("error does not name the out-of-scope campaign: %v", err)
+	}
+}
+
+// The membership check can only run if the query ASKS for campaign.id. The stub server answers
+// with whatever fixture the test wrote regardless of the SELECT, so nothing else in this file
+// would notice the field being dropped from the query — against the real API every audience read
+// would then fail as "missing field campaign", or, if the guard were also relaxed, silently stop
+// enforcing scope. This pins the SELECT itself for every dimension.
+func TestGetAudienceInsights_QuerySelectsCampaignIDForEveryDimension(t *testing.T) {
+	var mu sync.Mutex
+	var queries []string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		queries = append(queries, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+
+	if _, err := c.GetAudienceInsights(context.Background(), WindowLast7Days, []string{"555"}); err != nil {
+		t.Fatalf("GetAudienceInsights: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(queries) != len(audienceQueries) {
+		t.Fatalf("sent %d queries, want one per dimension (%d)", len(queries), len(audienceQueries))
+	}
+	// Asserted against the SELECT list specifically, NOT the whole query: the scope predicate
+	// puts the literal "campaign.id" in the WHERE clause of every one of these queries, so a
+	// substring check over the full text passes even when the projection omits the field
+	// entirely — it would be matching the filter it is not testing.
+	for i, q := range queries {
+		sel := q[strings.Index(q, "SELECT"):strings.Index(q, " FROM ")]
+		if !strings.Contains(sel, "campaign.id") {
+			t.Errorf("query %d (%s) does not SELECT campaign.id, so the scope check cannot run; select list = %q",
+				i, audienceQueries[i].dimension, sel)
+		}
+	}
+}
+
+// The membership check must be reachable for every dimension, not only the first one queried.
+// Device is the one that segments the `campaign` resource rather than a criterion view, so a
+// check written against the *_view shape only would leave it behind.
+func TestGetAudienceInsights_ScopeEnforcedOnEveryDimension(t *testing.T) {
+	for _, from := range []string{"age_range_view", "gender_view", "FROM campaign "} {
+		t.Run(from, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				if !strings.Contains(string(b), from) {
+					_, _ = io.WriteString(w, `{"results":[]}`)
+					return
+				}
+				switch {
+				case strings.Contains(from, "age_range"):
+					_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},`+
+						`"campaign":{"id":"999"},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
+				case strings.Contains(from, "gender"):
+					_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"gender":{"type":"MALE"}},`+
+						`"campaign":{"id":"999"},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
+				default:
+					_, _ = io.WriteString(w, `{"results":[{"segments":{"device":"MOBILE"},`+
+						`"campaign":{"id":"999"},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
+				}
+			})
+			if _, err := c.GetAudienceInsights(context.Background(), WindowLast7Days, []string{"555"}); err == nil {
+				t.Fatalf("campaign 999 was accepted from %s on a read scoped to [555]", from)
+			}
+		})
+	}
+}
+
+// The scope SET and the predicate STRING must be built from one pass, so the filter sent and the
+// membership enforced cannot drift. A set holding a spelling the predicate did not send (or vice
+// versa) would enforce a different boundary than the one requested.
+func TestCampaignScopePredicate_SetMatchesPredicate(t *testing.T) {
+	pred, scope, err := campaignScopePredicate([]string{"111", "222"}, "op")
+	if err != nil {
+		t.Fatalf("campaignScopePredicate: %v", err)
+	}
+	if len(scope) != 2 {
+		t.Fatalf("scope set = %v, want 2 entries", scope)
+	}
+	for _, id := range []string{"111", "222"} {
+		if _, ok := scope[id]; !ok {
+			t.Errorf("scope set is missing %s, but the predicate sent it: %s", id, pred)
+		}
+		if !strings.Contains(pred, id) {
+			t.Errorf("predicate %q does not carry %s, but the scope set enforces it", pred, id)
+		}
 	}
 }
 
@@ -859,7 +1023,7 @@ func TestGetKeywordPerformance_QueryAllowListsLiveStatuses(t *testing.T) {
 // cross-project read on the shared customer.
 func TestCampaignScopePredicate_EmptyListIsRefused(t *testing.T) {
 	for _, ids := range [][]string{nil, {}} {
-		if _, err := campaignScopePredicate(ids, "op"); err == nil {
+		if _, _, err := campaignScopePredicate(ids, "op"); err == nil {
 			t.Errorf("campaignScopePredicate(%v) returned no error; an empty scope must never "+
 				"produce a query, because an unscoped read returns every project's data", ids)
 		}
@@ -870,7 +1034,7 @@ func TestCampaignScopePredicate_EmptyListIsRefused(t *testing.T) {
 // non-numeric id is an injection vector. Same digits-only rule GetCampaignMetrics applies.
 func TestCampaignScopePredicate_RejectsNonNumericIDs(t *testing.T) {
 	for _, bad := range []string{"1' OR '1'='1", "abc", "12 34", "", "-1"} {
-		if _, err := campaignScopePredicate([]string{"111", bad}, "op"); err == nil {
+		if _, _, err := campaignScopePredicate([]string{"111", bad}, "op"); err == nil {
 			t.Errorf("campaignScopePredicate accepted %q; ids reach the query by concatenation", bad)
 		}
 	}
@@ -887,7 +1051,7 @@ func TestCampaignScopePredicate_RendersAnUnquotedINList(t *testing.T) {
 	// TestCampaignScopePredicate_RejectsIDsThatCannotNameACampaign), because normalising a
 	// malformed id inside the tenant-boundary predicate can substitute a different real
 	// campaign. This test asserts rendering, so it uses ids that are valid on both sides.
-	got, err := campaignScopePredicate([]string{"111", "222"}, "op")
+	got, _, err := campaignScopePredicate([]string{"111", "222"}, "op")
 	if err != nil {
 		t.Fatalf("campaignScopePredicate: %v", err)
 	}
@@ -1295,14 +1459,14 @@ func TestApplyKeywordActions_UnconfirmedArmsAreStructurallyDetectable(t *testing
 // substitution is made against the predicate that keeps one project from reading another's.
 func TestCampaignScopePredicate_RejectsIDsThatCannotNameACampaign(t *testing.T) {
 	for _, bad := range []string{" 123 ", "123 ", " 123", "000123", "0", "99999999999999999999", "9999999999999999999"} {
-		if _, err := campaignScopePredicate([]string{"111", bad}, "op"); err == nil {
+		if _, _, err := campaignScopePredicate([]string{"111", bad}, "op"); err == nil {
 			t.Errorf("campaignScopePredicate accepted %q for the tenant-boundary predicate; "+
 				"an id that cannot name a positive int64 campaign must fail closed rather than "+
 				"be normalised into a different real campaign", bad)
 		}
 	}
 	// The canonical spellings must still pass, or the fix has closed the endpoint entirely.
-	if _, err := campaignScopePredicate([]string{"111", strconv.FormatInt(math.MaxInt64, 10)}, "op"); err != nil {
+	if _, _, err := campaignScopePredicate([]string{"111", strconv.FormatInt(math.MaxInt64, 10)}, "op"); err != nil {
 		t.Errorf("campaignScopePredicate rejected canonical ids: %v", err)
 	}
 }
