@@ -44,6 +44,21 @@ import (
 // Non-upload routes are never gated. They carry bodies orders of magnitude smaller, and making
 // them queue behind an upload would turn a memory control into an availability regression.
 //
+// WHAT THE PERMIT COSTS, and why it is not a flat charge. The weight is priced from the
+// request's DECLARED body size (see constants.UploadAdmissionWeightFor), so a small upload takes
+// a small share of the budget and a maximum-size one takes the ceiling. Charging every upload
+// the worst-case weight is not merely pessimistic, it is a functional regression: with a budget
+// equal to that weight the semaphore admits exactly ONE upload at a time regardless of size.
+//
+// THE HOLD IS THE WHOLE HANDLER, deliberately, and that is the cost of this placement. The
+// permit is taken before next.ServeHTTP and released after it, so the socket read is INSIDE it —
+// which is the point (the body must not be read unadmitted) and also the exposure: a client that
+// dribbles its body holds its share of the budget for as long as the read takes. That is bounded
+// by constants.DefaultReadTimeout rather than left open, and it is why the read deadline is a
+// load-bearing part of this control rather than an unrelated tuning knob. Proportional pricing
+// is what keeps a single slow client from pinning the ENTIRE budget: it now holds only what its
+// declared size bought, so other uploads continue to be admitted alongside it.
+//
 // WHAT THE WEIGHT ACCOUNTS, precisely — because a bound that silently under-counts reads as
 // protection while providing less than it appears to.
 //
@@ -60,12 +75,28 @@ import (
 // request. Dispatch-side memory is bounded by its own control on that path — the Meta dispatcher
 // resolves each distinct asset once per dispatch and caps the total distinct bytes one dispatch
 // may hold — so this middleware neither provides nor needs to claim that bound.
-func UploadAdmission(budgetBytes int64, perRequestBytes int64, wait time.Duration) func(http.Handler) http.Handler {
+func UploadAdmission(budgetBytes int64, weightFor func(contentLength int64) int64, wait time.Duration) func(http.Handler) http.Handler {
 	sem := semaphore.NewWeighted(budgetBytes)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !isUploadRequest(r) {
 				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Priced from the DECLARED size, not charged flat. A flat charge equal to the
+			// budget made effective concurrency exactly 1: every upload, however small, took
+			// the entire budget, so one slow body pinned the only permit for as long as the
+			// read deadline allowed and every concurrent upload shed with 503. Pricing per
+			// request keeps the aggregate bound identical — the semaphore still cannot issue
+			// more than budgetBytes — while letting small uploads share it.
+			weight := weightFor(r.ContentLength)
+			if weight > budgetBytes {
+				// A single request priced above the whole budget could never be admitted, and
+				// semaphore.Acquire would block until its context expired and then shed. Answer
+				// immediately instead: the outcome is the same 503, reached without holding the
+				// caller for the wait.
+				writeUploadShed(w)
 				return
 			}
 
@@ -77,7 +108,7 @@ func UploadAdmission(budgetBytes int64, perRequestBytes int64, wait time.Duratio
 			ctx, cancel := context.WithTimeout(r.Context(), wait)
 			defer cancel()
 
-			if err := sem.Acquire(ctx, perRequestBytes); err != nil {
+			if err := sem.Acquire(ctx, weight); err != nil {
 				// SHED — and it must be unmistakably a failure. Returning 200, or an empty
 				// body, or letting the request through unadmitted, would each turn a refusal
 				// into a silent wrong answer: the caller would believe the asset was stored
@@ -87,7 +118,7 @@ func UploadAdmission(budgetBytes int64, perRequestBytes int64, wait time.Duratio
 				writeUploadShed(w)
 				return
 			}
-			defer sem.Release(perRequestBytes)
+			defer sem.Release(weight)
 
 			next.ServeHTTP(w, r)
 		})

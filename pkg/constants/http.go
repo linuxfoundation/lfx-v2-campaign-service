@@ -85,13 +85,72 @@ const UploadAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
 // under-counts precisely when it matters, which is worse than no bound because it reads as
 // protection.
 //
-// The consequence is deliberate and worth stating: at the current budget this admits ONE
-// maximum-size upload at a time and sheds concurrent ones with 503 + Retry-After. That is the
-// correct answer for a 512Mi pod — two worst-case uploads genuinely do not fit — and it is why
-// the shed path returns a retryable status rather than an error. Smaller images still decode
-// well within the same permit; the weight is priced for the worst legal upload, not the typical
-// one.
+// It is the weight of the WORST LEGAL upload, and it is charged only to an upload that is
+// actually that large. Charging it flat to every upload was a real defect rather than a
+// conservative choice: budget/weight is then exactly 1, so the service admitted ONE upload at a
+// time no matter how small, and a 200 KiB logo held the same permit as a 30 MiB image. See
+// UploadAdmissionWeightFor, which prices a request from its declared size against this ceiling.
 const UploadAdmissionWeightBytes int64 = 128 << 20 // 128 MiB
+
+// UploadAdmissionAmplification is how many bytes of peak resident memory one byte of request
+// body may cause this route to allocate.
+//
+// It is the same arithmetic that produced UploadAdmissionWeightBytes, expressed as a ratio so it
+// can price a request smaller than the worst case. The worst legal upload is 42 MiB on the wire
+// (MaxRequestBodyBytes) and provably peaks at ~128 MiB resident — the ~30 MiB decoded slice
+// live for the whole decode, the pixel buffer allocated on top of it, and the body buffer not
+// yet collected. 128/42 is just over 3, so 4 is the next whole ratio above the measured worst
+// case: it keeps a small upload's charge proportional while never pricing ANY request below
+// what the worst case proves it can cost.
+//
+// Deliberately a whole number, and deliberately an over-estimate. This multiplies a
+// CALLER-SUPPLIED length, so every source of error in it must round against the caller.
+const UploadAdmissionAmplification int64 = 4
+
+// UploadAdmissionMinWeightBytes floors what any single upload is charged.
+//
+// Without a floor, size-proportional pricing degenerates: a request declaring Content-Length 0,
+// or a chunked request declaring nothing at all, would be charged nothing and the budget would
+// admit unboundedly many of them. Each still costs the process a goroutine, a connection and a
+// decoder, so the floor is what keeps "many tiny uploads" bounded rather than free.
+//
+// 8 MiB admits 16 concurrent small uploads against the 128 MiB budget — enough that ordinary
+// traffic never sheds, few enough that the aggregate stays a minority of the pod.
+const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
+
+// UploadAdmissionWeightFor prices ONE upload against the budget from its DECLARED body size.
+//
+// Why declared size is safe to trust here, when Content-Length is caller-supplied and a caller
+// may lie: the two directions of the lie are not symmetric, and neither one can under-charge.
+//
+//   - Over-declaring charges the caller MORE than it will spend. That is self-limiting — it
+//     exhausts the liar's own admission first — and it is refused outright above
+//     MaxRequestBodyBytes by MaxBodyBytes' Content-Length arm.
+//   - UNDER-declaring is the dangerous direction, and it is closed downstream rather than here.
+//     MaxBodyBytes wraps the body in http.MaxBytesReader, so a request that understates its
+//     length cannot then read more than MaxRequestBodyBytes; it is refused with 413 at the read.
+//     A liar therefore buys a cheap permit and still cannot spend more than the ceiling this
+//     function would have charged it.
+//
+// Absent or chunked (ContentLength < 0) is charged the FULL worst-case weight rather than the
+// floor: nothing is known about the size, and the unknown case must be priced at the ceiling or
+// it becomes the cheapest way to buy a permit.
+func UploadAdmissionWeightFor(contentLength int64) int64 {
+	if contentLength < 0 {
+		return UploadAdmissionWeightBytes
+	}
+	// Overflow-safe: contentLength is bounded by MaxRequestBodyBytes downstream, but this
+	// function must not depend on a bound applied by a different middleware, so the compare
+	// happens before the multiply rather than after it.
+	if contentLength > UploadAdmissionWeightBytes/UploadAdmissionAmplification {
+		return UploadAdmissionWeightBytes
+	}
+	w := contentLength * UploadAdmissionAmplification
+	if w < UploadAdmissionMinWeightBytes {
+		return UploadAdmissionMinWeightBytes
+	}
+	return w
+}
 
 // UploadAdmissionWait is how long a request will wait for a permit before it is shed with 503.
 //
