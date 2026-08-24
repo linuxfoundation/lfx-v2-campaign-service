@@ -911,6 +911,19 @@ a row for campaign 999 returned against a request scoped to 555 was admitted as 
 read. The set membership check subsumes the presence check rather than replacing it: an empty
 id does not canonicalise and fails the same guard.
 
+**The truncation PROBE row is a returned row, so it is checked like every other one.**
+`GetKeywordPerformance` asks for `maxKeywordRows+1` and reports the extra row as `Truncated`.
+A first revision discarded the probe with `rows = rows[:maxKeywordRows]` BEFORE the loop that
+calls `assertCampaignInScope`, which exempted the one row most worth checking: a response whose
+51st row named an out-of-scope campaign returned a clean, capped answer with `truncated: true`
+and no error. "Every response row is re-checked" was therefore true of 50 rows out of 51, and
+the hole sat precisely where a caller reads the result as "this project has more keywords than
+we can show" — a claim sourced from a row proving the filter was not honoured. The cap now
+governs the APPEND, not the validation: all `maxKeywordRows+1` rows are decoded and
+tenant-checked, and rows at index `>= maxKeywordRows` are skipped only when building the output
+slice. A cap is a presentation concern; a tenant check is not, and the two must not share a
+control-flow decision.
+
 The ids are canonicalised on BOTH sides before comparison (`canonicalCampaignID`), so the
 comparison compares campaigns rather than text — otherwise `0555` would read as a foreign
 campaign, and the boundary would depend on how the upstream chose to spell a number.

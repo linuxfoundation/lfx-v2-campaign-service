@@ -1895,8 +1895,12 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 // Each scope entry pairs the id with its PROVENANCE rather than being a bare id, because an id
 // alone cannot be scoped safely: it is a bare numeric unique only within the customer it was
 // created under, and a connection can be re-pointed between create and read. The adapter must
-// drop entries whose recorded customer disagrees with the one its client resolves to, the same
-// invariant ReadMetrics and the keyword mutation enforce.
+// REFUSE THE WHOLE READ when any entry's recorded customer disagrees with the one its client
+// resolves to — not drop the mismatched entries and return the rest. Neither result carries an
+// omitted count or partial-coverage flag, so a silently reduced scope is indistinguishable from
+// a project that genuinely owns fewer campaigns, and a demographic distribution computed over
+// half a project looks exactly like a complete one. Refusing is the same invariant ReadMetrics
+// and the keyword mutation enforce, and it is what googleAdsScopeForCustomer implements.
 //
 // scope is never empty — the orchestrator answers an empty result WITHOUT calling the
 // adapter, because an empty scope is exactly when an unscoped query would expose everyone else's

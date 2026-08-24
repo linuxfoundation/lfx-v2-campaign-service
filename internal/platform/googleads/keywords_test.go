@@ -1494,3 +1494,35 @@ func TestValidateKeywordActions_RejectsWhitespacePaddedIDs(t *testing.T) {
 		})
 	}
 }
+
+// The truncation PROBE row is a returned GAQL row, so it is subject to the same tenant
+// check as every other returned row. Slicing the probe off before the scope loop would let
+// the one row that proves the filter was not honoured escape assertCampaignInScope: the
+// caller would receive a clean, capped, `truncated: true` answer built from a response that
+// carried another project's campaign. The probe is checked and then discarded, never
+// discarded and then unchecked.
+func TestGetKeywordPerformance_OutOfScopeProbeRowFailsTheRead(t *testing.T) {
+	rows := make([]string, 0, maxKeywordRows+1)
+	for i := 0; i < maxKeywordRows; i++ {
+		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "555", "kw", "BROAD", "ENABLED", 10, 1, 100))
+	}
+	// ONLY the probe row (the maxKeywordRows+1'th) names a campaign outside the scope.
+	rows = append(rows, keywordRowJSON("9999", "176216228", "999", "kw", "BROAD", "ENABLED", 10, 1, 100))
+
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+strings.Join(rows, ",")+`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err == nil {
+		t.Fatalf("an out-of-scope probe row was accepted on a read scoped to [555]: "+
+			"rows = %d, truncated = %v", len(kp.Rows), kp.Truncated)
+	}
+	if kp != nil {
+		t.Errorf("a result was returned alongside the scope error: %+v", kp)
+	}
+	if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "outside the requested campaign scope") {
+		t.Errorf("error does not name the out-of-scope probe campaign: %v", err)
+	}
+}

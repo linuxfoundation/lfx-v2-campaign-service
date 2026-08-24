@@ -112,7 +112,11 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 		// criterion, or a criterion that does not belong to this campaign's ad group. The
 		// adapter's own text is logged rather than returned — it names ad group ids, which
 		// are account configuration a caller acting on one campaign has no need to be told.
-		slog.WarnContext(ctx, "keyword action batch rejected before contacting the platform",
+		// "before the mutate", not "before contacting the platform": this sentinel also carries
+		// the criterion-type refusals, which resolveKeywordCriteria decides only AFTER a GAQL
+		// read. That read mutates nothing, so the batch is still refused with no keyword
+		// changed — but Google has been contacted by then.
+		slog.WarnContext(ctx, "keyword action batch rejected before the mutate; no keyword was changed",
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 			"platform", platform, "error", safeErrSummary(aerr))
 		return &briefs.BadRequestError{

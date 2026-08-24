@@ -260,11 +260,23 @@ func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string,
 	return &model.AudienceInsights{}, nil
 }
 
-func (d upstreamCapableDispatcher) ApplyKeywordActions(context.Context, string, model.Provider, *model.Campaign, []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+// ApplyKeywordActions returns ONE outcome per requested action, which is the contract the
+// orchestrator enforces. A fake returning an empty slice makes every "success" call fail with
+// unconfirmedOutcomeCountError, so a test that does not assert the success arm's error would
+// pass while the operation it claims to instrument actually failed.
+func (d upstreamCapableDispatcher) ApplyKeywordActions(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
-	return []model.KeywordActionOutcome{}, nil
+	out := make([]model.KeywordActionOutcome, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, model.KeywordActionOutcome{
+			AdGroupID:   a.AdGroupID,
+			CriterionID: a.CriterionID,
+			Action:      a.Action,
+		})
+	}
+	return out, nil
 }
 
 func (d upstreamCapableDispatcher) LookupCampaign(context.Context, string, model.Provider, string) (*model.PlatformCampaignRef, error) {
@@ -381,6 +393,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				err := tc.call(context.Background(), orch)
 				if arm.platformErr != nil && err == nil {
 					t.Fatalf("%s: expected the platform error to surface", tc.name)
+				}
+				// The success arm must actually SUCCEED. Without this, a fake that violates a
+				// downstream contract (e.g. returning fewer outcomes than actions) makes the
+				// call fail while the subtest still passes — the instrumentation would be
+				// asserted over an operation that errored, and a post-dispatch regression
+				// would stay green.
+				if arm.platformErr == nil && err != nil {
+					t.Fatalf("%s: success arm returned an error, so this asserts instrumentation over a failed call: %v", tc.name, err)
 				}
 
 				got := rec.upstreamCalls()

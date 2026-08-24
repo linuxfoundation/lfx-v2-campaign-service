@@ -274,9 +274,10 @@ func normaliseKeywordMatchType(s string) string {
 // the create path restricts itself to. See normaliseKeywordStatus.
 //
 // The query asks for maxKeywordRows+1 rows so a full page can be told from a truncated
-// one; the extra row is dropped and reported as Truncated. Ordering is by impressions
-// descending, which is what makes a truncated answer the useful slice rather than an
-// arbitrary one.
+// one; the extra row is reported as Truncated and dropped from the result — but only AFTER
+// it has been decoded and tenant-checked like every other returned row, because a probe
+// row is still a row the response carried. Ordering is by impressions descending, which is
+// what makes a truncated answer the useful slice rather than an arbitrary one.
 // campaignScopePredicate renders the GAQL predicate that confines a read to campaignIDs.
 //
 // It is the security boundary for the two reads in this file that would OTHERWISE be
@@ -394,12 +395,15 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		return nil, fmt.Errorf("get keyword performance: %w", err)
 	}
 
+	// The probe row is DISCARDED, not exempted. Every row the response carried is decoded
+	// and tenant-checked below, including the maxKeywordRows+1'th; only the APPEND is capped.
+	// Slicing here instead would let the one row that proves the campaign filter was not
+	// honoured skip assertCampaignInScope, and the caller would receive a clean capped answer
+	// with truncated=true built from a response carrying another project's campaign — exactly
+	// the silent partial that fail-whole-response exists to prevent.
 	truncated := len(rows) > maxKeywordRows
-	if truncated {
-		rows = rows[:maxKeywordRows]
-	}
 
-	out := make([]KeywordRow, 0, len(rows))
+	out := make([]KeywordRow, 0, min(len(rows), maxKeywordRows))
 	for i, raw := range rows {
 		var row gaqlKeywordRow
 		if uErr := json.Unmarshal(raw, &row); uErr != nil {
@@ -428,6 +432,11 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		// subsumed rather than dropped.
 		if sErr := assertCampaignInScope(row.Campaign.ID, inScope, fmt.Sprintf("get keyword performance: row %d", i)); sErr != nil {
 			return nil, sErr
+		}
+		// Validated above, appended only up to the cap: the probe row has now cleared the
+		// same checks as every other row and its job — proving there is more — is done.
+		if i >= maxKeywordRows {
+			continue
 		}
 		out = append(out, KeywordRow{
 			CriterionID: row.AdGroupCriterion.CriterionID,

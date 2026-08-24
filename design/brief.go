@@ -994,9 +994,11 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	Method("apply-keyword-actions", func() {
 		Description("Pause or remove Google Ads keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +
-			"is validated exactly like a create — every action is checked, the campaign's provisioning is " +
-			"confirmed, and the campaign's ad account is verified against the project's current connection " +
-			"BEFORE Google is contacted at all. " +
+			"is validated exactly like a create. The batch's syntax, the campaign's provisioning and the " +
+			"campaign's ad account are checked against the project's current connection BEFORE Google is " +
+			"contacted at all; each criterion is then resolved on the platform and confirmed to be a " +
+			"POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing " +
+			"has changed if that check refuses. " +
 			"ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
 			"so either every action applied or none did. A caller is never left working out which half of " +
 			"a spend-stopping request took effect. " +
