@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS creative_assets (
     mime_type   TEXT        NOT NULL CHECK (mime_type IN ('image/png','image/jpeg')),
     -- byte_size is len(bytes), stored so callers and metrics can read the size WITHOUT
     -- loading the blob. That is exactly why a wrong value is dangerous here: no reader that
-    -- uses the column as intended would ever notice it disagreed with the image. CHECK
+    -- uses the column as intended would ever notice it disagreed with the image.
     -- CHECK (byte_size = octet_length(bytes)) makes the column's whole PURPOSE an invariant of
     -- the table rather than a promise the writer makes. A separate CHECK (byte_size >= 0) was
     -- briefly here too and has been REMOVED as redundant: octet_length() is never negative, so
