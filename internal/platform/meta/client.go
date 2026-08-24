@@ -3727,8 +3727,23 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 		if retryIn < 0 || attempt >= retryMax {
 			return hash, rerr
 		}
-		if err := sleepCtx(ctx, retryIn); err != nil {
-			return "", err
+		if serr := sleepCtx(ctx, retryIn); serr != nil {
+			// The caller's context died while waiting out a throttle we had ALREADY been
+			// shed by. Returning the bare ctx.Err() would lose the outcome's shape: it is
+			// neither *transportError nor *APIError, so createOutcomeAmbiguous (and
+			// IsOutcomeUnconfirmed) would read it as a clean, definite failure.
+			//
+			// It is not one. A throttle on a MUTATING call is ambiguous by design — Meta
+			// may have accepted the upload and shed the response — and that is exactly why
+			// createOutcomeAmbiguous treats a 429 as ambiguous rather than as a semantic
+			// rejection. Cancelling the wait does not resolve the ambiguity; it only stops
+			// us from learning the answer. Wrapping as *transportError preserves the
+			// ambiguity while keeping the cancellation as the cause, so the variant is
+			// reported as UNCONFIRMED rather than as definitely-failed.
+			//
+			// Reachable whenever the retry wait outlives the caller's remaining deadline.
+			return "", &transportError{Method: http.MethodPost, Path: path,
+				Err: fmt.Errorf("throttled upload retry interrupted: %w", serr)}
 		}
 	}
 }

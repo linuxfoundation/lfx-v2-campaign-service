@@ -100,3 +100,30 @@ request rejected for a reason unrelated to the rate limit that caused the retry.
 encoded body is built once and replayed from a fresh reader per attempt, and the test
 parses each attempt's body rather than counting requests, so the empty-replay bug fails
 the test instead of passing it.
+
+The retry then produced a defect of its own, which is the ordinary shape of this work: a
+fix creates the next finding. When the caller's context died during a throttle wait, the
+loop returned the bare `ctx.Err()`. That value is neither `*transportError` nor
+`*APIError`, so `createOutcomeAmbiguous` read it as a CLEAN, DEFINITE failure — when a
+throttle on a mutating call is ambiguous by design, which is the whole reason a 429 is
+classified ambiguous rather than as a semantic rejection. Cancelling the wait does not
+resolve the ambiguity; it only stops us learning the answer. The operator-facing cost is a
+"create it manually" instruction for an image that may already exist upstream. The
+interruption is now wrapped as a `*transportError` that still carries the cancellation.
+
+Testing that arm was harder than fixing it, and the difficulty is worth recording because
+the failure mode was silent. The transport arm and the sleep arm BOTH return
+`*transportError`, so every ambiguity assertion passes no matter which one ran. Cancelling
+from the handler, on connection-idle, or from a goroutine racing the response all land
+while the client is still reading the response — producing a transport-arm error, and a
+green test against broken code. Several formulations did exactly that, and the mutation
+survived each one.
+
+Two things fixed it. First, an assertion naming the wrapper that ONLY the sleep arm adds,
+which is what distinguishes the arms at all. Second, a deterministic ordering hook:
+`parseRetryAfter` consults the client clock on its HTTP-DATE branch, which runs after the
+response is read and immediately before the wait — so a `Retry-After` sent as a date, with
+the cancellation issued from the clock, places the cancel provably between the two arms
+with no sleeps and no elapsed-time thresholds. The general lesson: when two code paths
+return the same error type, an assertion on the type cannot tell them apart, and a test
+that cannot tell them apart is not testing the one you named.
