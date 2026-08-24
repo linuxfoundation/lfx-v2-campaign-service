@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -44,18 +45,30 @@ func scopeUnderCustomer(id, customerID string) model.ProjectCampaignScope {
 // keywordActionServers wires a token endpoint plus an API server for the mutate path, and
 // records whether the API was reached at all — which is what the "never contacted" guards
 // below assert.
-func keywordActionServers(t *testing.T, apiH http.HandlerFunc) ([]googleads.Option, *bool) {
+// It returns an *atomic.Bool rather than a *bool guarded by a mutex INSIDE this helper.
+// A helper-local mutex cannot make the callers safe: the write happens on the server
+// goroutine under a lock no caller can acquire, and every assertion site reads the flag
+// with no lock at all, so the pair is unsynchronized however careful this function is.
+// Today's call sites happen to be ordered — each reads only after a SYNCHRONOUS dispatcher
+// call has returned, which supplies a happens-before edge, and reverting this to the old
+// pattern does not make `-race` fire on this suite. The hazard is that the edge comes from
+// the caller's shape rather than from the flag, so it is invisible at the assertion and
+// nothing preserves it: a handler that outlives the call (a retry, a background refresh, a
+// cancelled request still in flight) reintroduces the race. The isolated pattern DOES fire
+// under `-race`, and an assertion that can be read non-deterministically is worse than no
+// assertion because it passes.
+//
+// atomic.Bool moves the synchronization to the VALUE, which is the only place both sides
+// share. Callers use Load()/Store(false) and cannot reintroduce the asymmetry.
+func keywordActionServers(t *testing.T, apiH http.HandlerFunc) ([]googleads.Option, *atomic.Bool) {
 	t.Helper()
-	var mu sync.Mutex
-	reached := false
+	var reached atomic.Bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		reached = true
-		mu.Unlock()
+		reached.Store(true)
 		apiH(w, r)
 	}))
 	t.Cleanup(apiSrv.Close)
@@ -108,7 +121,7 @@ func TestGoogleAdsKeywordActions_AccountMismatchIsRefusedBeforeContact(t *testin
 	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
 		t.Errorf("error is not ErrCampaignAccountMismatch: %v", err)
 	}
-	if *reached {
+	if reached.Load() {
 		t.Error("the platform was contacted despite an account mismatch")
 	}
 }
@@ -131,7 +144,7 @@ func TestGoogleAdsKeywordActions_ForeignAdGroupIsRefusedBeforeContact(t *testing
 	if !errors.Is(err, domain.ErrKeywordActionInvalid) {
 		t.Errorf("error is not ErrKeywordActionInvalid: %v", err)
 	}
-	if *reached {
+	if reached.Load() {
 		t.Error("the platform was contacted for a criterion outside this campaign's ad group")
 	}
 }
@@ -161,7 +174,7 @@ func TestGoogleAdsKeywordActions_UnprovisionedCampaignIsRefusedBeforeContact(t *
 			if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 				t.Errorf("error is not ErrCampaignNotProvisioned: %v", err)
 			}
-			if *reached {
+			if reached.Load() {
 				t.Error("the platform was contacted for an unprovisioned campaign")
 			}
 		})
@@ -188,7 +201,7 @@ func TestGoogleAdsKeywordActions_InvalidBatchRefusedBeforeCredentials(t *testing
 	if !errors.Is(err, domain.ErrKeywordActionInvalid) {
 		t.Errorf("error is not ErrKeywordActionInvalid (it may have failed on credentials instead): %v", err)
 	}
-	if *reached {
+	if reached.Load() {
 		t.Error("the platform was contacted for an invalid batch")
 	}
 }
@@ -219,7 +232,7 @@ func TestGoogleAdsKeywordActions_UnknownCreationAccountFailsClosed(t *testing.T)
 	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
 		t.Errorf("error is not ErrCampaignProvenanceUnknown: %v", err)
 	}
-	if *reached {
+	if reached.Load() {
 		t.Error("the platform was contacted for a campaign whose ad account is unrecorded")
 	}
 }
@@ -302,7 +315,7 @@ func TestGoogleAdsInsightReads_MixedProvenanceScopeFailsClosed(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			*reached = false
+			reached.Store(false)
 			err := tc.call()
 			if err == nil {
 				t.Fatal("a mixed-provenance scope returned success; a partial result was reported as complete")
@@ -310,7 +323,7 @@ func TestGoogleAdsInsightReads_MixedProvenanceScopeFailsClosed(t *testing.T) {
 			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
 				t.Errorf("error is not ErrCampaignAccountMismatch (the sentinel the 409 arm maps): %v", err)
 			}
-			if *reached {
+			if reached.Load() {
 				t.Error("a GAQL query was issued for a partially-mismatched scope; the read must refuse before querying")
 			}
 		})
@@ -332,7 +345,7 @@ func TestGoogleAdsInsightReads_AllForeignScopeIsRefusedWithoutQuerying(t *testin
 	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
 		t.Errorf("error is not ErrCampaignAccountMismatch: %v", err)
 	}
-	if *reached {
+	if reached.Load() {
 		t.Error("the platform was queried after every campaign was filtered out; an empty " +
 			"scope is exactly when an unscoped read exposes every other project")
 	}
@@ -410,7 +423,7 @@ func TestGoogleAdsReadKeywordPerformance_BadWindowRefusedBeforeCredentials(t *te
 	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
 		t.Errorf("error is not ErrMetricsWindowUnsupported (it may have failed on credentials): %v", err)
 	}
-	if *reached {
+	if reached.Load() {
 		t.Error("the platform was contacted for an unsupported window")
 	}
 }
@@ -629,7 +642,7 @@ func TestGoogleAdsKeywordActions_PostCutoverCampaignResolvesItsCreationAccount(t
 		t.Fatalf("a campaign created under the system account must be actionable through its "+
 			"recorded creation account; it keeps spending while this path refuses: %v", err)
 	}
-	if !*reached {
+	if !reached.Load() {
 		t.Error("the platform was never contacted, so nothing was actually paused")
 	}
 	if len(outcomes) != 1 {
