@@ -460,6 +460,39 @@ unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitte
 below). A single global default would make every omitted-window request against an X
 campaign fail with a guaranteed 400.
 
+## Keyword actions: which fault wins, and what an ambiguous one answers
+
+`BriefService.ApplyKeywordActions` (`brief_keyword_actions.go`) pauses or removes Google Ads
+keywords on one campaign. It MUTATES what serves, takes no `If-Match` and no write lock (it
+persists nothing), and the batch is atomic upstream. Two ordering rules govern its error
+surface, and both exist because a caller reads a status code as an instruction.
+
+**A permanent input fault dominates a contingent state fault.** The Google Ads adapter validates
+the batch BEFORE it checks provisioning or resolves a connection, deliberately — "so a permanent
+input fault masks any contingent connection fault rather than the other way round"
+(`dispatch/googleads.go`). `Orchestrator.ApplyKeywordActions` used to run its own
+`ErrCampaignNotProvisioned` guard AHEAD of the dispatcher, which inverted that: a malformed batch
+against an unprovisioned campaign answered 409 ("try later") instead of 400 ("fix your request"),
+so the caller retried forever on input only they could correct. The orchestrator now refuses only
+a nil campaign — not an input fault, and not a state any adapter should have to nil-check around
+— and DELEGATES the empty-`PlatformCampaignID` case to the adapter, which raises the same
+sentinel in more detail (it also requires an ad group) and raises it in the right order. A VALID
+batch against an unprovisioned campaign still answers 409; only the malformed case moved. The two
+layers must not disagree about which fault wins.
+
+**An ambiguous outcome must not answer what a definite one answers.** The classifier's `default`
+arm previously swallowed UNCONFIRMED errors — its own comment admitted it — so a mutate that MAY
+already have been applied returned the same "could not be applied" 503 a definite failure gets.
+A 503 reads as "retry", and retrying a `REMOVE` that already ran is precisely the wrong remedy:
+Google cannot re-enable a removed criterion, only create a new one with a new id. UNCONFIRMED now
+has its own arm, matched by BEHAVIOUR (`errors.As` on an `Unconfirmed() bool` method — the
+dispatch wrapper is unexported, so no shared sentinel crosses the package boundary), sitting
+ABOVE the default. It keeps the 503 rather than inventing a status: the endpoint's declared error
+set (`commonBriefErrors`) is unchanged, so no design or `gen/` churn rides along, and the
+ambiguity is carried by the MESSAGE, which tells the caller to VERIFY before retrying. This
+mirrors the status toggle's unconfirmed arm exactly. A client must therefore read the message on
+a 503 here rather than branch on the status alone, and `docs/api-catalog.md` says so.
+
 ## Campaign adoption
 
 `BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that ALREADY

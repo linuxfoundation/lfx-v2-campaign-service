@@ -436,3 +436,160 @@ func TestDeferredBufferWriter_HijackWithoutSupportReturnsErrNotSupported(t *test
 		t.Error("Hijack returned a connection despite failing")
 	}
 }
+
+// TestMaxBodyBytes_TrailingBytesAfterAValidValueAreNeverConsumed pins the ONE case where
+// tracked.exceeded() legitimately stays false on an over-cap request, so that the reason it is
+// harmless is recorded as an assertion rather than as an argument.
+//
+// The shape: a VALID JSON value followed by megabytes of trailing whitespace, sent without a
+// declared length. json.Decoder.Decode stops at the end of the first complete value, so it never
+// reads far enough to trip MaxBytesReader — the cap does not fire, the handler succeeds, and the
+// request is answered 200. Read only that far, it looks like a bypass of the byte bound.
+//
+// It is not one, and the distinction is WHAT WAS READ rather than what was sent. The bound this
+// middleware exists to provide is on bytes the process CONSUMES, not on bytes a client is willing
+// to transmit. Bytes the decoder never asks for are never pulled off the socket into this
+// process: they sit in the kernel's receive buffer, the handler returns, and net/http closes the
+// connection rather than draining them. Nothing allocates them, so the memory bound holds.
+//
+// The two assertions below are the ones that make that checkable. The first is the load-bearing
+// one: consumption must NOT scale with the payload. A middleware that had actually been bypassed
+// would read the trailing bytes, and reading them is what costs memory.
+//
+// This also settles the question for the pricing rule in constants.UploadAdmissionWeightFor,
+// whose floor for undeclared bodies rests on "MaxBodyBytes bounds the real body regardless".
+// That premise survives: an undeclared request still cannot get MORE bytes into this process by
+// appending trailing junk, because the trailing junk is not read. The companion case — oversize
+// bytes INSIDE the JSON value, which the decoder must read and which is the only shape that
+// could actually store an over-cap asset — is covered by
+// TestMaxBodyBytes_OversizeInsideTheValueStillTrips413 below, and there the cap DOES fire.
+func TestMaxBodyBytes_TrailingBytesAfterAValidValueAreNeverConsumed(t *testing.T) {
+	const limit int64 = 4096
+
+	// A decoder that stops at the first complete value, exactly like Goa's.
+	var readByHandler int64
+	decoderLike := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counted := &countingReader{r: r.Body}
+		var v map[string]any
+		if err := json.NewDecoder(counted).Decode(&v); err != nil {
+			readByHandler = counted.n
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		readByHandler = counted.n
+		w.WriteHeader(http.StatusOK)
+	})
+
+	envelope := `{"name":"asset","bytes":"AAAA"}`
+
+	// The same request shape at two payload sizes an order of magnitude apart. If the trailing
+	// bytes were being consumed, consumption would grow with the payload.
+	small := measureTrailing(t, limit, decoderLike, envelope, 1<<20, &readByHandler)
+	large := measureTrailing(t, limit, decoderLike, envelope, 16<<20, &readByHandler)
+
+	// THE BOUND: what the process reads does not scale with what the client sends. Both are
+	// capped by the decoder stopping at the value's end, not by the payload's size.
+	if large > small*2 {
+		t.Errorf("bytes consumed scaled with the payload: %d for 1 MiB trailing vs %d for 16 MiB — "+
+			"the trailing bytes are being read into the process, which is the bypass this test denies",
+			large, small)
+	}
+	// And in absolute terms it stays near the envelope, nowhere near the payload.
+	if large > int64(len(envelope))*64 {
+		t.Errorf("handler consumed %d bytes for a %d-byte value; trailing bytes are being drained into the process",
+			large, len(envelope))
+	}
+}
+
+// TestMaxBodyBytes_OversizeInsideTheValueStillTrips413 is the counterweight to the test above,
+// and it is the case that actually matters for what gets STORED.
+//
+// Trailing bytes after a valid value are harmless because nobody reads them — but bytes INSIDE
+// the value are different in kind: the decoder must read every one of them to produce the value,
+// so an oversized `bytes` field is read, allocated, and would be persisted. That is the shape a
+// bypass of this cap would need in order to store an over-cap asset.
+//
+// Here the cap fires as designed: the read runs past the limit, MaxBytesReader fails it,
+// exceeded() goes true, and the middleware answers 413 with nothing decoded. Without this test,
+// the sibling above could be misread as saying the cap is conditional in a way that matters for
+// persistence. It is not — it is conditional only on bytes nobody wanted.
+func TestMaxBodyBytes_OversizeInsideTheValueStillTrips413(t *testing.T) {
+	const limit int64 = 64 << 10
+
+	var decodedLen int
+	var decodeFailed bool
+	decoderLike := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p struct {
+			Bytes []byte `json:"bytes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			decodeFailed = true
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		decodedLen = len(p.Bytes)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// A base64 payload 128x the cap, inside the value.
+	body := io.MultiReader(
+		strings.NewReader(`{"name":"asset","bytes":"`),
+		io.LimitReader(repeatReader{c: 'A'}, int64(limit)*128),
+		strings.NewReader(`"}`),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/x", body)
+	req.ContentLength = -1 // undeclared: only the read arm can catch this
+	rec := httptest.NewRecorder()
+
+	MaxBodyBytes(limit)(decoderLike).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d — an oversize value must trip the cap at the read", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if !decodeFailed {
+		t.Error("the decoder completed on an oversize value; the cap did not bound the read")
+	}
+	if decodedLen != 0 {
+		t.Errorf("decoded %d bytes from an over-cap body; nothing may be produced for persistence", decodedLen)
+	}
+	assertCleanJSON413(t, rec)
+}
+
+// countingReader records how many bytes a handler actually pulled from the body.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// repeatReader yields an endless run of one byte, so a large payload can be built without
+// allocating it — the test must not itself buffer what it claims the server does not.
+type repeatReader struct{ c byte }
+
+func (r repeatReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.c
+	}
+	return len(p), nil
+}
+
+// measureTrailing drives one envelope-plus-trailing-whitespace request and returns how many
+// bytes the handler consumed.
+func measureTrailing(t *testing.T, limit int64, h http.Handler, envelope string, trailing int64, read *int64) int64 {
+	t.Helper()
+	body := io.MultiReader(
+		strings.NewReader(envelope),
+		io.LimitReader(repeatReader{c: ' '}, trailing),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/x", body)
+	req.ContentLength = -1
+	rec := httptest.NewRecorder()
+	*read = 0
+	MaxBodyBytes(limit)(h).ServeHTTP(rec, req)
+	return *read
+}

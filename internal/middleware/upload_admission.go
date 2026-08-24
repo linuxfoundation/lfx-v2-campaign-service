@@ -19,7 +19,8 @@ import (
 // # Why a middleware and not a guard inside the service method
 //
 // The per-request budgets already in place (constants.MaxRequestBodyBytes at 42 MiB, the design's
-// 30 MiB MaxLength, maxCreativeDecodedBytes at 80 MiB) each bound ONE request and say nothing
+// MaxLength(41943040) encoded ceiling, the handler's 30 MiB maxCreativeStoredBytes,
+// maxCreativeDecodedBytes at 80 MiB) each bound ONE request and say nothing
 // about how many run at once. Against a fixed pod memory limit that is the whole problem: N
 // concurrent, entirely LEGAL uploads multiply an unbounded-in-aggregate per-request allocation
 // until the pod is OOM-killed, which denies service to every tenant on it and restarts the

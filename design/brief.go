@@ -395,6 +395,165 @@ var BriefMetrics = Type("brief-metrics", func() {
 	Required("brief_id", "window", "rows", "ok_count", "action_items")
 })
 
+// ─── Google Ads keyword / audience insight types ───
+
+// keywordActionEnum is the closed set of keyword mutations this service brokers.
+//
+// Deliberately only PAUSE and REMOVE — the two DESTRUCTIVE-toward-delivery directions. There is
+// no ENABLE here, and its absence is a decision rather than an omission: re-enabling a keyword
+// makes a paused campaign start spending again, and this endpoint's whole justification is that
+// it can only ever reduce what serves. A caller that wants to widen delivery goes through the
+// create/dispatch path, where budget and flight are validated together.
+//
+// REMOVE is irreversible in Google Ads: a removed ad-group criterion cannot be re-enabled, only
+// re-created as a NEW criterion with a new id. The description says so, because a UI that
+// presents it as the symmetric opposite of PAUSE will lose the caller their keyword history.
+func keywordActionEnum() {
+	Enum("PAUSE", "REMOVE")
+}
+
+// GoogleAdsKeyword is one keyword row from the project-scoped performance read.
+//
+// Every counter is scoped to the requested window. `criterion_id` is what the keyword-actions
+// endpoint consumes, so the two surfaces are usable together: read here, act there.
+var GoogleAdsKeyword = Type("google-ads-keyword", func() {
+	Attribute("criterion_id", String, "The ad-group criterion id — the handle keyword-actions takes. Bare numeric, unique only within its ad group, which is why ad_group_id travels with it.", func() { Example("305729261") })
+	Attribute("ad_group_id", String, "The ad group this criterion belongs to. Required to address the criterion: a criterion id alone does not identify a keyword.", func() { Example("176216228") })
+	Attribute("campaign_id", String, "The Google Ads campaign this keyword serves under", func() { Example("21234567890") })
+	Attribute("text", String, "The keyword text as Google stores it", func() { Example("kubernetes training") })
+	// UNKNOWN is a member here for the same reason it is on `status`: this read returns
+	// keywords this service never created — it is scoped to the project's own campaigns, but
+	// an ADOPTED campaign's criteria were authored in the Google Ads console, not by any
+	// dispatch this service ran. So a match type outside the three Google documents (its enum
+	// also carries UNSPECIFIED/UNKNOWN, and an omitted proto field decodes to "") is reachable.
+	// Without a member to fold onto, the generated CLIENT — which is where Goa emits response
+	// validation — would reject the entire response over one row.
+	Attribute("match_type", String, "How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.", func() { Enum("EXACT", "PHRASE", "BROAD", "UNKNOWN") })
+	Attribute("status", String, "The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.", func() { Enum("ENABLED", "PAUSED", "REMOVED", "UNKNOWN") })
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(4820) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(311) })
+	Attribute("cost_micros", Int64, "Cost over the window in micro-units of the account's native currency. This service performs no FX conversion, so do not blend it with another account's figures.", func() { Example(1284000) })
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)", func() { Example(0.0645) })
+	Required("criterion_id", "ad_group_id", "campaign_id", "text", "match_type", "status", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// GoogleAdsKeywords is the keyword performance read, scoped to the project's OWN campaigns.
+//
+// This is NOT a list endpoint in the sense api-catalog.md rule 3 forbids. It enumerates nothing
+// this service stores: the rows come from Google Ads over the project's connection, and no
+// keyword is persisted here in any table. The same reasoning the catalog already applies to
+// GET /projects/{projectId}/connection-google-ads/accounts applies unchanged.
+var GoogleAdsKeywords = Type("google-ads-keywords", func() {
+	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
+	Attribute("rows", ArrayOf(GoogleAdsKeyword), "Keyword rows, ordered by impressions descending. Capped — see `truncated`.")
+	Attribute("row_count", Int, "How many rows are in `rows`.", func() { Example(50) })
+	// A cap without a signal is a silent lie: a caller that receives exactly 50 rows cannot
+	// tell a 50-keyword project from a 5000-keyword one, and would present the top slice as
+	// the whole. This flag is the difference between a truncated answer and a wrong one.
+	Attribute("truncated", Boolean, "True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set — do not total them and present the result as the project's whole spend.", func() { Example(true) })
+	Required("window", "rows", "row_count", "truncated")
+})
+
+// GoogleAdsAudienceBucket is one demographic slice's counters.
+//
+// `dimension` names which breakdown the bucket belongs to, so the three breakdowns can share
+// one row type and one array. Splitting them into three typed arrays was considered and
+// rejected: a consumer that wants "show me the biggest slice" then has to special-case three
+// shapes, and a fourth breakdown (Google exposes several more) would be a breaking change
+// rather than a new enum value.
+var GoogleAdsAudienceBucket = Type("google-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which breakdown this bucket belongs to", func() { Enum("age", "gender", "device") })
+	Attribute("value", String, "The bucket within that breakdown, as Google's own enum literal. UNDETERMINED/UNKNOWN are real Google values, not read failures — a sizeable share of impressions genuinely cannot be attributed to a demographic, and folding them away would make the buckets sum to less than the campaign's traffic with no indication why.", func() { Example("AGE_RANGE_25_34") })
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Cost over the window in micro-units of the account's native currency", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// GoogleAdsAudience is the project-scoped demographic read: age, gender and device.
+//
+// The three breakdowns are read as three separate GAQL queries and returned in one array
+// discriminated by `dimension`. They are NOT independently failable in the response: if any one
+// query fails the whole request fails, because a partial demographic picture presented as a
+// whole one is how a campaign gets re-targeted on the half of the data that happened to load.
+var GoogleAdsAudience = Type("google-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
+	Attribute("buckets", ArrayOf(GoogleAdsAudienceBucket), "Every bucket across all three breakdowns, discriminated by `dimension`. Ordered by dimension then impressions descending.")
+	// Impressions are unitless and summable WITHIN one dimension, and each dimension covers the
+	// same traffic — so age, gender and device each total to (approximately) the same figure.
+	// Summing ACROSS dimensions triple-counts. Said here because the flat array makes that
+	// mistake easy to reach.
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all dimensions. Each dimension independently covers the same traffic, so summing impressions across dimensions triple-counts it — total within one dimension only.", func() { Example(18) })
+	Required("window", "buckets", "bucket_count")
+})
+
+// KeywordActionInput is one requested keyword mutation.
+//
+// Both ids are required and neither is inferable. A criterion id is unique only within its ad
+// group, so acting on a criterion id alone would mean guessing the ad group — and a wrong guess
+// addresses a DIFFERENT, real keyword rather than failing.
+var KeywordActionInput = Type("keyword-action-input", func() {
+	// Pattern is digits-only rather than merely non-empty, and that constraint is load-bearing
+	// rather than cosmetic: these ids are concatenated into a Google Ads resource name, so the
+	// same injection reasoning that governs customerIDRE in the platform client applies here.
+	// Declaring it in the design means Goa's request decoder rejects a malformed id before any
+	// handler runs, and the client re-validates for non-HTTP callers.
+	//
+	// MaxLength is 19, not 20, because Google Ads ids are positive int64s and math.MaxInt64
+	// ("9223372036854775807") has nineteen digits. A twenty-digit id is digits-only and
+	// injection-safe and still cannot name a criterion that exists, so admitting it here only
+	// moved its refusal upstream, where Google's PERMANENT rejection came back through a read
+	// arm that classifies as a retryable 503.
+	//
+	// The cap alone is not the whole check and is not meant to be: a digit count cannot rule
+	// out "9999999999999999999" (nineteen digits, above math.MaxInt64), "0", or the
+	// leading-zero spelling "0305729261". ValidateKeywordActions parses the value instead. This
+	// bound exists so the generated decoder refuses the clearly-impossible ids before a handler
+	// runs, and so the design and the client agree about what a valid request is.
+	Attribute("ad_group_id", String, "The ad group the criterion belongs to. Digits only, and the canonical base-10 spelling of a positive int64.", func() {
+		Pattern(`^[0-9]+$`)
+		MaxLength(19)
+		Example("176216228")
+	})
+	Attribute("criterion_id", String, "The keyword's ad-group criterion id, as returned by the keywords read. Digits only, and the canonical base-10 spelling of a positive int64.", func() {
+		Pattern(`^[0-9]+$`)
+		MaxLength(19)
+		Example("305729261")
+	})
+	Attribute("action", String, "What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion cannot be re-enabled, only re-created with a new id.", keywordActionEnum)
+	Required("ad_group_id", "criterion_id", "action")
+})
+
+// KeywordActionResult is one mutation's outcome.
+var KeywordActionResult = Type("keyword-action-result", func() {
+	Attribute("ad_group_id", String, "The ad group that was addressed", func() { Example("176216228") })
+	Attribute("criterion_id", String, "The criterion that was addressed", func() { Example("305729261") })
+	Attribute("action", String, "The action that was applied", keywordActionEnum)
+	Attribute("resource_name", String, "The criterion resource name Google returned for the applied mutation", func() { Example("customers/1234567890/adGroupCriteria/176216228~305729261") })
+	Required("ad_group_id", "criterion_id", "action", "resource_name")
+})
+
+// KeywordActions is the outcome of a keyword-actions request.
+//
+// There is NO partial success. Every action in the request is applied, or none is — the request
+// is sent to Google as a single atomic adGroupCriteria:mutate with partial_failure disabled, so
+// a rejected operation rolls the whole batch back. That is deliberate for a spend-affecting
+// mutation: a caller pausing eight keywords to stop a budget leak, told that five were paused,
+// has to work out which three still spend before they can act again. All-or-nothing means the
+// remedy is always "fix the input and resend".
+//
+// This is not the bulk-mutation shape api-catalog.md rule 5 forbids. That rule is about a single
+// call cutting across per-target PERMISSION boundaries — bulk status changes over many
+// campaigns. Every criterion here belongs to the one campaign named in the path, which is the
+// single permission-evaluated target; the batch is one campaign's keywords, not many campaigns.
+var KeywordActions = Type("keyword-actions", func() {
+	Attribute("campaign_id", String, "The campaign whose keywords were acted on", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("results", ArrayOf(KeywordActionResult), "One entry per requested action, in request order. All applied, or the request failed and none were.")
+	Attribute("applied_count", Int, "How many actions were applied. Always equal to the number requested — a partial application is not a possible outcome.", func() { Example(3) })
+	Required("campaign_id", "results", "applied_count")
+})
+
 // EmailCopy holds AI-generated email copy for a campaign brief.
 var EmailCopy = Type("email-copy", func() {
 	Attribute("subject", String, "Email subject line", func() {
@@ -712,8 +871,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// So the wire bound is stated on the wire representation, in the unit that
 				// representation is measured in: base64 characters. The DECODED 30 MiB ceiling
 				// is a different constraint on a different quantity and is enforced in the
-				// handler (maxCreativeEncodedBytes / maxCreativeDecodedBytes in
-				// internal/service), which is the only layer that sees decoded bytes.
+				// handler (maxCreativeStoredBytes, the stored-file ceiling, alongside
+				// maxCreativeDecodedBytes, the pixel budget — both in internal/service), which
+				// is the only layer that sees decoded bytes.
 				MaxLength(41943040) // 4/3 * 30 MiB: the ENCODED ceiling, the unit this schema constrains
 			})
 			Required("project_id", "brief_id", "content_type", "bytes")
@@ -931,6 +1091,69 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
+	Method("apply-keyword-actions", func() {
+		Description("Pause or remove Google Ads keywords on one campaign. " +
+			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +
+			"is validated exactly like a create. The batch's syntax, the campaign's provisioning and the " +
+			"campaign's ad account are checked against the project's current connection BEFORE Google is " +
+			"contacted at all; each criterion is then resolved on the platform and confirmed to be a " +
+			"POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing " +
+			"has changed if that check refuses. " +
+			"ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
+			"so either every action applied or none did. A caller is never left working out which half of " +
+			"a spend-stopping request took effect. " +
+			"REMOVE IS IRREVERSIBLE — Google cannot re-enable a removed criterion, only create a new one " +
+			"with a new id. " +
+			"Google Ads only: a campaign on any other platform is refused with 400, since no other adapter " +
+			"models keywords as addressable criteria. " +
+			"**409** when the change is refused before Google is contacted: the campaign is unprovisioned " +
+			"(no platform campaign id, or no ad group), the campaign belongs to a different ad account than " +
+			"the project's connection now resolves to, the campaign does not record which ad account it was " +
+			"created under (it must be re-dispatched before its keywords can be acted on — a different " +
+			"remedy from reconnecting, which is why it is reported separately), or the connection row " +
+			"itself is unusable. Those are non-retryable, which is why none of them is a 503. " +
+			"A malformed batch is **400 even when the campaign is also unprovisioned**: a permanent " +
+			"input fault the caller must fix dominates a contingent state fault they can only wait " +
+			"on, matching the order the adapter validates in. " +
+			"**503** carries two distinct outcomes and the MESSAGE separates them, so do not branch " +
+			"on the status alone: a DEFINITE failure (nothing was applied — retry), and an " +
+			"UNCONFIRMED one where the mutate may ALREADY have been applied (a short or mismatched " +
+			"mutate response, a 5xx, a timeout). The unconfirmed message tells the caller to VERIFY " +
+			"the campaign's keywords in the platform before retrying, because retrying an " +
+			"irreversible REMOVE that already ran cannot undo it.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// MinLength(1) rather than merely Required: an empty array is a request to mutate
+			// nothing, and answering it 200 would tell a caller their keywords were paused when
+			// no request was ever made. MaxLength bounds one mutate call, matching the platform
+			// client's own maxKeywords sanity cap.
+			// The explicit Example matters: Goa fabricates one by repeating the element
+			// type's example, which produced a generated CLI sample naming the SAME
+			// criterion twice — a batch ValidateKeywordActions rejects with a 400, so anyone
+			// pasting the documented example got an error. One action, so the sample is
+			// valid by construction rather than by two ids happening to differ.
+			Attribute("actions", ArrayOf(KeywordActionInput), "The keyword mutations to apply, all-or-nothing.", func() {
+				MinLength(1)
+				MaxLength(60)
+				Example([]map[string]any{
+					{"ad_group_id": "176216228", "criterion_id": "305729261", "action": "PAUSE"},
+				})
+			})
+			Required("project_id", "brief_id", "campaign_id", "actions")
+		})
+		Result(KeywordActions)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
 		})
 	})
 

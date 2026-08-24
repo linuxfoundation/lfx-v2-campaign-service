@@ -52,11 +52,33 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker())
 
 	// The parked requests below stream a body of UNKNOWN length (blockingBody carries no
-	// Content-Length), which constants.UploadAdmissionWeightFor prices at the worst-case
-	// ceiling — the deliberate choice that stops an unknown size being the cheapest permit.
-	// The saturation count is therefore computed from that same ceiling price rather than
-	// from the raw weight constant, so it tracks the pricing rule the chain actually applies
-	// instead of restating an arithmetic the middleware no longer performs.
+	// Content-Length), which constants.UploadAdmissionWeightFor prices at the FLOOR — the
+	// same charge as the smallest declared upload, because omitting the header cannot buy
+	// more bytes than declaring them (MaxBodyBytes bounds the body, the decode reservation
+	// bounds the pixel buffer, and neither consults the declared length).
+	//
+	// The saturation count is therefore computed from that same pricing function rather than
+	// from the raw weight constant, so it tracks the rule the chain actually applies instead
+	// of restating an arithmetic the middleware no longer performs. That matters more now
+	// than it did when unknown length priced at the ceiling: saturating the budget takes as
+	// many parked requests as the floor admits, not one.
+	//
+	// DERIVING THE COUNT MEANS THIS TEST DOES NOT COVER THE PRICING RULE, and the distinction
+	// is worth stating because the line below reads as though it does. Because `admits` is
+	// computed FROM UploadAdmissionWeightFor, changing that function's answer changes how many
+	// requests this test parks — it self-adjusts and stays green. Reverting the unknown-length
+	// floor back to the worst-case ceiling, for instance, simply moves this test from parking
+	// 16 requests to parking 1, and it still passes: the assertion is that the 17th (or 2nd) is
+	// shed, which holds at either price.
+	//
+	// That is correct FOR WHAT THIS TEST IS — a wiring proof, asserting only that admission is
+	// present in the chain, which must not break every time the pricing constants are retuned.
+	// But it means no failure here can be read as evidence about what an upload is CHARGED.
+	// The pricing rule is bound separately and non-derivably by
+	// TestUploadAdmissionWeightFor_PricesWithoutUnderCharging and
+	// TestUploadAdmission_UndeclaredLengthUploadsRunConcurrently in internal/middleware, which
+	// compare against literal expected weights; those are the tests that fail when the floor
+	// changes. Do not add pricing assertions here — add them there.
 	admits := int(constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(-1))
 
 	release := make(chan struct{})

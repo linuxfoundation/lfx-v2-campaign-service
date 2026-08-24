@@ -8546,6 +8546,426 @@ func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.De
 	}
 }
 
+// BuildGetGoogleAdsKeywordsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-google-ads-keywords" endpoint
+func (c *Client) BuildGetGoogleAdsKeywordsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-google-ads-keywords", "*lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetGoogleAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-google-ads-keywords", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetGoogleAdsKeywordsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-google-ads-keywords server.
+func EncodeGetGoogleAdsKeywordsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-google-ads-keywords", "*lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetGoogleAdsKeywordsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections get-google-ads-keywords endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGetGoogleAdsKeywordsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetGoogleAdsKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetGoogleAdsKeywordsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			res := NewGetGoogleAdsKeywordsGoogleAdsKeywordsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetGoogleAdsKeywordsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetGoogleAdsKeywordsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetGoogleAdsKeywordsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetGoogleAdsKeywordsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetGoogleAdsKeywordsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetGoogleAdsKeywordsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-google-ads-keywords", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildGetGoogleAdsAudienceRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-google-ads-audience" endpoint
+func (c *Client) BuildGetGoogleAdsAudienceRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-google-ads-audience", "*lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetGoogleAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-google-ads-audience", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetGoogleAdsAudienceRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-google-ads-audience server.
+func EncodeGetGoogleAdsAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-google-ads-audience", "*lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetGoogleAdsAudienceResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections get-google-ads-audience endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGetGoogleAdsAudienceResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetGoogleAdsAudienceResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			res := NewGetGoogleAdsAudienceGoogleAdsAudienceOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetGoogleAdsAudienceBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudienceBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetGoogleAdsAudienceConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudienceConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetGoogleAdsAudienceServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudienceServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetGoogleAdsAudienceInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudienceInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetGoogleAdsAudienceNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudiencePayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetGoogleAdsAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudienceUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-google-ads-audience", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListMetaAdsAccountsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "list-meta-ads-accounts" endpoint
@@ -9703,6 +10123,43 @@ func unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAcce
 	res := &lfxv2campaignserviceconnections.AccessibleAccount{
 		ID:    *v.ID,
 		Label: v.Label,
+	}
+
+	return res
+}
+
+// unmarshalGoogleAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsKeyword
+// builds a value of type *lfxv2campaignserviceconnections.GoogleAdsKeyword
+// from a value of type *GoogleAdsKeywordResponseBody.
+func unmarshalGoogleAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsKeyword(v *GoogleAdsKeywordResponseBody) *lfxv2campaignserviceconnections.GoogleAdsKeyword {
+	res := &lfxv2campaignserviceconnections.GoogleAdsKeyword{
+		CriterionID: *v.CriterionID,
+		AdGroupID:   *v.AdGroupID,
+		CampaignID:  *v.CampaignID,
+		Text:        *v.Text,
+		MatchType:   *v.MatchType,
+		Status:      *v.Status,
+		Impressions: *v.Impressions,
+		Clicks:      *v.Clicks,
+		CostMicros:  *v.CostMicros,
+		Ctr:         *v.Ctr,
+	}
+
+	return res
+}
+
+// unmarshalGoogleAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsAudienceBucket
+// builds a value of type
+// *lfxv2campaignserviceconnections.GoogleAdsAudienceBucket from a value of
+// type *GoogleAdsAudienceBucketResponseBody.
+func unmarshalGoogleAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsAudienceBucket(v *GoogleAdsAudienceBucketResponseBody) *lfxv2campaignserviceconnections.GoogleAdsAudienceBucket {
+	res := &lfxv2campaignserviceconnections.GoogleAdsAudienceBucket{
+		Dimension:   *v.Dimension,
+		Value:       *v.Value,
+		Impressions: *v.Impressions,
+		Clicks:      *v.Clicks,
+		CostMicros:  *v.CostMicros,
+		Ctr:         *v.Ctr,
 	}
 
 	return res

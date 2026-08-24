@@ -52,7 +52,7 @@ const uploadRoute = "/projects/cncf/briefs/6ba7b810-9dad-11d1-80b4-00c04fd430c8/
 
 // TestUploadRoute_RejectsOversizeBodyBeforeDecoding is the test for the gap this PR closes.
 //
-// design/brief.go declares MaxLength(31457280) on the upload's `bytes` attribute, which reads
+// design/brief.go declares MaxLength(41943040) on the upload's `bytes` attribute, which reads
 // like a size limit but does not bound the wire: the generated validator tests len() on the
 // DECODED slice, and it only sees that slice after goahttp.RequestDecoder's json.Decoder has
 // read the entire body off the socket and base64-decoded it. Before the cap, a caller could
@@ -153,7 +153,9 @@ func TestUploadRoute_RejectsOversizeChunkedBody(t *testing.T) {
 // admits equally (design/brief.go's Enum). The subtest asserting the largest case is what makes
 // the cap's last byte load-bearing.
 func TestUploadRoute_AdmitsMaximumLegalUpload(t *testing.T) {
-	const maxImage = 31457280 // MaxLength on design/brief.go's `bytes` attribute
+	const maxImage = 31457280 // the 30 MiB DECODED ceiling (maxCreativeStoredBytes); the
+	// design's MaxLength(41943040) is this value base64-encoded, and it is the encoded form
+	// that travels on the wire and that this test sizes the body from.
 	// Encoded once: both subtests differ only in the enum value, and this is 40 MiB of work.
 	encoded := base64.StdEncoding.EncodeToString(make([]byte, maxImage))
 

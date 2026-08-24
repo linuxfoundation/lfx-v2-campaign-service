@@ -91,6 +91,11 @@ func ToggleCampaignStatusLfxV2CampaignServiceBriefsPath(projectID string, briefI
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/status", projectID, briefID, campaignID)
 }
 
+// ApplyKeywordActionsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service apply-keyword-actions HTTP endpoint.
+func ApplyKeywordActionsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-actions", projectID, briefID, campaignID)
+}
+
 // DeleteCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-campaign HTTP endpoint.
 func DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)

@@ -156,7 +156,9 @@ func TestUploadAdmissionBudgetLeavesHeadroom(t *testing.T) {
 // have caught it.
 func TestUploadAdmissionWeightCoversTheCoexistingPeak(t *testing.T) {
 	// Both figures come from the service's declared limits, NOT from UploadAdmissionWeightBytes:
-	//   - the design's MaxLength on the upload's `bytes` attribute (30 MiB decoded);
+	//   - maxCreativeStoredBytes, the handler's stored-file ceiling in internal/service
+	//     (30 MiB decoded; the design's MaxLength(41943040) is that same bound expressed in
+	//     base64 characters, which is not the unit this peak is measured in);
 	//   - maxCreativeDecodedBytes, the decode budget in internal/service (80 MiB).
 	const maxDecodedPayload int64 = 30 << 20
 	const maxDecodedPixels int64 = 80 << 20

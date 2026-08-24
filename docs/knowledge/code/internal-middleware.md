@@ -17,7 +17,9 @@ Package middleware provides HTTP middleware for the service.
 It exists because the size bounds declared in `design/` do not bound the wire. A Goa `Bytes`
 attribute's `MaxLength` is checked by the GENERATED VALIDATOR against the already-decoded slice,
 and the validator only sees that slice after `goahttp.RequestDecoder`'s `json.Decoder` has read
-the entire body off the socket and base64-decoded it. Before this middleware there was no
+the entire body off the socket and base64-decoded it. (The upload declares that ceiling in base64
+CHARACTERS — `MaxLength(41943040)` — because that is the unit the published schema measures; the
+30 MiB DECODED ceiling is enforced separately in the handler at `maxCreativeStoredBytes`.) Before this middleware there was no
 `http.MaxBytesReader` anywhere in the service — every `LimitReader` in the tree caps an OUTBOUND
 response — so an unauthenticated caller could stream an arbitrarily large body to the
 creative-asset upload and the server would buffer and decode all of it before any declared limit
@@ -36,13 +38,14 @@ fact refused to read it. Nothing about the body is logged or echoed: the message
 the `Content-Length` arm the bytes are never read at all.
 
 The cap is sized from the largest LEGAL upload, not guessed. Base64 expands by exactly 4/3, so the
-30-MiB `MaxLength` on the upload's `bytes` attribute arrives as 41,943,040 characters — 40 MiB to
-the byte. Only `content_type` and `bytes` travel in the body (`project_id` and `brief_id` are path
+30-MiB stored-file ceiling arrives as 41,943,040 characters — 40 MiB to the byte, which is exactly
+what the upload's `bytes` attribute declares as `MaxLength`. Only `content_type` and `bytes` travel in the body (`project_id` and `brief_id` are path
 parameters), so the JSON envelope adds 39 bytes for the shorter enum value (`"image/png"`) and 40
 for the longer (`"image/jpeg"`), putting the worst legal body at **41,943,080** — the JPEG case,
 since `content_type` rides in the body and its length therefore counts. A 40-MiB cap would
 reject every maximum-size image by those 40 bytes; 42 MiB clears it with ~2 MiB of headroom.
-Raising the declared `MaxLength` requires raising this constant in step.
+Raising the declared `MaxLength` (or the `maxCreativeStoredBytes` ceiling it encodes) requires
+raising this constant in step.
 
 Both enum values are driven by `TestUploadRoute_AdmitsMaximumLegalUpload`, and the JPEG case is
 what makes the last byte load-bearing: a cap of 41,943,079 passes a PNG-only fixture while
@@ -54,8 +57,9 @@ mux are what would otherwise do the buffering.
 
 ## Upload admission bound (LFXV2-3295)
 
-`UploadAdmission(budget, weight, wait)` bounds the TOTAL bytes concurrent uploads may cause the
-process to allocate. The body cap above bounds ONE request; this bounds how many run at once.
+`UploadAdmission(budgetBytes, maxBodyBytes, weightFor, wait)` bounds the TOTAL bytes concurrent
+uploads may cause the process to allocate. The body cap above bounds ONE request; this bounds how
+many run at once.
 
 The distinction is the point. Against a fixed pod memory limit, N concurrent and entirely LEGAL
 uploads multiply a per-request allocation until the pod is OOM-killed — a cheap denial of service
@@ -98,6 +102,31 @@ The budget is DERIVED, not chosen: `constants.UploadAdmissionBudgetBytes` is
 `resources.limits.memory`. Because that number lives in a file the Go build cannot read,
 `TestPodMemoryLimitMatchesChart` parses `values.yaml` and fails when the two drift — the
 relationship is enforced rather than trusted.
+
+Two refusals, and their ORDER is deliberate. A body whose DECLARED `Content-Length` already
+exceeds `maxBodyBytes` is answered `413` immediately, before any permit is sought: that verdict is
+permanent and knowable from the headers, so shedding it with a retryable `503` because the budget
+happened to be busy would tell the caller to retry something that can never succeed at any size of
+budget. The check reads an already-parsed header and consumes no body, so it does not weaken the
+pre-auth placement above. An UNDECLARED or chunked body is deliberately not covered here — its
+size is unknowable without reading it, so it proceeds through admission and meets `MaxBodyBytes`'
+`MaxBytesReader` arm, which is where that case belongs.
+
+The weight is PRICED per request, not charged flat, by `constants.UploadAdmissionWeightFor`. A
+flat charge equal to the budget made effective concurrency exactly 1 — a 200 KiB logo held the
+same permit as a 30 MiB image. Declared sizes are charged proportionally
+(`UploadAdmissionAmplification`) between a floor (`UploadAdmissionMinWeightBytes`, 8 MiB) and the
+worst-case ceiling, so ordinary uploads run ~16 at a time against the 128 MiB budget.
+
+Unknown length (chunked or absent, `ContentLength < 0`) is charged the FLOOR, not the ceiling.
+The ceiling equals the whole budget, so pricing the unknown case there re-created concurrency 1 —
+and not hypothetically: goa's generated `RequestEncoder` never sets `ContentLength`, so the
+shipped briefs client streams this upload chunked and hit exactly that path. Charging the floor
+does not make an omitted header the cheapest permit, because the permit is not what bounds
+spending: the body is bounded by `MaxBodyBytes`' `MaxBytesReader` and the pixel buffer by the
+separate `DecodeReserver` budget, and neither consults the declared length. Making the generated
+client declare an encoded length so it is priced by its true size is the complementary
+client-side fix, tracked as issue #183.
 
 Under saturation a request waits a bounded `UploadAdmissionWait` (250 ms, absorbing ordinary
 jitter) and is then shed with an explicit `503` plus `Retry-After` in the service's
