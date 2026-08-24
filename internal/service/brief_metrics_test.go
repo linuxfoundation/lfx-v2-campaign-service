@@ -914,3 +914,90 @@ func TestGetBriefMetrics_CampaignBeforeItsFlightIsNotZeroDelivery(t *testing.T) 
 		t.Error("zero_delivery did not fire for a campaign a week into its flight with no delivery")
 	}
 }
+
+// Pins the WIRING of the conversions pointer from the adapter through to the rules.
+//
+// The rules-package tests prove the rule reasons correctly given an Input; they cannot see
+// whether this service ever populates Input.Conversions, nor whether it flattens a nil into a
+// zero on the way. Dereferencing at the call site would leave every rules test green while
+// making the no_conversions rule fire on every campaign whose platform reports no conversions
+// at all — so this asserts both directions through the real service.
+func TestGetBriefMetrics_NoConversionsWiringDistinguishesAbsentFromZero(t *testing.T) {
+	fired := func(t *testing.T, m *model.CampaignMetrics) bool {
+		t.Helper()
+		disp := newPerCampaignDispatcher()
+		disp.results["c1"] = m
+		s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderGoogleAds))
+		s.SetClock(func() time.Time { return metricsNow })
+		res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+		if err != nil {
+			t.Fatalf("GetBriefMetrics: %v", err)
+		}
+		for _, item := range res.ActionItems {
+			if item.Rule == "no_conversions" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Plenty of clicks, a MEASURED zero: the finding the rule exists for.
+	measured := &model.CampaignMetrics{
+		Impressions: 40000, Clicks: 800, CostMicros: 250_000_000, Ctr: 0.02,
+		Conversions: func() *float64 { v := 0.0; return &v }(),
+	}
+	if !fired(t, measured) {
+		t.Error("no_conversions did not fire for 800 clicks and a measured 0 conversions; " +
+			"the conversions pointer is not reaching the rules")
+	}
+
+	// The same traffic on a platform that reports NO conversion count. Identical numbers,
+	// opposite correct answer.
+	absent := &model.CampaignMetrics{
+		Impressions: 40000, Clicks: 800, CostMicros: 250_000_000, Ctr: 0.02,
+		Conversions: nil,
+	}
+	if fired(t, absent) {
+		t.Error("no_conversions fired for a campaign whose platform reports no conversions " +
+			"at all; a nil was flattened into a measured zero somewhere in the wiring")
+	}
+}
+
+// The measurement must also reach the RESPONSE, not just the rules — and absence must remain
+// absent on the wire so a consumer can tell "not measured here" from a measured zero.
+func TestGetBriefMetrics_ConversionsSurfaceOnTheRow(t *testing.T) {
+	row := func(t *testing.T, conv *float64) *briefs.CampaignMetrics {
+		t.Helper()
+		disp := newPerCampaignDispatcher()
+		disp.results["c1"] = &model.CampaignMetrics{
+			Impressions: 40000, Clicks: 800, CostMicros: 250_000_000, Ctr: 0.02, Conversions: conv,
+		}
+		s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderGoogleAds))
+		s.SetClock(func() time.Time { return metricsNow })
+		res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+		if err != nil {
+			t.Fatalf("GetBriefMetrics: %v", err)
+		}
+		if len(res.Rows) != 1 || res.Rows[0].Metrics == nil {
+			t.Fatalf("expected one ok row carrying metrics, got %+v", res.Rows)
+		}
+		return res.Rows[0].Metrics
+	}
+
+	v := 37.0
+	if got := row(t, &v); got.Conversions == nil || *got.Conversions != 37 {
+		t.Errorf("row conversions = %v, want 37", got.Conversions)
+	}
+	// A FRACTIONAL value must survive the whole mapping. Google and Microsoft both credit
+	// partial conversions, and a float that is rounded anywhere between the adapter and the
+	// wire reports a converting campaign as having produced none.
+	frac := 0.4
+	if got := row(t, &frac); got.Conversions == nil || *got.Conversions != 0.4 {
+		t.Errorf("row conversions = %v, want 0.4: a fractional conversion was rounded away "+
+			"between the domain model and the response", got.Conversions)
+	}
+	if got := row(t, nil); got.Conversions != nil {
+		t.Errorf("row conversions = %v for a platform that reported none; the response "+
+			"cannot distinguish absent from a measured zero", *got.Conversions)
+	}
+}

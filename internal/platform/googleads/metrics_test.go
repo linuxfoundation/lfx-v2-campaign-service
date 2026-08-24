@@ -117,6 +117,17 @@ func TestGetCampaignMetrics_NoActivityInWindowReturnsZeroValue(t *testing.T) {
 	if m.CampaignID != "555" {
 		t.Errorf("CampaignID = %q, want 555", m.CampaignID)
 	}
+	// The assertion the other four counters do not make for us: Conversions is a POINTER,
+	// so a zero-value struct satisfies "conversions == 0" by being nil, and nil means
+	// "this platform cannot measure conversions" — the opposite of what an empty result
+	// set means for Google. Assert the pointer is non-nil AND that it holds zero.
+	if m.Conversions == nil {
+		t.Fatal("Conversions = nil for a no-activity window; Google measured this window and " +
+			"got zero, and nil is reserved for platforms that cannot report conversions at all")
+	}
+	if *m.Conversions != 0 {
+		t.Errorf("*Conversions = %v, want 0", *m.Conversions)
+	}
 }
 
 func TestGetCampaignMetrics_ZeroImpressionsAvoidsDivideByZero(t *testing.T) {
@@ -272,5 +283,143 @@ func TestGetCampaignMetrics_OmittedMetricsAreZero(t *testing.T) {
 	}
 	if m.Impressions != 0 || m.Clicks != 0 || m.CostMicros != 0 || m.Ctr != 0 {
 		t.Errorf("expected zero-value metrics for omitted fields, got %+v", m)
+	}
+}
+
+// Conversions must be REQUESTED, or Google returns a row without it and every campaign
+// reads as unmeasured. Pins the GAQL SELECT rather than the response handling.
+func TestGetCampaignMetrics_RequestsConversions(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":3}}]}`)
+	})
+	if _, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days); err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	mu.Lock()
+	body := gotBody
+	mu.Unlock()
+	if !strings.Contains(body, "metrics.conversions") {
+		t.Errorf("GAQL query does not select metrics.conversions, so no campaign can ever "+
+			"report one; query body = %s", body)
+	}
+}
+
+// metrics.conversions is declared DOUBLE upstream and is serialized as a BARE JSON NUMBER,
+// unlike the int64 metrics Google encodes as strings. The fixture uses that documented
+// encoding: decoding it into a string field would fail on every converting campaign.
+func TestGetCampaignMetrics_ConversionsDecodedFromJSONNumber(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":12}}]}`)
+	})
+	m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil for a response that carried conversions:12")
+	}
+	if *m.Conversions != 12 {
+		t.Errorf("Conversions = %v, want 12", *m.Conversions)
+	}
+}
+
+// Google credits FRACTIONAL conversions under data-driven and position-based attribution,
+// which is why the field is a double. The fraction is carried through UNCHANGED: rounding
+// 0.4 to 0 would report a converting campaign as having produced nothing, and the
+// no_conversions rule reads exactly this number to decide whether to raise a finding.
+func TestGetCampaignMetrics_FractionalConversionsArePreserved(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want float64
+	}{
+		{"a fraction below one is not rounded to zero", "0.4", 0.4},
+		{"a fraction below one is not rounded up either", "0.8", 0.8},
+		{"a fraction above one keeps its remainder", "2.4", 2.4},
+		{"an exact half is not rounded", "2.5", 2.5},
+		{"an exact zero stays zero", "0", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","conversions":`+tc.raw+`}}]}`)
+			})
+			m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+			if err != nil {
+				t.Fatalf("GetCampaignMetrics: %v", err)
+			}
+			if m.Conversions == nil {
+				t.Fatalf("Conversions is nil for conversions:%s", tc.raw)
+			}
+			if *m.Conversions != tc.want {
+				t.Errorf("conversions:%s became %v, want %v: rounding a fractional conversion "+
+					"reports a converting campaign as having produced none",
+					tc.raw, *m.Conversions, tc.want)
+			}
+		})
+	}
+}
+
+// An ABSENT conversions member on a Google row is a measured ZERO, not "unmeasured".
+//
+// metrics.conversions is always in this method's SELECT list, and Google Ads REST encodes
+// responses as proto3 JSON, which omits fields holding the default value — the same reason
+// parseMetricInt already treats an omitted impressions/clicks as a measured 0. Leaving it nil
+// meant no_conversions could never fire for a Google campaign that genuinely converted
+// nobody, which is the rule's entire purpose. nil is reserved for the four platforms that
+// cannot report a campaign-level conversion count at all.
+func TestGetCampaignMetrics_AbsentConversionsIsMeasuredZero(t *testing.T) {
+	absent := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40"}}]}`)
+	})
+	m, err := absent.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil for a selected-but-omitted field: proto3 JSON omits a " +
+			"zero, so this is a measured 0 and no_conversions must be able to fire on it")
+	}
+	if *m.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *m.Conversions)
+	}
+
+	measured := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","conversions":0}}]}`)
+	})
+	m2, err := measured.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if m2.Conversions == nil {
+		t.Fatal("Conversions is nil for an explicit conversions:0, erasing a real measurement")
+	}
+	if *m2.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *m2.Conversions)
+	}
+}
+
+// A negative or non-finite conversion count is upstream corruption, not a small number.
+// Passing it through would put a figure the dashboard renders as a measurement into the
+// response — the same guard this file already applies to the other counters.
+func TestGetCampaignMetrics_MalformedConversionsIsAnError(t *testing.T) {
+	for _, raw := range []string{"-1", "1e400"} {
+		c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","conversions":`+raw+`}}]}`)
+		})
+		if _, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days); err == nil {
+			t.Errorf("conversions:%s was accepted; a malformed count became a measurement", raw)
+		}
 	}
 }

@@ -1013,6 +1013,9 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		// The adapter's POINTER, passed through unchanged so an unmeasured conversion count
+		// is omitted from the response body rather than serialized as 0.
+		Conversions: m.Conversions,
 		Email:       emailMetricsResult(m.Email),
 	}, nil
 }
@@ -2200,6 +2203,7 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 				Clicks:             r.metrics.Clicks,
 				CostMicros:         r.metrics.CostMicros,
 				Ctr:                r.metrics.Ctr,
+				Conversions:        r.metrics.Conversions,
 				Email:              emailMetricsResult(r.metrics.Email),
 			}
 			out.OKCount++
@@ -2243,7 +2247,12 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			// Ctr is a RATIO on the domain model; the rules take a percentage, and passing the
 			// ratio would make the low-CTR threshold a hundred times too strict.
 			CTRPct: r.metrics.Ctr * 100,
-			Pacing: r.pacing,
+			// Passed through as the POINTER the adapter produced, never dereferenced to a
+			// value here. Flattening a nil to 0 at this boundary would erase the distinction
+			// the whole field exists for and make the no_conversions rule fire on every
+			// campaign running on a platform that cannot report conversions.
+			Conversions: r.metrics.Conversions,
+			Pacing:      r.pacing,
 			// Only a paid-ads channel bills per delivery. HubSpot charges nothing per send and
 			// its adapter always reports CostMicros=0, so "no spend" there is the normal state
 			// rather than a signal. Keyed on Kind() rather than on the provider so a second
@@ -2352,6 +2361,18 @@ func (s *BriefService) GetCampaignSettings(ctx context.Context, p *briefs.GetCam
 			slog.ErrorContext(ctx, "the LF system connection is not usable; campaign settings readbacks are failing for every project without its own connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(rerr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign settings could not be read"}
+		case errors.Is(rerr, domain.ErrSystemConnectionMissing):
+			// ABOVE the ErrNotFound arm below, which is wrapped ALONGSIDE this sentinel by
+			// resolveExisting and would otherwise win. Forced-system mode is on and the LF
+			// system row is not installed for this provider: the project's own connection is
+			// precisely what forced mode ignores, so "connect it" is advice that cannot work,
+			// and the operator who must install the LF row would never be paged. Their repair,
+			// so 500 and an ERROR log — matching the ErrSystemConnectionNotUsable arm above and
+			// the identical arms in GetCampaignMetrics and ToggleCampaignStatus.
+			slog.ErrorContext(ctx, "the LF system connection is not installed; campaign settings readbacks are failing for every project while force-system mode is on",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
 			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign settings could not be read"}
 		case errors.Is(rerr, domain.ErrNotFound):
 			// No connection row for (project, provider), and no shared system account either.

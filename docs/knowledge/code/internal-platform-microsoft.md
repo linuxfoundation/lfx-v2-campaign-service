@@ -716,7 +716,18 @@ one-column copyright trailer — so `FieldsPerRecord = -1` is required; the defa
 rejects the whole file at the header row, which would fail every real report. Columns are
 resolved by header NAME, never by position, because Microsoft's writer chooses its own order
 and a positional read would swap Clicks and Spend into plausible wrong numbers; a missing
-metric column is refused rather than defaulted to zero. And the download request carries NO
+metric column is refused rather than defaulted to zero — with ONE deliberate exception,
+`ConversionsQualified`, which is resolved but not required. That column is only populated for
+accounts set up with Universal Event Tracking, so demanding it would turn an ordinary read into
+a hard failure for advertisers who simply do not track conversions; an absent column leaves the
+count nil, which is the honest answer rather than a fabricated zero. The column is
+`ConversionsQualified` and NOT `Conversions`: Microsoft's own column reference marks the latter
+deprecated as of 2022, directs callers to the qualified column, and warns the legacy values "may
+be inaccurate" because it cannot represent the decimal conversion values Microsoft now supports
+— so reading the obvious-looking column would have been the wrong number, not merely an older
+one. It is typed **double**, and its fraction is KEPT: rounding each row before summing
+compounds the error across a multi-row report, turning twenty rows of 0.4 into a reported zero
+for a campaign that converted eight times. And the download request carries NO
 bearer token: the URL is pre-signed storage, so attaching our OAuth credential would disclose
 it to a host that neither needs nor expects it.
 
