@@ -241,6 +241,60 @@ func TestTwitter_NoTweetIDIsDegradedNotCleanCreated(t *testing.T) {
 	}
 }
 
+// TestTwitter_TweetTextIsMappedAndAuthorsCleanCreated verifies the dispatch-layer
+// config plumbing for tweetText/asUserId: both must reach twitter.CampaignInput,
+// and a fully successful author+promote run must persist as a clean `created`
+// (not created_degraded) — the whole point of closing the manual-tweet gap.
+func TestTwitter_TweetTextIsMappedAndAuthorsCleanCreated(t *testing.T) {
+	var tweetHit bool
+	var tweetParams string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "promotable_users"):
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}]}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "tweet"):
+			tweetHit = true
+			tweetParams = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"data":{"id":"tw1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0),
+	)
+	cfg := json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetText":"Join us at KubeCon","asUserId":"u1"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !tweetHit {
+		t.Fatal("the adapter must POST the tweet-authoring endpoint when tweetText is configured")
+	}
+	if !strings.Contains(tweetParams, "as_user_id=u1") {
+		t.Errorf("tweet authoring request must carry the configured asUserId, got query: %q", tweetParams)
+	}
+	if !strings.Contains(tweetParams, "nullcast=true") {
+		t.Errorf("tweet authoring request must send nullcast=true explicitly, got query: %q", tweetParams)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("a fully authored+promoted tweet must persist as a clean %q, got %q", campaignStatusCreated, camp.Status)
+	}
+}
+
 func TestTwitter_ReusedCampaignIsDegraded(t *testing.T) {
 	// When the client REUSES an existing campaign/line item by name (the GET find-by-name
 	// returns a match), it does NOT apply this request's budget/config/dates — so even
