@@ -996,6 +996,19 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		// Carried through as a POINTER rather than being flattened, because the DOMAIN field
+		// is a pointer and its nil carries meaning across platforms: it marks the adapters
+		// whose platform reports no campaign-level conversion count at all (Meta, X, Reddit,
+		// email), and the no_conversions rule refuses to fire on it.
+		//
+		// This adapter never actually produces that nil. googleads.GetCampaignMetrics
+		// materialises a non-nil count on BOTH of its paths — an explicit zero for a no-row
+		// window, and a zero default when the row omits the conversions member — because for
+		// Google a no-activity window is a MEASUREMENT of zero, not an absence of one.
+		// Dereferencing here would still be wrong: it would bake that invariant into a second
+		// file, so a future path that legitimately returns nil would panic here instead of
+		// propagating the absence the type already knows how to express.
+		Conversions: m.Conversions,
 	}, nil
 }
 

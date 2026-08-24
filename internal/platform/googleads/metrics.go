@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,12 +94,22 @@ type CampaignMetrics struct {
 	CostMicros  int64         `json:"costMicros"`
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64 `json:"ctr"`
+	// Conversions is metrics.conversions, carried through with its FRACTION intact — the
+	// field reference types it DOUBLE because Google credits fractional conversions under
+	// data-driven and position-based attribution. It is a POINTER for cross-adapter
+	// consistency with model.CampaignMetrics.Conversions, where nil means "this platform
+	// cannot measure conversions at all". Google can, so this adapter never leaves it nil:
+	// metrics.conversions is always selected, and proto3 JSON omits default values, so an
+	// absent member is a measured 0.0 and is reported as a non-nil zero.
+	Conversions *float64 `json:"conversions,omitempty"`
 }
 
 // gaqlMetricsRow is the shape of one googleAds:search result row for the
 // campaign-metrics query below. Google Ads REST returns int64-valued fields
 // (resource ids and metrics) as JSON strings to avoid float64 precision loss, so
-// every field here is a string despite representing a number.
+// the INTEGER fields here are strings despite representing numbers. Conversions is the
+// exception and is a bare number: it is declared DOUBLE upstream, so there is no int64
+// precision to protect and no string encoding applied.
 type gaqlMetricsRow struct {
 	Campaign struct {
 		ID string `json:"id"`
@@ -107,6 +118,15 @@ type gaqlMetricsRow struct {
 		Impressions string `json:"impressions"`
 		Clicks      string `json:"clicks"`
 		CostMicros  string `json:"costMicros"`
+		// Conversions is a JSON NUMBER, not a string, and that difference is a type fact
+		// rather than an inconsistency worth normalising away. Google Ads REST encodes
+		// int64-valued fields as strings to protect them from float64 precision loss;
+		// metrics.conversions is declared DOUBLE in the field reference, so it is already a
+		// float and is serialized as a bare number. Decoding it into a string field would
+		// fail on every response that carries a conversion.
+		//
+		// The pointer distinguishes an omitted field from a present 0.0.
+		Conversions *float64 `json:"conversions"`
 	} `json:"metrics"`
 }
 
@@ -150,7 +170,8 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 
 	query := fmt.Sprintf(
-		"SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros "+
+		"SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros, "+
+			"metrics.conversions "+
 			"FROM campaign WHERE campaign.id = %s AND segments.date DURING %s",
 		id, w,
 	)
@@ -159,7 +180,23 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, fmt.Errorf("get campaign metrics: %w", err)
 	}
 	if len(rows) == 0 {
-		return &CampaignMetrics{CampaignID: id, Window: w}, nil
+		// A no-activity window is a MEASUREMENT, not an absence of one. Google Ads omits a
+		// campaign from results entirely when it had no impressions, so this branch means the
+		// query ran and the answer was zero — not that conversions could not be measured here.
+		// Conversions is therefore a non-nil zero, exactly as the row-decoding path below
+		// materialises it, keeping this adapter's invariant ("it never leaves the count nil")
+		// true on every path. nil is reserved for platforms that cannot report a campaign-level
+		// conversion count at all, and this is not one of them.
+		//
+		// The reason is the invariant itself, NOT any effect on the no_conversions rule. That
+		// rule cannot fire on this branch whichever way the pointer goes: it is gated on
+		// in.Clicks >= minClicksForConversions (internal/service/rules/actions.go), and a
+		// window with no rows has zero clicks. What the honest zero actually buys is that
+		// every consumer of this struct — the metrics response, a conversion total, anything
+		// reading the pointer — sees "measured, and the answer was none" rather than
+		// "unmeasured", which is the true state of a window Google did answer.
+		zero := 0.0
+		return &CampaignMetrics{CampaignID: id, Window: w, Conversions: &zero}, nil
 	}
 	// Enforce the single-row assumption documented above rather than trusting it.
 	// Reading rows[0] alone is only correct while the query segments by nothing; a
@@ -221,6 +258,48 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 	if impressions > 0 {
 		m.Ctr = float64(clicks) / float64(impressions)
+	}
+	// metrics.conversions is ALWAYS in this method's SELECT list, and Google Ads REST encodes
+	// responses as proto3 JSON, which OMITS fields holding the default value. An absent
+	// conversions member on a row we explicitly selected is therefore the encoding of a
+	// measured 0.0 — not "Google could not measure this". Materialising a non-nil zero is the
+	// same treatment parseMetricInt already gives an omitted impressions/clicks value.
+	//
+	// nil is reserved for adapters whose PLATFORM cannot report a campaign-level conversion
+	// count at all (Meta, X, Reddit, email), which is a different fact and the reason the
+	// domain field is a pointer. Leaving Google nil on a zero would have meant no_conversions
+	// never fired for a Google campaign that genuinely converted nobody — the rule's whole
+	// purpose.
+	conv := 0.0
+	if row.Metrics.Conversions != nil {
+		conv = *row.Metrics.Conversions
+	}
+	{
+		// Reject malformed magnitudes rather than folding them into a count. NaN and ±Inf
+		// both survive JSON decoding of a bare number in some encoders, a negative
+		// conversion count is upstream corruption rather than a small number, and a value
+		// beyond int64 would wrap into a negative on conversion. Each would otherwise become
+		// a figure the dashboard renders as a measurement — the same guard meta/metrics.go
+		// and reddit/metrics.go apply to spend.
+		//
+		// The bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
+		// exactly representable as a float64, so float64(math.MaxInt64) rounds UP to 2^63,
+		// one more than MaxInt64. A value of exactly 2^63 would pass a '>' guard and then
+		// wrap to MinInt64. Same reasoning as meta/metrics.go's spend-scaling guard.
+		if math.IsNaN(conv) || math.IsInf(conv, 0) || conv < 0 || conv >= float64(math.MaxInt64) {
+			return nil, &transportError{
+				Method: http.MethodPost,
+				Path:   c.customerPath("googleAds:search"),
+				Err:    fmt.Errorf("decode campaign metrics row: conversions is not a usable count"),
+			}
+		}
+		// Carried through UNROUNDED. metrics.conversions is a DOUBLE because Google credits
+		// fractional conversions under data-driven and position-based attribution, so a
+		// campaign can genuinely hold 0.4 of a conversion. Rounding that to 0 would report a
+		// converting campaign as having produced nothing, and the no_conversions rule reads
+		// exactly this number — so the rounding would manufacture the very finding the rule
+		// exists to report honestly. Only an upstream value of exactly zero may fire it.
+		m.Conversions = &conv
 	}
 	return m, nil
 }
