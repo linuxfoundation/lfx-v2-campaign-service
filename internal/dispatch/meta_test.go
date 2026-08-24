@@ -2135,8 +2135,11 @@ func TestMeta_DispatchResolvesAssetToImageHash(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// The upload carried the asset's BYTES as a multipart file part — the documented
-	// `bytes` create parameter — not a url field.
+	// The upload carried the asset's BYTES as a multipart FILE part, not a url field.
+	// Note the transport is deliberately NOT the documented `bytes` create parameter:
+	// `bytes` is Meta's base64 scalar, whereas this request sends a multipart file part
+	// (named `source`) to avoid the ~33% base64 inflation. See uploadImage's godoc for
+	// why the part NAME is not the contract and the filename is what matters.
 	if !strings.HasPrefix(uploadType, "multipart/form-data") {
 		t.Errorf("upload Content-Type = %q, want multipart/form-data", uploadType)
 	}

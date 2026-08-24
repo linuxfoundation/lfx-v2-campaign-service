@@ -1017,3 +1017,134 @@ func TestUploadImageRetriesTruncated429(t *testing.T) {
 		t.Errorf("attempts = %d, want 2 — the truncated 429 must cost exactly one retry", n)
 	}
 }
+
+// TestUploadImageRetriesTruncatedGraphThrottle pins that a Graph-coded throttle is retried
+// even when the response body is TRUNCATED.
+//
+// THE FAILURE MODE. Meta reports rate limiting as an HTTP 400 carrying a Graph rate-limit
+// code far more often than as a 429, so the envelope — not the status — is what identifies
+// the common throttle shape. The envelope arm was gated on `readErr == nil`, so a 400 whose
+// body is a COMPLETE `{"error":{"code":4}}` followed by a connection closed early on a
+// mismatched Content-Length skipped that arm entirely: `raw` parses fine, but readErr is
+// non-nil. It then failed the status==429 arm and fell to `default`, returning `final` — a
+// retryable throttle turned terminal, leaving a created_degraded campaign no re-dispatch
+// repairs.
+//
+// This is the SAME defect the truncated-429 test covers, on the other classification arm,
+// and do() already gets it right: it unmarshals the envelope on every non-2xx path before
+// consuming readErr, precisely so a parseable body is not discarded for being short.
+//
+// HOW THE TRUNCATION IS PRODUCED. The handler writes a complete JSON envelope but declares a
+// larger Content-Length and hangs up, so io.ReadAll returns the usable bytes AND an
+// unexpected EOF — the real shape of the bug rather than a simulated error value.
+func TestUploadImageRetriesTruncatedGraphThrottle(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&attempts, 1)
+		if n == 1 {
+			// A COMPLETE, parseable rate-limit envelope — code 4 is in graphRateLimitCodes —
+			// carried on a 400 and truncated by an overstated Content-Length.
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Length", "4096")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":4,"type":"OAuthException","message":"rate limit"}}`)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if hj, ok := w.(http.Hijacker); ok {
+				conn, _, herr := hj.Hijack()
+				if herr == nil {
+					_ = conn.Close()
+				}
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"images":{"creative":{"hash":"HASH_OK","url":"https://x/y.png"}}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		withSleepFn(func(context.Context, time.Duration) error { return nil }),
+	)
+
+	hash, err := c.uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+	if err != nil {
+		t.Fatalf("a truncated Graph-coded throttle must be RETRIED, not returned as final: %v", err)
+	}
+	if hash != "HASH_OK" {
+		t.Errorf("hash = %q, want %q", hash, "HASH_OK")
+	}
+	if n := atomic.LoadInt32(&attempts); n != 2 {
+		t.Errorf("attempts = %d, want 2 — the truncated Graph throttle must cost exactly one retry", n)
+	}
+}
+
+// TestUploadImageTruncatedEnvelopeIsMarkedUnreadable pins the OTHER half of parsing the
+// envelope without gating on readErr.
+//
+// Dropping that gate means a TRUNCATED body can now populate Type/Code/Message. That is
+// wanted — it is what lets a code-4 throttle on a 400 be seen — but it must not make a
+// short body look like a COMPLETE rejection. `raw` holds only what arrived before the
+// connection closed, so fields Meta actually sent may be missing entirely; a caller that
+// reads a bare parsed envelope as the full story would treat "we never finished reading"
+// as "Meta said exactly this".
+//
+// So a truncated envelope keeps its parsed fields AND carries EnvelopeUnreadable. This
+// uses code 100 — deliberately NOT in graphRateLimitCodes — so the response stays FINAL
+// and the assertion is about the flag rather than about retrying. Without the flag this
+// test passes silently, which is exactly the survivor it exists to kill.
+func TestUploadImageTruncatedEnvelopeIsMarkedUnreadable(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":100,"type":"OAuthException","message":"bad param"}}`)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, herr := hj.Hijack()
+			if herr == nil {
+				_ = conn.Close()
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		withSleepFn(func(context.Context, time.Duration) error { return nil }),
+	)
+
+	_, err := c.uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+	if err == nil {
+		t.Fatal("a non-throttle 400 must fail")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %T, want *APIError", err)
+	}
+	// The parsed fields survive the truncation...
+	if apiErr.Code != 100 {
+		t.Errorf("Code = %d, want 100 — a parseable envelope must be read even when truncated", apiErr.Code)
+	}
+	if apiErr.Message != "bad param" {
+		t.Errorf("Message = %q, want %q — the read diagnostic must not overwrite Meta's message", apiErr.Message, "bad param")
+	}
+	// ...but the response is NOT presented as a complete rejection.
+	if !apiErr.EnvelopeUnreadable {
+		t.Error("EnvelopeUnreadable = false, want true — a truncated body may be missing fields Meta sent, so it must not read as a clean rejection")
+	}
+	// A non-rate-limit code is final: no retry.
+	if n := atomic.LoadInt32(&attempts); n != 1 {
+		t.Errorf("attempts = %d, want 1 — code 100 is not a throttle", n)
+	}
+}

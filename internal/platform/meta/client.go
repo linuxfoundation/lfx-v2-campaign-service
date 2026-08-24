@@ -1856,8 +1856,12 @@ func validateVariantImageURL(raw string) error {
 // and decodes the stored token before it ever constructs a client or reaches
 // CreateCampaign — so by the time this validator runs, the credential has already
 // been used. The value here is spend-safety (no campaign or ad set exists yet), not
-// credential avoidance. resolveVariantAssets is the check that genuinely runs
-// pre-credential, and it is in the dispatcher, not here.
+// credential avoidance.
+//
+// Nor is any other check a pre-credential one: MetaDispatcher.resolveVariantAssets runs
+// later in the same Dispatch body, still AFTER that first resolveMetaCredentials call, so
+// it too is pre-upstream/pre-spend rather than pre-credential (its own godoc says so). No
+// validation on this path should be relied on as a credential-avoidance boundary.
 //
 // Both empty is valid and means "no image": the creative is built as a bare link
 // ad, exactly as before either field existed.
@@ -3712,7 +3716,13 @@ func (u *uploadCache) upload(ctx context.Context, c *Client, image []byte, conte
 // Outcomes are classified with the SAME error types do() uses, so callers and tests see
 // one vocabulary:
 //   - pre-send dial failure → plain error (nothing was uploaded);
-//   - non-2xx → *APIError carrying the Graph envelope (or a redacted body snippet);
+//   - non-2xx WITH a parseable Graph envelope → *APIError carrying it;
+//   - non-2xx WITHOUT one → *APIError carrying the status and EnvelopeUnreadable, and
+//     NEVER a body snippet. This is where the vocabulary deliberately DIVERGES from
+//     do(): do() surfaces a redacted snippet, but this request's first multipart part
+//     is the caller's image, so a reflecting proxy would put creative bytes inside the
+//     snippet and redactSecrets cannot recognise them. The body is withheld instead —
+//     see the branch below and TestUploadImageErrorNeverCarriesTheRequestBody;
 //   - a 2xx we cannot read/parse, or that names no hash → *transportError (ambiguous).
 //
 // The bytes go as a multipart FILE part rather than base64 in JSON, to avoid a ~33%
@@ -3834,11 +3844,26 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, encoded []
 		apiErr := &APIError{StatusCode: status, Method: http.MethodPost, Path: path}
 		var env graphErrorEnvelope
 		switch {
-		case readErr == nil && json.Unmarshal(raw, &env) == nil && env.Error != nil:
+		// The envelope is parsed WITHOUT gating on readErr, exactly as do() does. A
+		// truncated read does not imply an unusable envelope: the common shape is a
+		// COMPLETE JSON body followed by a connection closed early on a mismatched
+		// Content-Length, so `raw` often parses. Gating this arm on readErr == nil sent
+		// such a response to the default arm as FINAL — and because Meta reports rate
+		// limiting as an HTTP 400 carrying a Graph rate-limit code far more often than as
+		// a 429, that discarded the throttle shape this path most needs to see, leaving a
+		// created_degraded campaign no re-dispatch repairs. The status-only 429 arm below
+		// cannot cover it: a code-4 throttle arrives as a 400.
+		case json.Unmarshal(raw, &env) == nil && env.Error != nil:
 			apiErr.Type = env.Error.Type
 			apiErr.Code = env.Error.Code
 			apiErr.FBTraceID = env.Error.FBTraceID
 			apiErr.Message = env.Error.Message
+			// What parsed is trusted to DESCRIBE the failure, but the body was still short:
+			// flag it so a caller does not read this as a complete rejection, and keep the
+			// read diagnostic where it cannot overwrite Meta's own message.
+			if readErr != nil {
+				apiErr.EnvelopeUnreadable = true
+			}
 			// Throttle detection uses the SAME two signals do() uses, and for the same
 			// reason: Meta reports rate limiting as an HTTP 400 carrying a Graph
 			// rate-limit code far more often than as a 429, so a status-only test would

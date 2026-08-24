@@ -256,6 +256,15 @@ re-dispatch repairs. The retry uses the same bounded schedule as `do()` — the 
 `Retry-After` policy including its over-cap abort, and the same capped exponential
 fallback via the shared `backoffDelay` helper, which both paths call so the two cannot
 drift apart. Only the THROTTLE arm retries; every other classification stays final.
+
+Throttle classification does NOT depend on reading the body completely, matching `do()`.
+A truncated read (a mismatched `Content-Length` makes `io.ReadAll` return "unexpected
+EOF") does not imply an unusable envelope, since the common shape is a complete JSON body
+followed by an early close. Both arms therefore ignore `readErr`: the status-only 429 arm,
+and the Graph-envelope arm that catches the MORE common shape — Meta reports rate limiting
+as a 400 carrying a rate-limit code more often than as a 429, so gating the envelope parse
+would leave that shape terminal. A truncated envelope keeps whatever parsed and also sets
+`EnvelopeUnreadable`, so a caller never reads a short body as a complete rejection.
 Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
 For a `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
