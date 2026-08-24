@@ -383,6 +383,27 @@ func SafeDSNErrFor(dsn string, err error) string {
 // The empty-string guard is not decoration. A DSN with no password (the local peer-auth case)
 // leaves Config.Password empty, and strings.Contains(msg, "") is true for every message, so
 // omitting it would withhold every error the package ever prints.
+//
+// The comparison is on WORD BOUNDARIES rather than on raw substrings, and that distinction is
+// load-bearing for exactly the environment this package protects. CI's TEST_DATABASE_URL uses
+// the user and password "postgres", and "postgres" is a substring of "postgresql" -- so a raw
+// strings.Contains matched ordinary driver prose that merely names the protocol
+// ("unsupported postgresql wire protocol version 2", "lookup postgresql.svc failed") and
+// replaced it with the withhold sentinel. That is a real cost, not a cosmetic one: it fires
+// on generic short identifiers (postgres, test, db, root are all common), and it destroys the
+// message in the one configuration the package is meant to keep diagnosable, which is the
+// diagnosability half of this helper's contract.
+//
+// A credential is reproduced when the message names it as a VALUE -- `user=postgres`,
+// role "postgres", database "postgres" -- and in every such form the identifier is bounded by
+// a non-word character (=, ", space, backtick, end of string). An embedding inside a longer
+// word ("postgresql") is a different token and reproduces nothing. Matching that boundary
+// keeps every genuine echo and drops the false ones; verified against both sets below in
+// TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers.
+//
+// The match is case-insensitive because Postgres folds unquoted identifiers to lower case,
+// so a DSN written `user=Postgres` reaches the driver's prose as `postgres`; comparing
+// case-sensitively would miss that echo.
 func dsnIdentifiersPresent(dsn, msg string) bool {
 	if dsn == "" {
 		return false
@@ -392,9 +413,48 @@ func dsnIdentifiersPresent(dsn, msg string) bool {
 		return true
 	}
 	for _, id := range []string{cfg.Password, cfg.User, cfg.Database, cfg.Host} {
-		if id != "" && strings.Contains(msg, id) {
+		if id != "" && namesIdentifier(msg, id) {
 			return true
 		}
 	}
 	return false
+}
+
+// namesIdentifier reports whether msg reproduces id as a whole token rather than as a
+// fragment of a longer word.
+//
+// Written as an explicit scan rather than a regexp because the identifier is arbitrary
+// operator-supplied text: building a pattern from it means escaping it correctly on every
+// call, and a DSN field is exactly the kind of value that contains regexp metacharacters.
+// A scan has no such failure mode and does not recompile per error.
+func namesIdentifier(msg, id string) bool {
+	lowMsg, lowID := strings.ToLower(msg), strings.ToLower(id)
+	for i := 0; ; {
+		j := strings.Index(lowMsg[i:], lowID)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(lowID)
+		if !isWordByte(lowMsg, start-1) && !isWordByte(lowMsg, end) {
+			return true
+		}
+		// Advance one byte, not one match: overlapping occurrences must all be tried, or
+		// a bounded echo sitting immediately after an embedded one would be missed.
+		i = start + 1
+		if i >= len(lowMsg) {
+			return false
+		}
+	}
+}
+
+// isWordByte reports whether the byte at position i is part of an identifier token.
+// Out-of-range positions are NOT word bytes, which is what makes a match at the very start
+// or end of the message count as bounded.
+func isWordByte(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return false
+	}
+	c := s[i]
+	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }

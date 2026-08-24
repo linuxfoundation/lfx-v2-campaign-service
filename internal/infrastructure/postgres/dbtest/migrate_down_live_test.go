@@ -60,7 +60,15 @@ func newMigrator(t *testing.T, dsn string) *migrate.Migrate {
 	}
 	m, err := migrate.NewWithSourceInstance("iofs", src, migrateURL(t, dsn))
 	if err != nil {
-		t.Fatalf("init migrator: %s", dbtest.SafeDSNErr(err))
+		// SafeDSNErrFor(dsn, ...), not SafeDSNErr. This function is handed an EXPLICIT
+		// dsn -- the scratch DSN from freshDatabase, which is TEST_DATABASE_URL with the
+		// database name swapped. SafeDSNErr would compare against the ENVIRONMENT's
+		// DSN(), and the scratch database name is precisely the identifier that differs,
+		// so a golang-migrate init failure naming it would be cleared as "not a
+		// configured value" and printed in full. That is the same wrong-DSN seam this
+		// package already fixed in connectAndMigrate; the redactor must be handed the
+		// DSN this call actually used.
+		t.Fatalf("init migrator: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	return m
 }
@@ -1115,6 +1123,69 @@ func TestScratchDatabaseHelpersRedactConnectErrors(t *testing.T) {
 	}
 }
 
+// TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers pins the boundary half of the
+// redaction contract: withhold every message that REPRODUCES a configured identifier, and
+// keep every message that merely embeds it inside a longer word.
+//
+// Both halves are failures, and only one of them is a leak. The DSN here is CI's:
+// user and password "postgres", which is a substring of "postgresql". Under a raw
+// strings.Contains the "keeps" table below was withheld wholesale -- the sentinel replaced
+// ordinary protocol prose that named no credential at all, in exactly the configuration
+// this package is meant to keep readable.
+//
+// The messages are the driver's real shapes, not invented ones: pgx formats
+// "failed to connect to `user=%s database=%s`", Postgres formats
+// `password authentication failed for user "%s"` and `role "%s" does not exist`.
+func TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	// user and password are both "postgres" -- the CI default, and the case that makes
+	// the embedding question real.
+	const dsn = "postgres://postgres:postgres@127.0.0.1:5432/campaign_test?sslmode=disable"
+
+	// WITHHELD: each of these names a configured identifier as a value.
+	withheld := []string{
+		"failed to connect to `user=postgres database=campaign_test`: connection refused",
+		`password authentication failed for user "postgres"`,
+		`role "postgres" does not exist`,
+		`FATAL: database "campaign_test" does not exist`,
+	}
+	for _, msg := range withheld {
+		got := dbtest.SafeDSNErrFor(dsn, errors.New(msg))
+		if got == msg {
+			t.Errorf("SafeDSNErrFor = %q, want it WITHHELD; the message reproduces an "+
+				"identifier from the DSN as a value", got)
+		}
+	}
+
+	// KEPT: none of these reproduces an identifier. "postgresql" merely embeds the
+	// user/password "postgres"; it is a different token and leaks nothing.
+	kept := []string{
+		"unsupported postgresql wire protocol version 2",
+		"server closed the connection unexpectedly (postgresql protocol error)",
+		"dial tcp: lookup postgresql.svc: no such host",
+		"connection refused",
+		"context deadline exceeded",
+	}
+	for _, msg := range kept {
+		got := dbtest.SafeDSNErrFor(dsn, errors.New(msg))
+		if got != msg {
+			t.Errorf("SafeDSNErrFor = %q, want the driver's text %q preserved; "+
+				"%q embeds a configured identifier inside a longer word but reproduces "+
+				"no credential, and withholding it costs the diagnosis for nothing",
+				got, msg, msg)
+		}
+	}
+
+	// A bounded echo immediately following an embedded one must still be caught: the
+	// scan advances one byte per attempt rather than skipping a whole match.
+	both := `postgresql driver: role "postgres" does not exist`
+	if got := dbtest.SafeDSNErrFor(dsn, errors.New(both)); got == both {
+		t.Errorf("SafeDSNErrFor = %q, want it withheld; an embedded occurrence must not "+
+			"mask a genuine bounded echo later in the same message", got)
+	}
+}
+
 // TestNoConnectSiteRendersItsErrorRaw is a SOURCE assertion, and it is deliberate.
 //
 // The rest of this file asserts on rendered strings, on the stated principle that a leak is
@@ -1129,6 +1200,17 @@ func TestScratchDatabaseHelpersRedactConnectErrors(t *testing.T) {
 // error to be rendered through the package's redaction rather than with %v. It is a weaker
 // guarantee than a rendered-output assertion and is not a substitute for one anywhere the
 // output CAN be rendered — it exists exactly where that option does not.
+//
+// It asks TWO questions, because a redactor CALL is not evidence of redaction. The second
+// exists because the leak this package was opened to fix survived five review rounds while
+// a redactor was plainly present at the leaking site: connectAndMigrate called SafeDSNErr,
+// which compares against the ENVIRONMENT's DSN(), while the function had been handed an
+// explicit one. The identifier that differed was the one that leaked.
+//
+//  1. Is the error rendered through a redactor at all, rather than with %v?
+//  2. Where the enclosing function was handed an explicit DSN parameter, is the redactor
+//     the DSN-taking form, and is it handed THAT parameter? A bare SafeDSNErr inside such
+//     a function silently redacts against a different secret than the call used.
 func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	t.Parallel()
 
@@ -1160,6 +1242,12 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	}
 	// The only renderings that count as safe passage for an error value.
 	redactors := map[string]bool{"SafeDSNErr": true, "SafeDSNErrFor": true}
+
+	// The DSN-taking redactor, which is the only one correct inside a function that was
+	// handed an explicit DSN. Kept separate from `redactors` because the two questions
+	// differ: `redactors` answers "is this rendered safely at all", this answers "is it
+	// rendered against the RIGHT secret".
+	const dsnRedactor = "SafeDSNErrFor"
 
 	// selName renders a call's function as "pkg.Func" (or "Func") for matching.
 	selName := func(e ast.Expr) string {
@@ -1281,7 +1369,79 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		return bound
 	}
 
+	// dsnParams maps a function declaration to the names of its explicit `dsn string`
+	// parameters. A function with one has been handed a secret that is NOT necessarily
+	// the environment's, so redacting against DSN() there compares the wrong value.
+	dsnParams := map[*ast.FuncDecl][]string{}
+	for _, d := range file.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Type.Params == nil {
+			continue
+		}
+		for _, f := range fn.Type.Params.List {
+			id, ok := f.Type.(*ast.Ident)
+			if !ok || id.Name != "string" {
+				continue
+			}
+			for _, n := range f.Names {
+				if n.Name == "dsn" {
+					dsnParams[fn] = append(dsnParams[fn], n.Name)
+				}
+			}
+		}
+	}
+
+	// enclosing finds the FuncDecl a position falls inside, so the pairing check can ask
+	// what DSN was in scope at the call rather than guessing from the file.
+	enclosing := func(pos token.Pos) *ast.FuncDecl {
+		for _, d := range file.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && fn.Pos() <= pos && pos <= fn.End() {
+				return fn
+			}
+		}
+		return nil
+	}
+
+	// mispairedRedactors reports redactor calls that redact against the WRONG secret:
+	// inside a function holding an explicit dsn parameter, either the environment form
+	// SafeDSNErr, or SafeDSNErrFor handed something other than that parameter.
+	mispairedRedactors := func(call *ast.CallExpr, params []string) []string {
+		var bad []string
+		inScope := map[string]bool{}
+		for _, p := range params {
+			inScope[p] = true
+		}
+		ast.Inspect(call, func(n ast.Node) bool {
+			c, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := selName(c.Fun)
+			if i := strings.LastIndex(name, "."); i >= 0 {
+				name = name[i+1:]
+			}
+			if !redactors[name] {
+				return true
+			}
+			if name != dsnRedactor {
+				bad = append(bad, name+" (redacts against the environment DSN())")
+				return true
+			}
+			// SafeDSNErrFor's first argument must BE the in-scope dsn parameter.
+			if len(c.Args) == 0 {
+				return true
+			}
+			id, ok := c.Args[0].(*ast.Ident)
+			if !ok || !inScope[id.Name] {
+				bad = append(bad, name+" handed "+exprText(fset, c.Args[0]))
+			}
+			return true
+		})
+		return bad
+	}
+
 	checked := 0
+	pairChecked := 0
 	// Walk every statement that performs a DSN-bearing call, then inspect the error
 	// handling that follows it in the same block.
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -1330,6 +1490,23 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 						return true
 					}
 					checked++
+					// Question 2: the redactor is present -- is it aimed at the right
+					// secret? Only asked where the enclosing function was handed one.
+					if fn := enclosing(call.Pos()); fn != nil {
+						if params := dsnParams[fn]; len(params) > 0 {
+							pairChecked++
+							for _, bad := range mispairedRedactors(call, params) {
+								pos := fset.Position(call.Pos())
+								t.Errorf("line %d redacts against the WRONG DSN: %s, inside "+
+									"%s which was handed an explicit %q:\n  %s\nthe explicit "+
+									"DSN and the environment's differ (the scratch database "+
+									"name above all), so this clears the identifier that "+
+									"actually leaks; use dbtest.SafeDSNErrFor(%s, err)",
+									pos.Line, bad, fn.Name.Name, params[0],
+									exprText(fset, call), params[0])
+							}
+						}
+					}
 					for _, bare := range bareErrArgs(call, bound) {
 						pos := fset.Position(call.Pos())
 						t.Errorf("line %d renders a DSN-bearing connect error raw (%s passed "+
@@ -1352,7 +1529,17 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		t.Fatal("guard inspected no t.Fatalf/t.Errorf in any connect-error handler; " +
 			"the walk no longer matches this file's shape and is not pinning anything")
 	}
-	t.Logf("inspected %d formatting calls in connect-error handlers", checked)
+	// The pairing question has its own self-test for the same reason the first one does:
+	// it is answered only inside functions holding an explicit dsn parameter, and a
+	// refactor that renames that parameter would empty this walk silently, leaving a
+	// guard that passes because it asked nothing.
+	if pairChecked == 0 {
+		t.Fatal("guard checked no redactor/DSN pairing; no connect-error handler was found " +
+			"inside a function taking an explicit dsn parameter, so the wrong-DSN seam " +
+			"this file exists to pin is no longer being inspected")
+	}
+	t.Logf("inspected %d formatting calls in connect-error handlers (%d redactor/DSN pairings)",
+		checked, pairChecked)
 }
 
 // exprText renders an AST node back to source for a failure message.

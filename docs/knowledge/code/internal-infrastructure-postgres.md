@@ -992,6 +992,88 @@ it, so the failure lands at version 10 for a different reason than the one under
 Reassigning ownership to another column of the same table keeps the cascade and isolates the
 property.
 
+## Redacting a DSN-bearing error (`SafeDSNErr` / `SafeDSNErrFor`)
+
+Every failure in `dbtest` prints to a CI log, and pgx builds its errors out of the parsed
+DSN: `*pgconn.ConnectError` formats ``failed to connect to `user=%s database=%s` `` straight
+from the `Config`. A `%v` on any connect arm therefore puts the configured credential into
+the build log. The package renders those errors through one of two helpers instead.
+
+The two differ only in WHICH secret they compare against, and that is the whole of the
+contract:
+
+* `SafeDSNErr(err)` compares against the ENVIRONMENT's `DSN()`. Correct only where the
+  failing call used the environment's DSN.
+* `SafeDSNErrFor(dsn, err)` compares against an EXPLICIT DSN. Required wherever the calling
+  function was handed one.
+
+**A redactor call is not evidence of redaction.** The leak that opened LFXV2-2643 survived
+five review rounds with a redactor plainly present at the leaking line: `connectAndMigrate`
+called `SafeDSNErr` while holding an explicit `dsn`. On the scratch path those DSNs differ —
+`freshDatabase` rewrites `TEST_DATABASE_URL` with a new database name — so the comparison
+cleared the message against the wrong string and the scratch database name printed in full.
+The same seam recurred at `newMigrator`, which is likewise handed an explicit `dsn`. When
+reviewing one of these sites the question is never "is a redactor called", it is "which
+secret was it handed".
+
+`TestNoConnectSiteRendersItsErrorRaw` pins both questions from the AST. It asks (1) whether
+each DSN-bearing call's error reaches a `t.Fatalf`/`t.Errorf` through a redactor rather than
+raw, and (2) whether, inside a function holding an explicit `dsn` parameter, the redactor is
+the DSN-taking form handed THAT parameter. Question 2 is what catches the wrong-DSN seam,
+which question 1 cannot see. It is parsed rather than line-scanned because two earlier
+window-based versions each missed a site, and each question carries its own
+`checked == 0` self-test — a guard that inspects nothing passes for the same reason a
+correct one does.
+
+Both instruments are honest about their strength. The source guard is **weaker** than a
+rendered-output assertion: the four `pgx.Connect` sites fire only when a live database dies
+mid-run, which no unit test can arrange, so reverting one to `%v` leaves every behavioural
+test green. It pins them at the source because that is the only option there — not because
+source-level evidence is equivalent.
+
+### Withholding is bounded by word boundaries, not substrings
+
+`dsnIdentifiersPresent` withholds a message that reproduces the DSN's password, user,
+database or host. Matching that on a raw `strings.Contains` broke the other half of the
+contract — diagnosability — in exactly the configuration the helper protects. CI's
+`TEST_DATABASE_URL` uses the user and password `postgres`, which is a substring of
+`postgresql`, so ordinary protocol prose naming no credential at all
+(`unsupported postgresql wire protocol version 2`) was replaced wholesale by the withhold
+sentinel.
+
+A credential is reproduced when a message names it as a VALUE — `user=postgres`,
+`role "postgres"` — and in every such form the identifier is bounded by a non-word byte.
+An embedding inside a longer word is a different token and reproduces nothing. `namesIdentifier`
+matches on that boundary, case-insensitively because Postgres folds unquoted identifiers to
+lower case. It scans rather than compiling a regexp: the identifier is arbitrary
+operator-supplied text and a DSN field is exactly the kind of value that carries regexp
+metacharacters. The scan advances one byte per attempt, so an embedded occurrence cannot
+mask a genuine bounded echo later in the same message.
+
+`TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers` asserts both directions against the CI
+DSN — the driver's real message shapes must be withheld, the protocol prose must survive.
+Only asserting the first would be satisfied by a helper that withholds everything.
+
+### A regression test must not pass for the wrong reason
+
+`TestConnectAndMigrateWithholdsTheExplicitDSN` renders a real failure and asserts the probe's
+identifiers are absent. Because the host is one of the four compared fields, a probe sharing
+a host with `TEST_DATABASE_URL` makes redaction fire on the host ALONE, and the test stays
+green with the fix reverted. Picking an unusual loopback address does not settle it: the
+harness contract constrains `TEST_DATABASE_URL` no further than "a database this package may
+freely modify", so a developer may legitimately point it at that address.
+
+The probe host is therefore `dbtest-probe.invalid`. RFC 2606 reserves the TLD as permanently
+non-resolvable, so no WORKING harness DSN can share it. A second assertion renders the same
+error against an unrelated pinned DSN and requires the text to SURVIVE — if an unrelated DSN
+withheld it too, withholding would say nothing about which DSN the redactor was handed.
+
+Serializing the test and calling `t.Setenv` is the wrong remedy, and it is the one that looks
+obvious. `SafeDSNErrFor` takes the DSN as an argument precisely so these tests need no
+process-global state; a serial test that writes `TEST_DATABASE_URL` still races the package's
+PARALLEL tests, which read it through `DSN()`, and the env var is restored on cleanup so the
+window is invisible in a green run.
+
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 
 A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the
