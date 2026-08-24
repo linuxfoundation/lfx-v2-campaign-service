@@ -42,24 +42,46 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // tenant's or still active). When the active, same-project parent is absent the SELECT yields no
 // candidate row, nothing is inserted, and RETURNING comes back empty — mapped to ErrNotFound.
 //
-// What this gate does NOT do is serialize against archival. It takes no lock on the parent, so
-// under READ COMMITTED the statement's snapshot can see an active brief while a concurrent
-// ArchiveBrief commits, and the asset lands under a brief that is archived by the time the
-// insert does. That is the same position the plain CreateAudience holds with the identical
-// status <> 'archived' guarded insert; the SELECT ... FOR UPDATE treatment is reserved for
-// CreateAudienceForApprovedBrief, where losing the race builds REAL HubSpot lists from a brief
-// that is no longer approved. The consequence here is only a stored blob nothing can reach: an
-// archived brief refuses every later operation, so the row is unreferenced rather than acted
-// on. Should that calculus change -- an asset that costs money to hold, or a path that reads
-// assets without re-checking the parent -- this insert needs the locking treatment, not a
-// stronger comment.
+// The gate alone does NOT serialize against archival, which is why CreateAsset wraps it in a
+// transaction that LOCKS the parent brief first. A bare guarded insert takes no lock on the
+// parent, so under READ COMMITTED the statement's snapshot can see an active brief while a
+// concurrent ArchiveBrief commits, and the asset lands under a brief that is archived by the
+// time the insert does. That is not theoretical: it reproduces deterministically against a live
+// database (TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival) — an uncommitted
+// ArchiveBrief holding the row does not block the unlocked insert.
 //
-// The second of those triggers is CHECKED rather than left to review. getCreativeAssetQuery's
-// EXISTS on a non-archived parent is what makes "nothing can reach it" true, and
+// The single-statement atomicity of INSERT ... SELECT is not the property needed here, and it is
+// worth being exact about why, because "it is one statement" is the intuition that makes the
+// unlocked version look sufficient. Atomicity means the statement does not half-apply; it says
+// nothing about what the statement's snapshot may miss. Under READ COMMITTED each statement
+// takes a FRESH snapshot of the last committed state, and a concurrent non-key status update
+// does not conflict with the FK's key-share lock — so the EXISTS subquery can read a brief that
+// another transaction is in the act of archiving. campaign_repo.go's lockAdoptBriefQuery states
+// the same rule from the other side: what is required is FOR UPDATE, "not a plain re-read, and
+// not the single-statement atomicity of the INSERT".
+//
+// This matches the treatment the rest of this package already gives a brief-parented write --
+// AudienceRepo.CreateAudienceForApprovedBrief, BriefRepo's guarded update, and
+// campaign_repo.go's lockAdoptBriefQuery all take SELECT ... FOR UPDATE on campaign_briefs
+// before writing a child. CreateAsset was the outlier, not the exception.
+//
+// The cost is narrow and worth naming: uploads to the SAME brief serialize on that brief's row
+// for the duration of the insert. Uploads to different briefs never contend, because the lock is
+// per-brief-row rather than table-wide.
+//
+// Why an unreachable blob is not an acceptable loss, which is what the earlier reasoning here
+// assumed: creative_assets has no prune, and briefs are never hard-deleted (archive is a soft
+// status flip), so a row committed under an archived brief is retained FOREVER with nothing that
+// can read it or clean it up. Storage that only grows and is unreachable by every code path is a
+// different category from a row a later operation would refuse.
+//
+// getCreativeAssetQuery carries the same EXISTS on a non-archived parent, pinned by
 // TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant's "an archived parent brief makes
-// the asset unreadable" subtest fails if it is dropped. That subtest is therefore load-bearing
-// for THIS decision as well as for its own lifecycle-consistency point, and says so, so that
-// weakening it cannot quietly remove this insert's justification.
+// the asset unreadable" subtest. That is a lifecycle-visibility rule in its own right — an
+// archived brief must refuse its children on every operation — and it is NO LONGER load-bearing
+// for this insert's correctness: the insert is correct because it locks, not because a later
+// read happens to hide what it stored. Weakening the read would be its own bug, not a
+// reopening of the archival race.
 //
 // ON CONFLICT (brief_id, checksum) DO UPDATE — not DO NOTHING — is what makes a repeat upload
 // return the EXISTING asset. DO NOTHING suppresses the RETURNING clause on a conflict (Postgres
@@ -78,12 +100,12 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // (DO NOTHING plus a follow-up SELECT) costs a second round trip on every duplicate and
 // reintroduces the read-after-write race this single statement avoids.
 //
-// No explicit transaction wraps this, unlike CreateAudience. That insert holds a (brief,platform)
-// build lease whose row a lost commit-ack would strand, so it reconciles inside a tx; a creative
-// asset carries no lease and no external side effect, and its idempotency key makes a
-// lost-ack retry harmless — the retry returns the row the first attempt committed rather than
-// duplicating it. A single autocommit statement is therefore both sufficient and safer (no
-// connection held across a reconcile loop).
+// This DOES run inside an explicit transaction, because the parent-brief lock and the insert
+// have to be one atomic unit (see the ordering argument above). The idempotency key still makes
+// a lost commit-ack harmless — the retry returns the row the first attempt committed rather than
+// duplicating it — so the transaction is here for ORDERING, not for the reconcile reason
+// CreateAudience has one (that insert holds a (brief,platform) build lease whose row a lost ack
+// would strand).
 const createCreativeAssetQuery = `INSERT INTO creative_assets
 		(project_id, brief_id, mime_type, byte_size, checksum, bytes, created_by)
 		SELECT $1, $2, $3, $4, $5, $6, $7
@@ -97,17 +119,49 @@ const createCreativeAssetQuery = `INSERT INTO creative_assets
 // CreateAsset stores an uploaded image and returns it, or ErrNotFound when the parent brief is
 // absent, archived, or owned by another project. Idempotent on (brief_id, checksum).
 func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
-	stored, err := scanCreativeAsset(r.db.QueryRow(ctx, createCreativeAssetQuery,
+	// Lock the parent brief, then insert on the SAME transaction. The lock is what orders this
+	// against a concurrent ArchiveBrief; the insert's own WHERE EXISTS gate is retained because
+	// it still enforces tenancy and the active-status rule, and re-reads the row under the lock.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create creative asset: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// FOR UPDATE, not a plain SELECT: a plain read returns the last committed row and would
+	// straddle a concurrent archival exactly as the unlocked insert did. Whichever transaction
+	// takes this lock first runs to completion before the other observes the row.
+	var status string
+	lockQ := `SELECT status FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
+	if lerr := tx.QueryRow(ctx, lockQ, a.BriefID, a.ProjectID).Scan(&status); lerr != nil {
+		if errors.Is(lerr, pgx.ErrNoRows) {
+			// Absent, or owned by another project. Both are ErrNotFound for the same reason the
+			// insert's gate collapses them: telling them apart leaks whether a brief the caller
+			// cannot see exists.
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("create creative asset: lock brief: %w", lerr)
+	}
+	if status == "archived" {
+		return nil, domain.ErrNotFound
+	}
+
+	stored, err := scanCreativeAsset(tx.QueryRow(ctx, createCreativeAssetQuery,
 		a.ProjectID, a.BriefID, a.MimeType, a.ByteSize, a.Checksum, a.Bytes, nullJSON(a.CreatedBy)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// No active parent brief for (project, brief): missing, archived, or another
-			// project's. All three are ErrNotFound — none may accrue an asset (subject to the
-			// archival race documented above, which this statement does not serialize), and telling
-			// them apart would leak whether a brief the caller cannot see exists.
+			// Reachable only if the brief stopped qualifying between the lock and this insert,
+			// which the lock is there to prevent — kept because the gate also enforces tenancy
+			// and the status rule, and a gate whose failure path is unhandled is a panic waiting
+			// on a future change. Telling the cases apart would leak whether a brief the caller
+			// cannot see exists.
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("create creative asset: %w", err)
+	}
+
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("create creative asset: commit: %w", cerr)
 	}
 	return stored, nil
 }
