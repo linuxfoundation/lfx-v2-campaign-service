@@ -2514,3 +2514,78 @@ func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
 			"to publish with \"Please add Instagram account\"", got)
 	}
 }
+
+// TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError covers the log-injection and
+// unbounded-field surface on the ONE value here that is opaque caller JSON.
+//
+// imageAssetId has no length or charset bound anywhere on its path, and a rejected value
+// is quoted back in an error that reaches operator-facing output AND the orchestrator's
+// structured error log (notCreated → the default pre-create arm's slog "error" attribute).
+// So a caller controls both how MUCH text and WHAT text lands there.
+//
+// Asserted as BEHAVIOUR of the rendered error, not as source text: the message must stay
+// bounded, must not carry newlines a caller could use to forge a second log entry, and
+// must still identify the variant so the operator can act on it.
+func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(&multiCreativeAssets{assets: map[string]*model.CreativeAsset{}})
+
+	t.Run("length is bounded", func(t *testing.T) {
+		// 100 KiB of caller-chosen text in a field whose valid form is a 36-char UUID.
+		huge := strings.Repeat("A", 100<<10)
+		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+			[]meta.AdVariant{{ImageAssetID: huge}})
+		if err == nil {
+			t.Fatal("a malformed asset id must be refused")
+		}
+		msg := err.Error()
+		// The whole message must stay small. The bound is on what the VALUE contributes,
+		// so compare against the value's cap plus generous room for the fixed wording.
+		if len(msg) > maxAssetIDInError+300 {
+			t.Errorf("error is %d bytes for a %d-byte caller value; the quoted id must be truncated", len(msg), len(huge))
+		}
+		if strings.Contains(msg, huge) {
+			t.Error("the full caller value was echoed into the error unchanged")
+		}
+		if !strings.Contains(msg, "truncated") {
+			t.Errorf("a truncated value must say so, got %q", msg)
+		}
+		// Still actionable: the operator needs to know WHICH variant.
+		if !strings.Contains(msg, "variant 1") {
+			t.Errorf("error must still name the variant, got %q", msg)
+		}
+	})
+
+	t.Run("control characters cannot forge a log line", func(t *testing.T) {
+		// A newline plus a plausible-looking forged record. If this reaches a line-oriented
+		// log sink intact, the caller has written a second entry.
+		inject := "aaa\nlevel=INFO msg=\"campaign created successfully\"\rmore"
+		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+			[]meta.AdVariant{{ImageAssetID: inject}})
+		if err == nil {
+			t.Fatal("a malformed asset id must be refused")
+		}
+		msg := err.Error()
+		if strings.ContainsAny(msg, "\n\r") {
+			t.Errorf("error carries a raw newline/carriage return, so a caller can forge a log entry: %q", msg)
+		}
+		// The neutralised text may remain; what must not survive is the line break.
+		if strings.Contains(msg, "\nlevel=INFO") {
+			t.Errorf("the injected log line survived intact: %q", msg)
+		}
+	})
+
+	t.Run("a valid uuid is still accepted", func(t *testing.T) {
+		// The sanitiser must not become a new rejection path: a well-formed id must still
+		// reach the repo lookup (and fail there as "does not exist"), not be refused as
+		// malformed.
+		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+			[]meta.AdVariant{{ImageAssetID: "11111111-2222-3333-4444-555555555555"}})
+		if err == nil {
+			t.Fatal("an absent asset must still be refused")
+		}
+		if strings.Contains(err.Error(), "not a valid asset id") {
+			t.Errorf("a well-formed uuid was rejected as malformed: %v", err)
+		}
+	})
+}

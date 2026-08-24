@@ -13,6 +13,7 @@ package meta
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1810,9 +1811,18 @@ func validateVariantImageURL(raw string) error {
 // this field or image_hash but not both." A variant supplying both is therefore a
 // caller error with no correct interpretation — picking one silently would attach
 // an image the caller did not choose — so it is REFUSED HERE, locally, before any
-// credential is used or any upstream call is made. Deferring to Meta would mean
-// discovering it at the per-variant creative step, where the paid campaign and ad
-// set already exist and the rejection is non-fatal: money spent, no ad.
+// upstream call is made. Deferring to Meta would mean discovering it at the
+// per-variant creative step, where the paid campaign and ad set already exist and
+// the rejection is non-fatal: money spent, no ad.
+//
+// Note what this refusal does NOT precede. An earlier revision claimed it ran
+// "before any credential is used"; that is false on the production path.
+// MetaDispatcher.Dispatch calls resolveMetaCredentials first, which loads, decrypts
+// and decodes the stored token before it ever constructs a client or reaches
+// CreateCampaign — so by the time this validator runs, the credential has already
+// been used. The value here is spend-safety (no campaign or ad set exists yet), not
+// credential avoidance. resolveVariantAssets is the check that genuinely runs
+// pre-credential, and it is in the dispatcher, not here.
 //
 // Both empty is valid and means "no image": the creative is built as a bare link
 // ad, exactly as before either field existed.
@@ -3313,10 +3323,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).
+	//
+	// The upload cache is per-CAMPAIGN and created here, not on the Client: it must not
+	// outlive the campaign it was built for (see uploadCache's godoc).
+	uploads := newUploadCache()
 	for i, variant := range validVariants {
 		utmURL := buildUTMURL(in, i)
 
-		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i)
+		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i, uploads)
 		if verr != nil {
 			// A cancelled or deadlined CALLER context is fatal: continuing would let
 			// us report a "successful" campaign after the caller's context died. Key
@@ -3350,10 +3364,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				msg := fmt.Sprintf("Ad %d failed: image upload did not complete, so no creative or ad was created for variant %d: %s",
 					i+1, i+1, scrubURLFromErr(verr, variant.ImageURL, 300))
 				if createOutcomeAmbiguous(upErr.err) {
-					// Only the IMAGE is in doubt, and it is content-addressed: a re-dispatch
-					// re-derives the same hash, so a landed image needs no cleanup. Say so,
-					// rather than leaving the operator to guess whether it must be removed.
-					msg += " (the library image upload may have landed; it is content-addressed, so re-dispatching reuses it rather than duplicating it)"
+					// Only the IMAGE is in doubt, and it is content-addressed, so a landed
+					// image needs no cleanup: it is deduplicated by content and costs nothing
+					// left in place.
+					//
+					// What this must NOT promise is that re-dispatching repairs the variant.
+					// It does not. This shortfall leaves AdCount below the requested variant
+					// count, which the dispatcher persists as `created_degraded`; that status
+					// carries an upstream campaign id and is terminal, so
+					// isReusableCampaign accepts it and a later dispatch returns the existing
+					// campaign WITHOUT re-running any ad step — the upload included. An
+					// earlier revision of this line told the operator re-dispatching would
+					// reuse the image, which reads as "retry and the ad appears"; nothing
+					// re-runs, so the ad would never appear and the operator would wait on it.
+					// Reconciliation is manual, matching the degraded-status contract.
+					msg += " (the library image upload may have landed; it is content-addressed, so it needs no cleanup — but re-dispatching will NOT recreate this ad: the campaign persists as created_degraded and is reused as-is, so reconcile this variant in Meta Ads Manager)"
 				}
 				steps = append(steps, msg)
 				continue
@@ -3465,6 +3490,95 @@ type adImageUploadResponse struct {
 		Hash string `json:"hash"`
 		URL  string `json:"url"`
 	} `json:"images"`
+}
+
+// uploadCache memoizes /adimages uploads for the duration of ONE CreateCampaign call, so
+// that N variants naming the SAME asset cost one upload instead of N.
+//
+// WHY THIS EXISTS. resolveVariantAssets already dedupes the DB read and the buffer: five
+// variants naming one 30 MiB asset hold one buffer, and their ImageBytes slices alias it.
+// The UPLOAD was not deduped, so those five variants still pushed 150 MiB across five
+// round trips inside CreateCampaign's single deadline — the cost the dedupe was meant to
+// remove, just moved downstream. Uploading identical bytes repeatedly also has no upstream
+// effect worth paying for: Meta content-addresses ad images, so uploads 2..N re-derive a
+// hash the first already returned.
+//
+// OPTIONS CONSIDERED (recorded because this is a design choice, not a bug fix):
+//
+//  1. Do nothing. Correct today, and the sequential loop means the peak RESIDENT memory is
+//     one buffer, not N — the "N copies" framing was about wire cost, not heap. Rejected
+//     because the wire cost is real and lands inside one deadline: the fifth 30 MiB upload
+//     is what times the campaign out, and it buys nothing.
+//  2. Cache on the CLIENT (c.uploadedHashes), living as long as the Client. Rejected: a
+//     Client can outlive one dispatch, so a hash could be reused after the image was
+//     deleted from the ad account, attaching a dangling image_hash to a paid creative.
+//     The cache must not outlive the campaign it was built for.
+//  3. Pre-upload every distinct asset before the variant loop. Rejected: it moves failures
+//     earlier but uploads images for variants that may never be reached (an earlier
+//     variant can abort the loop), doing MORE work in the failure case.
+//  4. CHOSEN — a per-CreateCampaign cache, keyed by content, storing ONLY unambiguous
+//     successes. Deduplicates exactly the repeat-asset case, cannot outlive the campaign,
+//     and uploads nothing speculatively.
+//
+// KEYED BY CONTENT, not by asset id or slice identity. The client never sees the asset id
+// (AdVariant.ImageAssetID is a config field the dispatcher resolves and the client does not
+// read), and aliasing is an implementation detail of the dispatcher that a direct client
+// caller need not reproduce. A SHA-256 of the bytes matches exactly when the upload would
+// be a no-op upstream, which is the precise condition for reuse. The digest is of the
+// caller's own image and is never logged, never sent, and never placed in an error.
+//
+// WHAT IS CACHED, AND WHAT IS DELIBERATELY NOT. Only an unambiguously successful upload —
+// one that returned a non-empty hash — is stored. Every failure mode is left uncached, so
+// the next variant naming the same asset retries from scratch:
+//
+//   - SUCCESS (hash returned) → cached; later variants reuse the hash with no request.
+//   - DEFINITE FAILURE (4xx *APIError, pre-send dial error) → NOT cached. Caching it would
+//     turn one rejected transfer into a campaign-wide failure, failing variants that might
+//     have succeeded on a retry.
+//   - AMBIGUOUS FAILURE (*transportError: timeout, 5xx, unreadable/hashless 2xx) → NOT
+//     cached, and this is the load-bearing case. The upload MAY have landed upstream, but
+//     we cannot name the hash, so there is nothing sound to reuse: caching the error would
+//     propagate a failure that may not exist, and there is no hash to cache instead.
+//     Retrying is safe precisely because the endpoint is content-addressed — a duplicate
+//     upload creates nothing — so the retry either learns the hash or fails again.
+//
+// Failures are therefore never memoized in any form. The cache only ever makes a variant
+// do LESS work when an earlier variant provably succeeded; it can never make a variant
+// fail because a different variant failed.
+//
+// No mutex: CreateCampaign's variant loop is strictly sequential, and a cache instance is
+// created per call and never shared across goroutines.
+type uploadCache struct {
+	byContent map[[sha256.Size]byte]string
+}
+
+func newUploadCache() *uploadCache {
+	return &uploadCache{byContent: make(map[[sha256.Size]byte]string)}
+}
+
+// upload returns the image_hash for these bytes, uploading them only if this call has not
+// already uploaded identical bytes successfully. A nil receiver performs a plain upload
+// with no caching, so a caller that has no cache is never a nil-panic.
+func (u *uploadCache) upload(ctx context.Context, c *Client, image []byte, contentType string) (string, error) {
+	if u == nil {
+		return c.uploadImage(ctx, image, contentType)
+	}
+	key := sha256.Sum256(image)
+	if h, ok := u.byContent[key]; ok {
+		return h, nil
+	}
+	h, err := c.uploadImage(ctx, image, contentType)
+	if err != nil {
+		// Nothing is recorded on ANY error arm — see the type's godoc. An ambiguous
+		// failure in particular may have landed upstream, but without a hash there is
+		// nothing sound to reuse, and memoizing the error would spread one bad transfer
+		// across every variant naming this asset.
+		return "", err
+	}
+	// uploadImage never returns a nil error with an empty hash (a hashless 2xx is a
+	// transportError), so reaching here means the upload unambiguously succeeded.
+	u.byContent[key] = h
+	return h, nil
 }
 
 // uploadImage uploads one image's BYTES to the ad account and returns its
@@ -3666,9 +3780,9 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 // The upload runs BEFORE the creative so a rejected image fails the variant before a
 // creative or ad exists. It is idempotent (content-addressed), so a re-dispatch that
 // reaches here again re-derives the same hash rather than duplicating the image.
-func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID, imageHash string, err error) {
+func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int, uploads *uploadCache) (adID, creativeID, imageHash string, err error) {
 	if len(variant.ImageBytes) > 0 {
-		if imageHash, err = c.uploadImage(ctx, variant.ImageBytes, variant.ImageMIME); err != nil {
+		if imageHash, err = uploads.upload(ctx, c, variant.ImageBytes, variant.ImageMIME); err != nil {
 			// No bytes, size, or checksum in the message — only which variant failed.
 			//
 			// Wrapped as an uploadStageError so the caller can tell WHICH stage failed. A 5xx

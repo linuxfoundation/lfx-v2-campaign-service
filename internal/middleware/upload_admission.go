@@ -52,14 +52,14 @@ import (
 // cost of the route this middleware gates.
 //
 // It does NOT account memory that an unrelated code path later allocates from bytes that were
-// stored earlier. Outbound dispatch reads assets back out of the database and can multiply their
-// resident bytes — Meta's createVariantAd uploads per variant, so N variants naming one asset
-// hold N copies — but that happens in a dispatch worker, on bytes fetched from Postgres, long
-// after the HTTP request that stored them has returned and released its permit. It is a
-// different lifetime and a different code path, not an undercount of this one: no upload request
-// gated here can multiply its own resident bytes through variant fan-out, because fan-out reads
-// from storage rather than from the request. Bounding dispatch-side amplification would need its
-// own control in the dispatch path; this middleware neither provides nor claims it.
+// stored earlier. Outbound dispatch reads assets back out of the database, but that happens in a
+// dispatch worker, on bytes fetched from Postgres, long after the HTTP request that stored them
+// has returned and released its permit. It is a different lifetime and a different code path,
+// not an undercount of this one: no upload request gated here can multiply its own resident
+// bytes through variant fan-out, because fan-out reads from storage rather than from the
+// request. Dispatch-side memory is bounded by its own control on that path — the Meta dispatcher
+// resolves each distinct asset once per dispatch and caps the total distinct bytes one dispatch
+// may hold — so this middleware neither provides nor needs to claim that bound.
 func UploadAdmission(budgetBytes int64, perRequestBytes int64, wait time.Duration) func(http.Handler) http.Handler {
 	sem := semaphore.NewWeighted(budgetBytes)
 	return func(next http.Handler) http.Handler {

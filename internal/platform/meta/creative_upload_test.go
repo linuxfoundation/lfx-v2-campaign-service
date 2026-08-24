@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -14,6 +15,7 @@ import (
 	"net/http/httptest"
 	"path"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -292,5 +294,242 @@ func TestUploadImageAcceptsSingleEntryUnderAnyKey(t *testing.T) {
 				t.Errorf("hash = %q, want THE_HASH", hash)
 			}
 		})
+	}
+}
+
+// metaUploadCacheServer is a full campaign fake that counts /adimages calls and records
+// the image_hash each creative received. Every other endpoint answers the minimum the
+// campaign flow needs, so the only variable under test is upload behaviour.
+func metaUploadCacheServer(t *testing.T, uploads *int32, hashes chan<- string, uploadStatus func(n int32) (int, string)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adimages"):
+			n := atomic.AddInt32(uploads, 1)
+			// Drain the body so the client's write always completes.
+			_, _ = io.Copy(io.Discard, r.Body)
+			status, body := uploadStatus(n)
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			body := decodeBody(t, r)
+			ld := creativeLinkData(t, body)
+			h, _ := ld["image_hash"].(string)
+			hashes <- h
+			_, _ = io.WriteString(w, `{"id":"creative_x"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_x"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// TestUploadIsDedupedAcrossVariantsSharingOneAsset is the behavioural lock for the
+// per-campaign upload cache. resolveVariantAssets already makes N variants naming ONE
+// asset share ONE buffer, so at this layer they arrive as identical bytes. Uploading
+// them once is the point: five variants naming one 30 MiB asset previously pushed five
+// identical transfers inside CreateCampaign's single deadline.
+//
+// The assertion is on OBSERVED REQUESTS and on the hash each creative received — not on
+// the cache's internals — so it fails if the dedupe is removed and equally if the dedupe
+// is implemented by handing a variant the WRONG hash.
+func TestUploadIsDedupedAcrossVariantsSharingOneAsset(t *testing.T) {
+	var uploads int32
+	hashes := make(chan string, 8)
+	srv := metaUploadCacheServer(t, &uploads, hashes, func(int32) (int, string) {
+		return http.StatusOK, `{"images":{"creative":{"hash":"SHARED_HASH"}}}`
+	})
+	defer srv.Close()
+
+	shared := []byte("IDENTICAL-ASSET-BYTES")
+	res, err := imageTestClient(srv.URL).CreateCampaign(context.Background(), imageTestInput(
+		AdVariant{PrimaryText: "One", Headline: "H1", ImageBytes: shared, ImageMIME: "image/png"},
+		AdVariant{PrimaryText: "Two", Headline: "H2", ImageBytes: shared, ImageMIME: "image/png"},
+		AdVariant{PrimaryText: "Three", Headline: "H3", ImageBytes: shared, ImageMIME: "image/png"},
+	))
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdCount != 3 {
+		t.Fatalf("ad count = %d, want 3", res.AdCount)
+	}
+	if n := atomic.LoadInt32(&uploads); n != 1 {
+		t.Errorf("/adimages called %d times for 3 variants naming ONE asset, want exactly 1", n)
+	}
+	close(hashes)
+	got := 0
+	for h := range hashes {
+		got++
+		if h != "SHARED_HASH" {
+			t.Errorf("creative received image_hash %q, want SHARED_HASH", h)
+		}
+	}
+	if got != 3 {
+		t.Fatalf("creatives = %d, want 3", got)
+	}
+}
+
+// TestDistinctAssetsAreUploadedSeparately is the counterweight: the cache must key on
+// CONTENT, so two variants naming DIFFERENT assets must still upload twice and must each
+// receive their own hash. Without this, a cache keyed on something coarser (or a blanket
+// "upload once per campaign") would pass the dedupe test above while attaching one
+// variant's image to another variant's paid creative.
+func TestDistinctAssetsAreUploadedSeparately(t *testing.T) {
+	var uploads int32
+	hashes := make(chan string, 8)
+	srv := metaUploadCacheServer(t, &uploads, hashes, func(n int32) (int, string) {
+		return http.StatusOK, fmt.Sprintf(`{"images":{"creative":{"hash":"HASH_%d"}}}`, n)
+	})
+	defer srv.Close()
+
+	res, err := imageTestClient(srv.URL).CreateCampaign(context.Background(), imageTestInput(
+		// SAME LENGTH, different content. Equal length is deliberate: it makes the test
+		// sensitive to a cache keyed on anything coarser than the bytes themselves (a
+		// length, a size class), which would collide here and upload only once —
+		// attaching variant 1's image to variant 2's paid creative.
+		AdVariant{PrimaryText: "One", Headline: "H1", ImageBytes: []byte("ASSET-ALPHA"), ImageMIME: "image/png"},
+		AdVariant{PrimaryText: "Two", Headline: "H2", ImageBytes: []byte("ASSET-BRAVO"), ImageMIME: "image/png"},
+	))
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdCount != 2 {
+		t.Fatalf("ad count = %d, want 2", res.AdCount)
+	}
+	if n := atomic.LoadInt32(&uploads); n != 2 {
+		t.Errorf("/adimages called %d times for 2 DISTINCT assets, want 2", n)
+	}
+	close(hashes)
+	seen := map[string]bool{}
+	for h := range hashes {
+		if seen[h] {
+			t.Errorf("two creatives received the SAME image_hash %q; distinct assets must not share a hash", h)
+		}
+		seen[h] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("distinct hashes = %d, want 2", len(seen))
+	}
+}
+
+// TestFailedUploadIsNotCachedAcrossVariants is the load-bearing negative: a FAILED upload
+// must never be memoized. If it were, one bad transfer would become a campaign-wide
+// failure — every later variant naming that asset would fail without ever retrying, even
+// though the failure may have been transient.
+//
+// The fake fails the FIRST /adimages with a 500 (an ambiguous outcome — the upload may
+// have landed upstream, which is exactly the case that must not be cached in either
+// direction) and succeeds afterwards. The second variant must therefore RETRY and succeed.
+func TestFailedUploadIsNotCachedAcrossVariants(t *testing.T) {
+	var uploads int32
+	hashes := make(chan string, 8)
+	srv := metaUploadCacheServer(t, &uploads, hashes, func(n int32) (int, string) {
+		if n == 1 {
+			return http.StatusInternalServerError, `{"error":{"message":"transient","code":2}}`
+		}
+		return http.StatusOK, `{"images":{"creative":{"hash":"RECOVERED_HASH"}}}`
+	})
+	defer srv.Close()
+
+	shared := []byte("IDENTICAL-ASSET-BYTES")
+	res, err := imageTestClient(srv.URL).CreateCampaign(context.Background(), imageTestInput(
+		AdVariant{PrimaryText: "One", Headline: "H1", ImageBytes: shared, ImageMIME: "image/png"},
+		AdVariant{PrimaryText: "Two", Headline: "H2", ImageBytes: shared, ImageMIME: "image/png"},
+	))
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	// Variant 1 fails its upload (non-fatal, recorded in Steps); variant 2 must retry the
+	// upload rather than inherit variant 1's failure, so exactly one ad is created.
+	if res.AdCount != 1 {
+		t.Fatalf("ad count = %d, want 1 (variant 1's upload failed, variant 2 must still succeed)", res.AdCount)
+	}
+	if n := atomic.LoadInt32(&uploads); n != 2 {
+		t.Errorf("/adimages called %d times, want 2 — a FAILED upload must not be cached, so variant 2 must retry", n)
+	}
+	close(hashes)
+	got := []string{}
+	for h := range hashes {
+		got = append(got, h)
+	}
+	if len(got) != 1 || got[0] != "RECOVERED_HASH" {
+		t.Errorf("creative hashes = %v, want exactly [RECOVERED_HASH]", got)
+	}
+}
+
+// TestAmbiguousUploadStepDoesNotPromiseRedispatchRecovery locks the WORDING of the
+// operator-facing Step for an ambiguous (5xx/transport) image upload failure.
+//
+// The recovery this Step used to promise does not exist. An upload shortfall leaves
+// CampaignResult.AdCount below the requested variant count; MetaDispatcher.Dispatch
+// persists that as `created_degraded`; and service.isReusableCampaign treats
+// `created_degraded` as a terminal, REUSABLE row — so a later dispatch returns the
+// existing campaign without re-running any ad step, the upload included. Telling the
+// operator that "re-dispatching reuses it" reads as "retry and the ad appears", so they
+// would wait for an ad that nothing will ever create.
+//
+// What remains true is that the image itself needs no cleanup (it is content-addressed).
+// This test pins both halves: the no-cleanup fact stays, the false retry promise is gone
+// and is replaced by an explicit statement that re-dispatch will NOT recreate the ad.
+func TestAmbiguousUploadStepDoesNotPromiseRedispatchRecovery(t *testing.T) {
+	var uploads int32
+	hashes := make(chan string, 4)
+	srv := metaUploadCacheServer(t, &uploads, hashes, func(int32) (int, string) {
+		// A 5xx: ambiguous — the upload may have landed, but no hash came back.
+		return http.StatusInternalServerError, `{"error":{"message":"upstream unavailable","code":2}}`
+	})
+	defer srv.Close()
+
+	res, err := imageTestClient(srv.URL).CreateCampaign(context.Background(), imageTestInput(
+		AdVariant{PrimaryText: "One", Headline: "H1", ImageBytes: []byte("SOME-ASSET"), ImageMIME: "image/png"},
+	))
+	if err != nil {
+		t.Fatalf("CreateCampaign error = %v, want nil (a per-variant upload failure is non-fatal)", err)
+	}
+	if res.AdCount != 0 {
+		t.Fatalf("ad count = %d, want 0 — the only variant's upload failed", res.AdCount)
+	}
+
+	var step string
+	for _, s := range res.Steps {
+		if strings.Contains(s, "image upload did not complete") {
+			step = s
+			break
+		}
+	}
+	if step == "" {
+		t.Fatalf("no upload-failure step was recorded; steps = %v", res.Steps)
+	}
+	// The ambiguity must be reported at all — otherwise the assertions below are vacuous.
+	if !strings.Contains(step, "may have landed") {
+		t.Fatalf("an ambiguous upload must be reported as possibly landed, got %q", step)
+	}
+	// The FALSE promise must be gone. This is the substance of the fix: re-dispatch does
+	// not re-run the upload, so the step must not say it reuses the image on re-dispatch.
+	if strings.Contains(step, "re-dispatching reuses it") {
+		t.Errorf("step still promises a recovery that cannot happen — a created_degraded "+
+			"campaign is reused as-is and no ad step re-runs: %q", step)
+	}
+	// And it must say what DOES happen, so the operator reconciles instead of retrying.
+	if !strings.Contains(step, "will NOT recreate this ad") {
+		t.Errorf("step must state that re-dispatch will not recreate the ad, got %q", step)
+	}
+	if !strings.Contains(step, "created_degraded") {
+		t.Errorf("step must name the status the campaign persists as, got %q", step)
+	}
+	// The still-true half must survive: the image needs no cleanup.
+	if !strings.Contains(step, "no cleanup") {
+		t.Errorf("step must still tell the operator the image needs no cleanup, got %q", step)
 	}
 }

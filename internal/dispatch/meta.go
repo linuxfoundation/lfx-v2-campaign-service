@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -144,6 +145,62 @@ func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != n
 // budget using one stored image.
 const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB) assets
 
+// maxAssetIDInError bounds how much of a REJECTED imageAssetId is quoted back. A valid
+// id is a 36-character UUID, so this is generous for anything legitimate while keeping a
+// malformed value short enough to stay readable. Deliberately well under
+// errSummaryMaxRunes (200) so this value cannot by itself consume an error summary and
+// push the surrounding wording — which says WHICH variant and WHAT is wrong — out of the
+// truncation window.
+const maxAssetIDInError = 64
+
+// safeAssetIDForError renders a rejected imageAssetId for an error message that reaches
+// operator-facing output and a structured error log.
+//
+// imageAssetId is opaque CALLER JSON with no length or charset bound anywhere on its path
+// (design/brief.go sets none, and the config is decoded straight into metaConfig), so the
+// raw value is attacker-controlled in both size and content. It reaches
+// slog.ErrorContext's "error" attribute via notCreated → the orchestrator's default
+// pre-create arm, so quoting it unchanged would let a caller write arbitrary text — and
+// arbitrarily MUCH of it — into the orchestrator's structured error log.
+//
+// Two independent problems, so two independent controls:
+//   - UNBOUNDED LENGTH → truncated to maxAssetIDInError runes (runes, not bytes, so a
+//     multi-byte value is never split mid-character into invalid UTF-8).
+//   - LOG INJECTION → every non-graphic rune is replaced. Newlines and carriage returns
+//     are the ones that matter: a log line the caller can break is a log line the caller
+//     can forge a second, fake entry inside.
+//
+// It is NOT a redactor and makes no claim to be one — the same distinction
+// safeErrSummary carries. It bounds and neutralises; it does not decide that the content
+// was secret. Nothing secret is expected here (this is a caller-supplied reference, not a
+// credential), so bounding the blast radius is the appropriate control.
+//
+// The value is wrapped in explicit markers rather than %q. %q would escape the control
+// characters, but only AFTER the unbounded value had already been accepted, and it leaves
+// the reader unable to tell a truncated value from a complete one.
+func safeAssetIDForError(id string) string {
+	var b strings.Builder
+	n := 0
+	truncated := false
+	for _, r := range id {
+		if n == maxAssetIDInError {
+			truncated = true
+			break
+		}
+		if unicode.IsGraphic(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(unicode.ReplacementChar)
+		}
+		n++
+	}
+	out := "<" + b.String() + ">"
+	if truncated {
+		out = "<" + b.String() + "… (truncated)>"
+	}
+	return out
+}
+
 // resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
 // the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
 // campaignFromMeta for the degraded-count check and the config snapshot — is not mutated.
@@ -191,7 +248,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 			continue
 		}
 		if _, perr := uuid.Parse(assetID); perr != nil {
-			return nil, fmt.Errorf("meta variant %d references creative asset %q, which is not a valid asset id", i+1, assetID)
+			return nil, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
 		}
 		if b, seen := byID[assetID]; seen {
 			// Already resolved for an earlier variant: no second read, no second buffer,

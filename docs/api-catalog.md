@@ -738,7 +738,7 @@ imageAssetId?: string            — OPTIONAL id of a creative asset previously 
                                   `link_data.picture` as "Specify this field or `image_hash`
                                   but not both", so a variant supplying BOTH has no correct
                                   interpretation and is REFUSED — locally, before any
-                                  credential is used or any upstream call is made, rather
+                                  upstream call is made, rather
                                   than discovered at the per-variant creative step where the
                                   campaign and ad set already exist. Supply one or neither;
                                   neither still yields the bare-link creative.
