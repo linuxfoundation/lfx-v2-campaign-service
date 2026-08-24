@@ -112,7 +112,7 @@ Pacing is meaningful **per campaign only**. This service performs no FX conversi
 cost is reported in each platform's native unit, so `Pct` must never be totalled or averaged
 across platforms — the same reason the brief-metrics response refuses a cross-channel cost total.
 
-## The four rules
+## The five rules
 
 | Rule | Fires when |
 |---|---|
@@ -120,6 +120,7 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 | `underspending` | Pacing is computable and below the floor |
 | `budget_constrained` | Pacing is computable and above plan |
 | `low_ctr` | CTR below the threshold, over enough impressions to mean anything |
+| `no_conversions` | Zero **measured** conversions over enough clicks to mean anything, on a platform that reports conversions at all |
 
 Two guards carry most of the weight. **Zero delivery requires both signals** — impressions alone
 is an unbilled serve, spend alone is a billing entry with no serve, and flagging either trains
@@ -138,6 +139,22 @@ intended. And a campaign that never started is trivially at 0% of plan, so emitt
 gives the operator two HIGH findings with opposite remedies: one says no budget change will fix
 this, the other says to adjust the budget. **Low CTR needs a delivery floor**, because three impressions and
 no clicks is a 0% CTR that says nothing about the creative.
+
+**No conversions needs two floors, not one.** The click floor is the direct analogue of the CTR
+rule's impression floor: a campaign with a handful of clicks and no conversions is describing
+normal variance, not a broken funnel. It is set lower than the CTR floor because clicks sit a
+funnel step further down and arrive one to two orders of magnitude less often — reusing the
+impression floor would mean the rule effectively never fired on the campaigns this service runs.
+
+The second floor is the one that matters more: the rule is **gated on the platform reporting
+conversions at all**, the same way `zero_delivery` is gated on the channel billing per delivery.
+`Conversions` is a POINTER on both `model.CampaignMetrics` and `rules.Input` precisely so absent
+stays distinguishable from a measured zero. Only Google Ads, LinkedIn and Microsoft populate it;
+Meta and X expose conversions solely as per-action-type structures with no scalar to read,
+Reddit's reporting contract is undocumented, and the email channel has no conversion concept.
+Flattening a nil to 0 anywhere along the path would flag **every** campaign on those four
+platforms, forever — reporting the absence of measurement as a campaign defect, which is the
+failure mode the whole pointer exists to prevent.
 
 `isActive` is an allow-list of the statuses where the campaign is meant to be spending, and it
 gates **every** rule — the pacing ones as well as zero delivery.

@@ -362,6 +362,15 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 		// cross-channel cost-per-acquisition.
 		CostMicros: 0,
 		Ctr:        ratio(clicks, opens),
+		// Conversions is LEFT NIL, and unlike CostMicros above it is not set to zero. The two
+		// absences are different facts and the types say so. CostMicros=0 is a MEASUREMENT —
+		// HubSpot genuinely bills nothing per send, so zero is the true cost. A conversion
+		// count has no such true value here: the statistics endpoint's counter vocabulary
+		// (sent, delivered, open, click, bounce, unsubscribed, and the wider probe set above)
+		// contains no conversion counter at all, because a marketing email send has no
+		// campaign-level conversion concept to report. Writing 0 would claim this email
+		// converted nobody, when the honest claim is that this channel does not measure it.
+		Conversions: nil,
 		Email: &model.EmailMetrics{
 			Sent:         counters[counterSent],
 			Delivered:    counters[counterDelivered],
