@@ -112,7 +112,7 @@ func TestLiveClaimThenUpsertPersistsProvenance(t *testing.T) {
 }
 
 // TestLiveProvenanceIsWrittenOnceThenFrozen pins the two halves of the invariant that the
-// conditional update must hold SIMULTANEOUSLY, and that a naive fix breaks one of.
+// conditional update must hold SIMULTANEOUSLY, and that a naive fix breaks one of them.
 //
 // The finding this file's sibling test exposes is that the column was never written on the
 // dispatch path. The obvious repair — put ran_on_system_account in the DO UPDATE SET list —

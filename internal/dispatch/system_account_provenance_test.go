@@ -72,7 +72,8 @@ func TestStampProvenance_RecordsTheAccountThatServedTheCampaign(t *testing.T) {
 		if c.RanOnSystemAccount == nil {
 			t.Fatal("RanOnSystemAccount is nil after a PROJECT-served dispatch — a campaign we " +
 				"positively know ran on the project's own account must say so, not read as " +
-				"\"unknown\"; nil is reserved for rows that predate the column")
+				"\"unknown\"; nil means provenance was NOT OBSERVED — pre-000027 rows and " +
+				"campaigns adopted from upstream, neither of which this path is")
 		}
 		if *c.RanOnSystemAccount {
 			t.Error("RanOnSystemAccount = true for a campaign created on the project's OWN " +

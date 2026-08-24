@@ -6,9 +6,13 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -363,9 +367,20 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 		},
 	}
 
-	if len(cases) != 7 {
-		t.Fatalf("this table covers %d dispatchers, but the package has 7 Dispatch methods that "+
-			"stamp provenance; an uncovered one can lose its defer silently", len(cases))
+	// The table must cover every dispatcher in the package, and this guard has to DERIVE the
+	// expected set rather than compare against a literal. The literal 7 that stood here could
+	// not fail the way its own message promised: adding an eighth dispatcher changes neither
+	// len(cases) nor the constant, so the uncovered dispatcher it warns about would sail
+	// through green — the guard agreed with itself instead of with the package.
+	//
+	// The expected count is DERIVED from the package's own source rather than restated, so the
+	// guard tracks the package instead of agreeing with itself. dispatchMethodCount parses the
+	// non-test files in this directory for `func (d *XDispatcher) Dispatch(`, which is exactly
+	// the set of methods that carry a provenance defer.
+	want := dispatchMethodCount(t)
+	if len(cases) != want {
+		t.Fatalf("this table covers %d dispatchers, but the package declares %d Dispatch methods "+
+			"that stamp provenance; an uncovered one can lose its defer silently", len(cases), want)
 	}
 
 	for _, tc := range cases {
@@ -422,4 +437,58 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			})
 		}
 	}
+}
+
+// dispatchMethodCount counts the `Dispatch` methods declared on *Dispatcher receivers in the
+// non-test Go files of this package.
+//
+// It exists because the check above used to compare len(cases) against a literal 7. That guard
+// could not fail in the way its own message described: an eighth dispatcher changes neither side
+// of `len(cases) != 7`, so the uncovered dispatcher it existed to catch would pass green. An
+// assertion whose expected value is a constant maintained by hand cannot detect a change to the
+// thing it is meant to track — it only detects edits to the table.
+//
+// Parsing the source keeps the two in step from the production side: the count moves when a
+// dispatcher is added, in the same commit, and this test is what fails until the table grows a
+// row for it.
+func dispatchMethodCount(t *testing.T) int {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, perr := parser.ParseFile(fset, name, nil, 0)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", name, perr)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "Dispatch" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+				continue
+			}
+			star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+			if !ok {
+				continue
+			}
+			ident, ok := star.X.(*ast.Ident)
+			if !ok || !strings.HasSuffix(ident.Name, "Dispatcher") {
+				continue
+			}
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("found no Dispatch methods in this package; the source scan is broken, and a " +
+			"zero here would make the coverage guard vacuous")
+	}
+	return n
 }
