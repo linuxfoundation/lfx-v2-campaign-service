@@ -547,6 +547,106 @@ type tokenResponse struct {
 	ExpiresIn   int64  `json:"expires_in"`
 }
 
+// invalidateAccessToken drops the cached token so the NEXT refreshToken mints a fresh one.
+//
+// It exists because a token's ADVERTISED expiry is not the only way it stops working. A
+// revoked, rotated, or server-side-invalidated token keeps its expires_in, so the fast path
+// in refreshToken goes on serving it long after the platform started rejecting it. Nothing
+// else ever clears the cache, so without this the client is stuck for the remainder of that
+// advertised lifetime.
+//
+// This became reachable when the dispatcher started CACHING clients across operations
+// (internal/dispatch/reddit.go). A client rebuilt per operation began with an empty cache, so
+// one rejection cost one failure; a cached client re-presents the same rejected token to every
+// later call. On a dispatch path that spends money, that is a stuck campaign rather than a
+// transient error.
+//
+// It clears the EXPIRY as well as the token. Zeroing only cachedToken would leave the fast
+// path's `c.cachedToken != ""` test doing the work alone; clearing both makes the cache empty
+// by either condition, so a future edit to that test cannot silently resurrect the token.
+//
+// A published in-flight refresh carrying a MATCHING token is blanked and unpublished as well
+// as the cache being cleared. Be precise about what that arm does and does not buy today.
+//
+// It is NOT reachable on the current leader path. The leader sets inflight.token, retracts
+// c.inflight and closes done inside ONE unbroken critical section (see refreshToken), so a
+// published flight is never observable holding a non-empty token: by the time the token is
+// set, the flight is already unpublished in the same lock hold. A 3s racing probe over ~7M
+// observations of a published flight saw the (c.inflight != nil && token != "") state ZERO
+// times; splitting that critical section in two made the same probe see it ~74k times, which
+// is what shows the zero is a property of the lock discipline and not of the probe.
+//
+// It therefore does NOT close the residual window tracked by #180: a 401 arriving BEFORE the
+// leader sets inflight.token finds "" on the flight, matches nothing, and the leader then
+// publishes the already-rejected token. Closing that needs publication and teardown to be
+// atomic across all three token caches -- a concurrency redesign, not a guard tweak. Do not
+// read this arm as covering #180.
+//
+// It is kept deliberately, as defence-in-depth rather than as live coverage: its
+// unreachability is a property of TODAY's lock discipline, not an invariant of the type. The
+// single Unlock/Lock split above is the whole distance between here and a reachable poisoned
+// publication, and that shape is exactly what an attempted #180 fix would introduce. The
+// per-provider tests bind this arm (neutering it fails that provider's test and only that
+// one), so it is enforced behaviour, not dead weight -- and it is the landing site a future
+// #180 fix builds on.
+func (c *Client) invalidateAccessToken(presented string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Compare-and-clear. The cache may already hold a NEWER token than the one this 401
+	// answered: with a shared client, request A can leave carrying tok_1, request B can
+	// refresh and cache tok_2, and A's late 401 then arrives describing tok_1. An
+	// unconditional clear would evict tok_2 — a token nothing rejected — and a burst of
+	// late responses would drive serial re-exchanges, defeating the single-flight
+	// coalescing this client already has.
+	//
+	// Clearing only on a match makes the operation idempotent and self-limiting: the
+	// rejected token is dropped exactly once, and every later 401 naming it is a no-op
+	// because the cache has already moved on.
+	if presented == "" {
+		return
+	}
+
+	// A published single-flight refresh carrying this exact token is poisoned too, not just
+	// the cache. On the CURRENT leader path this arm does not fire: the leader sets
+	// inflight.token, retracts c.inflight and closes done in one unbroken critical section,
+	// so a flight is never observable published AND holding a token (see the doc comment
+	// above for the probe that measured this). It is retained as defence-in-depth against
+	// that critical section being split — the shape any #180 fix would introduce — not
+	// because it fires today, and it does NOT close the pre-publication window of #180.
+	//
+	// This check is deliberately INDEPENDENT of the cache comparison below: once the cache
+	// has been cleared, gating it behind a cache match would skip exactly the case it
+	// exists to cover.
+	//
+	// It stays as SELECTIVE as the cache clear — matching on the token's identity, never
+	// blanking a flight unconditionally — so a flight carrying a token no 401 named is
+	// untouched and the ABA over-invalidation described above is not reintroduced.
+	//
+	// The token is blanked rather than an error being set: waiters treat an empty token as
+	// a miss and re-lead a fresh exchange, which is the wanted recovery, and it keeps this
+	// function total (it invents no error text for a response it never saw).
+	if c.inflight != nil && c.inflight.token == presented {
+		c.inflight.token = ""
+		// UNPUBLISH the poisoned flight as well as blanking it. Blanking alone is not
+		// enough: a waiter that re-leads would find this same flight still on c.inflight,
+		// rejoin it, read the blank again and recurse without bound (a stack overflow, not
+		// a retry). Detaching it means the next caller finds no flight and starts a
+		// genuinely NEW exchange.
+		//
+		// Dropping the pointer is safe: done is closed exactly once by the leader that owns
+		// this value, and it still holds its own local reference, so unpublishing here
+		// cannot double-close or strand an existing waiter — waiters already blocked on
+		// done are released as normal and then take the poisoned arm themselves.
+		c.inflight = nil
+	}
+
+	if c.cachedToken != presented {
+		return
+	}
+	c.cachedToken = ""
+	c.tokenExpireAt = time.Time{}
+}
+
 // refreshToken returns a cached access token when it is still valid past the
 // expiry buffer, otherwise it requests a new one. Mirrors refreshRedditToken.
 //
@@ -597,7 +697,15 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 			c.mu.Lock()
 			inflight.token = token
 			inflight.err = err
-			c.inflight = nil
+			// Compare-and-clear, for the same reason invalidateAccessToken uses one:
+			// this flight may no longer be the published one. invalidateAccessToken
+			// unpublishes a flight whose token a 401 rejected, after which a later
+			// caller can publish a NEW flight. An unconditional nil here would erase
+			// that newer flight, stranding its waiters on a pointer nobody will ever
+			// complete. Only retract this flight if it is still the current one.
+			if c.inflight == inflight {
+				c.inflight = nil
+			}
 			close(inflight.done)
 			c.mu.Unlock()
 		}()
@@ -613,6 +721,20 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case <-inflight.done:
+		if inflight.err == nil && inflight.token == "" {
+			// The flight succeeded but its result was POISONED by
+			// invalidateAccessToken: a 401 rejected exactly this value while the
+			// flight was still published. Handing it back would return the token the
+			// platform just refused, which is the leak the guard exists to close.
+			//
+			// An empty token is never an ordinary success — fetchToken rejects an
+			// empty access_token before it ever publishes — so this arm cannot fire
+			// on a healthy refresh. Re-lead a fresh exchange instead. The leader has
+			// already cleared c.inflight by the time done is closed, so the retry
+			// starts a NEW flight rather than rejoining this one, and cannot loop on
+			// the poisoned result.
+			return c.refreshToken(ctx)
+		}
 		return inflight.token, inflight.err
 	}
 }
@@ -943,6 +1065,17 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 				return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 			}
 			return nil, &transportError{Method: method, Path: path, Err: err}
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			// Invalidated on the STATUS LINE, before the body is read. readResponseBody can
+			// block until the per-attempt deadline on a slow or truncated 401, and for that
+			// whole window every concurrent caller on this shared client keeps taking the
+			// rejected token from refreshToken's fast path -- so the "next operation
+			// re-mints" guarantee would be false exactly under the load that makes it
+			// matter. Nothing below can change the verdict: a 401 is a 401 whether or not
+			// its body arrives. Mirrors the google-ads and microsoft clients.
+			c.invalidateAccessToken(token)
 		}
 
 		// A 429 with retries remaining: compute the wait and back off. The body is

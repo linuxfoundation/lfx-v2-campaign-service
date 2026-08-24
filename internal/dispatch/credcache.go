@@ -126,7 +126,8 @@ type credCacheEntry struct {
 // That is a decrypt guarantee ONLY. Each caller receives its own clone and builds its own
 // platform client, and the OAuth token is cached on the client instance — so this coalescing
 // does not by itself collapse the token exchange. Reusing the CLIENT is what does that, and it
-// is a separate cache (clientCache) wired today only into Google Ads.
+// is a separate cache (clientCache). Which dispatchers are wired to it is recorded on
+// clientCache itself rather than repeated here, so the roster has one home to update.
 type credCache struct {
 	mu      sync.Mutex
 	entries map[credCacheKey]*credCacheEntry
@@ -370,11 +371,56 @@ func isComparable(v any) bool {
 // the client is what makes a polling dashboard perform ONE token exchange instead of one per read,
 // which is the reuse LFXV2-3036 asks for.
 //
+// THE ROSTER LIVES HERE. Wired today into GoogleAdsDispatcher, RedditDispatcher and
+// MicrosoftDispatcher. LinkedIn, Meta and X/Twitter are deliberately NOT wired yet — a partial
+// rollout under LFXV2-3033, deferred only because open PRs owned those files at the time (cs#148,
+// cs#152, cs#158); they still rebuild a client per resolve. "Rebuilds a client" is NOT the same
+// as "re-mints a token", and these three do not re-mint: Meta and LinkedIn are handed an
+// already-minted bearer token and perform no exchange at construction, and X signs each request
+// with stored OAuth 1.0a credentials. So the win for them is allocation, not a saved token
+// round-trip — and X in particular documents its client as safe for SEQUENTIAL use only, so it
+// must not be shared across concurrent callers on the strength of this pattern alone. Each needs
+// its own safety and benefit analysis before wiring.
+// Other comments point AT this list rather than restating it, so wiring the next provider is a
+// one-site edit.
+//
+// WIRED IS NOT THE SAME AS "every path on a wired provider". The bypasses below are per-PATH, and
+// this roster is the single source of truth for them, so enumerate them all:
+//
+//   - Google Ads' account-agnostic discovery client (empty CustomerID, resolveGoogleAdsDiscoveryClient)
+//     and Microsoft's ListAccounts client (ZERO AccountConfig) — see cachedMicrosoftClient for why
+//     sharing one key with dispatch would cross the two.
+//   - Google Ads' adoption owned-connection path (resolveOwnedGoogleAdsClient → LookupCampaign): a
+//     rare one-shot rather than the polling loop this exists for.
+//   - **GoogleAdsDispatcher.Dispatch**, which builds its client inline via googleads.NewClient
+//     rather than through cachedGoogleAdsClient. This one is easy to miss and was omitted here for
+//     two tickets: Google Ads is listed as "wired", and it IS — but only on the toggle/metrics
+//     entry point (resolveGoogleAdsClient → ToggleStatus, ReadMetrics). The CREATE path re-mints
+//     an OAuth token per campaign, so a dispatch burst gets no reuse at all. Microsoft's create
+//     path is the opposite (microsoft.go, Dispatch → cachedMicrosoftClient), which is exactly the
+//     asymmetry that made this omission plausible. Both behaviours are pinned:
+//     TestClientCache_GoogleAdsDispatchBypassesTheCache and
+//     TestClientCache_MicrosoftDispatchUsesTheCachedClient — wiring Google Ads' create path will
+//     fail the first, which is the prompt to update this list in the same change.
+//
 // It is a separate type from credCache rather than a generic because the two hold different things
 // with different safety arguments: a *resolved is copied per caller (fromSystem is stamped on it),
 // while a client is deliberately SHARED — sharing is the entire point, since the token cache lives
-// on the instance. The clients this holds are safe for concurrent use: googleads.Client guards its
-// token with a mutex and coalesces refreshes.
+// on the instance.
+//
+// Sharing is safe only because of a property every stored client must have INDIVIDUALLY, and the
+// field is typed `any`, so the compiler enforces none of it: each client guards its token cache
+// and in-flight refresh handle with a mutex and stashes NO per-call state on the receiver. That
+// was verified per provider rather than inherited from Google Ads — see the per-dispatcher
+// comments on the `clients` field in googleads.go, reddit.go and microsoft.go, of which
+// Microsoft's is the one that most needed checking (multi-customer discovery: a CustomerID that
+// VARIED per caller would have made a shared instance serve one caller against another's
+// customer). Its configured customer IS stashed on the receiver — c.account.CustomerID, which
+// doCustomerRequest reads rather than taking as an argument — so what makes it safe is that
+// c.account is immutable and the cache key pins the connection row id and version; the
+// per-customer discovery path uses a separate ZERO-AccountConfig client that bypasses this cache.
+// A future provider whose client stashes MUTABLE per-call state must NOT be wired to this cache
+// without changing the client first.
 //
 // Entries carry the same (row id, version) validation as credCache, so a rotated or revoked
 // credential can never be served through a stale client either — a client built from an old
