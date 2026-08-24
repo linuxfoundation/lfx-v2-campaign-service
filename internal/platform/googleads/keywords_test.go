@@ -1768,3 +1768,152 @@ func TestApplyKeywordActions_NegativeCriterionStaysPermanentFault(t *testing.T) 
 		t.Errorf("a refused-before-mutating batch must not be UNCONFIRMED: %v", err)
 	}
 }
+
+// TestGetKeywordPerformance_NegativeRowDoesNotConsumeACapSlot is the reproduction of the
+// reviewer's case on PR #153: ONE negative row followed by exactly maxKeywordRows positive
+// rows. The response carries maxKeywordRows+1 rows, but only maxKeywordRows of them are
+// keywords this endpoint publishes — so the complete answer is the full cap, NOT truncated.
+func TestGetKeywordPerformance_NegativeRowDoesNotConsumeACapSlot(t *testing.T) {
+	rows := []string{negativeKeywordRowJSON("999", "176216228", "555", "free", "BROAD", "ENABLED", 10, 0, 0)}
+	for i := 0; i < maxKeywordRows; i++ {
+		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "555", "kw", "BROAD", "ENABLED", 10, 1, 100))
+	}
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+strings.Join(rows, ",")+`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	t.Logf("OBSERVED: rows = %d, truncated = %v", len(kp.Rows), kp.Truncated)
+	if len(kp.Rows) != maxKeywordRows || kp.Truncated {
+		t.Fatalf("rows = %d, truncated = %v; want %d rows and truncated = false",
+			len(kp.Rows), kp.Truncated, maxKeywordRows)
+	}
+}
+
+// TestGetKeywordPerformance_TruncationCountsMatchingRowsOnly sweeps the cap/`truncated`
+// pair across the polarity boundary instead of reasoning about it. Each case states the
+// rows the server returns and the pair the caller must see; either half can be right while
+// the pair is wrong, so both are asserted together.
+//
+// The reviewer's case on PR #153 is `one negative then a full page`. The cases that keep the
+// fix honest are the ones where truncation is still TRUE: a fix that made `truncated` count
+// publishable rows could just as easily have hardcoded it false.
+func TestGetKeywordPerformance_TruncationCountsMatchingRowsOnly(t *testing.T) {
+	positives := func(n int) []string {
+		out := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "555", "kw", "BROAD", "ENABLED", 10, 1, 100))
+		}
+		return out
+	}
+	negative := func(id string) string {
+		return negativeKeywordRowJSON(id, "176216228", "555", "free", "BROAD", "ENABLED", 10, 0, 0)
+	}
+
+	cases := []struct {
+		name      string
+		rows      []string
+		wantRows  int
+		wantTrunc bool
+		why       string
+	}{
+		{
+			name:      "one negative then a full page of positives",
+			rows:      append([]string{negative("999")}, positives(maxKeywordRows)...),
+			wantRows:  maxKeywordRows,
+			wantTrunc: false,
+			why:       "the response held exactly a full page of publishable keywords and nothing beyond it",
+		},
+		{
+			name:      "one negative then a full page plus a positive probe",
+			rows:      append([]string{negative("999")}, positives(maxKeywordRows+1)...),
+			wantRows:  maxKeywordRows,
+			wantTrunc: true,
+			why:       "a positive row past the cap is a keyword the caller has not been shown",
+		},
+		{
+			name:      "a negative in the middle of a full page",
+			rows:      append(append(positives(10), negative("999")), positives(maxKeywordRows-10)...),
+			wantRows:  maxKeywordRows,
+			wantTrunc: false,
+			why:       "position must not change the verdict; the negative still consumes no slot",
+		},
+		{
+			name:      "a negative as the last row of an over-full response",
+			rows:      append(positives(maxKeywordRows), negative("999")),
+			wantRows:  maxKeywordRows,
+			wantTrunc: false,
+			why:       "the only row past the cap is one this endpoint does not publish",
+		},
+		{
+			name:      "every row negative",
+			rows:      []string{negative("991"), negative("992"), negative("993")},
+			wantRows:  0,
+			wantTrunc: false,
+			why:       "no publishable keywords, and none withheld — an empty answer is a complete one",
+		},
+		{
+			name:      "positives only, one past the cap",
+			rows:      positives(maxKeywordRows + 1),
+			wantRows:  maxKeywordRows,
+			wantTrunc: true,
+			why:       "the unchanged all-positive probe case must keep reporting truncation",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+strings.Join(tc.rows, ",")+`]}`)
+			})
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+			if err != nil {
+				t.Fatalf("GetKeywordPerformance: %v", err)
+			}
+			if len(kp.Rows) != tc.wantRows || kp.Truncated != tc.wantTrunc {
+				t.Fatalf("(rows, truncated) = (%d, %v), want (%d, %v): %s",
+					len(kp.Rows), kp.Truncated, tc.wantRows, tc.wantTrunc, tc.why)
+			}
+			for _, r := range kp.Rows {
+				if r.Text == "free" {
+					t.Errorf("negative criterion %s was published as an actionable handle", r.CriterionID)
+				}
+			}
+		})
+	}
+}
+
+// TestGetKeywordPerformance_NegativeProbeRowIsStillScopeChecked keeps the two fixes already
+// on this PR from being traded against each other. The cap now counts MATCHED rows, so a
+// negative row no longer advances it — that must not become a route by which a row escapes
+// assertCampaignInScope. The out-of-scope row here is BOTH negative AND past the cap: the
+// two conditions that each, on their own, cause a row to be dropped from the result.
+func TestGetKeywordPerformance_NegativeProbeRowIsStillScopeChecked(t *testing.T) {
+	rows := make([]string, 0, maxKeywordRows+1)
+	for i := 0; i < maxKeywordRows; i++ {
+		rows = append(rows, keywordRowJSON(fmt.Sprintf("%d", 1000+i), "176216228", "555", "kw", "BROAD", "ENABLED", 10, 1, 100))
+	}
+	rows = append(rows, negativeKeywordRowJSON("9999", "176216228", "999", "free", "BROAD", "ENABLED", 10, 0, 0))
+
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+strings.Join(rows, ",")+`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err == nil {
+		t.Fatalf("an out-of-scope NEGATIVE probe row was accepted on a read scoped to [555]: "+
+			"rows = %d, truncated = %v", len(kp.Rows), kp.Truncated)
+	}
+	if kp != nil {
+		t.Errorf("a result was returned alongside the scope error: %+v", kp)
+	}
+	if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "outside the requested campaign scope") {
+		t.Errorf("error does not name the out-of-scope campaign: %v", err)
+	}
+}

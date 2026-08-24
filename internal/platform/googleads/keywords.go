@@ -96,11 +96,16 @@ type KeywordRow struct {
 type KeywordPerformance struct {
 	Window MetricsWindow `json:"window"`
 	Rows   []KeywordRow  `json:"rows"`
-	// Truncated reports that the SCOPED CAMPAIGNS hold more keywords than Rows carries —
-	// the caller's own campaigns, which is the whole of what this read covers, and never
-	// the shared customer. Without it a caller receiving exactly maxKeywordRows rows cannot
-	// tell a project with few keywords from a truncated large one, and would total the slice
-	// as if it were that project's complete keyword spend.
+	// Truncated reports that the SCOPED CAMPAIGNS hold more PUBLISHABLE keywords than Rows
+	// carries — the caller's own campaigns, which is the whole of what this read covers, and
+	// never the shared customer. Without it a caller receiving exactly maxKeywordRows rows
+	// cannot tell a project with few keywords from a truncated large one, and would total the
+	// slice as if it were that project's complete keyword spend.
+	//
+	// It counts what this endpoint PUBLISHES, not what the response carried. Rows the read
+	// discards — a negative criterion keyword_view returns despite the query's polarity
+	// predicate — are not keywords the caller can page to, so counting them would report
+	// truncation on a complete answer and send the caller looking for data that is not there.
 	Truncated bool `json:"truncated"`
 }
 
@@ -284,6 +289,10 @@ func normaliseKeywordMatchType(s string) string {
 // it has been decoded and tenant-checked like every other returned row, because a probe
 // row is still a row the response carried. Ordering is by impressions descending, which is
 // what makes a truncated answer the useful slice rather than an arbitrary one.
+//
+// Both the cap and Truncated count the rows this read PUBLISHES, never the rows the response
+// carried. A discarded negative criterion must not consume a cap slot nor stand in for a
+// keyword the caller could page to; see the counter notes in the body.
 // campaignScopePredicate renders the GAQL predicate that confines a read to campaignIDs.
 //
 // It is the security boundary for the two reads in this file that would OTHERWISE be
@@ -409,9 +418,24 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 	// honoured skip assertCampaignInScope, and the caller would receive a clean capped answer
 	// with truncated=true built from a response carrying another project's campaign — exactly
 	// the silent partial that fail-whole-response exists to prevent.
-	truncated := len(rows) > maxKeywordRows
-
+	//
+	// THREE counts are in play and they are not interchangeable:
+	//   len(rows)  — rows the server returned, INCLUDING any the polarity check drops.
+	//   matched    — rows that are keywords this endpoint publishes (positive, in scope).
+	//   len(out)   — matched rows actually appended, capped at maxKeywordRows.
+	//
+	// `truncated` answers "are there more MATCHING keywords than we returned", so it is
+	// derived from `matched`, not from len(rows). Deriving it from the raw count conflates
+	// "the server sent a row we discarded" with "there is another keyword you have not
+	// seen", and manufactures an incomplete-looking answer out of a complete one: one
+	// negative row ahead of a full page of positives reported maxKeywordRows-1 rows with
+	// truncated=true, when the response held exactly a full page and nothing more.
+	//
+	// The CAP must likewise govern the count of MATCHED rows, not the raw index — an
+	// index-based cap lets a dropped row consume a slot, which is the same defect seen
+	// from the other side.
 	out := make([]KeywordRow, 0, min(len(rows), maxKeywordRows))
+	matched := 0
 	for i, raw := range rows {
 		var row gaqlKeywordRow
 		if uErr := json.Unmarshal(raw, &row); uErr != nil {
@@ -470,9 +494,13 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		if row.AdGroupCriterion.Negative {
 			continue
 		}
-		// Validated above, appended only up to the cap: the probe row has now cleared the
-		// same checks as every other row and its job — proving there is more — is done.
-		if i >= maxKeywordRows {
+		// Counted only now: `matched` advances for rows that survived BOTH the scope check
+		// and the polarity check, so a dropped negative never consumes a cap slot.
+		matched++
+		// Validated above, appended only up to the cap: a matched row beyond the cap has
+		// cleared the same checks as every other row and its job — proving there is more —
+		// is done.
+		if matched > maxKeywordRows {
 			continue
 		}
 		out = append(out, KeywordRow{
@@ -489,7 +517,15 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		})
 	}
 
-	return &KeywordPerformance{Window: w, Rows: out, Truncated: truncated}, nil
+	// More MATCHING keywords existed than we returned. Because the GAQL query already asks
+	// for positives only (`ad_group_criterion.negative = FALSE`), the LIMIT of
+	// maxKeywordRows+1 is a probe over the matching set, so a matched count past the cap is
+	// exactly the signal the probe was fetched to produce. The response-side polarity check
+	// is enforcement of a filter already requested — not a second, narrower filter applied
+	// after the fact — so it cannot make the probe uninformative: a page cannot come back
+	// entirely negative unless the server ignored the predicate, and a row that proves that
+	// is dropped rather than counted, which keeps `truncated` honest either way.
+	return &KeywordPerformance{Window: w, Rows: out, Truncated: matched > maxKeywordRows}, nil
 }
 
 // audienceQuery describes one demographic breakdown: which GAQL resource carries it and
