@@ -125,11 +125,13 @@ func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != n
 // hold in memory at once.
 //
 // It is aligned with the caps PR #170 already established rather than inventing a third
-// scheme. Those are all derived from ONE number — the 30 MiB per-asset ceiling declared on
-// the upload (design/brief.go's MaxLength(31457280), itself set at Meta's documented
-// single-image maximum): constants.MaxRequestBodyBytes is 42 MiB (one 30 MiB image
-// base64-expanded by 4/3, plus envelope) and the decode budget is 80 MiB. This is the same
-// ceiling applied to the one code path that holds SEVERAL assets simultaneously.
+// scheme. Those are all derived from ONE number — the 30 MiB per-asset ceiling enforced on
+// the upload (internal/service's maxCreativeStoredBytes, itself set at Meta's documented
+// single-image maximum; the design's MaxLength(41943040) is that same ceiling expressed in
+// base64 CHARACTERS, which is the unit the wire schema measures): constants.MaxRequestBodyBytes
+// is 42 MiB (one 30 MiB image base64-expanded by 4/3, plus envelope) and the decode budget is
+// 80 MiB. This is the same ceiling applied to the one code path that holds SEVERAL assets
+// simultaneously.
 //
 // 240 MiB is EIGHT maximum-size (30 MiB) assets. Justified against a legitimate campaign:
 // real Meta creatives are nothing like 30 MiB — Meta's own recommended feed image is
@@ -143,6 +145,10 @@ func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != n
 // Deduplication (below) is what makes the bound meaningful: without it the SAME asset id
 // repeated N times would charge N times over, so the cheapest attack would exhaust the
 // budget using one stored image.
+//
+// The bound is on bytes RETAINED, and the check runs after the tripping asset has been read,
+// so the true peak is this value plus one maximum-size asset — 270 MiB, not 240. See the
+// check in resolveVariantAssets for why that overshoot is accepted rather than closed.
 const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB) assets
 
 // maxAssetIDInError bounds how much of a REJECTED imageAssetId is quoted back. A valid
@@ -297,8 +303,17 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		if len(asset.Bytes) == 0 {
 			return nil, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
-		// Charged once per DISTINCT asset, and checked BEFORE the buffer is retained so
-		// the ceiling bounds what this call holds rather than reporting after the fact.
+		// Charged once per DISTINCT asset, and checked before the buffer is retained in
+		// byID/out — but NOT before GetAsset materialized it. The repo read scans the whole
+		// BYTEA, so the asset that TRIPS the ceiling is already resident when it is counted:
+		// the true peak is maxVariantAssetBytes plus one maximum-size asset (270 MiB), not
+		// 240 MiB. Stated rather than rounded off because a bound that under-reports its own
+		// worst case is the kind of number a later change gets sized against.
+		//
+		// Reading byte_size first and refusing before fetching the bytes would make the peak
+		// exact; it is not done here because it costs a second round trip per asset on the
+		// dispatch path, and the one-asset overshoot is bounded and small next to the pod
+		// budget. If the ceiling is ever raised toward the pod limit, close this gap first.
 		totalBytes += int64(len(asset.Bytes))
 		if totalBytes > maxVariantAssetBytes {
 			return nil, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
