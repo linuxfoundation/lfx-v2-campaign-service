@@ -395,10 +395,135 @@ func defaultNonce() string {
 
 // apiResponse is the loose envelope returned by X Ads endpoints.
 type apiResponse struct {
+	// Data is the raw `data` value. It is nil ONLY when the field was ABSENT: an
+	// explicit `"data":null` decodes to the four literal bytes `null` (non-nil,
+	// len 4), so a nil or length check CANNOT distinguish absent from null from an
+	// empty `[]`. A caller that must tell "no result set" from "an intentionally
+	// empty one" therefore decodes first and inspects the DECODED value — both
+	// absent and null leave a slice nil, while a present `[]` yields a non-nil
+	// empty slice. ListAdAccounts (accounts.go) is the caller that needs that
+	// distinction and makes it that way.
 	Data json.RawMessage `json:"data"`
 	// NextCursor is set on cursor-paginated list endpoints (campaigns,
 	// line_items). Empty when there are no further pages.
 	NextCursor string `json:"next_cursor"`
+	// NextCursorPresent reports whether the `next_cursor` KEY appeared in the body at
+	// all, which NextCursor alone cannot express: X documents exhaustion as an explicit
+	// null ("If less than count entities are returned in the current page of the result
+	// set, the next_cursor value will be null"), and both a null and an absent field
+	// decode to "".
+	//
+	// It matters wherever ending the walk would otherwise be asserted on a body that
+	// never supplied the field X's contract says it carries. Both current readers are
+	// such a case, for different reasons: ListAdAccounts owes EVERY account or an error,
+	// so a missing cursor must not terminate the enumeration; findByName's "not found" is
+	// a claim the caller acts on with a create POST, so it must not rest on one either.
+	//
+	// The discriminator in findByName is PAGE FULLNESS, not the page cap. X documents a
+	// short page as conclusively last on its own evidence, while a FULL page owes a cursor
+	// — so an absent cursor on a full page is unknowable and must error. The page cap
+	// cannot stand in for that check: it is only reachable while a non-empty cursor keeps
+	// arriving, which is exactly the case an absent cursor is not.
+	NextCursorPresent bool `json:"-"`
+	// NextCursorNull reports whether the `next_cursor` key held a literal JSON `null`, as
+	// distinct from an empty string. NextCursor alone cannot express the difference —
+	// `null` and `""` both decode to "" — and NextCursorPresent cannot either, since both
+	// are present.
+	//
+	// The distinction is the one X's contract actually draws. Termination is documented as
+	// an explicit null ("If less than count entities are returned in the current page of
+	// the result set, the next_cursor value will be null"); `""` is not a value the
+	// documentation ever ascribes a meaning to. Treating it as exhaustion means a
+	// malformed body ends the walk and returns the accounts gathered so far AS A COMPLETE
+	// LIST — the same false-absence defect the `data` guard prevents, arriving through the
+	// pagination door, and invisible to the user because a truncated account picker looks
+	// exactly like a full one.
+	//
+	// Consulted by ListAdAccounts, for the same reason NextCursorPresent is: its contract
+	// is that it returns EVERY account or an error, so `""` — a value X's documentation
+	// never ascribes a meaning to — must not be read as exhaustion.
+	//
+	// Both cursor walks consult it through cursorVerdict, which is the single place the
+	// three shapes (absent / empty / null) are turned into a decision. They differ only in
+	// whether the page is conclusive on its own evidence — a short page is, under X's
+	// documented rule — not in how they read the cursor itself.
+	NextCursorNull bool `json:"-"`
+}
+
+// cursorOutcome is what a page's next_cursor field says about whether more pages exist.
+type cursorOutcome int
+
+const (
+	// cursorMore: a usable cursor was returned; another page must be fetched.
+	cursorMore cursorOutcome = iota
+	// cursorExhausted: X's documented end-of-results signal, an explicit null.
+	cursorExhausted
+	// cursorUnknowable: the field is absent, or present but an empty string. Neither is a
+	// shape X's contract ascribes a meaning to, so the walk cannot conclude anything from
+	// it and the CALLER must decide whether that is fatal.
+	cursorUnknowable
+)
+
+// cursorVerdict classifies a page's next_cursor into the three outcomes above.
+//
+// It exists so the two cursor walks in this package cannot drift apart. They had already
+// drifted once, in precisely the way a shared reader prevents: ListAdAccounts rejected both an
+// absent cursor and a present-but-empty one, while findByName's guard tested only
+// !NextCursorPresent — so a full page carrying `"next_cursor":""` was PRESENT, skipped the
+// guard, fell through to the empty-string check and was reported as a genuine not-found. The
+// caller answers a not-found with a create POST, so the divergence duplicated live campaigns.
+//
+// The classification is deliberately not a policy. It says what the body SAID, and each walk
+// applies its own rule to cursorUnknowable, because the two have genuinely different evidence
+// available: ListAdAccounts owes every account and can never accept it, while findByName may
+// still conclude from a SHORT page under X's documented rule that a page below `count` is the
+// last one. Folding that difference in here would either make the accounts walk too permissive
+// or break find-or-create for every ordinary small account.
+func cursorVerdict(r *apiResponse) cursorOutcome {
+	switch {
+	case !r.NextCursorPresent:
+		return cursorUnknowable
+	case r.NextCursorNull:
+		return cursorExhausted
+	case r.NextCursor == "":
+		// Present, not null, and empty. X documents exhaustion as an explicit null and
+		// never gives `""` a meaning, so this is not a body that said the walk is done.
+		return cursorUnknowable
+	default:
+		return cursorMore
+	}
+}
+
+// UnmarshalJSON decodes the envelope and additionally records whether `next_cursor` was
+// present as a KEY. encoding/json cannot express key-presence on a plain string field, and
+// a pointer would change NextCursor's type for every existing caller; this keeps the
+// decoded value identical and adds the one bit that absence carries.
+func (r *apiResponse) UnmarshalJSON(b []byte) error {
+	// A distinct type breaks the recursion into this method.
+	type envelope apiResponse
+	var e envelope
+	if err := json.Unmarshal(b, &e); err != nil {
+		return err
+	}
+	// Decode a second time into a key-presence map. The first pass decodes into a
+	// STRUCT, so it has already rejected every valid-JSON non-object that could carry
+	// no key — a bare array, string, number or bool all fail there and return above,
+	// never reaching this probe. The only non-object that gets this far is a literal
+	// `null`, which both passes accept and which leaves the map nil, so the presence
+	// bit reads false. The error is therefore ignored rather than handled: it is not
+	// reachable for a body the first pass accepted, and the conservative "no key
+	// present" is the correct answer for the one body that does reach it.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err == nil {
+		var raw json.RawMessage
+		raw, e.NextCursorPresent = keys["next_cursor"]
+		// The raw bytes are the only place the null/empty-string difference survives:
+		// both decode to "" in the struct pass above. Compared against the literal
+		// rather than decoded, because decoding is exactly what erases the distinction.
+		e.NextCursorNull = e.NextCursorPresent && string(raw) == "null"
+	}
+	*r = apiResponse(e)
+	return nil
 }
 
 // apiError is a non-2xx response from the X Ads API. It carries status/method/path
@@ -671,6 +796,15 @@ func isMutatingMethod(method string) bool {
 // an X account can hold. Hitting the cap with a cursor still outstanding is
 // treated as inconclusive (an error), never as "not found".
 const maxListPages = 25
+
+// listPageSize is the `count` both name lookups request, and X Ads v12's maximum list page
+// size. It is a named constant because findByName compares the returned element count
+// against it: X documents a page shorter than `count` as the last one, which is what lets a
+// short page terminate the walk without a cursor while a FULL page without one is treated as
+// inconclusive. A literal in the query strings and a second literal in that comparison could
+// drift apart silently, and the walk would then either error on every page or trust a
+// truncated one.
+const listPageSize = 1000
 
 func (c *Client) accountURL() string {
 	return fmt.Sprintf("%s/%s/accounts/%s", c.baseURL, c.apiVersion, c.account.AccountID)
@@ -1009,7 +1143,7 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	// name-based idempotency). q does substring/prefix matching, so findByName
 	// still enforces the EXACT-name comparison locally. count=1000 (max page size,
 	// independent of cursor) keeps any residual paging cheap.
-	return c.findByName(ctx, "campaigns?with_deleted=false&count=1000&q="+url.QueryEscape(name), name)
+	return c.findByName(ctx, "campaigns?with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name)
 }
 
 // findLineItemByName returns the id of a line item matching name within a
@@ -1023,7 +1157,7 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 	// q=<name> is the server-side name filter (see findCampaignByName); it makes
 	// the lookup O(matches), not O(account), while findByName still enforces the
 	// exact-name match locally. count=1000 is the max page size.
-	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count=1000&q="+url.QueryEscape(name), name)
+	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name)
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /
@@ -1054,9 +1188,34 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 		if resp == nil {
 			return "", fmt.Errorf("lookup %q: empty response", name)
 		}
+		// Declared INSIDE the loop so it starts nil on every iteration and its nil-ness
+		// is decided by this page's body alone.
 		var items []campaignElement
-		if err := json.Unmarshal(resp.Data, &items); err != nil {
-			return "", fmt.Errorf("lookup %q: decode list: %w", name, err)
+		// resp.Data is nil ONLY when the `data` key was absent entirely. An explicit
+		// `"data":null` is NOT nil here — encoding/json stores the four bytes `null` in a
+		// json.RawMessage — so neither a nil nor a length check separates absent from null
+		// from a present `[]`. Both shapes are admitted to the decode and the check that
+		// catches them is on `items` AFTER decoding: a present `[]` decodes to a non-nil
+		// empty slice, while both absent and null leave it nil.
+		if len(resp.Data) > 0 {
+			if err := json.Unmarshal(resp.Data, &items); err != nil {
+				return "", fmt.Errorf("lookup %q: decode list: %w", name, err)
+			}
+		}
+		// A nil slice means the body carried no result set at all, which is NOT the same
+		// claim as an empty one. `"data":null` decodes without error, so nothing upstream
+		// of here objects, and the walk would otherwise fall through to the cursor
+		// classification — where a null cursor reads as X's documented exhaustion and
+		// yields ("", nil). That is a confident not-found derived from a body that never
+		// reported a result set, and the caller answers it with a create POST.
+		//
+		// A present `[]` is a genuine, well-formed "no elements" answer and must keep
+		// flowing through to the ordinary not-found path, or the first create on an empty
+		// account would break. That is the distinction the post-decode nil check makes and
+		// a length check cannot. ListAdAccounts guards identically; the two walks must not
+		// diverge on what an absent result set means.
+		if items == nil {
+			return "", fmt.Errorf("lookup %q: 2xx response carried no data field, so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name)
 		}
 		for _, it := range items {
 			if it.Name == name {
@@ -1070,10 +1229,35 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 				return it.ID, nil
 			}
 		}
-		if resp.NextCursor == "" {
+		// Terminating the walk as "not found" is a CLAIM the caller acts on with a create
+		// POST, so it must not rest on a body that never said the results were exhausted.
+		//
+		// X's documented rule is what discriminates: "If less than count entities are
+		// returned in the current page of the result set, the next_cursor value will be
+		// null." A SHORT page is therefore conclusively the last one on its own evidence,
+		// whatever the cursor field does — that is the ordinary terminating page and it
+		// stays a clean not-found. A FULL page (exactly listPageSize) is the ambiguous
+		// one: X owes a cursor there, so a body whose cursor is UNKNOWABLE — the key
+		// absent, or present but an empty string, neither of which X's contract gives a
+		// meaning — leaves it unknown whether another page holds the name. The page cap
+		// below does not cover this, being reachable only while a usable cursor keeps
+		// arriving.
+		//
+		// The three shapes are classified by cursorVerdict, shared with ListAdAccounts, so
+		// the two walks cannot disagree about what a cursor means again.
+		switch cursorVerdict(resp) {
+		case cursorUnknowable:
+			if len(items) >= listPageSize {
+				return "", fmt.Errorf("lookup %q: a full page of %d returned no next_cursor X gives a meaning to (absent or empty, not the documented null), so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name, listPageSize)
+			}
+			// Short page: conclusively the last one under X's documented rule, so the
+			// cursor's shape does not matter and this is a genuine not-found.
 			return "", nil
+		case cursorExhausted:
+			return "", nil
+		case cursorMore:
+			cursor = resp.NextCursor
 		}
-		cursor = resp.NextCursor
 	}
 	// Hit the page cap with a cursor still outstanding: we can't be sure the name
 	// doesn't exist further on, so return an error rather than "not found" (which

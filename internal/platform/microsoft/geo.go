@@ -81,11 +81,19 @@ const (
 
 	// geoCacheTTL bounds how long a parsed locations map is reused before it is re-fetched.
 	//
-	// SCOPE: the cache lives on the Client, and MicrosoftDispatcher builds a NEW client per
-	// Dispatch call, so today this coalesces the fetches WITHIN one campaign create (and any
-	// concurrent callers sharing that client) — not across jobs. A cross-job cache would need a
-	// longer-lived owner injected into the dispatcher, which is a separate change; claiming one
-	// here would be false. The TTL still governs any client that IS retained.
+	// SCOPE: the cache lives on the Client, so its reach is exactly the lifetime of the client
+	// that owns it. As of LFXV2-3033 MicrosoftDispatcher CACHES its clients (internal/dispatch's
+	// clientCache, keyed and invalidated by the connection's row id + version), so one client —
+	// and therefore one parsed locations map — is now reused ACROSS campaign creates for the same
+	// connection, until the credential rotates or the entry is evicted. Before that change the
+	// dispatcher built a new client per Dispatch and this coalesced only within a single create.
+	//
+	// It is still not a PROCESS-wide cache: separate connections, and the same connection after a
+	// rotation or eviction, each get their own client and re-fetch. The TTL bounds how long any
+	// one client reuses its map.
+	//
+	// This sharing is why c.geo.mu is load-bearing rather than defensive: concurrent creates on
+	// one connection now genuinely share this cache.
 	//
 	// Microsoft's own guidance is to "consider calling the GetGeoLocationsFileUrl operation
 	// once or twice each month to determine if the contents of the file have changed e.g.,

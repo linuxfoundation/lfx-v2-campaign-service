@@ -399,12 +399,12 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
 // internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
-// every dispatch. What differs is whether the operator can RECOVER. Reddit and X have no
-// discovery endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
+// every dispatch. What differs is whether the operator can RECOVER. Reddit has no discovery
+// endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
 // does have one — call discovery, rerun bootstrap with the chosen id — so its row is
 // recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
-// the operator with no reason to go looking. Microsoft is excluded by neither: it has both
-// halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
+// the operator with no reason to go looking. Microsoft and X are excluded by neither: each has
+// both halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
@@ -435,9 +435,24 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // the four excluded providers are no longer excluded for the same reason, and the difference is
 // what tells you how far each is from qualifying:
 //
-//   - Reddit and X lack the FIRST half. Neither platform client has a ListAdAccounts, so no
+//   - Reddit lacks the FIRST half. Its platform client has no ListAdAccounts, so no
 //     discovery endpoint exists and nothing inside this API could tell an operator what to put
 //     in the account id.
+//   - X has BOTH halves as of LFXV2-3319, which added twitter.ListAdAccounts and
+//     TwitterDispatcher.ListAccounts. The second half it already had, and had had all
+//     along: validateTwitterConnection tags an empty account id with BOTH
+//     ErrConnectionNotUsable and ErrAccountNotSelected, and Dispatch calls that validator
+//     ITSELF rather than validating inline — so unusableConnectionReason reports
+//     "account_not_selected" and the create failure names the missing choice. That is the
+//     Microsoft shape, not the LinkedIn one, and the distinction is the whole point of
+//     stating which half is missing: X was excluded for the first half alone, so supplying
+//     it completed the pair without any change to the create path. X's toggle and metrics
+//     paths share the same validator and answer synchronously, so unlike Meta the naming is
+//     not log-only there. Its absence from this map is therefore a SEQUENCING decision, not
+//     a missing capability: adding it changes what this CLI accepts and belongs in its own
+//     commit. It is not the only member in that position — read the map for the current set
+//     rather than trusting this sentence to name the others, which is the mistake the note
+//     below is about.
 //   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
 //     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
 //     inline and answers an empty account id with a bare notCreated, so the create path names
@@ -452,7 +467,24 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //
 // Stating which half is missing matters because the halves are earned separately, and an
 // enumeration of members goes stale silently — this comment described a Google/Meta-only world
-// for two tickets after that stopped being true.
+// for two tickets after that stopped being true, and then said X was "the same position
+// Microsoft is in" as though Microsoft were the only other one.
+//
+// Two tests now carry the load this prose kept dropping, and they are the reason the paragraphs
+// above can afford to describe a RULE instead of a roster:
+//
+//   - TestAccountListerProseMatchesTheInterface (internal/dispatch) derives the FIRST half from
+//     service.AccountLister itself and fails when the chart route or
+//     docs/knowledge/kubernetes/ruleset.md disagrees with the interface.
+//   - TestAccountDiscoveryProvidersIsASubsetOfAccountListers (this package) pins that every
+//     member here holds the first half, without asserting equality — the two sets are unequal on
+//     purpose, and making that a failure is what would force this judgement to be relitigated
+//     every ticket.
+//
+// The SECOND half stays prose because it is a call-graph judgement — whether Dispatch itself
+// calls the validator that tags ErrAccountNotSelected — which no assertion can derive: every
+// dispatcher including Reddit mentions that sentinel. Prefer adding a case to those tests over
+// correcting a member list here a fifth time.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
 	model.ProviderMetaAds:   true,

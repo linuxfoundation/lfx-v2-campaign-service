@@ -786,6 +786,13 @@ type ListMicrosoftAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
+// ListTwitterAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body.
+type ListTwitterAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
 // ListHubspotEmailsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body.
@@ -3860,6 +3867,66 @@ type ListMicrosoftAdsAccountsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListTwitterAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListTwitterAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListTwitterAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListTwitterAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListTwitterAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListTwitterAdsAccountsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListTwitterAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListHubspotEmailsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -3923,9 +3990,14 @@ type ListHubspotEmailsUnauthorizedResponseBody struct {
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
-	// Account identifier in the ad platform's own namespace, ready to store as the
-	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
-	// act_-prefixed (act_8666746580).
+	// Account identifier in the ad platform's OWN namespace, ready to store as the
+	// connection's account_id verbatim. The format is per-provider and is whatever
+	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
+	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// re-derive it. Each discovery method's own example shows its provider's form.
+	// Storing it unchanged is what matters: the connection validation for each
+	// provider accepts only its own format.
 	ID string `form:"id" json:"id" xml:"id"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
@@ -4732,6 +4804,26 @@ func NewListLinkedinAdsAccountsResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewListMicrosoftAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsResult) *ListMicrosoftAdsAccountsResponseBody {
 	body := &ListMicrosoftAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsResponseBody builds the HTTP response body from the
+// result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListTwitterAdsAccountsResult) *ListTwitterAdsAccountsResponseBody {
+	body := &ListTwitterAdsAccountsResponseBody{}
 	if res.Accounts != nil {
 		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
 		for i, val := range res.Accounts {
@@ -8120,6 +8212,72 @@ func NewListMicrosoftAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignservi
 	return body
 }
 
+// NewListTwitterAdsAccountsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListTwitterAdsAccountsBadRequestResponseBody {
+	body := &ListTwitterAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListTwitterAdsAccountsServiceUnavailableResponseBody {
+	body := &ListTwitterAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListTwitterAdsAccountsInternalServerErrorResponseBody {
+	body := &ListTwitterAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListTwitterAdsAccountsNotFoundResponseBody {
+	body := &ListTwitterAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListTwitterAdsAccountsPayloadTooLargeResponseBody {
+	body := &ListTwitterAdsAccountsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListTwitterAdsAccountsUnauthorizedResponseBody {
+	body := &ListTwitterAdsAccountsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListHubspotEmailsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-hubspot-emails" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -8704,6 +8862,17 @@ func NewListLinkedinAdsAccountsPayload(projectID string, bearerToken *string) *l
 // endpoint payload.
 func NewListMicrosoftAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListTwitterAdsAccountsPayload builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint payload.
+func NewListTwitterAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

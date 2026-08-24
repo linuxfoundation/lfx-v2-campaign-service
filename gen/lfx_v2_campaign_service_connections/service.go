@@ -170,6 +170,17 @@ type Service interface {
 	// account_id; the label carries Microsoft's human-facing account number, which
 	// is what its own UI shows.
 	ListMicrosoftAdsAccounts(context.Context, *ListMicrosoftAdsAccountsPayload) (res *ListMicrosoftAdsAccountsResult, err error)
+	// Enumerate the X/Twitter Ads accounts accessible via the stored connection
+	// credential. Returns account ids as the alphanumeric handle X uses, ready to
+	// store as the connection's account_id. Accounts that are under review or
+	// rejected are RETURNED with the reason in the label rather than hidden, so a
+	// caller whose only account is unusable sees it and why. DELETED accounts are
+	// a different case and are not promised: the walk does not send
+	// `with_deleted`, so it takes X's documented default of false and deleted
+	// accounts are normally excluded upstream — a deleted account is not a choice.
+	// The per-row deleted flag is still honoured defensively, so a row X flags
+	// anyway is labelled rather than passing as live.
+	ListTwitterAdsAccounts(context.Context, *ListTwitterAdsAccountsPayload) (res *ListTwitterAdsAccountsResult, err error)
 	// Search the marketing emails reachable via the stored HubSpot connection,
 	// most-recently-updated first. This is a TEMPLATE picker, not an account
 	// picker: a HubSpot connection is already scoped to the portal its private-app
@@ -199,12 +210,17 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [49]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-hubspot-emails"}
+var MethodNames = [50]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails"}
 
 type AccessibleAccount struct {
-	// Account identifier in the ad platform's own namespace, ready to store as the
-	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
-	// act_-prefixed (act_8666746580).
+	// Account identifier in the ad platform's OWN namespace, ready to store as the
+	// connection's account_id verbatim. The format is per-provider and is whatever
+	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
+	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// re-derive it. Each discovery method's own example shows its provider's form.
+	// Storing it unchanged is what matters: the connection validation for each
+	// provider accepts only its own format.
 	ID string
 	// Human-readable account name or label
 	Label *string
@@ -754,6 +770,21 @@ type ListMicrosoftAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
 // method.
 type ListMicrosoftAdsAccountsResult struct {
+	Accounts []*AccessibleAccount
+}
+
+// ListTwitterAdsAccountsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts method.
+type ListTwitterAdsAccountsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListTwitterAdsAccountsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts method.
+type ListTwitterAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
