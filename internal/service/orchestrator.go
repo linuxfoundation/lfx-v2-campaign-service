@@ -1411,6 +1411,15 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// already logs it beside the same reason token.
 			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
 			switch {
+			case errors.Is(derr, domain.ErrServiceDefect):
+				// ABOVE both connection arms. This path has no response to classify — the 202
+				// was answered long ago — so the LOG is the entire diagnosis, and both lines
+				// below assert a connection defect. Reporting one for a request this service
+				// built wrongly sends whoever reads it to repair a healthy row, which is the
+				// same misdirection the synchronous 409 produced, minus the status code.
+				slog.ErrorContext(ctx, "platform dispatch failed before upstream create because of a defect in this service; the connection is NOT at fault and needs no repair (claim released)",
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
+					"reason", unusableConnectionReason(derr))
 			case errors.Is(derr, domain.ErrSystemConnectionMissing):
 				// Forced-system mode is on and no LF row is installed for this provider, so
 				// EVERY paid-ads dispatch on this deployment fails the same way. Its own arm
