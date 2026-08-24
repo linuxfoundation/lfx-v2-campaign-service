@@ -65,6 +65,25 @@ the unreadable and oversize arms, where the token is still in scope in `attempt`
 
 An empty `presented` never clears, so a caller that cannot name a token cannot flush the cache.
 
+## The guard belongs on the status line, not after the body read
+
+A later round found microsoft still reading the full response body BEFORE its 401 guard ran.
+That is not merely untidy: a slow or truncated 401 leaves the rejected token readable from
+`accessTokenValue` for the rest of the attempt timeout, and every concurrent caller on the
+shared client keeps sending it. Reading first buys no accuracy — a 401 is a 401 whether or not
+its body arrives.
+
+Hoisting the guard to immediately after `Do` fixed it and SIMPLIFIED the change: the unreadable
+and oversized arms are now covered upstream, so `statusAwareReadError` no longer needs the token
+threaded into it at all and reverts to its original signature. google-ads already had this
+shape; reddit's single non-2xx exit is unaffected.
+
+`TestAttempt_401InvalidatesBeforeTheBodyIsRead` pins the ORDERING rather than the outcome: the
+fixture flushes a 401 status and stalls before the body, and asserts the cache is already empty
+at that instant. Moving the guard back below `ReadFrom` compiles and kills it — and also kills
+the unreadable-body test, because the late position stops covering that arm. Two bugs, one
+placement.
+
 ## Mutation
 
 Two independent properties, two independent mutations, both compiling:

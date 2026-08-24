@@ -906,6 +906,17 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		// Invalidated on the STATUS LINE, before the body is read. A slow or truncated 401
+		// body would otherwise hold the rejected token available to every concurrent caller
+		// on this shared client for the remainder of the attempt timeout. Nothing below can
+		// change the verdict -- a 401 is a 401 whether or not its body arrives -- so reading
+		// first buys no accuracy and costs a window. This also means the unreadable and
+		// oversized arms below need no guard of their own: they are already covered here.
+		// Mirrors the google-ads client.
+		c.invalidateAccessToken(token)
+	}
+
 	buf := new(bytes.Buffer)
 	if _, rerr := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); rerr != nil {
 		// Status is already known. Preserve it: a read failure on a 2xx is ambiguous
@@ -917,7 +928,7 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 		// status line clearly warrants — so this uses the same retryAfterIf429/
 		// is429Status signalling as the oversize path below. Mirrors the siblings.
 		return nil, c.retryAfterIf429(resp), c.is429Status(resp.StatusCode),
-			c.statusAwareReadError(resp.StatusCode, method, path, token, rerr)
+			c.statusAwareReadError(resp.StatusCode, method, path, rerr)
 	}
 	if int64(buf.Len()) > maxResponseBytes {
 		// Same status-aware discipline for an oversized body: an oversized 2xx create
@@ -926,20 +937,11 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 		// definite. A plain fmt.Errorf here would be neither, letting createOutcome-
 		// Ambiguous return false and inviting a duplicate create.
 		return nil, c.retryAfterIf429(resp), c.is429Status(resp.StatusCode),
-			c.statusAwareReadError(resp.StatusCode, method, path, token, fmt.Errorf("response exceeds %d bytes", maxResponseBytes))
+			c.statusAwareReadError(resp.StatusCode, method, path, fmt.Errorf("response exceeds %d bytes", maxResponseBytes))
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return buf.Bytes(), 0, false, nil
-	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		// The platform rejected this token. Drop it so the next operation re-mints instead
-		// of re-presenting it until its advertised expiry. Placed on the STATUS, before the
-		// body is parsed: an unreadable or unparseable 401 body is still a 401, and making
-		// invalidation depend on the body would leave the ambiguous case serving the
-		// rejected token.
-		c.invalidateAccessToken(token)
 	}
 
 	// Non-2xx: build a classified apiError. Parse error codes from the FULL body; the
@@ -968,18 +970,12 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 // status as an apiError so definite-4xx and 429-retry classification survive. The
 // cause is never surfaced verbatim (transportError uses safeCause; apiError.Error()
 // omits the body). Mirrors the google-ads read-failure handling.
-func (c *Client) statusAwareReadError(status int, method, path, token string, cause error) error {
+func (c *Client) statusAwareReadError(status int, method, path string, cause error) error {
 	if status >= 200 && status < 300 {
 		return &transportError{Method: method, Path: path, err: cause}
 	}
-	if status == http.StatusUnauthorized {
-		// An UNREADABLE 401 is still a 401. This arm is reached when the body could not be
-		// read or exceeded the cap, which is precisely the case a body-dependent guard would
-		// miss — and the two read-failure exits above return from attempt() before the
-		// status check further down, so invalidating only there would leave both of them
-		// re-presenting the rejected token.
-		c.invalidateAccessToken(token)
-	}
+	// No token invalidation here: attempt() now clears on the 401 STATUS LINE, before the
+	// body read that lands on this path, so both callers are already covered upstream.
 	return &apiError{StatusCode: status, Method: method, Path: path}
 }
 

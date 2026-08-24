@@ -36,6 +36,24 @@ refresh runs on a `WithoutCancel`-detached context so one caller's cancellation
 can't tear down a shared refresh). The OAuth response body is never echoed into
 errors (it can carry the `client_secret`/`refresh_token` back).
 
+A resource-server **401 invalidates the cached access token**, on the STATUS LINE and before
+the response body is read. Expiry alone is not enough: a revoked or rotated token keeps its
+advertised `expires_in`, so the fast path would go on serving it long after the platform
+started rejecting it. That only became reachable once the dispatcher began caching CLIENTS
+across operations — a client rebuilt per operation started with an empty cache, so one
+rejection cost one failure. Reading the body first would buy no accuracy (a 401 is a 401
+whether or not its body arrives) and would hold the rejected token available to every
+concurrent caller for the rest of the attempt timeout, so the unreadable and oversized arms
+need no guard of their own.
+
+Invalidation is **compare-and-clear**, not an unconditional clear: it takes the token the
+rejected request actually presented and drops the cache only if it still holds that token.
+With a shared client, request A can leave carrying `tok_1`, request B can refresh and cache
+`tok_2`, and A's late 401 then names `tok_1` — clearing blindly would evict a token nothing
+rejected and let a burst of late responses drive serial re-exchanges, defeating the
+single-flight coalescing above. Matching makes it idempotent: the rejected token is dropped
+exactly once, and every later 401 naming it is a no-op.
+
 ## Request layer
 
 `doRequest` applies the repo's standard discipline: no-follow redirects

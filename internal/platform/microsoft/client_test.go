@@ -606,11 +606,11 @@ func TestParseRetryAfter_HugeDeltaSecondsAborts(t *testing.T) {
 func TestStatusAwareReadError(t *testing.T) {
 	c := NewClient(testCreds(), testAccount())
 	// 2xx read failure → transportError (ambiguous).
-	if err := c.statusAwareReadError(200, http.MethodPost, "Campaigns", "", io.ErrUnexpectedEOF); !createOutcomeAmbiguous(err) {
+	if err := c.statusAwareReadError(200, http.MethodPost, "Campaigns", io.ErrUnexpectedEOF); !createOutcomeAmbiguous(err) {
 		t.Errorf("a 2xx read failure must be ambiguous (transportError), got: %v", err)
 	}
 	// 400 read failure → apiError with status preserved, definite (not ambiguous).
-	err := c.statusAwareReadError(400, http.MethodPost, "Campaigns", "", io.ErrUnexpectedEOF)
+	err := c.statusAwareReadError(400, http.MethodPost, "Campaigns", io.ErrUnexpectedEOF)
 	var ae *apiError
 	if !errors.As(err, &ae) || ae.StatusCode != 400 {
 		t.Errorf("a 400 read failure must keep its status as apiError, got: %v", err)

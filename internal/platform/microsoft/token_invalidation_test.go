@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestDoRequest_401InvalidatesTheCachedToken pins that an auth rejection does not leave the
@@ -141,5 +142,56 @@ func TestABA_LateUnauthorizedDoesNotEvictANewerToken(t *testing.T) {
 	c.invalidateAccessToken("tok_current")
 	if got := c.accessToken; got != "" {
 		t.Errorf("cached token = %q, want it cleared: the token the 401 named must be dropped", got)
+	}
+}
+
+// TestAttempt_401InvalidatesBeforeTheBodyIsRead pins the ORDERING, not just the outcome.
+//
+// A guard placed after the body read leaves the rejected token readable from
+// accessTokenValue for as long as the body takes to arrive — which for a slow or truncated
+// 401 is up to the attempt timeout, during which every concurrent caller on this shared
+// client keeps sending it. Reading first buys no accuracy: a 401 is a 401 whether or not
+// its body arrives.
+//
+// The server sends the 401 status, flushes, then stalls before writing the body. The test
+// asserts the cache is ALREADY empty at that moment, so a guard that runs after ReadFrom
+// fails here while still passing the outcome-only tests.
+func TestAttempt_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
+	bodyGate := make(chan struct{})
+	observed := make(chan string, 1)
+
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok_1","expires_in":3600}`)
+	}))
+	defer tok.Close()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// The status line is out; the body is not. Sample the cache here.
+		<-bodyGate
+		_, _ = io.WriteString(w, `{"Errors":[{"Code":"AuthenticationTokenExpired"}]}`)
+	}))
+	defer api.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tok.URL), WithBaseURL(api.URL), WithClock(fixedClock()))
+
+	go func() {
+		// Give the handler time to flush the status before sampling.
+		time.Sleep(150 * time.Millisecond)
+		c.tokenMu.Lock()
+		observed <- c.accessToken
+		c.tokenMu.Unlock()
+		close(bodyGate)
+	}()
+
+	_, _ = c.doRequest(context.Background(), http.MethodGet, "/Campaigns", nil, true)
+
+	if got := <-observed; got != "" {
+		t.Errorf("cached token = %q while the 401 body was still in flight, want it already "+
+			"cleared: invalidation must happen on the status line, not after ReadFrom", got)
 	}
 }
