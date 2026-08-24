@@ -230,6 +230,23 @@ boundary (same behavioral-interface pattern as `NoUpstreamCreate`) — every ada
 implements `StatusToggler` follows this contract; see the linked platform concepts below
 for which do and their implementation details.
 
+**Where an adapter classifies BOTH an expiry and an unconfirmed outcome, the unconfirmed
+check must come FIRST.** A cascading toggle is multi-step, so a credential can die BETWEEN
+steps: on LinkedIn's PAUSE the campaign gate is flipped first and the creatives second, so
+a mid-cascade 401 arrives as a `partialCascadeError` whose `Unwrap` exposes the inner
+expiry — and an expiry-first check matched a state in which delivery had ALREADY stopped,
+reporting only "reconnect the connection". Worse, the expiry arm tags the error with
+`domain.ErrConnectionNotUsable`, which the service's toggle switch matches ABOVE its own
+unconfirmed arm, so the partial cascade answered a non-retryable 409 and the platform-state
+ambiguity was never surfaced or logged at all. Both facts are true; the ordering question is
+which one a caller can act on. "Verify the platform state before retrying" describes a
+partial effect that persists whether or not the credential is ever repaired, whereas
+"reconnect" is a precondition the very next call rediscovers. Nothing is lost by
+de-prioritising it: `unconfirmedToggleError` WRAPS the cause, so
+`errors.Is(err, ErrCredentialsExpired)` still answers true. A PRE-SEND expiry is not
+unconfirmed (nothing was sent, nothing applied), so it falls through to the expiry arm and
+keeps answering "reconnect", unchanged.
+
 Which children a toggle must reach, any asymmetric ACTIVATE/PAUSE handling, and
 whether a platform has wired `StatusToggler` at all, is per-platform and
 documented in that platform's own "Dispatch adapter (internal/dispatch)"
