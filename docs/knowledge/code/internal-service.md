@@ -832,6 +832,17 @@ never compared: this service's lifecycle vocabulary and Google's `ENABLED`/`PAUS
 are different axes, and comparing them would flag a permanent, meaningless divergence on every
 campaign.
 
+Everything else defaults to 503, and that arm answers a MIXED population: pre-contact failures
+(a refused dial, a timeout, a 5xx) alongside every response-validation refusal in the client —
+more than one row for a unique id, an id filter Google did not honour, mutually exclusive budget
+amounts, a period contradicting its amount, an unparseable budget. In the second class the
+platform WAS reached and DID answer; the answer could not be trusted. The client message is
+therefore deliberately generic — the settings could not be read — because naming connectivity
+would send an operator to check a network and credentials that are all fine. The specific
+refusal is preserved where it can be acted on: it reaches the LOG via `safeErrSummary`, not the
+caller, who can act on neither. A retry is the right advice for both, since a contradictory
+response can be transient as easily as a timeout.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)
