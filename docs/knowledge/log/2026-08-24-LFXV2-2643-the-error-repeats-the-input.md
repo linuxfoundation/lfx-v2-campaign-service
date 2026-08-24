@@ -61,6 +61,29 @@ own precondition — that formatting the raw error DOES embed the password —
 so a case that stopped exercising a parse failure fails loudly instead of
 passing vacuously.
 
+Two review findings on the fix itself, both real:
+
+The harness first got `redact.URLUserinfo` alone rather than the unwrap, so the
+WIDEST print path in the package kept precisely the shape this entry argues
+against — and `TestConnectAndMigrateDoesNotEchoTheDSN`, asserting only that the
+credential was absent, could not see it. `safeDSNErr` is now exported as
+`dbtest.SafeDSNErr` and used by the harness too, so there is one implementation
+rather than two sites disagreeing about what "redacted" means. The harness test
+now also rejects the redacted-remnant form.
+
+Separately, `freshDatabase` repointed the scratch DSN by editing `u.Path` only.
+The path is not the only place a DSN names its database: pgx reads `dbname` (and
+the alias `database`) from the QUERY and applies it AFTER the path, verified via
+`pgxpool.ParseConfig`, which resolves `Database="fromquery"` for both spellings.
+A `TEST_DATABASE_URL` written that way would leave the "scratch" DSN pointing at
+the shared database, so every migration would run there and the down-to-zero
+would drop its schema. The rewrite is now a pure `withDatabase` — split out so
+it is testable without a server, since a live test could only exercise whichever
+single DSN form the developer happens to have — and the test asserts the database
+pgx RESOLVES rather than the string produced. That distinction is the finding: a
+path-only rewrite LOOKS correct, so a string assertion passes in exactly the
+broken case.
+
 Note for a follow-up ticket, deliberately NOT fixed here because this is a
 test-only PR: `postgres.Migrate` itself leaks the same way in PRODUCTION.
 `pool.go`'s `init migrator: %w` carries the full DSN, and

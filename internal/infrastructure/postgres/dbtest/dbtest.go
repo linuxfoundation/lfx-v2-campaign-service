@@ -39,7 +39,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -137,7 +139,7 @@ func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 		// %w here would put TEST_DATABASE_URL (with its CI `user:password@`) into the
 		// build log via Pool's t.Fatalf. redact.URLUserinfo is string-based, so it works
 		// on exactly this path -- where the parse FAILED and there is no *url.URL.
-		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, redact.URLUserinfo(err.Error()))
+		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, SafeDSNErr(err))
 	}
 	// 30s covers a cold container that has just passed its health check but is still
 	// warming, which is the slow case on a CI runner. It bounds the POOL open only;
@@ -198,4 +200,39 @@ func UniqueID(t *testing.T, suffix string) string {
 		t.Fatalf("dbtest: cannot generate a unique id: %v", err)
 	}
 	return strings.ToLower(name+"-"+suffix) + "-" + hex.EncodeToString(b[:])
+}
+
+// SafeDSNErr renders an error that may carry the DSN into a form safe to print.
+//
+// The DSN is the one value this package must never let reach a log. Locally it is a
+// peer-auth URL with nothing in it, but in CI TEST_DATABASE_URL authenticates over TCP
+// with a `user:password@` segment, and CI logs are visible to more people than the secret
+// store is. Reporting the env-var NAME instead of its value is the discipline used
+// throughout this package -- and on the paths below that discipline is defeated by the
+// error itself, which repeats the input it was given.
+//
+// Two error shapes do it. `url.Parse` fails with a `*url.Error`, whose Error() is
+// `fmt.Sprintf("%s %q: %s", Op, URL, Err)` -- the whole raw URL, credentials included.
+// `migrate.NewWithSourceInstance` reaches `database.Open`, which parses the URL and wraps
+// that same `*url.Error` as "failed to open database: parse %q: ...". Both were verified
+// against a password-bearing DSN, and both leaked it in full.
+//
+// So the cause is UNWRAPPED rather than formatted: `ue.Err` is the diagnosis ("invalid URL
+// escape %q", "missing ']' in host") with the URL left behind, which is the part worth
+// printing. redact.URLUserinfo then covers anything else in the chain that embedded the
+// value, because it is string-based and needs no parse to succeed -- see its package doc,
+// which names this exact path. Callers pass the error, never the DSN.
+//
+// It is exported so the harness in this package and the live tests in dbtest_test share ONE
+// implementation. Two formatting sites disagreeing about what "redacted" means is the bug
+// that produced pkg/redact in the first place.
+func SafeDSNErr(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return redact.URLUserinfo(ue.Err.Error())
+	}
+	return redact.URLUserinfo(err.Error())
 }

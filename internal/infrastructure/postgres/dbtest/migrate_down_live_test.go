@@ -16,6 +16,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
@@ -53,7 +54,7 @@ func newMigrator(t *testing.T, dsn string) *migrate.Migrate {
 	}
 	m, err := migrate.NewWithSourceInstance("iofs", src, migrateURL(t, dsn))
 	if err != nil {
-		t.Fatalf("init migrator: %s", safeDSNErr(err))
+		t.Fatalf("init migrator: %s", dbtest.SafeDSNErr(err))
 	}
 	return m
 }
@@ -132,12 +133,41 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 	// all, plus sslmode and any other query parameter. That is invisible locally, where
 	// peer/trust auth needs no password, and fails in CI, which authenticates with a
 	// user:password pair over TCP. So: parse, edit one field, re-render.
-	u, err := url.Parse(dbtest.DSN())
+	rewritten, err := withDatabase(dbtest.DSN(), name)
 	if err != nil {
-		t.Fatalf("parse %s: %s", dbtest.EnvDatabaseURL, safeDSNErr(err))
+		t.Fatalf("parse %s: %s", dbtest.EnvDatabaseURL, dbtest.SafeDSNErr(err))
+	}
+	return rewritten
+}
+
+// withDatabase points a DSN at a different database, changing nothing else.
+//
+// Split out of freshDatabase so it can be tested without a server: the shapes that break
+// it are properties of the DSN STRING, and a live test could only ever exercise whichever
+// single form the developer's TEST_DATABASE_URL happens to take.
+func withDatabase(dsn, name string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
 	}
 	u.Path = "/" + name
-	return u.String()
+	// The PATH is not the only place a DSN names its database. pgx reads `dbname` (and
+	// its alias `database`) from the QUERY and applies it AFTER the path, so a
+	// TEST_DATABASE_URL written `postgres://h/ignored?dbname=campaign_test` would leave
+	// this "scratch" DSN pointing straight back at the shared database -- verified
+	// against pgxpool.ParseConfig, which reports Database="fromquery" for both spellings.
+	// Every migration would then run on the developer's real test database instead of a
+	// throwaway, and the down-to-zero would drop its schema. Strip both.
+	//
+	// Only these two keys are removed, and only when present: everything else in the
+	// query is exactly what must survive -- sslmode above all, plus any connect_timeout
+	// or application_name the operator set.
+	if q := u.Query(); q.Has("dbname") || q.Has("database") {
+		q.Del("dbname")
+		q.Del("database")
+		u.RawQuery = q.Encode()
+	}
+	return u.String(), nil
 }
 
 // TestLiveMigrationsGoDownAndUpAgain drives the embedded migration set to its top
@@ -465,9 +495,9 @@ func objectDiff(want, got []string) string {
 	return b.String()
 }
 
-// TestSafeDSNErrKeepsCredentialsOutOfOutput pins the property that makes the two
-// t.Fatalf sites above safe to print: the RENDERED string carries the diagnosis and
-// not the credential.
+// TestSafeDSNErrKeepsCredentialsOutOfOutput pins the property that makes every DSN-
+// bearing error site in this package safe to print: the RENDERED string carries the
+// diagnosis and not the credential.
 //
 // It asserts on the rendered output rather than on the source of the call sites,
 // because the leak is a property of what the error FORMATS TO, not of which verb the
@@ -540,15 +570,15 @@ func TestSafeDSNErrKeepsCredentialsOutOfOutput(t *testing.T) {
 					"password, so this case cannot demonstrate the leak it guards")
 			}
 
-			got := safeDSNErr(err)
+			got := dbtest.SafeDSNErr(err)
 			if strings.Contains(got, password) {
-				t.Errorf("safeDSNErr leaked the password into its output: %q", got)
+				t.Errorf("SafeDSNErr leaked the password into its output: %q", got)
 			}
 			if strings.Contains(got, username) {
-				t.Errorf("safeDSNErr leaked the user half of the credential into its output: %q", got)
+				t.Errorf("SafeDSNErr leaked the user half of the credential into its output: %q", got)
 			}
 			if !strings.Contains(got, tc.wantCause) {
-				t.Errorf("safeDSNErr = %q, want it to still name the cause %q — a redactor that "+
+				t.Errorf("SafeDSNErr = %q, want it to still name the cause %q — a redactor that "+
 					"drops the diagnosis makes the failure unactionable", got, tc.wantCause)
 			}
 
@@ -559,7 +589,7 @@ func TestSafeDSNErrKeepsCredentialsOutOfOutput(t *testing.T) {
 			// leak, so a credential assertion cannot see the difference; it is simply
 			// unreadable, and unwrapping is what makes the message a sentence again.
 			if strings.HasPrefix(got, "***") || strings.Contains(got, tc.hostFragment) {
-				t.Errorf("safeDSNErr = %q, want the unwrapped cause rather than a redacted "+
+				t.Errorf("SafeDSNErr = %q, want the unwrapped cause rather than a redacted "+
 					"remnant of the full message — unwrap the *url.Error instead of "+
 					"redacting its rendering", got)
 			}
@@ -590,11 +620,69 @@ func TestSafeDSNErrRedactsAWrappedMigratorError(t *testing.T) {
 			"case cannot demonstrate the leak it guards")
 	}
 
-	got := safeDSNErr(wrapped)
+	got := dbtest.SafeDSNErr(wrapped)
 	if strings.Contains(got, password) {
-		t.Errorf("safeDSNErr leaked the password from a wrapped migrator error: %q", got)
+		t.Errorf("SafeDSNErr leaked the password from a wrapped migrator error: %q", got)
 	}
 	if !strings.Contains(got, "invalid URL escape") {
-		t.Errorf("safeDSNErr = %q, want it to still name the parse cause", got)
+		t.Errorf("SafeDSNErr = %q, want it to still name the parse cause", got)
+	}
+}
+
+// TestWithDatabaseRepointsTheDSN asserts on the database pgx RESOLVES, not on the
+// rewritten string.
+//
+// That distinction is the whole finding. Editing `u.Path` produces a DSN that LOOKS
+// repointed -- the path says the scratch name -- while pgx applies the query's `dbname`
+// afterwards and connects to the original database anyway. A string assertion on the path
+// passes in exactly the case that is broken, so the assertion has to go through the same
+// parser the migrator uses.
+func TestWithDatabaseRepointsTheDSN(t *testing.T) {
+	t.Parallel()
+
+	const scratch = "scratch_db"
+
+	cases := []struct {
+		name string
+		dsn  string
+	}{
+		{name: "database in the path", dsn: "postgres://u:p@h:5432/original?sslmode=disable"},
+		{name: "dbname in the query overrides the path", dsn: "postgres://u:p@h:5432/original?dbname=original&sslmode=disable"},
+		{name: "database alias in the query", dsn: "postgres://u:p@h:5432/original?database=original&sslmode=disable"},
+		{name: "both aliases present", dsn: "postgres://u:p@h:5432/original?dbname=original&database=original&sslmode=disable"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := withDatabase(tc.dsn, scratch)
+			if err != nil {
+				t.Fatalf("withDatabase(%q): %v", tc.name, err)
+			}
+
+			cfg, err := pgxpool.ParseConfig(got)
+			if err != nil {
+				t.Fatalf("pgxpool.ParseConfig(rewritten): %v", err)
+			}
+			if cfg.ConnConfig.Database != scratch {
+				t.Errorf("pgx resolves database %q, want %q — the rewritten DSN still points at "+
+					"the shared database, so every migration would run there and the down-to-zero "+
+					"would drop its schema (rewritten: %q)", cfg.ConnConfig.Database, scratch, got)
+			}
+
+			// Everything the DSN did NOT name a database with must survive. sslmode is the
+			// one that fails loudly in CI, where the connection is over TCP.
+			if cfg.ConnConfig.TLSConfig != nil {
+				t.Errorf("sslmode=disable did not survive the rewrite: TLSConfig is non-nil "+
+					"(rewritten: %q)", got)
+			}
+			if cfg.ConnConfig.User != "u" {
+				t.Errorf("user did not survive the rewrite: got %q (rewritten: %q)", cfg.ConnConfig.User, got)
+			}
+			if cfg.ConnConfig.Password != "p" {
+				t.Errorf("password did not survive the rewrite (rewritten: %q)", got)
+			}
+		})
 	}
 }
