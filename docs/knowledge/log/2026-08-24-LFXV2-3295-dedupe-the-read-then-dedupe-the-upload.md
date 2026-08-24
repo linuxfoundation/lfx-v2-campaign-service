@@ -69,3 +69,34 @@ its basename — but this client reads the single entry BY VALUE and enforces a 
 count, so it never derives that key. `TestUploadImageAcceptsSingleEntryUnderAnyKey` already
 pins that independence across `creative`, `creative.png` and an unrelated key. No change
 was warranted, and asserting an undocumented requirement would have been the defect.
+
+Two further defects on the same path were fixed once the dedupe made them visible.
+
+The dedupe cache keyed on the caller's raw uuid SPELLING, and `uuid.Parse` accepts four
+of them for one uuid — canonical, braced, URN and unhyphenated. So a config could name one
+asset through several valid aliases and defeat the dedupe completely: each alias missed the
+map, re-read the row, retained another buffer and was charged against the aggregate budget
+again — the unbounded case the dedupe exists to prevent, reachable with no extra stored
+data, and it would eventually produce a false "distinct creative assets" rejection naming
+assets that are not distinct. The parsed uuid's canonical form is now the key and the
+lookup value.
+
+`uploadImage` also skipped the throttle retry. The repo rule is that retry eligibility is
+an IDEMPOTENCY decision rather than a method test: `doCreate` passes `retryThrottle=false`
+because Meta exposes no create idempotency key, so a repeated shed create can duplicate a
+paid object. This upload does not share that property — it is content-addressed, so
+repeating it re-derives the same hash and creates nothing — and it was verified
+independently rather than taken from the review. Not retrying was the costlier default:
+the campaign and ad set already exist by then, so a transient 429 dropped the variant into
+a `created_degraded` campaign that no re-dispatch repairs. Only the throttle arm retries,
+bounded by `retryMax` and honouring `Retry-After` with `do()`'s over-cap abort. Detection
+uses both of `do()`'s signals, because Meta reports rate limiting as an HTTP 400 carrying
+a Graph rate-limit code far more often than as a 429 — a status-only test would miss the
+common shape.
+
+The retry made the multipart body replayable, and that is its own hazard: a `bytes.Reader`
+is consumed by the first send, so reusing one would post an EMPTY body on every retry — a
+request rejected for a reason unrelated to the rate limit that caused the retry. The
+encoded body is built once and replayed from a fresh reader per attempt, and the test
+parses each attempt's body rather than counting requests, so the empty-replay bug fails
+the test instead of passing it.

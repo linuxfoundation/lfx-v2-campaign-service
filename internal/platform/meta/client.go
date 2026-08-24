@@ -3492,6 +3492,45 @@ type adImageUploadResponse struct {
 	} `json:"images"`
 }
 
+// throttleWait decides how long a throttled /adimages attempt should wait before the
+// next one, applying the SAME Retry-After policy do() applies — including its abort.
+//
+// It returns (wait, nil) to retry after `wait`, or (0, abortErr) when the server's
+// declared reset exceeds maxRetryWait. Clamping an oversized reset would retry while Meta
+// is still throttling, burning attempts and stalling this synchronous flow, so an
+// over-cap reset ABORTS carrying the Graph diagnostics — exactly do()'s behaviour, and
+// the twitter/reddit clients'.
+func (c *Client) throttleWait(ctx context.Context, resp *http.Response, apiErr *APIError, status int, path string) (time.Duration, error) {
+	_ = ctx
+	retryAfter := c.parseRetryAfter(resp)
+	if retryAfter > 0 {
+		if retryAfter > maxRetryWait {
+			// Report the RAW header: parseRetryAfter clamps an oversized reset to a
+			// sentinel used only to trip this comparison, so the raw value is what needs
+			// debugging against upstream.
+			rawRetryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
+			abortErr := &APIError{
+				StatusCode: status, Method: http.MethodPost, Path: path,
+				Type: apiErr.Type, Code: apiErr.Code, FBTraceID: apiErr.FBTraceID,
+				Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
+			}
+			if apiErr.Message != "" {
+				abortErr.Message = fmt.Sprintf("%s (Graph: %s)", abortErr.Message, apiErr.Message)
+			}
+			return 0, abortErr
+		}
+		return retryAfter, nil
+	}
+	// No server-declared reset: the same capped exponential backoff do() uses. The
+	// attempt number is not threaded in, so this uses the base delay; the loop bounds
+	// total attempts at retryMax either way.
+	wait := c.retryBaseDelay
+	if wait > maxRetryWait {
+		wait = maxRetryWait
+	}
+	return wait, nil
+}
+
 // uploadCache memoizes /adimages uploads for the duration of ONE CreateCampaign call, so
 // that N variants naming the SAME asset cost one upload instead of N.
 //
@@ -3620,9 +3659,20 @@ func (u *uploadCache) upload(ctx context.Context, c *Client, image []byte, conte
 //
 // Meta CONTENT-ADDRESSES ad images — identical bytes always yield the same hash and
 // a repeat upload is a no-op returning that hash — so this is idempotent and needs
-// none of do()'s create-ambiguity/retry machinery: a duplicate upload creates
-// nothing. It therefore makes a single attempt and classifies the outcome with the
-// SAME error types do() uses, so callers and tests see one vocabulary:
+// none of do()'s create-AMBIGUITY machinery: a duplicate upload creates nothing.
+//
+// That same idempotency is why it DOES retry a throttle, unlike doCreate. The rule
+// governing retry eligibility here is idempotency, not the HTTP method: doCreate sets
+// retryThrottle=false because Meta exposes no create idempotency key, so repeating a
+// shed create can duplicate a paid object. Repeating this upload cannot — it re-derives
+// the same hash. And declining to retry is not the safe default at this point in the
+// flow: the campaign and ad set already exist, so a transient 429 drops the variant and
+// leaves a created_degraded campaign that no re-dispatch repairs. Only the throttle arm
+// retries (bounded by retryMax, honouring Retry-After with do()'s over-cap abort); every
+// other outcome is final on the first attempt.
+//
+// Outcomes are classified with the SAME error types do() uses, so callers and tests see
+// one vocabulary:
 //   - pre-send dial failure → plain error (nothing was uploaded);
 //   - non-2xx → *APIError carrying the Graph envelope (or a redacted body snippet);
 //   - a 2xx we cannot read/parse, or that names no hash → *transportError (ambiguous).
@@ -3665,12 +3715,51 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 	}
 
 	path := "/" + c.account.AccountID + "/adimages"
-	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &body)
+	// The encoded multipart body is built ONCE and replayed per attempt from a fresh
+	// reader. A *bytes.Reader is consumed by the first send, so reusing the same one
+	// would post an EMPTY body on any retry — a request Meta rejects for a reason that
+	// has nothing to do with the rate limit that caused the retry.
+	encoded := body.Bytes()
+	contentTypeHeader := mw.FormDataContentType()
+
+	for attempt := 0; ; attempt++ {
+		hash, retryIn, rerr := c.uploadImageAttempt(ctx, path, encoded, contentTypeHeader)
+		if retryIn < 0 || attempt >= retryMax {
+			return hash, rerr
+		}
+		if err := sleepCtx(ctx, retryIn); err != nil {
+			return "", err
+		}
+	}
+}
+
+// uploadImageAttempt performs ONE /adimages send and classifies the outcome exactly as
+// uploadImage's contract describes. It returns a non-negative retryIn ONLY when the
+// caller should sleep that long and try again; a negative retryIn means "this outcome is
+// final, return it".
+//
+// WHY THIS UPLOAD IS RETRIED WHEN A CREATE IS NOT. doCreate passes retryThrottle=false
+// because Meta exposes no create idempotency key, so repeating a shed create can
+// duplicate a PAID object. That reasoning is about IDEMPOTENCY, not about the HTTP
+// method: the rule is that a request may be retried when repeating it cannot create a
+// second thing. This upload satisfies that independently — Meta content-addresses ad
+// images, so posting identical bytes twice yields the same hash and creates nothing the
+// first post did not. A 429 here is therefore safe to retry, and NOT retrying it is the
+// costly choice: the campaign and ad set already exist by this point, so a transient
+// throttle silently drops the variant and leaves a created_degraded campaign that no
+// re-dispatch will repair.
+//
+// Only the THROTTLE arm retries. Every other classification is final and identical to
+// the single-attempt behaviour, so this adds a retry and changes no verdict.
+func (c *Client) uploadImageAttempt(ctx context.Context, path string, encoded []byte, contentTypeHeader string) (string, time.Duration, error) {
+	const final = time.Duration(-1)
+
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(encoded))
 	if rerr != nil {
-		return "", fmt.Errorf("build request: %w", rerr)
+		return "", final, fmt.Errorf("build request: %w", rerr)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
-	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Content-Type", contentTypeHeader)
 
 	resp, derr := c.httpClient.Do(req)
 	if derr != nil {
@@ -3679,9 +3768,9 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 		// The upload being idempotent makes ambiguity harmless, but the caller fails the
 		// variant either way.
 		if isPreSendDialError(derr) {
-			return "", fmt.Errorf("meta API %s %s: %w", http.MethodPost, path, derr)
+			return "", final, fmt.Errorf("meta API %s %s: %w", http.MethodPost, path, derr)
 		}
-		return "", &transportError{Method: http.MethodPost, Path: path, Err: derr}
+		return "", final, &transportError{Method: http.MethodPost, Path: path, Err: derr}
 	}
 	// One byte past the cap so truncation is detectable, exactly as do() reads.
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
@@ -3697,6 +3786,28 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 			apiErr.Code = env.Error.Code
 			apiErr.FBTraceID = env.Error.FBTraceID
 			apiErr.Message = env.Error.Message
+			// Throttle detection uses the SAME two signals do() uses, and for the same
+			// reason: Meta reports rate limiting as an HTTP 400 carrying a Graph
+			// rate-limit code far more often than as a 429, so a status-only test would
+			// miss the common shape and drop the variant on a limit that was about to
+			// clear.
+			if status == http.StatusTooManyRequests || graphRateLimitCodes[env.Error.Code] {
+				wait, abort := c.throttleWait(ctx, resp, apiErr, status, path)
+				if abort != nil {
+					return "", final, abort
+				}
+				return "", wait, apiErr
+			}
+		case readErr == nil && status == http.StatusTooManyRequests:
+			// A 429 whose body carries no Graph envelope is still unambiguously a throttle:
+			// the STATUS alone says so. Retry it on the same terms, without trusting the
+			// body (which this path deliberately withholds, see the next arm).
+			apiErr.EnvelopeUnreadable = true
+			wait, abort := c.throttleWait(ctx, resp, apiErr, status, path)
+			if abort != nil {
+				return "", final, abort
+			}
+			return "", wait, apiErr
 		case readErr == nil:
 			// The raw body is deliberately WITHHELD on this path, unlike do()'s matching
 			// branch which surfaces a redacted snippet.
@@ -3720,18 +3831,18 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 			apiErr.EnvelopeUnreadable = true
 			apiErr.Message = fmt.Sprintf("read response body: %v", readErr)
 		}
-		return "", apiErr
+		return "", final, apiErr
 	}
 	if readErr != nil {
-		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
+		return "", final, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
 	}
 	if int64(len(raw)) > maxResponseBody {
-		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
+		return "", final, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
 	}
 
 	var out adImageUploadResponse
 	if uerr := json.Unmarshal(raw, &out); uerr != nil {
-		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", uerr)}
+		return "", final, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", uerr)}
 	}
 	// ONE upload yields ONE entry, and that invariant is enforced rather than assumed.
 	//
@@ -3750,18 +3861,18 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 	// is REFUSED. Failing closed is mandatory here: guessing among entries is what puts
 	// an unapproved image on a paid ad.
 	if len(out.Images) != 1 {
-		return "", &transportError{Method: http.MethodPost, Path: path,
+		return "", final, &transportError{Method: http.MethodPost, Path: path,
 			Err: fmt.Errorf("image upload returned %d image entries, want exactly 1", len(out.Images))}
 	}
 	for _, img := range out.Images {
 		if h := strings.TrimSpace(img.Hash); h != "" {
-			return h, nil
+			return h, final, nil
 		}
 	}
 	// A 2xx naming no hash is ambiguous the same way a create returning no id is: the
 	// upload may have landed but we cannot name it. transportError, so the variant fails
 	// rather than attaching an empty image_hash to a creative.
-	return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("image upload returned no hash")}
+	return "", final, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("image upload returned no hash")}
 }
 
 // createVariantAd creates the adcreative and ad for one variant, returning the ad

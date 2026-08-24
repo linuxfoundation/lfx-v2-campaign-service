@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // uploadedPart is what the fake /adimages endpoint observed about the request
@@ -531,5 +532,173 @@ func TestAmbiguousUploadStepDoesNotPromiseRedispatchRecovery(t *testing.T) {
 	// The still-true half must survive: the image needs no cleanup.
 	if !strings.Contains(step, "no cleanup") {
 		t.Errorf("step must still tell the operator the image needs no cleanup, got %q", step)
+	}
+}
+
+// uploadRetryClient is imageTestClient with a negligible backoff base so a retry test
+// does not spend real seconds sleeping. The DELAY is not what is under test — the number
+// of attempts and the final outcome are — so shrinking it changes nothing being asserted.
+func uploadRetryClient(srvURL string) *Client {
+	return NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srvURL),
+		WithClock(fixedMetaClock()),
+		withRetryBaseDelay(time.Millisecond),
+	)
+}
+
+// TestUploadImageRetriesThrottleAndSucceeds proves the throttle retry exists and that a
+// variant survives a transient rate limit.
+//
+// This is the case the retry is FOR: by the time uploadImage runs, the campaign and ad
+// set already exist, so dropping the variant on a 429 leaves a created_degraded campaign
+// that no re-dispatch repairs. Retrying is sound because the endpoint is
+// content-addressed — repeating the upload creates nothing.
+//
+// Asserted on observed attempts and the returned hash, never on elapsed time.
+func TestUploadImageRetriesThrottleAndSucceeds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		// A plain 429.
+		{"http 429", http.StatusTooManyRequests, `{"error":{"message":"slow down","code":613}}`},
+		// The COMMON shape: Meta reports rate limiting as a 400 carrying a Graph
+		// rate-limit code far more often than as a 429. A status-only test would miss it.
+		{"http 400 with graph rate-limit code", http.StatusBadRequest, `{"error":{"message":"limit","code":4}}`},
+		// A 429 with no parseable Graph envelope — the status alone is decisive.
+		{"http 429 with no envelope", http.StatusTooManyRequests, `not json at all`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				n := atomic.AddInt32(&attempts, 1)
+				// Every attempt must carry the FULL multipart body. A replayed request
+				// that reused a consumed reader would arrive empty, so parsing it here is
+				// what catches that.
+				got := captureUpload(t, r)
+				if len(got.body) == 0 {
+					t.Errorf("attempt %d carried an EMPTY image part; the multipart body must be replayed per attempt", n)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if n == 1 {
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.body)
+					return
+				}
+				_, _ = io.WriteString(w, `{"images":{"creative":{"hash":"AFTER_RETRY"}}}`)
+			}))
+			defer srv.Close()
+
+			hash, err := uploadRetryClient(srv.URL).uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+			if err != nil {
+				t.Fatalf("uploadImage error after a retryable throttle: %v", err)
+			}
+			if hash != "AFTER_RETRY" {
+				t.Errorf("hash = %q, want AFTER_RETRY", hash)
+			}
+			if n := atomic.LoadInt32(&attempts); n != 2 {
+				t.Errorf("attempts = %d, want 2 (one throttled, one successful retry)", n)
+			}
+		})
+	}
+}
+
+// TestUploadImageDoesNotRetryNonThrottleFailures is the counterweight: the retry must be
+// scoped to throttles ONLY. A 400 that is a genuine semantic rejection (a corrupt image)
+// must fail on the FIRST attempt — retrying it would spend the deadline re-sending bytes
+// Meta has already refused on their merits.
+func TestUploadImageDoesNotRetryNonThrottleFailures(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// code 100 is a plain invalid-parameter error, NOT a rate-limit code.
+		_, _ = io.WriteString(w, `{"error":{"message":"invalid image","code":100}}`)
+	}))
+	defer srv.Close()
+
+	_, err := uploadRetryClient(srv.URL).uploadImage(context.Background(), []byte("BAD"), "image/png")
+	if err == nil {
+		t.Fatal("a 400 invalid-image must fail")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v (%T), want *APIError", err, err)
+	}
+	if n := atomic.LoadInt32(&attempts); n != 1 {
+		t.Errorf("attempts = %d, want 1 — a non-throttle rejection must not be retried", n)
+	}
+}
+
+// TestUploadImageStopsAfterRetryMaxThrottles bounds the retry: a server that throttles
+// forever must not loop indefinitely inside the campaign's deadline, and the error the
+// caller finally sees must still be the throttle (so it classifies as a rate limit, not
+// as some generic failure).
+func TestUploadImageStopsAfterRetryMaxThrottles(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613}}`)
+	}))
+	defer srv.Close()
+
+	_, err := uploadRetryClient(srv.URL).uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+	if err == nil {
+		t.Fatal("an endlessly throttled upload must fail")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v (%T), want the throttle *APIError", err, err)
+	}
+	if apiErr.Code != 613 {
+		t.Errorf("final error code = %d, want the throttle code 613 preserved", apiErr.Code)
+	}
+	// retryMax retries after the first attempt.
+	if n := atomic.LoadInt32(&attempts); n != retryMax+1 {
+		t.Errorf("attempts = %d, want %d (initial + retryMax)", n, retryMax+1)
+	}
+}
+
+// TestUploadImageAbortsWhenRetryAfterExceedsCap mirrors do()'s policy: when the server
+// DECLARES a reset longer than maxRetryWait, sleeping only the cap would retry while Meta
+// is still throttling — burning attempts and stalling a synchronous flow — so it aborts
+// instead of clamping, carrying the Graph diagnostics.
+func TestUploadImageAbortsWhenRetryAfterExceedsCap(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613,"type":"OAuthException"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := uploadRetryClient(srv.URL).uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+	if err == nil {
+		t.Fatal("an over-cap Retry-After must abort")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v (%T), want *APIError", err, err)
+	}
+	if !strings.Contains(apiErr.Message, "exceeds max wait") {
+		t.Errorf("message = %q, want the over-cap abort wording", apiErr.Message)
+	}
+	// The RAW header is what needs debugging upstream, so it must be reported verbatim.
+	if !strings.Contains(apiErr.Message, `"600"`) {
+		t.Errorf("message = %q, want the raw Retry-After value 600", apiErr.Message)
+	}
+	if apiErr.Code != 613 {
+		t.Errorf("abort dropped the Graph code: got %d, want 613", apiErr.Code)
+	}
+	if n := atomic.LoadInt32(&attempts); n != 1 {
+		t.Errorf("attempts = %d, want 1 — an over-cap reset must abort, not retry", n)
 	}
 }
