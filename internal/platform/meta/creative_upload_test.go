@@ -703,73 +703,15 @@ func TestUploadImageAbortsWhenRetryAfterExceedsCap(t *testing.T) {
 	}
 }
 
-// TestUploadImageCancelledThrottleSleepStaysAmbiguous covers a defect the retry itself
-// introduced. It is about CLASSIFICATION, not control flow.
-//
-// When the caller's context dies while the client is waiting out a throttle, returning
-// the bare ctx.Err() loses the outcome's shape: it is neither *transportError nor
-// *APIError, so createOutcomeAmbiguous reads it as a clean, definite failure. It is not
-// one — a throttle on a mutating call is ambiguous by design (Meta may have accepted the
-// upload and shed the response), which is exactly why a 429 is classified ambiguous
-// rather than as a semantic rejection. Cancelling the wait does not resolve the
-// ambiguity, it only stops us learning the answer. The operator-facing cost of getting it
-// wrong is a "create it manually" instruction for an image that may already exist.
-//
-// HOW THE WAIT IS REACHED DETERMINISTICALLY. The context is cancelled by the server's
-// SECOND read of the request body — i.e. the client has demonstrably finished sending and
-// the server is answering — via a body that cancels as it is consumed. Every ordering
-// driven by the HTTP response instead (cancelling in the handler, on connection-idle, or
-// from a goroutine watching request count) races the client's own response read: the
-// error then comes from the TRANSPORT arm, which is ALREADY a *transportError, so every
-// ambiguity assertion passes while the wait is never exercised. Three versions of this
-// test did exactly that and the mutation survived all three.
-//
-// That is why the final assertion names the wrapper: it is the only thing that
-// distinguishes the sleep arm from the transport arm, and without it this test is green
-// against broken code.
-func TestUploadImageCancelledThrottleSleepStaysAmbiguous(t *testing.T) {
-	var attempts int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&attempts, 1)
-		if n > 1 {
-			t.Errorf("a second attempt was made; the cancellation must interrupt the retry wait")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		// Far longer than this test takes, but under maxRetryWait so this is the RETRY
-		// path and not the over-cap abort.
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613}}`)
-	}))
-	defer srv.Close()
-
-	// Already cancelled: sleepCtx therefore returns immediately and deterministically on
-	// the FIRST retry wait, with no dependence on scheduling or elapsed time. The client
-	// still performs and classifies attempt 1 against the live server first, because the
-	// request is issued with a context that is only consulted for cancellation at the
-	// transport and sleep boundaries -- so this exercises exactly the arm under test.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := uploadRetryClient(srv.URL).uploadImage(ctx, []byte("PNGBYTES"), "image/png")
-	if err == nil {
-		t.Fatal("a cancelled throttle wait must fail")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("error = %v, want it to wrap context.Canceled", err)
-	}
-	// THE POINT: the outcome must remain AMBIGUOUS, not read as a clean failure.
-	if !createOutcomeAmbiguous(err) {
-		t.Errorf("a cancelled throttle wait classified as a DEFINITE failure (%v); "+
-			"a shed throttle on a mutating call may have been accepted upstream, so it must stay ambiguous", err)
-	}
-	var te *transportError
-	if !errors.As(err, &te) {
-		t.Errorf("error = %v (%T), want *transportError so the ambiguity survives", err, err)
-	}
-}
+// NOTE ON A TEST THAT IS NOT HERE. An earlier revision added
+// TestUploadImageCancelledThrottleSleepStaysAmbiguous, which drove uploadImage with an
+// ALREADY-cancelled context and asserted the outcome stayed ambiguous. It was vacuous:
+// with the context dead before the call, the round trip fails on attempt 1 and the error
+// comes from the TRANSPORT arm, so the retry wait never ran. Because both arms return
+// *transportError, every assertion in it passed — including against a build where the
+// sleep arm returned a bare ctx.Err(). It was removed rather than repaired: the test
+// below covers the same behaviour and actually fails when the wrap is reverted, and two
+// tests where only one can fail is worse than one that can.
 
 // TestThrottleWaitInterruptionIsWrappedAmbiguous pins the SLEEP ARM directly, because the
 // end-to-end test above cannot reliably distinguish it from the transport arm: once the
