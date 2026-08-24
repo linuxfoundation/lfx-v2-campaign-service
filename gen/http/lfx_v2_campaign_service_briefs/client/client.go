@@ -78,6 +78,10 @@ type Client struct {
 	// toggle-campaign-status endpoint.
 	ToggleCampaignStatusDoer goahttp.Doer
 
+	// ApplyKeywordActions Doer is the HTTP client used to make requests to the
+	// apply-keyword-actions endpoint.
+	ApplyKeywordActionsDoer goahttp.Doer
+
 	// DeleteCampaign Doer is the HTTP client used to make requests to the
 	// delete-campaign endpoint.
 	DeleteCampaignDoer goahttp.Doer
@@ -121,6 +125,7 @@ func NewClient(
 		GenerateEmailCopyDoer:    doer,
 		UpdateCampaignDoer:       doer,
 		ToggleCampaignStatusDoer: doer,
+		ApplyKeywordActionsDoer:  doer,
 		DeleteCampaignDoer:       doer,
 		GetJobDoer:               doer,
 		RestoreResponseBody:      restoreBody,
@@ -486,6 +491,30 @@ func (c *Client) ToggleCampaignStatus() goa.Endpoint {
 		resp, err := c.ToggleCampaignStatusDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ApplyKeywordActions returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service apply-keyword-actions server.
+func (c *Client) ApplyKeywordActions() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeApplyKeywordActionsRequest(c.encoder)
+		decodeResponse = DecodeApplyKeywordActionsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildApplyKeywordActionsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ApplyKeywordActionsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
 		}
 		return decodeResponse(resp)
 	}

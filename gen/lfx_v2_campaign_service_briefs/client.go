@@ -30,13 +30,14 @@ type Client struct {
 	GenerateEmailCopyEndpoint    goa.Endpoint
 	UpdateCampaignEndpoint       goa.Endpoint
 	ToggleCampaignStatusEndpoint goa.Endpoint
+	ApplyKeywordActionsEndpoint  goa.Endpoint
 	DeleteCampaignEndpoint       goa.Endpoint
 	GetJobEndpoint               goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, applyKeywordActions, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -53,6 +54,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		GenerateEmailCopyEndpoint:    generateEmailCopy,
 		UpdateCampaignEndpoint:       updateCampaign,
 		ToggleCampaignStatusEndpoint: toggleCampaignStatus,
+		ApplyKeywordActionsEndpoint:  applyKeywordActions,
 		DeleteCampaignEndpoint:       deleteCampaign,
 		GetJobEndpoint:               getJob,
 	}
@@ -345,6 +347,25 @@ func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStat
 		return
 	}
 	return ires.(*Campaign), nil
+}
+
+// ApplyKeywordActions calls the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// ApplyKeywordActions may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ApplyKeywordActions(ctx context.Context, p *ApplyKeywordActionsPayload) (res *KeywordActions, err error) {
+	var ires any
+	ires, err = c.ApplyKeywordActionsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*KeywordActions), nil
 }
 
 // DeleteCampaign calls the "delete-campaign" endpoint of the

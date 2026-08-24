@@ -301,6 +301,65 @@ func (r *CampaignRepo) ListCampaignsForBrief(ctx context.Context, projectID, bri
 	return out, nil
 }
 
+// listProjectPlatformCampaignIDsQuery returns the PLATFORM ids of a project's live campaigns on
+// one provider.
+//
+// project_id is in the WHERE clause, not applied by the caller after the fact: a Go-side filter
+// over an unscoped read is the same cross-tenant exposure one layer up, and it would be invisible
+// in review because the call site would look identical.
+//
+// Only the platform id is selected. The caller scopes a GAQL query with these, and selecting whole
+// rows would hand it credentials-adjacent fields it has no use for.
+//
+// Rows with an EMPTY platform_campaign_id are excluded: a claimed-but-not-yet-dispatched campaign
+// has no upstream id, and an empty string in an IN list would either match nothing or, worse,
+// widen the predicate depending on how it is rendered. status <> 'deleted' matches every other
+// read here — a soft-deleted campaign is invisible.
+//
+// DISTINCT because a caller only needs each upstream id once; ORDER BY makes the generated query
+// text stable, which keeps it comparable between reads and in tests.
+// `result` travels with each id because the id ALONE cannot be scoped safely: a
+// platform_campaign_id is a bare numeric unique only within the customer it was created
+// under, and the creating customer is recorded in this JSON blob. The caller matches it
+// against the connection's CURRENT customer before querying, exactly as ReadMetrics does —
+// without it, a re-pointed connection can select an unrelated campaign of the same id.
+//
+// DISTINCT is on the PAIR rather than the id alone: two rows may share an upstream id only
+// if they also share provenance, and collapsing on the id would discard the evidence.
+const listProjectPlatformCampaignIDsQuery = `SELECT DISTINCT platform_campaign_id, result FROM campaigns
+	WHERE project_id=$1 AND platform=$2 AND status <> 'deleted'
+	  AND platform_campaign_id IS NOT NULL AND platform_campaign_id <> ''
+	ORDER BY platform_campaign_id ASC`
+
+// ListProjectPlatformCampaignIDs returns the upstream campaign ids this project owns on platform.
+//
+// Returns an EMPTY slice, not an error, when the project has dispatched nothing to that platform.
+// That is an ordinary state — a project that has not run a campaign yet — and the caller renders
+// it as an empty result rather than a failure.
+func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	rows, err := r.db.Query(ctx, listProjectPlatformCampaignIDsQuery, projectID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("list project platform campaign ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.ProjectCampaignScope, 0)
+	for rows.Next() {
+		var (
+			id     string
+			result []byte
+		)
+		if serr := rows.Scan(&id, &result); serr != nil {
+			return nil, fmt.Errorf("scan project platform campaign id: %w", serr)
+		}
+		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: result})
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate project platform campaign ids: %w", rerr)
+	}
+	return out, nil
+}
+
 // GetCampaign returns a single campaign under a brief. Soft-deleted campaigns are
 // invisible to reads: a deleted campaign returns ErrNotFound (404), matching
 // domain.ErrNotFound's contract ("does not exist, or has been soft-deleted") and

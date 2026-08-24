@@ -983,6 +983,16 @@ type campaignStatusUpdate struct {
 // than assume "not applied". Exported so the dispatcher can classify across the package
 // boundary (mirrors the reddit/twitter clients' helper of the same name).
 func IsOutcomeUnconfirmed(err error) bool {
+	// An explicit NOT-ATTEMPTED marker wins over everything below, including the
+	// Unconfirmed() check: it is set only by a call site that knows no request was sent, and
+	// it is the one fact the shape-based inference cannot recover. Without this arm a
+	// pre-mutation read failure (resolveKeywordCriteria's GAQL query, which fails as a
+	// transportError or 5xx just like a mutate does) would be reported as "the changes may
+	// have been applied" even though adGroupCriteria:mutate was never built.
+	var na interface{ NotAttempted() bool }
+	if errors.As(err, &na) && na.NotAttempted() {
+		return false
+	}
 	var u interface{ Unconfirmed() bool }
 	if errors.As(err, &u) && u.Unconfirmed() {
 		return true

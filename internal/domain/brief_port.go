@@ -118,6 +118,26 @@ type CampaignReader interface {
 	// has never been dispatched is an ordinary state, and the caller (a brief-wide metrics
 	// read) must be able to answer "nothing to measure yet" without it being a failure.
 	ListCampaignsForBrief(ctx context.Context, projectID, briefID string) ([]*model.Campaign, error)
+	// ListProjectPlatformCampaignIDs returns the UPSTREAM campaigns this project owns on
+	// platform, across every brief, excluding soft-deleted rows and rows with no platform id
+	// yet (claimed but not dispatched).
+	//
+	// Each entry carries its provenance blob alongside the id, because the id ALONE is not a
+	// safe scope: it is a bare numeric unique only within the customer it was created under.
+	// The adapter matches that provenance against the connection's current customer before
+	// querying, the same invariant ReadMetrics enforces.
+	//
+	// It exists so an account-wide platform read can be narrowed to the caller's own campaigns.
+	// Google Ads is ONE customer shared across every foundation (docs/architecture.md,
+	// "Account Tenancy"), so a query scoped only by the connection returns every project's
+	// data; these ids are what scope it to the authorized project. The scoping is applied in
+	// SQL — a Go-side filter over an unscoped read would leave the same exposure one layer up.
+	//
+	// Returns an EMPTY slice, not an error, when the project has dispatched nothing to that
+	// platform. The caller must render that as an empty result and must NOT fall back to an
+	// unscoped read: an empty id list means "this project owns no campaigns here", which is
+	// precisely when an unscoped query would expose everyone else's.
+	ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
 	// platform) by inserting a placeholder campaign row (status 'pending') via
 	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker
