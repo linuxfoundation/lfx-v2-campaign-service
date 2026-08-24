@@ -273,11 +273,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   NOT encrypted: an ad image is not a secret, unlike the credential blobs. It stores the SOURCE
   BYTES rather than a platform handle because an ad platform's image handle is per-ad-account
   and only resolvable at dispatch, so the bytes must survive the gap between upload and campaign
-  create. **It is numbered 000028, not 000027**: 000027 is claimed by open PR #164
-  (`000027_campaigns_ran_on_system_account`, LFXV2-3050), and two branches holding one version
-  are green on both PRs and red only on whichever merges second. The resulting 000027 gap is
-  recorded in `allowedVersionGaps` and is a MERGE-ORDER obligation — #164 must land first, or
-  golang-migrate skips 000027 permanently. See *Migration numbering* above.
+  create. **It is numbered 000028, not 000027**: 000027 was claimed by PR #164
+  (`000027_campaigns_ran_on_system_account`, LFXV2-3050) while that PR was still open, so this
+  branch took the next free version and recorded the transitional gap in `allowedVersionGaps`
+  as a merge-order obligation. #164 has since merged, 000027 is in the tree, and the entry is
+  gone — `allowedVersionGaps` is back to its empty resting state and the obligation is
+  discharged. See *Migration numbering* above.
 
 - `000027` — `ran_on_system_account` BOOLEAN on `campaigns`, nullable and with NO
   default (LFXV2-3050). It records WHICH AD ACCOUNT served the campaign: the
@@ -1301,13 +1302,18 @@ transaction. Six things are doing work here and each has a failure mode if chang
   reasoning assumed: `creative_assets` has no prune and briefs are never hard-deleted, so a row
   committed under an archived brief is retained FOREVER with nothing able to read or clean it.
   That is a different category from a row a later operation would refuse.
-- **The `WHERE EXISTS` gate is RETAINED on top of the lock**, because it carries the tenant
-  boundary as well as the status rule. The row is inserted only if a brief with this `id` and
-  `project_id` exists and is not archived. Dropping the clause does not merely widen an error
-  path — it lets a caller scoped to project A attach an asset to project B's brief.
-  `TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief` asserts each of the three
-  refusals AND that no row was stored, because returning `ErrNotFound` and storing nothing are
-  two separate claims and a broken gate can do one without the other. The read path carries the
+- **The tenant boundary is the LOCK QUERY, not the `WHERE EXISTS` gate.** Since the lock
+  landed, `CreateAsset` reaches the insert only after `SELECT ... FOR UPDATE` has matched the
+  parent on both `id` and `project_id` and the explicit status check has rejected `archived`.
+  A brief that is absent, archived, or owned by another project therefore returns `ErrNotFound`
+  from the lock step, before the insert runs at all — so all three refusals are owned by the
+  lock query and its status check. The `WHERE EXISTS` gate is RETAINED as defense-in-depth: it
+  re-states the same predicate under the held lock, which keeps the insert self-contained if it
+  is ever reused outside this transaction, but it is no longer what stops a cross-project
+  attach. `TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief` asserts each of the
+  three refusals AND that no row was stored, because returning `ErrNotFound` and storing
+  nothing are two separate claims and a broken guard can do one without the other; it does not
+  distinguish which of the two layers refused. The read path carries the
   same `EXISTS` on a non-archived parent (`getCreativeAssetQuery`), pinned by
   `TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant`'s "an archived parent brief makes
   the asset unreadable" subtest — that remains a tenancy/visibility rule in its own right, no

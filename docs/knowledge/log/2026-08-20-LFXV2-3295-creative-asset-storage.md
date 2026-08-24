@@ -145,11 +145,14 @@ That is why this repo has a live-database test instead of the SQL-string tests t
 connection repos use.
 
 - **`WHERE EXISTS (active, same-project brief)`** is the parent gate, in SQL rather than as a
-  preceding `SELECT`. That removes the application-level `SELECT`-then-`INSERT` window, and
-  only that: the statement takes no lock on the parent, so a concurrent `ArchiveBrief` can still
-  commit after the snapshot sees an active brief — see the correction above for why the answer
-  is an accurate comment rather than a lock. The gate is also a tenant boundary: the `brief_id`
-  FK proves only that the brief exists, not that it belongs to this caller.
+  preceding `SELECT`, which removes the application-level `SELECT`-then-`INSERT` window. As
+  this entry was written the gate also carried the tenant boundary and took no lock on the
+  parent, so a concurrent `ArchiveBrief` could still commit after the snapshot saw an active
+  brief. Both halves were superseded later in this PR: `CreateAsset` now locks the parent with
+  `SELECT ... FOR UPDATE` on `id` and `project_id` and checks the status explicitly before the
+  insert, so the lock orders the archival AND owns the tenant boundary, and this gate is
+  defense-in-depth re-stating the predicate under the held lock. See
+  `2026-08-24-LFXV2-3295-createasset-locks-the-parent-brief.md`.
 - **`DO UPDATE SET byte_size = creative_assets.byte_size`** is a no-op that exists only to make
   the conflicting row eligible for `RETURNING`. `DO NOTHING` emits no row for a row it did not
   touch, so a repeat upload would surface `ErrNoRows` → a spurious `ErrNotFound` on what is
@@ -214,8 +217,9 @@ fails on all three mutations above, including the one the existing test could no
   `TestCreativeAssets_CompositeTenantFKRejectsMismatchedProject` fails with `a direct insert
   pairing brief ... with project_id "...foreign-proj..." succeeded` — the cross-tenant row was
   really created, so the diagnostic reports the vulnerability rather than an absent error.
-- dropping the `WHERE EXISTS` clause: all three refusal paths fail — and the cross-project case
-  fails with `err = <nil>`, meaning the mutation genuinely attached an asset to another
-  project's brief rather than merely mis-mapping an error. The test asserts nothing was STORED
-  as well as which error came back, because a broken gate can get one of those right and the
-  other wrong.
+- dropping the `WHERE EXISTS` clause: recorded against the pre-lock implementation, where it
+  failed all three refusal paths with the cross-project case returning `err = <nil>`. That
+  mutation no longer survives to the insert now that the lock query refuses first, so the
+  clause's removal is caught by review rather than by this test. The test still asserts nothing
+  was STORED as well as which error came back, because a broken guard can get one of those
+  right and the other wrong.
