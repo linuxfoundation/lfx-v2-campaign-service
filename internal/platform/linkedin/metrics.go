@@ -553,7 +553,24 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 // (resp, false, 0, nil) on success, (nil, true, wait, nil) when the caller
 // should retry after wait, or (nil, false, 0, err) on a terminal error.
 func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAnalyticsResponse, bool, time.Duration, error) {
-	attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	// Resolve through authorizedAttempt, NOT c.creds.AccessToken: this is the metrics
+	// read path — the one that surfaced the expired-token 500 — so it must take the
+	// same refresh and fail-closed discipline as doRequest. Reading the field directly
+	// would send a known-expired token and would never see a refreshed one.
+	//
+	// It is NOT a data race: c.creds is injected at construction and never written
+	// afterwards — a rotated refresh token is adopted into c.refreshToken/c.refreshExpiry
+	// precisely so c.creds stays immutable (see fetchToken in token.go). The reason to go
+	// through the token accessor is correctness of the VALUE, not memory safety.
+	//
+	// authorizedAttempt also fixes the ORDER: the refresh runs on the parent ctx under
+	// its own bound, so a refresh that succeeds near that bound still leaves this Ad
+	// Analytics request a full per-attempt budget.
+	attemptCtx, cancel, token, err := c.authorizedAttempt(ctx)
+	if err != nil {
+		cancel()
+		return nil, false, 0, err
+	}
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, rawURL, nil)
@@ -561,8 +578,7 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		cancel()
 		return nil, false, 0, fmt.Errorf("new request: %w", err)
 	}
-
-	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("LinkedIn-Version", c.apiVersion)
 	req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
 
@@ -594,6 +610,16 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		// prefix is needed on either. Do not add a "read response body: " prefix here: it would
 		// double-state what redactBodyReadError already says, and it would also make the two
 		// paths' text diverge for no reason (metrics_test.go's wantBody asserts they match).
+		//
+		// A 401 is classified here for the same reason the readable-body arm below does it: an
+		// unreadable body does not make the 401 any less a 401. The AMBIGUITY half is a no-op on
+		// this path (the method is a hard-coded GET, which the method gate keeps definite — an
+		// analytics read creates nothing), but the CACHE-INVALIDATION half is not: without this,
+		// a 401 whose body could not be read left the rejected token in cache to be replayed,
+		// and the operator got an opaque upstream error instead of the reconnect signal.
+		if ce := c.expiredCredentialsError(resp.StatusCode, "", http.MethodGet); ce != nil {
+			return nil, false, 0, ce
+		}
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: redactBodyReadError(err).Error()}
 	}
 
@@ -608,10 +634,38 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 		}
+		// Same reasoning as the read-failure arm above: an oversized body does not un-401 a
+		// 401, and the rejected token must still be evicted from the cache.
+		if ce := c.expiredCredentialsError(resp.StatusCode, "", http.MethodGet); ce != nil {
+			return nil, false, 0, ce
+		}
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// A 401 is classified HERE, not left to the caller, and this is the path the
+		// incident actually ran through. Resolving the token through accessTokenValue
+		// above covers a token this client KNOWS is expired; it cannot cover the two
+		// cases that produced the outage — a bearer-only row whose AccessTokenExpiresAt
+		// is zero (so nothing predicts the expiry) and a token LinkedIn revoked
+		// mid-flight. In both, the request is sent and LinkedIn answers 401, and
+		// returning a bare apiError here made GetCampaignMetrics fail with an opaque
+		// upstream error that the dispatcher's ErrCredentialsExpired re-tag could never
+		// match. Mirrors doRequest's 401 arm in client.go.
+		//
+		// The body is passed to the classifier but still NOT retained on apiError: it is
+		// read for the serviceErrorCode signal and discarded, so no untrusted upstream
+		// text reaches an exported field.
+		// expiredCredentialsError clears the cached token (so the next read re-exchanges
+		// rather than replaying one LinkedIn has already rejected — only the CACHE, since a
+		// revoked access token does not imply a revoked refresh token) and records
+		// Method/StatusCode for the same reason doRequest's 401 arm does. Here they classify
+		// NEGATIVELY and that is the point: this analytics call is a GET, so it created
+		// nothing, and the method gate in createOutcomeAmbiguous keeps a read 401 a plain
+		// expiry rather than letting it read as "a campaign may exist".
+		if ce := c.expiredCredentialsError(resp.StatusCode, buf.String(), http.MethodGet); ce != nil {
+			return nil, false, 0, ce
+		}
 		// Body is deliberately NOT retained: this analytics path never classifies on
 		// the response body (unlike isInReviewPauseRejection's write-path use of
 		// apiError.Body above), so there's no reason to hold an untrusted,
