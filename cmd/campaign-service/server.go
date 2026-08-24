@@ -164,15 +164,30 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 
 	handler := buildHandler(mux, cfg, inflight)
 
-	srv := &http.Server{
+	srv := buildServer(cfg, handler)
+
+	return runServerWithContext(ctx, srv, cont, inflight)
+}
+
+// buildServer assembles the http.Server with its timeouts.
+//
+// It is a seam for the same reason buildHandler is one: the timeouts are security controls whose
+// ABSENCE is invisible. Constructing the server inline meant the only way to check ReadTimeout
+// was to restate it in a test literal — which asserts the constant's value and proves nothing
+// about the running server, so deleting the field left every test green. Extracting it lets a
+// test read the real object.
+func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
+	return &http.Server{
 		Addr:              cfg.ServerAddress(),
 		Handler:           handler,
 		ReadHeaderTimeout: constants.DefaultReadHeaderTimeout,
-		WriteTimeout:      constants.DefaultWriteTimeout,
-		IdleTimeout:       constants.DefaultIdleTimeout,
+		// Bounds the whole request read, not just the headers: without it a slowloris can
+		// dribble a body indefinitely while holding an upload admission permit, exhausting
+		// the admission budget with requests that never complete.
+		ReadTimeout:  constants.DefaultReadTimeout,
+		WriteTimeout: constants.DefaultWriteTimeout,
+		IdleTimeout:  constants.DefaultIdleTimeout,
 	}
-
-	return runServerWithContext(ctx, srv, cont, inflight)
 }
 
 // buildHandler wraps the mounted mux in the service's middleware chain. It is a seam
@@ -187,6 +202,11 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 //     exactly what would otherwise buffer and base64-decode an unbounded body, so the
 //     cap has to be inside every other wrapper but outside the mux (see
 //     constants.MaxRequestBodyBytes).
+//   - UploadAdmission sits immediately OUTSIDE MaxBodyBytes, and that order is the point.
+//     MaxBodyBytes bounds ONE body; admission bounds how many may be in flight at once. It
+//     has to run before the body is read at all, because Goa's generated handler decodes the
+//     request before the endpoint authenticates it — so the permit must be taken while the
+//     pre-auth allocation is still ahead of us, not after the decoder has already made it.
 //   - RequestID and, when enabled, debug/OTel sit OUTSIDE it, so a request refused with
 //     413 still carries a request id and is still traced — an operator investigating a
 //     rejection needs it correlated like any other response.
@@ -197,6 +217,11 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker) http.Handler {
 	handler := mux
 	handler = middleware.MaxBodyBytes(constants.MaxRequestBodyBytes)(handler)
+	handler = middleware.UploadAdmission(
+		constants.UploadAdmissionBudgetBytes,
+		constants.UploadAdmissionWeightBytes,
+		constants.UploadAdmissionWait,
+	)(handler)
 	handler = middleware.RequestIDMiddleware()(handler)
 	if cfg.Debug {
 		handler = debug.HTTP()(handler)

@@ -1,0 +1,151 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
+)
+
+// TestUploadAdmission_IsWiredIntoTheRealChain asserts the admission bound is APPLIED, not merely
+// implemented.
+//
+// This is a distinct fact from anything internal/middleware can prove. Its own tests drive
+// UploadAdmission directly, so they pass whether or not buildHandler ever calls it -- deleting
+// the wiring line compiles, keeps every middleware test green, and silently removes the control
+// in production. Only a test that drives the real chain closes that gap, which is exactly why
+// buildHandler is a seam.
+//
+// The proof is behavioural rather than structural: no reflection, no counting of wrappers. It
+// saturates the budget by parking requests inside the chain, then asserts that a further upload
+// is SHED with the admission middleware's own 503 -- a response no other layer in the chain
+// produces, and one that can only appear if admission is wired.
+//
+// Only the probe's response is inspected. The parked requests are never allowed to complete
+// during the assertion, which also keeps this test clear of a pre-existing upstream data race in
+// goa v3.25.3's ErrorEncoder (http/encoding.go:265-266 writes a shared `formatter` closure
+// variable): that race fires when two error responses encode concurrently and reproduces through
+// the bare mux with no admission middleware present, so it is not this PR's to fix here.
+func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
+	// buildHandler is exercised with a SENTINEL inner handler in place of the mux. The subject
+	// under test is buildHandler's own composition -- whether it installs UploadAdmission --
+	// and the sentinel keeps the parked requests out of goa's generated error encoder, which
+	// carries a pre-existing upstream data race (see the doc comment above). The chain being
+	// measured is the real one; only the thing it wraps is substituted.
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			_, _ = io.Copy(io.Discard, r.Body)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker())
+
+	admits := int(constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightBytes)
+
+	release := make(chan struct{})
+	var reading int64
+	var wg sync.WaitGroup
+
+	// Occupy every permit. Each parked request holds its permit until the test ends.
+	for range admits {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, uploadRoute,
+				&blockingBody{release: release, reading: &reading})
+			req.Header.Set("Content-Type", "application/json")
+			chain.ServeHTTP(httptest.NewRecorder(), req)
+		}()
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt64(&reading) < int64(admits) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := atomic.LoadInt64(&reading); got != int64(admits) {
+		close(release)
+		wg.Wait()
+		t.Fatalf("only %d of %d permits were taken; cannot test saturation", got, admits)
+	}
+
+	// The budget is now fully occupied. One more upload must be shed by admission.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	chain.ServeHTTP(rec, req)
+
+	close(release)
+	wg.Wait()
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("saturated chain answered %d, want %d: UploadAdmission is not wired into "+
+			"buildHandler (budget %d MiB, weight %d MiB, %d permits held)",
+			rec.Code, http.StatusServiceUnavailable,
+			constants.UploadAdmissionBudgetBytes>>20,
+			constants.UploadAdmissionWeightBytes>>20, admits)
+	}
+	if !strings.Contains(rec.Body.String(), "upload capacity") {
+		t.Errorf("shed body = %q, want the admission middleware's own message; "+
+			"a 503 from another layer would not prove admission is wired", rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("no Retry-After on the shed response from the real chain")
+	}
+}
+
+// blockingBody is a request body whose first Read parks until released. It makes an admitted
+// request hold its permit for a controlled window, so saturation is deterministic rather than a
+// race against how quickly the handler rejects the payload.
+type blockingBody struct {
+	release chan struct{}
+	reading *int64
+	done    bool
+}
+
+func (b *blockingBody) Read(_ []byte) (int, error) {
+	if !b.done {
+		atomic.AddInt64(b.reading, 1)
+		<-b.release
+		b.done = true
+	}
+	return 0, io.EOF
+}
+
+// TestReadTimeoutIsSetOnTheServer guards the slowloris bound on the REAL server object.
+//
+// It reads buildServer's output rather than restating the timeouts in a literal of its own. An
+// earlier version of this test built its own http.Server from the same constants and passed
+// even with the ReadTimeout field deleted from the server -- it was asserting that a constant
+// equals itself. The bug it must catch is a missing FIELD, so it has to inspect the struct the
+// service actually runs.
+func TestReadTimeoutIsSetOnTheServer(t *testing.T) {
+	srv := buildServer(&config.Config{}, http.NotFoundHandler())
+
+	if srv.ReadTimeout == 0 {
+		t.Fatal("ReadTimeout is unset on the server: a slow body can hold an admission permit " +
+			"indefinitely, exhausting the upload budget with requests that never complete")
+	}
+	if srv.ReadTimeout <= srv.ReadHeaderTimeout {
+		t.Errorf("ReadTimeout %v <= ReadHeaderTimeout %v: it covers the body as well as the headers",
+			srv.ReadTimeout, srv.ReadHeaderTimeout)
+	}
+	// A legitimate maximum-size upload must fit inside the deadline.
+	if srv.ReadTimeout < 60*time.Second {
+		t.Errorf("ReadTimeout %v is too short for a %d MiB upload",
+			srv.ReadTimeout, constants.MaxRequestBodyBytes>>20)
+	}
+	if srv.WriteTimeout == 0 || srv.IdleTimeout == 0 {
+		t.Error("buildServer dropped WriteTimeout or IdleTimeout")
+	}
+}

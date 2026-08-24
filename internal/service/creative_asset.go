@@ -169,8 +169,8 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 //
 // maxCreativeDecodedBytes is 80 MiB of decoded pixel buffer. That figure is deliberately the
 // ceiling the previous pixel-only bound INTENDED — its comment promised ~76 MiB — rather than
-// the ~153 MiB it actually permitted once 16-bit images are priced correctly. Setting the budget
-// to that larger real number would have blessed the defect instead of fixing it: nothing
+// the ~152.6 MiB it actually permitted once 16-bit images are priced correctly. Setting the
+// budget to that larger real number would have blessed the defect instead of fixing it: nothing
 // previously admitted would newly be refused, and the gate would have been rewritten to no
 // effect.
 //
@@ -182,9 +182,11 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 // bytesPerPixel is what makes the budget honest across bit depths. Go's image/png decodes a
 // 16-bit colour-type-6 PNG to *image.NRGBA64 at EIGHT bytes per pixel, not four — so a
 // pixel-only cap silently permits twice the memory it appears to. An earlier revision of this
-// code capped 20M pixels and its comment claimed ~76 MiB; the true worst case was ~160 MiB. The
-// budget is now expressed in bytes and the per-pixel cost is read from the declared colour
-// model, so a 16-bit image is charged what it actually costs.
+// code capped 20M pixels and its comment claimed ~76 MiB; the true worst case was 152.6 MiB
+// (20,000,000 px x 8 B/px = 160,000,000 B, which is 160 MB decimal but 152.6 MiB binary — the
+// same quantity in two units, which is why both are named explicitly here rather than left to
+// the reader). The budget is now expressed in bytes and the per-pixel cost is read from the
+// declared colour model, so a 16-bit image is charged what it actually costs.
 //
 // maxCreativeDimension additionally bounds each SIDE, because a byte budget alone admits a
 // degenerate 1x20,000,000 strip that is no image any creative pipeline should accept.

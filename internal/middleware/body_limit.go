@@ -4,10 +4,12 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"sync/atomic"
 )
@@ -200,4 +202,56 @@ func writeRequestTooLarge(w http.ResponseWriter) {
 		Code:    "413",
 		Message: "request body exceeds the maximum allowed size",
 	})
+}
+
+// Unwrap exposes the underlying ResponseWriter so net/http's ResponseController can find
+// capabilities this wrapper does not itself implement. Without it, wrapping every request in
+// deferredBufferWriter silently strips whatever the base writer offered from any in-mux handler
+// that reaches for it — a failure with no error and no log line.
+//
+// Unwrap is the general escape hatch; Flush and Hijack below are still implemented explicitly
+// because both need the BUFFERING state respected, which an unwrapped writer cannot know about.
+func (w *deferredBufferWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush implements http.Flusher.
+//
+// It deliberately does NOT flush while the response is being held. Flushing a buffered response
+// would push a body describing a truncated request onto the wire, which is precisely what the
+// buffering half of this writer exists to prevent — and once flushed it could no longer be
+// replaced by the 413. While held, the call is a no-op: the data stays in the buffer and is
+// either discarded (limit tripped) or replayed by flush().
+//
+// A pass-through response flushes normally, so an under-limit streaming handler is unaffected.
+// If the base writer is not a Flusher, this is a no-op rather than a panic.
+func (w *deferredBufferWriter) Flush() {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.held {
+		return
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack implements http.Hijacker so a websocket-upgrade or other connection-taking handler
+// mounted in the mux keeps working.
+//
+// Hijacking takes the raw connection, after which this middleware can no longer write anything
+// to it — so a hijacked response can never be rewritten to a 413. That is correct rather than a
+// gap: the handler owns the connection from that point, and marking the response committed keeps
+// the middleware from trying to write a status onto a connection it no longer controls.
+func (w *deferredBufferWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	c, rw, err := h.Hijack()
+	if err == nil {
+		// The connection is gone from this middleware's control: never buffer or rewrite.
+		w.passedThru = true
+		w.held = false
+	}
+	return c, rw, err
 }
