@@ -3981,3 +3981,111 @@ func (r *reachFlag) hit() bool {
 	defer r.mu.Unlock()
 	return r.set
 }
+
+// A FULL page carrying `"next_cursor":""` is the same ambiguity as a full page carrying no
+// cursor key at all, and it used to slip past the guard for a purely mechanical reason: the
+// guard tested `!resp.NextCursorPresent`, and an empty STRING is present. The walk fell through
+// to `if resp.NextCursor == "" { return "", nil }` and reported a confident not-found.
+//
+// The consequence is the money-affecting one this whole guard exists to prevent. `("", nil)` is
+// read by findCampaignByName's caller as "no such campaign" and answered with a create POST, so
+// a campaign that already exists is duplicated and spends a second budget.
+//
+// `""` is not a value X's contract gives a meaning to — exhaustion is documented as an explicit
+// null — so on a full page it can only be treated as unknowable. ListAdAccounts already refused
+// it for exactly this reason; this test pins the same reading here.
+func TestFindByNameFullPageWithEmptyCursorIsError(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		els := make([]string, 0, listPageSize)
+		for i := 0; i < listPageSize; i++ {
+			els = append(els, fmt.Sprintf(`{"id":"x%d","name":"never-matches"}`, i))
+		}
+		// A full page, and next_cursor is PRESENT but an empty string — neither the
+		// documented null nor a usable cursor.
+		_, _ = w.Write([]byte(`{"data":[` + strings.Join(els, ",") + `],"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findCampaignByName(context.Background(), "target")
+	if err == nil {
+		t.Fatalf("a full page with an EMPTY next_cursor and no match must not read as a confident "+
+			"not-found; got id=%q, nil error — the caller answers that with a create and duplicates "+
+			"the campaign", id)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty on an inconclusive walk", id)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("pages fetched = %d, want 1: the walk must stop on the ambiguous page", got)
+	}
+}
+
+// The line_items walk shares findByName with campaigns, so the guard must hold for it too.
+// Asserting only the campaign path would let a fix that special-cased one caller pass.
+func TestFindLineItemByNameFullPageWithEmptyCursorIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		els := make([]string, 0, listPageSize)
+		for i := 0; i < listPageSize; i++ {
+			els = append(els, fmt.Sprintf(`{"id":"x%d","name":"never-matches"}`, i))
+		}
+		_, _ = w.Write([]byte(`{"data":[` + strings.Join(els, ",") + `],"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findLineItemByName(context.Background(), "camp1", "target")
+	if err == nil {
+		t.Fatalf("a full page with an EMPTY next_cursor must not read as a confident not-found; "+
+			"got id=%q, nil error", id)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty on an inconclusive walk", id)
+	}
+}
+
+// A SHORT page with an empty next_cursor stays a clean not-found. X documents a page shorter
+// than `count` as conclusively the last one, so the ambiguity the guard above closes does not
+// arise — and without this test a fix could satisfy the two above by erroring on every empty
+// cursor, breaking find-or-create for every ordinary small account.
+func TestFindByNameShortPageWithEmptyCursorIsGenuineNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"x","name":"never-matches"}],"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findCampaignByName(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("a short page is X's documented last page and must stay a clean not-found: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty", id)
+	}
+}

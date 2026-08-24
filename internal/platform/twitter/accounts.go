@@ -251,28 +251,30 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 				Timezone: strings.TrimSpace(el.Timezone),
 			})
 		}
-		// An ABSENT next_cursor is NOT an exhausted cursor. X documents termination as an
+		// An UNKNOWABLE next_cursor is not an exhausted one. X documents termination as an
 		// explicit null — "If less than count entities are returned in the current page
-		// of the result set, the next_cursor value will be null" — so a body carrying no
-		// such key is not a body that said the walk is finished. Without this guard the
-		// zero value reads as "no more pages" and a malformed intermediate response
-		// truncates the picker silently: the same false absence the data guard above
-		// prevents, arriving through the pagination door.
-		if !resp.NextCursorPresent {
-			return nil, fmt.Errorf("x ad-account discovery returned a response with no next_cursor field; cannot confirm the credential's accounts were enumerated")
-		}
-		// A present but EMPTY next_cursor is not exhaustion either. X documents
-		// termination as an explicit null, and `""` is a value its contract never gives a
-		// meaning to — so accepting it repeats the absent-cursor defect above one step
-		// further in: the walk stops on a body that never said it was finished, and the
-		// accounts gathered so far are returned AS A COMPLETE LIST. The user then picks
-		// from a truncated account picker that is indistinguishable from a full one. Only
-		// the documented null terminates.
-		if !resp.NextCursorNull && resp.NextCursor == "" {
+		// of the result set, the next_cursor value will be null" — so neither an absent
+		// key nor a present-but-empty string is a body that said the walk is finished.
+		// Accepting either would stop the walk on a malformed response and return the
+		// accounts gathered so far AS A COMPLETE LIST: the same false absence the data
+		// guard above prevents, arriving through the pagination door, and invisible to
+		// the user because a truncated account picker looks exactly like a full one.
+		//
+		// This walk can NEVER accept unknowable, unlike findByName, which shares
+		// cursorVerdict but may still conclude from a short page under X's documented
+		// rule. The difference is in the contract, not in the reading of the cursor:
+		// ListAdAccounts owes EVERY account or an error, and has no page-level evidence
+		// that would let it conclude otherwise.
+		//
+		// The two messages stay distinct so an operator can tell which shape arrived.
+		if cursorVerdict(resp) == cursorUnknowable {
+			if !resp.NextCursorPresent {
+				return nil, fmt.Errorf("x ad-account discovery returned a response with no next_cursor field; cannot confirm the credential's accounts were enumerated")
+			}
 			return nil, fmt.Errorf("x ad-account discovery returned an empty next_cursor; X signals exhaustion with an explicit null, so the credential's accounts cannot be confirmed as fully enumerated")
 		}
-		// Present and null is X's documented exhaustion signal: fully enumerated.
-		if resp.NextCursorNull {
+		// X's documented exhaustion signal: fully enumerated.
+		if cursorVerdict(resp) == cursorExhausted {
 			return accounts, nil
 		}
 		if _, dup := seen[resp.NextCursor]; dup {

@@ -443,11 +443,55 @@ type apiResponse struct {
 	// is that it returns EVERY account or an error, so `""` — a value X's documentation
 	// never ascribes a meaning to — must not be read as exhaustion.
 	//
-	// findByName does not need this bit, and that is a statement about WHICH ambiguity each
-	// reader faces, not a claim that findByName trusts the cursor generally: it does consult
-	// NextCursorPresent (see its full-page guard). A short page already terminates it on X's
-	// documented rule, so the empty-vs-null distinction changes nothing there.
+	// Both cursor walks consult it through cursorVerdict, which is the single place the
+	// three shapes (absent / empty / null) are turned into a decision. They differ only in
+	// whether the page is conclusive on its own evidence — a short page is, under X's
+	// documented rule — not in how they read the cursor itself.
 	NextCursorNull bool `json:"-"`
+}
+
+// cursorOutcome is what a page's next_cursor field says about whether more pages exist.
+type cursorOutcome int
+
+const (
+	// cursorMore: a usable cursor was returned; another page must be fetched.
+	cursorMore cursorOutcome = iota
+	// cursorExhausted: X's documented end-of-results signal, an explicit null.
+	cursorExhausted
+	// cursorUnknowable: the field is absent, or present but an empty string. Neither is a
+	// shape X's contract ascribes a meaning to, so the walk cannot conclude anything from
+	// it and the CALLER must decide whether that is fatal.
+	cursorUnknowable
+)
+
+// cursorVerdict classifies a page's next_cursor into the three outcomes above.
+//
+// It exists so the two cursor walks in this package cannot drift apart. They had already
+// drifted once, in precisely the way a shared reader prevents: ListAdAccounts rejected both an
+// absent cursor and a present-but-empty one, while findByName's guard tested only
+// !NextCursorPresent — so a full page carrying `"next_cursor":""` was PRESENT, skipped the
+// guard, fell through to the empty-string check and was reported as a genuine not-found. The
+// caller answers a not-found with a create POST, so the divergence duplicated live campaigns.
+//
+// The classification is deliberately not a policy. It says what the body SAID, and each walk
+// applies its own rule to cursorUnknowable, because the two have genuinely different evidence
+// available: ListAdAccounts owes every account and can never accept it, while findByName may
+// still conclude from a SHORT page under X's documented rule that a page below `count` is the
+// last one. Folding that difference in here would either make the accounts walk too permissive
+// or break find-or-create for every ordinary small account.
+func cursorVerdict(r *apiResponse) cursorOutcome {
+	switch {
+	case !r.NextCursorPresent:
+		return cursorUnknowable
+	case r.NextCursorNull:
+		return cursorExhausted
+	case r.NextCursor == "":
+		// Present, not null, and empty. X documents exhaustion as an explicit null and
+		// never gives `""` a meaning, so this is not a body that said the walk is done.
+		return cursorUnknowable
+	default:
+		return cursorMore
+	}
 }
 
 // UnmarshalJSON decodes the envelope and additionally records whether `next_cursor` was
@@ -1161,23 +1205,34 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 			}
 		}
 		// Terminating the walk as "not found" is a CLAIM the caller acts on with a create
-		// POST, so it must not rest on a body that never supplied a cursor at all.
+		// POST, so it must not rest on a body that never said the results were exhausted.
 		//
 		// X's documented rule is what discriminates: "If less than count entities are
 		// returned in the current page of the result set, the next_cursor value will be
 		// null." A SHORT page is therefore conclusively the last one on its own evidence,
 		// whatever the cursor field does — that is the ordinary terminating page and it
 		// stays a clean not-found. A FULL page (exactly listPageSize) is the ambiguous
-		// one: X owes a cursor there, and a body that omits the key leaves it unknowable
-		// whether another page holds the name. The page cap below does not cover this,
-		// being reachable only while a non-empty cursor keeps arriving.
-		if len(items) >= listPageSize && !resp.NextCursorPresent {
-			return "", fmt.Errorf("lookup %q: a full page of %d returned no next_cursor, so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name, listPageSize)
-		}
-		if resp.NextCursor == "" {
+		// one: X owes a cursor there, so a body whose cursor is UNKNOWABLE — the key
+		// absent, or present but an empty string, neither of which X's contract gives a
+		// meaning — leaves it unknown whether another page holds the name. The page cap
+		// below does not cover this, being reachable only while a usable cursor keeps
+		// arriving.
+		//
+		// The three shapes are classified by cursorVerdict, shared with ListAdAccounts, so
+		// the two walks cannot disagree about what a cursor means again.
+		switch cursorVerdict(resp) {
+		case cursorUnknowable:
+			if len(items) >= listPageSize {
+				return "", fmt.Errorf("lookup %q: a full page of %d returned no next_cursor X gives a meaning to (absent or empty, not the documented null), so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name, listPageSize)
+			}
+			// Short page: conclusively the last one under X's documented rule, so the
+			// cursor's shape does not matter and this is a genuine not-found.
 			return "", nil
+		case cursorExhausted:
+			return "", nil
+		case cursorMore:
+			cursor = resp.NextCursor
 		}
-		cursor = resp.NextCursor
 	}
 	// Hit the page cap with a cursor still outstanding: we can't be sure the name
 	// doesn't exist further on, so return an error rather than "not found" (which

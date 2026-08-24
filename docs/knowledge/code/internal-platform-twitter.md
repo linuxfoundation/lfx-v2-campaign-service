@@ -209,8 +209,8 @@ the page cap bounds the total.
 
 **Empty must stay distinguishable from failure, and X does not document the zero-account
 case.** The choice made is the fail-loud one: an empty, non-nil slice with a nil error is
-returned ONLY when X sent `"data":[]` together with an explicit `next_cursor` — a body that
-affirmatively says "here is the set, and it is empty". Anything less is an error, so an empty
+returned ONLY when X sent `"data":[]` together with the documented exhaustion `null` cursor — a
+body that affirmatively says "here is the set, and it is empty". Anything less is an error, so an empty
 answer always means X said the set was empty, never that the call failed.
 
 Two absence guards implement that, and both are subtler than they look:
@@ -220,26 +220,35 @@ Two absence guards implement that, and both are subtler than they look:
   check on the raw field — and `null` then unmarshals into a nil element slice, reporting a
   healthy zero accounts. The guard therefore tests the DECODED slice for nil after decoding:
   a present `[]` yields a non-nil empty slice, while both absent and null leave it nil.
-* **An absent `next_cursor` is not exhaustion.** X documents termination as an explicit null
+* **Only the documented null is exhaustion.** X documents termination as an explicit null
   ("If less than `count` entities are returned in the current page of the result set, the
-  `next_cursor` value will be `null`"), so a body carrying no such key never said the walk was
-  finished. Because a plain string field collapses null and absent onto `""`, `apiResponse`
-  gained a `NextCursorPresent` bit populated by a custom `UnmarshalJSON`. `findByName`
-  deliberately does not consult it — its walk already errors rather than reporting "not found"
-  when it runs out of pages.
-* **An EMPTY `next_cursor` is not exhaustion either.** Presence alone does not settle it: a
-  `"next_cursor":""` is present and still not the documented null, so the presence bit passed
-  it straight through to a `== ""` check that read it as the end of the walk and returned the
-  accounts gathered so far as a COMPLETE list. `apiResponse` therefore also carries
-  `NextCursorNull`, set from the RAW bytes (`string(raw) == "null"`) because decoding is
-  exactly what erases the null/empty distinction. Only the documented null terminates; an
-  empty cursor is an error. This is the same sibling relationship the `data` guard has —
-  absent vs explicit null vs `[]` — arriving through the pagination door.
+  `next_cursor` value will be `null`"). A plain string field collapses null, absent and empty
+  onto `""`, so `apiResponse` carries two extra bits set by a custom `UnmarshalJSON`:
+  `NextCursorPresent` (did the KEY appear) and `NextCursorNull` (did it hold a literal `null`,
+  read from the RAW bytes, because decoding is exactly what erases that distinction).
+* **One classifier, consulted by every cursor walk.** `cursorVerdict` turns those bits into
+  three outcomes — a usable cursor, the documented exhaustion null, or *unknowable* (the key
+  absent, or present but empty). Both walks in the package route through it, so they cannot
+  disagree about what a cursor means. They had diverged exactly once, in the way a shared
+  reader prevents: the accounts walk rejected an empty cursor while the name lookup tested
+  only key-presence, so `"next_cursor":""` was present, skipped the guard, and reported a
+  confident "not found" that the caller answers with a create POST — duplicating a live
+  campaign.
+* **What each walk does with *unknowable* differs, and that is contract, not cursor reading.**
+  `ListAdAccounts` owes EVERY account or an error, so it can never accept it. `findByName` may
+  still conclude from a SHORT page, which X's rule makes conclusively the last one on its own
+  evidence; only a FULL page leaves it unknowable whether another page holds the name. Neither
+  can lean on a page cap to cover this: the cap is reachable only while a usable cursor keeps
+  arriving, which is precisely the case an unknowable cursor is not.
 
-A walk that cannot be completed is an ERROR, never a short list: a repeated cursor, the
-`adAccountMaxPages` (20) cap, a `data` that is not an array, an empty `next_cursor`, and a row
-whose id fails `accountIDRe` **or exceeds `maxAccountIDLen` (64)** all return nil rather than
-what was collected. The id check reuses the SAME regexp every account-scoped path validates a
+  This is the same absent-vs-null-vs-empty distinction the `data` guard draws, arriving
+  through the pagination door.
+
+A walk that cannot be completed is an ERROR, never a short list. Anything that leaves the set
+unconfirmed — a cursor `cursorVerdict` calls unknowable, a repeated cursor, the
+`adAccountMaxPages` (20) cap, a `data` that is not an array, or a row whose id fails
+`accountIDRe` **or exceeds `maxAccountIDLen` (64)** — returns nil rather than what was
+collected. The id check reuses the SAME regexp every account-scoped path validates a
 configured id against, so an account this walk offers must be one the client will later accept
 — and the LENGTH bound is the other half of that same contract:
 `design/connection.go` caps `twitter-ads-connection-config.account_id` at `MaxLength(64)` as
