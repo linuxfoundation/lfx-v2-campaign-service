@@ -230,6 +230,23 @@ boundary (same behavioral-interface pattern as `NoUpstreamCreate`) — every ada
 implements `StatusToggler` follows this contract; see the linked platform concepts below
 for which do and their implementation details.
 
+**Where an adapter classifies BOTH an expiry and an unconfirmed outcome, the unconfirmed
+check must come FIRST.** A cascading toggle is multi-step, so a credential can die BETWEEN
+steps: on LinkedIn's PAUSE the campaign gate is flipped first and the creatives second, so
+a mid-cascade 401 arrives as a `partialCascadeError` whose `Unwrap` exposes the inner
+expiry — and an expiry-first check matched a state in which delivery had ALREADY stopped,
+reporting only "reconnect the connection". Worse, the expiry arm tags the error with
+`domain.ErrConnectionNotUsable`, which the service's toggle switch matches ABOVE its own
+unconfirmed arm, so the partial cascade answered a non-retryable 409 and the platform-state
+ambiguity was never surfaced or logged at all. Both facts are true; the ordering question is
+which one a caller can act on. "Verify the platform state before retrying" describes a
+partial effect that persists whether or not the credential is ever repaired, whereas
+"reconnect" is a precondition the very next call rediscovers. Nothing is lost by
+de-prioritising it: `unconfirmedToggleError` WRAPS the cause, so
+`errors.Is(err, ErrCredentialsExpired)` still answers true. A PRE-SEND expiry is not
+unconfirmed (nothing was sent, nothing applied), so it falls through to the expiry arm and
+keeps answering "reconnect", unchanged.
+
 Which children a toggle must reach, any asymmetric ACTIVATE/PAUSE handling, and
 whether a platform has wired `StatusToggler` at all, is per-platform and
 documented in that platform's own "Dispatch adapter (internal/dispatch)"
@@ -1294,6 +1311,27 @@ naming the caller sent whoever was paged to inspect a row that project does not 
 projects failing over ONE corrupt system row read as N failing rows, which is the deployment-wide
 conclusion the arm is written not to assert. `ErrSystemConnectionOrigin` is wrapped onto every
 error the fallback produces, at the single site that knows the fallback was taken.
+
+**The fallback is also RECORDED, not only classified** (LFXV2-3050). `fromSystem` used to feed
+error attribution and then be discarded, so once a campaign was created the row said which
+PROJECT it belonged to and never which CREDENTIAL served it — leaving system-account spend
+unattributable and the blast radius of an LF credential revocation uncomputable. Each
+`Dispatch` now applies `resolved.stampProvenance` to the campaign it returns, writing
+`campaigns.ran_on_system_account` (migration `000027`).
+
+It is applied by a `defer` on a NAMED RETURN, not at each `return campaignFromX(...)` site.
+The seven dispatchers have two or three campaign-returning exits each, several of which
+return a campaign ALONGSIDE an error (the UNCONFIRMED and degraded paths) — precisely the
+rows an operator reconciling spend cannot afford to have unstamped. Per-site stamping would
+be seventeen edits that an eighth path silently omits. An unstamped row is not mistakable for
+a project-owned one — that is an explicit `false`, while unstamped is `NULL` — but the
+consequence is quieter and worse: `NULL` means provenance was never recorded, so those
+campaigns fall OUT of system-account attribution and credential blast-radius reporting
+altogether, uncounted rather than miscounted. The helper is nil-safe on both sides, so a
+dispatcher that fails before resolving records "not recorded" rather than a fabricated
+`false`. `resolveRedditClientWithCreds` /
+`resolveHubSpotClientWithCreds` exist only because those two adapters resolve behind a helper
+that returned the client alone; the read-only callers keep the narrower signature.
 
 No create endpoint can plant a row at the reserved scope (`projectSlugProblem` rejects it), and
 `rejectSystemScope` closes get/update/delete/test/set-credential — which stay permissive on

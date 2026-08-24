@@ -153,13 +153,17 @@ func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googl
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.
-func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	// Resolve creds FIRST (pre-create): a missing/undecryptable connection is a
 	// not-created error → the orchestrator releases the claim.
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
 		return nil, err // already a preCreateError
 	}
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	// validateGoogleAdsConnection is shared with ToggleStatus so a create and a toggle accept
 	// EXACTLY the same connections and cannot drift. Its failures are wrapped with notCreated
 	// HERE — create-only claim semantics the toggle path must not apply.
