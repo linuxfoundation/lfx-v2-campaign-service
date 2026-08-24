@@ -579,10 +579,18 @@ var GoogleAdsConnection = Type("google-ads-connection", func() {
 // one, so the fabricated value only survives where no provider is in scope — and there, a
 // visibly fake string is the safer artifact: a reader cannot copy it into a connection, whereas
 // a plausible `8666746580` in a provider-less context is exactly the wrong claim to publish to
-// the Meta half of the callers. The description on `id` carries both formats, which is where
-// the contract belongs.
+// the Meta half of the callers.
+//
+// The description on `id` describes the SHAPE of the contract — an opaque, per-provider,
+// store-verbatim string — rather than enumerating one member per provider. It listed only
+// Google's and Meta's forms while five providers already reused the type, so LinkedIn,
+// Microsoft Ads and X/Twitter callers read a description that did not cover their id. An
+// enumeration in a shared type goes stale the moment a provider is added and nothing fails when
+// it does, because no test can assert prose. The shape statement stays true as providers are
+// added; the per-provider FORM belongs in each method's own example, where adding a method
+// forces the author to supply one.
 var AccessibleAccount = Type("accessible-account", func() {
-	Attribute("id", String, "Account identifier in the ad platform's own namespace, ready to store as the connection's account_id. Google Ads: bare digits (8666746580). Meta: act_-prefixed (act_8666746580).")
+	Attribute("id", String, "Account identifier in the ad platform's OWN namespace, ready to store as the connection's account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method's own example shows its provider's form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.")
 	Attribute("label", String, "Human-readable account name or label")
 	Required("id")
 })

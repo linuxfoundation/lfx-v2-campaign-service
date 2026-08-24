@@ -3490,9 +3490,14 @@ type ListHubspotEmailsUnauthorizedResponseBody struct {
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
-	// Account identifier in the ad platform's own namespace, ready to store as the
-	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
-	// act_-prefixed (act_8666746580).
+	// Account identifier in the ad platform's OWN namespace, ready to store as the
+	// connection's account_id verbatim. The format is per-provider and is whatever
+	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
+	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// re-derive it. Each discovery method's own example shows its provider's form.
+	// Storing it unchanged is what matters: the connection validation for each
+	// provider accepts only its own format.
 	ID string `form:"id" json:"id" xml:"id"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`

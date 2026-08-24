@@ -213,9 +213,14 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 var MethodNames = [50]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails"}
 
 type AccessibleAccount struct {
-	// Account identifier in the ad platform's own namespace, ready to store as the
-	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
-	// act_-prefixed (act_8666746580).
+	// Account identifier in the ad platform's OWN namespace, ready to store as the
+	// connection's account_id verbatim. The format is per-provider and is whatever
+	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
+	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// re-derive it. Each discovery method's own example shows its provider's form.
+	// Storing it unchanged is what matters: the connection validation for each
+	// provider accepts only its own format.
 	ID string
 	// Human-readable account name or label
 	Label *string
