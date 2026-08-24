@@ -20,9 +20,9 @@ import (
 // This is the read GetCampaignMetrics cannot be: metrics report impressions, clicks,
 // cost and CTR, none of which describe a campaign's CONFIGURATION, so no reading of
 // them can tell an operator that the budget upstream is not the budget the campaign
-// row records. The two can legitimately disagree — adoption binds a campaign this
-// service never created, and nothing here or anywhere else pushes the recorded config
-// upstream — so the disagreement needs a way to be SEEN.
+// row records. The two can legitimately disagree: nothing here or anywhere else pushes
+// the recorded config upstream, and more than one path lets the two sides drift apart
+// — so the disagreement needs a way to be SEEN.
 //
 // Strictly read-only. Every call this file makes is a GAQL search (googleAds:search,
 // a POST that reads); nothing in this file mutates, and nothing about a readback may

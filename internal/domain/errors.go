@@ -71,8 +71,8 @@ var (
 	// importing the orchestration layer.
 	//
 	// Google Ads is the only platform that implements the capability today. That is not a
-	// gap left open by accident — adoption, which is what makes a row's recorded request
-	// and the live campaign able to disagree in the first place, exists only there.
+	// gap left open by accident: it is the platform whose campaigns this service reads back,
+	// and the capability is added per platform as each one's readback is wired.
 	ErrSettingsReadbackUnsupported = errors.New("settings readback is not supported for this platform")
 
 	// ErrMetricsWindowUnsupported indicates the requested window is one of the seven

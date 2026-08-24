@@ -63,15 +63,14 @@ type Service interface {
 	// report, per setting, where it diverges from what the campaign row recorded.
 	// A pure read: the platform is only read, never written, and the observation
 	// is never persisted back onto the campaign row — the row means "what this
-	// dispatch asked for", and the two can legitimately disagree because nothing
-	// pushes the recorded config upstream. This is the read metrics cannot be:
-	// impressions, clicks, cost and CTR do not describe a campaign's
-	// configuration. A setting that could not be read on either side is reported
-	// ABSENT with an `unknown` verdict, never defaulted to zero and never counted
-	// as a match. Support is per-platform: a campaign whose platform has no
-	// settings-readback dispatcher wired returns 400 — Google Ads is the only one
-	// today, because adoption (which is what lets the recorded request and the
-	// live campaign disagree) exists only there.
+	// dispatch asked for", and the two can legitimately disagree: nothing pushes
+	// the recorded config upstream, and more than one path lets them drift apart.
+	// This is the read metrics cannot be: impressions, clicks, cost and CTR do not
+	// describe a campaign's configuration. A setting that could not be read on
+	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
+	// zero and never counted as a match. Support is per-platform: a campaign whose
+	// platform has no settings-readback dispatcher wired returns 400 — Google Ads
+	// is the only one today.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.

@@ -246,9 +246,9 @@ this shared file too.
 (*model.CampaignSettingsReadback, error)` — reads a campaign's live configuration and
 compares it against what the campaign row recorded. Discovered by the same type assertion
 `MetricsReader` uses; a dispatcher without it yields
-`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads is the only implementation**,
-because adoption — the thing that lets a row's recorded request and the live campaign
-disagree — exists only there.
+`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads is the only implementation**
+today; the capability is wired per platform, and a dispatcher without it is a 400 rather
+than a silent empty readback.
 
 **Read-only in two senses, both load-bearing.** It issues no mutating call upstream, and it
 never writes back onto the campaign row. `budget_amount`/`budget_type`/`config_snapshot`

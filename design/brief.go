@@ -374,6 +374,40 @@ var CampaignSettingsReadback = Type("campaign-settings-readback", func() {
 	Attribute("diverged_count", Int, "How many fields carry the `diverged` verdict.", func() { Example(1) })
 	Attribute("unknown_count", Int, "How many fields were NOT COMPARED — either because the field has no counterpart on the campaign row (the upstream-only observations, and `status`, which is never compared) or because a side could not be read. Reported separately from diverged_count rather than folded into it: \"2 differ\" reads very differently next to \"and 5 were not compared\". NOT a read-failure count: on a fully healthy readback most fields are unknown by construction, so a consumer watching this for failures would see a constant floor. Use each field's `comparison` to see which is which.", func() { Example(7) })
 	Required("campaign_id", "platform_campaign_id", "platform", "read_at", "fields", "diverged_count", "unknown_count")
+	// An explicit COMPOSITE example, because the synthesised one cannot be self-consistent.
+	// Goa builds an object example by cloning each attribute's own example, so `fields` came
+	// out as the same element repeated while `diverged_count` and `unknown_count` kept their
+	// scalar examples — an object asserting a diverged field none of its entries carried, and
+	// counts matching neither the list's length nor its verdicts. The attribute-level
+	// Example(1)/Example(7) are retained: they document each count's own shape in the
+	// per-property schema, where no `fields` array sits beside them to contradict it.
+	//
+	// The values below are the healthy Google Ads shape described above: the six COMPARED
+	// settings plus the four upstream-only ones, with exactly one genuine divergence
+	// (budget_amount) so diverged_count == 1 is a fact the list supports. The two flight dates
+	// read `unknown` because Google Ads records no recorded side for them today, which with the
+	// four upstream-only fields is the documented floor of six on a row whose config_snapshot
+	// records a channel — so unknown_count == 6 here, not the bare attribute example.
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "21398765432",
+		"platform":             "google-ads",
+		"read_at":              "2026-08-24T15:04:05Z",
+		"fields": []map[string]any{
+			{"field": "budget_amount", "recorded": "500.00", "upstream": "750.00", "comparison": "diverged"},
+			{"field": "budget_type", "recorded": "daily", "upstream": "daily", "comparison": "match"},
+			{"field": "campaign_name", "recorded": "LF-Q3-cloud-native", "upstream": "LF-Q3-cloud-native", "comparison": "match"},
+			{"field": "advertising_channel_type", "recorded": "SEARCH", "upstream": "SEARCH", "comparison": "match"},
+			{"field": "start_date", "upstream": "2026-07-01", "comparison": "unknown"},
+			{"field": "end_date", "upstream": "2026-09-30", "comparison": "unknown"},
+			{"field": "status", "upstream": "ENABLED", "comparison": "unknown"},
+			{"field": "budget_delivery_method", "upstream": "STANDARD", "comparison": "unknown"},
+			{"field": "budget_explicitly_shared", "upstream": "false", "comparison": "unknown"},
+			{"field": "bidding_strategy_type", "upstream": "TARGET_SPEND", "comparison": "unknown"},
+		},
+		"diverged_count": 1,
+		"unknown_count":  6,
+	})
 })
 
 // BriefMetricsRow is one campaign's slot in the brief-wide metrics read.
@@ -780,7 +814,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("get-campaign-settings", func() {
-		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree because nothing pushes the recorded config upstream. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: a campaign whose platform has no settings-readback dispatcher wired returns 400 — Google Ads is the only one today, because adoption (which is what lets the recorded request and the live campaign disagree) exists only there.")
+		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: a campaign whose platform has no settings-readback dispatcher wired returns 400 — Google Ads is the only one today.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
