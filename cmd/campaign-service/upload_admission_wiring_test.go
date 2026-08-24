@@ -165,3 +165,27 @@ func TestReadTimeoutIsSetOnTheServer(t *testing.T) {
 			srv.ReadHeaderTimeout, srv.ReadTimeout)
 	}
 }
+
+// TestServerTimeoutsReserveHandlerHeadroom pins the inequality the three deadlines must satisfy.
+//
+// Equality is NOT sufficient: because the write deadline keeps expiring while the body is read
+// and while the handler runs, ReadTimeout == WriteTimeout lets a slow body consume the entire
+// write budget and leave nothing for image.Decode, the insert, and the response — the same
+// dropped-connection failure as a read deadline that exceeds the write deadline, reached from
+// the other side. The read budget must be strictly smaller, by at least the reserved headroom.
+func TestServerTimeoutsReserveHandlerHeadroom(t *testing.T) {
+	srv := buildServer(&config.Config{}, http.NotFoundHandler())
+
+	if srv.ReadTimeout+constants.UploadHandlerHeadroom > srv.WriteTimeout {
+		t.Errorf("ReadTimeout %v + headroom %v exceeds WriteTimeout %v: a slow body can consume "+
+			"the write budget and leave nothing to decode, persist and answer with",
+			srv.ReadTimeout, constants.UploadHandlerHeadroom, srv.WriteTimeout)
+	}
+	if srv.ReadTimeout >= srv.WriteTimeout {
+		t.Errorf("ReadTimeout %v is not strictly below WriteTimeout %v: equal budgets reserve "+
+			"no response headroom at all", srv.ReadTimeout, srv.WriteTimeout)
+	}
+	if constants.UploadHandlerHeadroom <= 0 {
+		t.Error("UploadHandlerHeadroom must be positive to reserve any response budget")
+	}
+}

@@ -10,8 +10,12 @@ const (
 
 	DefaultShutdownTimeout   = 25 * time.Second
 	DefaultReadHeaderTimeout = 15 * time.Second
-	DefaultWriteTimeout      = 60 * time.Second
-	DefaultIdleTimeout       = 90 * time.Second
+	// 120s, not 60s: this deadline is installed when the request HEADERS are read and keeps
+	// expiring through the body read AND the handler, so it must cover DefaultReadTimeout
+	// (90s) plus UploadHandlerHeadroom (30s). At 60s a legitimate slow upload could finish
+	// reading with no budget left to answer.
+	DefaultWriteTimeout = 120 * time.Second
+	DefaultIdleTimeout  = 90 * time.Second
 )
 
 // MaxRequestBodyBytes caps how many bytes the server will read from any request
@@ -104,17 +108,36 @@ const UploadAdmissionWait = 250 * time.Millisecond
 // never send a complete request at all, which would turn the memory bound into a cheaper denial
 // of service than the one it was added to prevent.
 //
-// Three deadlines have to agree here, and the binding constraint is net/http's ordering:
-// the WRITE deadline is installed when the request HEADERS are read, and it keeps expiring while
-// the handler reads the body. So any time spent reading the body is time subtracted from the
-// budget available to write the response.
+// The deadlines share one clock, and the binding constraint is net/http's ordering: the WRITE
+// deadline is installed when the request HEADERS are read, and it keeps expiring while the
+// handler reads the body AND while the handler runs. So every second spent reading the body is a
+// second subtracted from the budget available to decode, persist and write the response.
 //
-// A ReadTimeout longer than WriteTimeout would therefore let an upload satisfy the read deadline
-// and then have no budget left to answer at all — the caller sees a dropped connection rather
-// than a result or an error. ReadTimeout is consequently held at or below WriteTimeout.
+// That makes ReadTimeout == WriteTimeout wrong too, not just ReadTimeout > WriteTimeout. Equal
+// budgets let a slow body consume essentially the whole write deadline and leave nothing for
+// image.Decode, the insert and the response — the same dropped-connection failure as the
+// too-long read deadline, reached a different way.
 //
-// It must still leave room for the body after the headers, so ReadHeaderTimeout is reduced to
-// 15s (headers are small; 60s to send them was never a real requirement and it left no room
-// under a 60s total). That leaves 45s of the read budget for a 42 MiB body, and the whole 60s
-// write budget is never outlived by the read.
-const DefaultReadTimeout = DefaultWriteTimeout
+// The read budget is therefore held strictly BELOW the write budget, with the difference
+// reserved as handler headroom:
+//
+//	DefaultReadTimeout + UploadHandlerHeadroom <= DefaultWriteTimeout
+//
+// Sizing: a 42 MiB body is ~34s at 10 Mbps and ~67s at 5 Mbps, so a read budget of 90s covers a
+// genuinely slow but real uploader. WriteTimeout is raised to 120s to hold that plus headroom —
+// squeezing the read budget instead would reject legitimate uploads from ordinary connections,
+// which is a worse failure than a longer deadline on a route already bounded by admission
+// control and MaxBodyBytes.
+//
+// TestServerTimeoutsReserveHandlerHeadroom asserts the inequality on the real server, so changing
+// any one of the three without the others fails rather than silently starving the response.
+const DefaultReadTimeout = 90 * time.Second
+
+// UploadHandlerHeadroom is the response budget reserved inside WriteTimeout after the body has
+// been read: decode, persist, and write. It is not itself a deadline — net/http has no such
+// knob — but naming it makes the relationship between the read and write deadlines explicit and
+// testable rather than an unwritten assumption about two constants that happen to differ.
+//
+// 30s is generous for a decode-and-insert that normally completes in well under a second; it is
+// sized to survive a slow database rather than to be tight.
+const UploadHandlerHeadroom = 30 * time.Second

@@ -99,11 +99,22 @@ expiring while the handler reads the body. An upload taking 60-120s could satisf
 deadline and then have no budget left to send anything — the caller sees a dropped connection
 rather than a response or an error.
 
-Fixed by holding `ReadTimeout` at `WriteTimeout` and reducing `ReadHeaderTimeout` to 15s so the
-body still has room inside the total. The relationship is asserted on the real server object.
+My first correction was to hold `ReadTimeout` **equal** to `WriteTimeout`. A second reviewer
+caught that this is still wrong, from the other side: the write deadline keeps expiring through
+the handler too, so equal budgets let a slow body consume the whole write deadline and leave
+nothing for `image.Decode`, the insert and the response — the same dropped connection, reached a
+different way. **Equality was not sufficient; the read budget has to be strictly smaller by a
+reserved margin.**
+
+Final shape: 15s headers, 90s body read, 30s named `UploadHandlerHeadroom`, inside a 120s write
+budget. `WriteTimeout` was raised rather than the read budget squeezed, because a 42 MiB body is
+~67s at 5 Mbps and cutting it short would reject legitimate uploads. The inequality
+`ReadTimeout + UploadHandlerHeadroom <= WriteTimeout` is asserted on the real server object.
 
 The general shape: **a new timeout is not independent of the existing ones.** Before adding one,
-find which deadlines share a clock and in what order the runtime installs them.
+find which deadlines share a clock and in what order the runtime installs them — and note that
+correcting an inequality to an equality can leave the same defect, because the margin, not the
+ordering, was what the failure needed.
 
 ## The rule
 
