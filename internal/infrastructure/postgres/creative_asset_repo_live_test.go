@@ -130,7 +130,7 @@ func TestCreativeAssetRepo_CreateAsset_StoresAndReturnsMetadata(t *testing.T) {
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 	asset := newTestAsset(t, projectID, briefID)
 
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestCreativeAssetRepo_CreateAsset_StoresByteSizeMatchingPayload(t *testing.
 	asset.Bytes = append(asset.Bytes, make([]byte, 512)...)
 	asset.ByteSize = int64(len(asset.Bytes))
 
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -216,9 +216,13 @@ func TestCreativeAssetRepo_CreateAsset_IsIdempotentOnChecksum(t *testing.T) {
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 	asset := newTestAsset(t, projectID, briefID)
 
-	first, err := repo.CreateAsset(ctx, asset)
+	first, firstCreated, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("first CreateAsset: %v", err)
+	}
+	if !firstCreated {
+		t.Error("first CreateAsset reported created=false; the initial upload DID insert the row, " +
+			"and reporting otherwise makes the transport answer 200 for a genuine creation")
 	}
 
 	// A second upload of the same checksum by a DIFFERENT actor.
@@ -228,9 +232,16 @@ func TestCreativeAssetRepo_CreateAsset_IsIdempotentOnChecksum(t *testing.T) {
 	reupload.ByteSize = asset.ByteSize
 	reupload.CreatedBy = json.RawMessage(`{"principal":"second-uploader"}`)
 
-	second, err := repo.CreateAsset(ctx, reupload)
+	second, secondCreated, err := repo.CreateAsset(ctx, reupload)
 	if err != nil {
 		t.Fatalf("re-upload CreateAsset: %v", err)
+	}
+	// The flag is the ONLY thing that separates these two outcomes: the returned row is fully
+	// populated and identical either way, so without it the transport answers 201 for a retry
+	// that created nothing.
+	if secondCreated {
+		t.Error("re-upload reported created=true, but the ON CONFLICT path returned the EXISTING " +
+			"row and inserted nothing; a client retrying would be told it created a resource")
 	}
 	if second.ID != first.ID {
 		t.Errorf("re-upload returned a new id %s, want the existing %s — the upload was not idempotent", second.ID, first.ID)
@@ -287,7 +298,7 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 		// nothing was inserted).
 		briefID := "00000000-0000-4000-8000-000000000000"
 		asset := newTestAsset(t, creativeAssetUniqueID(t, "proj"), briefID)
-		_, err := repo.CreateAsset(ctx, asset)
+		_, _, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound", err)
 		}
@@ -297,7 +308,7 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 	t.Run("archived brief", func(t *testing.T) {
 		briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "archived")
 		asset := newTestAsset(t, projectID, briefID)
-		_, err := repo.CreateAsset(ctx, asset)
+		_, _, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound — an archived brief must not accrue assets", err)
 		}
@@ -311,7 +322,7 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 		// boundary, so it is the most important of the three to prove stored NOTHING, not just to
 		// prove it returned an error.
 		asset := newTestAsset(t, creativeAssetUniqueID(t, "other-proj"), briefID)
-		_, err := repo.CreateAsset(ctx, asset)
+		_, _, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound — a caller must not attach an asset to another project's brief", err)
 		}
@@ -335,7 +346,7 @@ func TestCreativeAssetRepo_CreateAsset_AcceptsDraftBrief(t *testing.T) {
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "draft")
 	asset := newTestAsset(t, projectID, briefID)
 
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset under a DRAFT brief: %v — an asset must be storable while the "+
 			"brief is still being composed; the parent predicate is ACTIVE, not APPROVED", err)
@@ -507,7 +518,7 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 	asset := newTestAsset(t, projectID, briefID)
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -556,7 +567,7 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 		// reopen the archival race.
 		liveBriefID, liveProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 		a := newTestAsset(t, liveProjectID, liveBriefID)
-		created, err := repo.CreateAsset(ctx, a)
+		created, _, err := repo.CreateAsset(ctx, a)
 		if err != nil {
 			t.Fatalf("CreateAsset under the active brief: %v", err)
 		}
@@ -628,7 +639,7 @@ func TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		_, cerr := repo.CreateAsset(ctx, asset)
+		_, _, cerr := repo.CreateAsset(ctx, asset)
 		done <- result{err: cerr}
 	}()
 

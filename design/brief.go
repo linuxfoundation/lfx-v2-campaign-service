@@ -472,6 +472,17 @@ var CreativeAsset = Type("creative-asset", func() {
 	})
 	Attribute("byte_size", Int64, "Size of the stored image in bytes")
 	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
+	// created SELECTS the upload response status and is deliberately NOT Required, so it stays
+	// out of every other representation of this type (get/list responses never set it).
+	//
+	// The upload is idempotent on (brief_id, checksum), so a re-upload of identical bytes returns
+	// the EXISTING row — fully populated, same id, the FIRST upload's created_at. Nothing in the
+	// row distinguishes that from a genuine creation, so an unconditional 201 told a retrying
+	// client it had created a resource when nothing was created. This attribute carries the
+	// distinction to the transport, which renders it as 201 vs 200.
+	Attribute("created", String, "\"true\" when this request stored the asset; \"false\" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.", func() {
+		Enum("true", "false")
+	})
 	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
 })
 
@@ -686,7 +697,24 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// must be raised alongside any increase here.
 			Attribute("bytes", Bytes, "Raw image bytes, base64-encoded in the JSON request body.", func() {
 				MinLength(1)
-				MaxLength(31457280) // 30 MiB hard ceiling; at/above Meta's ~30 MB single-image max file size
+				// MaxLength is published into the OpenAPI document as `maxLength` on the JSON
+				// STRING, not on the decoded bytes — Goa emits this attribute as
+				// `type: string, format: binary`. The two are not the same quantity: base64
+				// expands by 4/3, so a 30 MiB image is 41,943,040 encoded characters.
+				//
+				// Declaring the DECODED ceiling here therefore published a constraint that
+				// rejects at ~22.5 MiB decoded (31,457,280 chars / 4 * 3) — well inside what
+				// this endpoint intends to accept and what the 42 MiB wire cap allows. A
+				// standards-compliant validator or a generated client would refuse an upload
+				// the server would have honoured, and the server-side generated validator would
+				// never disagree because it applies the same number to the decoded slice.
+				//
+				// So the wire bound is stated on the wire representation, in the unit that
+				// representation is measured in: base64 characters. The DECODED 30 MiB ceiling
+				// is a different constraint on a different quantity and is enforced in the
+				// handler (maxCreativeEncodedBytes / maxCreativeDecodedBytes in
+				// internal/service), which is the only layer that sees decoded bytes.
+				MaxLength(41943040) // 4/3 * 30 MiB: the ENCODED ceiling, the unit this schema constrains
 			})
 			Required("project_id", "brief_id", "content_type", "bytes")
 		})
@@ -695,9 +723,22 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/creative-assets")
 			Header("bearer_token:Authorization")
-			// 201 with no ETag: creative assets are insert-only and carry no version,
-			// so there is no optimistic-concurrency handle to hand back.
-			Response(StatusCreated)
+			// TWO success statuses, selected by the `created` Tag, because this upload is
+			// idempotent on (brief_id, checksum) and the two outcomes are genuinely different
+			// events: 201 when this request stored the asset, 200 when an identical upload
+			// already existed and the stored row was returned unchanged. An unconditional 201
+			// told a retrying client it had created a resource when nothing was created.
+			//
+			// The body is the same CreativeAsset in both arms. The `created` attribute IS
+			// rendered (as an omitempty field), so it is an ADDITIVE body change, not a
+			// breaking one: every field an existing client reads keeps its name, type and
+			// meaning, and a client that ignores unknown fields sees no difference. The
+			// status is the part that changed, and only for the retry case.
+			//
+			// No ETag on either: creative assets are insert-only and carry no version, so there
+			// is no optimistic-concurrency handle to hand back.
+			Response(StatusCreated, func() { Tag("created", "true") })
+			Response(StatusOK)
 			briefErrorResponses()
 		})
 	})

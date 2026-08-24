@@ -88,6 +88,21 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// predicate — never an attribution or lookup key — so it stays UUID-or-slug like the other
 	// nested brief routes (GetBrief, CreateAudience).
 
+	// Stage 0 — the STORED-FILE ceiling, checked before anything reads the bytes.
+	//
+	// This used to be the design's MaxLength on the bytes attribute, applied by the generated
+	// validator. It moved here because Goa publishes MaxLength as `maxLength` on the base64
+	// STRING in the OpenAPI document, and base64 expands by 4/3 — so a 30 MiB decoded ceiling was
+	// published as a constraint that rejects at ~22.5 MiB decoded. The design now declares the
+	// encoded ceiling (the unit that schema measures) and the decoded ceiling is enforced at the
+	// only layer that sees decoded bytes.
+	//
+	// It is a len() on an already-decoded slice, so it costs nothing and it runs first: an
+	// oversized upload is refused before DecodeConfig reads its header.
+	if len(p.Bytes) > maxCreativeStoredBytes {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image exceeds the maximum accepted size for a creative asset"}
+	}
+
 	// Validation runs in three stages, and the ORDER is the security property: the cheap header
 	// read first, then the declared-size gate, and only then the allocating full decode. Each
 	// stage bounds what the next one may spend.
@@ -188,11 +203,27 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		// uploader, so this attributes creation, not re-sending.
 		CreatedBy: marshalActor(attributedActor(ctx, "upload creative asset")),
 	}
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, created, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
-	return creativeAssetResult(stored), nil
+	// created selects the response status in the generated encoder: 201 when this request stored
+	// the asset, 200 when the idempotent path returned one that already existed. It is set ONLY
+	// here, on the upload path — every other representation of a CreativeAsset leaves it nil, so
+	// the field is omitted from those bodies.
+	res := creativeAssetResult(stored)
+	res.Created = createdTag(created)
+	return res, nil
+}
+
+// createdTag renders the repository's "did this call insert" bool as the enum string the design
+// declares. A string rather than a bool because Goa's response Tag matches on a string value.
+func createdTag(created bool) *string {
+	v := "false"
+	if created {
+		v = "true"
+	}
+	return &v
 }
 
 // Decode budget for an uploaded creative. The bound that matters is BYTES ALLOCATED during
@@ -225,6 +256,21 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 const (
 	maxCreativeDecodedBytes = 80 << 20 // 80 MiB of decoded pixel data
 	maxCreativeDimension    = 10_000
+	// maxCreativeStoredBytes is the ceiling on the STORED IMAGE FILE — the base64-DECODED body
+	// bytes, which is what lands in the creative_assets.bytes column and what Meta caps at ~30 MB
+	// for a single-image creative.
+	//
+	// It is enforced HERE rather than by the design's MaxLength because those constrain different
+	// quantities. Goa publishes MaxLength as `maxLength` on the JSON STRING, and base64 expands by
+	// 4/3, so declaring 30 MiB there rejected uploads at ~22.5 MiB decoded — inside what this
+	// endpoint accepts. The design now declares the ENCODED ceiling (41,943,040 characters), which
+	// is the unit that schema actually measures, and the decoded ceiling lives at the only layer
+	// that sees decoded bytes: this one.
+	//
+	// Distinct from maxCreativeDecodedBytes above: that bounds the PIXEL BUFFER image.Decode
+	// allocates (80 MiB), which compression makes unrelated to file size — a 68 KiB PNG can decode
+	// to 61 MiB. This bounds the compressed file itself.
+	maxCreativeStoredBytes = 31457280 // 30 MiB; at/above Meta's single-image max file size
 	// narrowBytesPerPixel is the cost of the widest 8-bit-per-channel representation Go
 	// produces (RGBA/NRGBA). Gray and YCbCr are cheaper; charging all of them the RGBA rate
 	// keeps the estimate conservative without needing a case per format.

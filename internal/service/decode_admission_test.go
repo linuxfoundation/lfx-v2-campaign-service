@@ -304,13 +304,13 @@ type observingCreativeAssetRepo struct {
 	during func()
 }
 
-func (r *observingCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
+func (r *observingCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
 	if r.during != nil {
 		r.during()
 	}
 	out := *a
 	out.ID = "asset-1"
-	return &out, nil
+	return &out, true, nil
 }
 
 // GetAsset satisfies the port; this test only exercises the upload path.

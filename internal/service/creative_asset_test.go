@@ -67,16 +67,19 @@ func TestBriefService_UploadCreativeAsset_UnavailableWithoutRepo(t *testing.T) {
 type fakeCreativeAssetRepo struct {
 	stored *model.CreativeAsset
 	err    error
+	// existing makes CreateAsset take the IDEMPOTENT path: it returns the stored row while
+	// reporting created=false, which is what a re-upload of identical bytes does.
+	existing bool
 }
 
-func (f *fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
+func (f *fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
 	if f.err != nil {
-		return nil, f.err
+		return nil, false, f.err
 	}
 	f.stored = a
 	out := *a
 	out.ID = "asset-1"
-	return &out, nil
+	return &out, !f.existing, nil
 }
 
 func (f *fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
@@ -703,5 +706,102 @@ func TestBriefService_UploadCreativeAsset_MapsRepoError(t *testing.T) {
 			}
 			tc.assert(t, err)
 		})
+	}
+}
+
+// TestBriefService_UploadCreativeAsset_ReportsCreationHonestly pins the property a review round
+// found missing: the upload is idempotent on (brief_id, checksum), so a re-upload of identical
+// bytes returns the EXISTING asset — and the response must not claim it created one.
+//
+// The assertion is on the value the TRANSPORT reads, not on an internal flag: `created` is the
+// attribute the generated encoder switches on to emit 201 vs 200, so asserting it here is
+// asserting the status the client will see. A test that only checked the returned row would pass
+// against the defect, because the row is byte-identical on both paths — that is precisely why the
+// unconditional 201 survived until now.
+func TestBriefService_UploadCreativeAsset_ReportsCreationHonestly(t *testing.T) {
+	img := pngBytes(t)
+
+	for _, tc := range []struct {
+		name     string
+		existing bool
+		want     string
+		why      string
+	}{
+		{
+			name: "first upload stores the asset", existing: false, want: "true",
+			why: "the row was inserted by this request, so the client is told 201 Created",
+		},
+		{
+			name: "re-upload resolves to the existing asset", existing: true, want: "false",
+			why: "nothing was created; answering 201 would give a retrying client false creation semantics",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeCreativeAssetRepo{existing: tc.existing}
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetCreativeAssetRepo(repo)
+
+			got, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+				ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: img,
+			})
+			if err != nil {
+				t.Fatalf("UploadCreativeAsset: %v", err)
+			}
+			if got.Created == nil {
+				t.Fatalf("created is nil: the encoder selects the response status from it, and a nil "+
+					"value silently takes the 200 arm — %s", tc.why)
+			}
+			if *got.Created != tc.want {
+				t.Errorf("created = %q, want %q — %s", *got.Created, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestBriefService_UploadCreativeAsset_RefusesOversizeStoredFile pins the DECODED-byte ceiling
+// that moved out of the design and into this handler.
+//
+// It has to live here now: the design's MaxLength constrains the base64 STRING, so the generated
+// validator no longer enforces a decoded ceiling at all. Without this guard an image between
+// 30 MiB and the 42 MiB wire cap would be stored, which is past what Meta accepts for a
+// single-image creative.
+//
+// The oversize input is a REAL decodable PNG, not arbitrary bytes: bytes that fail DecodeConfig
+// would be refused by a later stage for a different reason and the test would pass vacuously
+// without the size guard existing at all.
+func TestBriefService_UploadCreativeAsset_RefusesOversizeStoredFile(t *testing.T) {
+	// A valid PNG padded past the stored-file ceiling. Trailing bytes after IEND keep the image
+	// decodable while pushing len(Bytes) over the bound, which is exactly the case the guard is
+	// for: a well-formed image that is simply too large to store.
+	img := pngBytes(t)
+	oversize := make([]byte, 0, maxCreativeStoredBytes+1)
+	oversize = append(oversize, img...)
+	for len(oversize) <= maxCreativeStoredBytes {
+		oversize = append(oversize, 0)
+	}
+	if len(oversize) <= maxCreativeStoredBytes {
+		t.Fatalf("test input is %d bytes, not over the %d ceiling", len(oversize), maxCreativeStoredBytes)
+	}
+
+	repo := &fakeCreativeAssetRepo{}
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+
+	_, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: oversize,
+	})
+	if err == nil {
+		t.Fatalf("a %d-byte image was accepted against a %d-byte stored-file ceiling; the design's "+
+			"MaxLength now bounds the base64 string, so nothing else refuses this",
+			len(oversize), maxCreativeStoredBytes)
+	}
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Errorf("error = %T (%v), want *briefs.BadRequestError", err, err)
+	}
+	// It must be refused BEFORE storage, not merely reported after.
+	if repo.stored != nil {
+		t.Errorf("an oversize image reached the repository (%d bytes); the guard must run before "+
+			"the write", len(repo.stored.Bytes))
 	}
 }

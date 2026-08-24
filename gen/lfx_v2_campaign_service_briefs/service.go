@@ -405,6 +405,10 @@ type CreativeAsset struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string
 }
 
 // DeleteBriefPayload is the payload type of the lfx-v2-campaign-service-briefs

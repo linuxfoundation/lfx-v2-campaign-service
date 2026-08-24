@@ -1642,18 +1642,35 @@ func DecodeUploadCreativeAssetResponse(decoder func(*http.Response) goahttp.Deco
 		switch resp.StatusCode {
 		case http.StatusCreated:
 			var (
-				body UploadCreativeAssetResponseBody
+				body UploadCreativeAssetCreatedResponseBody
 				err  error
 			)
 			err = decoder(resp).Decode(&body)
 			if err != nil {
 				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
 			}
-			err = ValidateUploadCreativeAssetResponseBody(&body)
+			err = ValidateUploadCreativeAssetCreatedResponseBody(&body)
 			if err != nil {
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
 			}
 			res := NewUploadCreativeAssetCreativeAssetCreated(&body)
+			tmp := "true"
+			res.Created = &tmp
+			return res, nil
+		case http.StatusOK:
+			var (
+				body UploadCreativeAssetOKResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetOKResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			res := NewUploadCreativeAssetCreativeAssetOK(&body)
 			return res, nil
 		case http.StatusBadRequest:
 			var (

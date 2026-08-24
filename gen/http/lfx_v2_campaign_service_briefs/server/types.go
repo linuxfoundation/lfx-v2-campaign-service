@@ -253,10 +253,10 @@ type FetchEventURLResponseBody struct {
 	ExtractedFrom string `form:"extracted_from" json:"extracted_from" xml:"extracted_from"`
 }
 
-// UploadCreativeAssetResponseBody is the type of the
+// UploadCreativeAssetCreatedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
 // HTTP response body.
-type UploadCreativeAssetResponseBody struct {
+type UploadCreativeAssetCreatedResponseBody struct {
 	// Creative asset UUID
 	ID string `form:"id" json:"id" xml:"id"`
 	// Owning project
@@ -271,6 +271,34 @@ type UploadCreativeAssetResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// UploadCreativeAssetOKResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetOKResponseBody struct {
+	// Creative asset UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
+	// Size of the stored image in bytes
+	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -2193,17 +2221,34 @@ func NewFetchEventURLResponseBody(res *lfxv2campaignservicebriefs.EventDetails) 
 	return body
 }
 
-// NewUploadCreativeAssetResponseBody builds the HTTP response body from the
-// result of the "upload-creative-asset" endpoint of the
+// NewUploadCreativeAssetCreatedResponseBody builds the HTTP response body from
+// the result of the "upload-creative-asset" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
-func NewUploadCreativeAssetResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *UploadCreativeAssetResponseBody {
-	body := &UploadCreativeAssetResponseBody{
+func NewUploadCreativeAssetCreatedResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *UploadCreativeAssetCreatedResponseBody {
+	body := &UploadCreativeAssetCreatedResponseBody{
 		ID:        res.ID,
 		ProjectID: res.ProjectID,
 		BriefID:   res.BriefID,
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Created:   res.Created,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetOKResponseBody builds the HTTP response body from the
+// result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetOKResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *UploadCreativeAssetOKResponseBody {
+	body := &UploadCreativeAssetOKResponseBody{
+		ID:        res.ID,
+		ProjectID: res.ProjectID,
+		BriefID:   res.BriefID,
+		MimeType:  res.MimeType,
+		ByteSize:  res.ByteSize,
+		Checksum:  res.Checksum,
+		Created:   res.Created,
 	}
 	return body
 }
@@ -4173,8 +4218,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		if len(body.Bytes) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 1, true))
 		}
-		if len(body.Bytes) > 31457280 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 31457280, false))
+		if len(body.Bytes) > 41943040 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 41943040, false))
 		}
 	}
 	return
