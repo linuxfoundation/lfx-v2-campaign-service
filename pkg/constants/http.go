@@ -22,12 +22,13 @@ const (
 // body before refusing it with 413.
 //
 // It exists because the size bounds declared in design/ do NOT bound the wire. The
-// creative-asset upload declares MaxLength(31457280) on a Goa `Bytes` attribute, but
-// the generated validator tests len() on the DECODED slice, and it only ever sees
-// that slice after goahttp.RequestDecoder's json.Decoder has read the entire request
-// body and base64-decoded it. Without an inbound cap an unauthenticated caller
-// streams an arbitrarily large body and the server buffers and decodes all of it
-// before any declared limit is consulted.
+// creative-asset upload declares MaxLength(41943040) on a Goa `Bytes` attribute --
+// the ENCODED ceiling, base64.EncodedLen of the 30 MiB stored-file limit -- but the
+// generated validator tests len() on the DECODED slice, and it only ever sees that
+// slice after goahttp.RequestDecoder's json.Decoder has read the entire request body
+// and base64-decoded it. Without an inbound cap an unauthenticated caller streams an
+// arbitrarily large body and the server buffers and decodes all of it before any
+// declared limit is consulted.
 //
 // The value is derived, not guessed. Base64 expands by exactly 4/3 with padding
 // (encoding/json decodes a []byte field via base64.StdEncoding), so the largest
@@ -134,7 +135,20 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 //
 // Absent or chunked (ContentLength < 0) is charged the FULL worst-case weight rather than the
 // floor: nothing is known about the size, and the unknown case must be priced at the ceiling or
-// it becomes the cheapest way to buy a permit.
+// it becomes the cheapest way to buy a permit. Charging the floor would be the wrong direction:
+// an undeclared 42 MiB body's true worst case is ~168 MiB at UploadAdmissionAmplification,
+// ABOVE the 128 MiB ceiling charged here, so the ceiling already under-states that risk.
+//
+// KNOWN CONSEQUENCE — an undeclared-length upload SERIALIZES. The ceiling equals
+// UploadAdmissionBudgetBytes (both are PodMemoryLimitBytes/4), so one such request consumes the
+// whole budget and concurrent undeclared uploads shed with 503 + Retry-After after
+// UploadAdmissionWait rather than running together. This is a THROUGHPUT property, not a safety
+// gap: the aggregate memory bound holds either way, and the shed is honest and retryable. It is
+// also not hypothetical — goa's generated RequestEncoder never sets ContentLength, so the
+// generated briefs client sends this upload chunked and lands here. The real caller (the TS/BFF)
+// sets Content-Length and is priced by size, so it is unaffected. Accepted deliberately for now;
+// the fix is to publish the encoded length from an upload-specific request encoder so the
+// generated client is priced by size too — tracked as issue #183.
 func UploadAdmissionWeightFor(contentLength int64) int64 {
 	if contentLength < 0 {
 		return UploadAdmissionWeightBytes

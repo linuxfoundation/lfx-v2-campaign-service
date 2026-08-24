@@ -17,7 +17,9 @@ Package middleware provides HTTP middleware for the service.
 It exists because the size bounds declared in `design/` do not bound the wire. A Goa `Bytes`
 attribute's `MaxLength` is checked by the GENERATED VALIDATOR against the already-decoded slice,
 and the validator only sees that slice after `goahttp.RequestDecoder`'s `json.Decoder` has read
-the entire body off the socket and base64-decoded it. Before this middleware there was no
+the entire body off the socket and base64-decoded it. (The upload declares that ceiling in base64
+CHARACTERS — `MaxLength(41943040)` — because that is the unit the published schema measures; the
+30 MiB DECODED ceiling is enforced separately in the handler at `maxCreativeStoredBytes`.) Before this middleware there was no
 `http.MaxBytesReader` anywhere in the service — every `LimitReader` in the tree caps an OUTBOUND
 response — so an unauthenticated caller could stream an arbitrarily large body to the
 creative-asset upload and the server would buffer and decode all of it before any declared limit
@@ -36,13 +38,14 @@ fact refused to read it. Nothing about the body is logged or echoed: the message
 the `Content-Length` arm the bytes are never read at all.
 
 The cap is sized from the largest LEGAL upload, not guessed. Base64 expands by exactly 4/3, so the
-30-MiB `MaxLength` on the upload's `bytes` attribute arrives as 41,943,040 characters — 40 MiB to
-the byte. Only `content_type` and `bytes` travel in the body (`project_id` and `brief_id` are path
+30-MiB stored-file ceiling arrives as 41,943,040 characters — 40 MiB to the byte, which is exactly
+what the upload's `bytes` attribute declares as `MaxLength`. Only `content_type` and `bytes` travel in the body (`project_id` and `brief_id` are path
 parameters), so the JSON envelope adds 39 bytes for the shorter enum value (`"image/png"`) and 40
 for the longer (`"image/jpeg"`), putting the worst legal body at **41,943,080** — the JPEG case,
 since `content_type` rides in the body and its length therefore counts. A 40-MiB cap would
 reject every maximum-size image by those 40 bytes; 42 MiB clears it with ~2 MiB of headroom.
-Raising the declared `MaxLength` requires raising this constant in step.
+Raising the declared `MaxLength` (or the `maxCreativeStoredBytes` ceiling it encodes) requires
+raising this constant in step.
 
 Both enum values are driven by `TestUploadRoute_AdmitsMaximumLegalUpload`, and the JPEG case is
 what makes the last byte load-bearing: a cap of 41,943,079 passes a PNG-only fixture while

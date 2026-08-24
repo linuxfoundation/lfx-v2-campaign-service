@@ -712,8 +712,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// So the wire bound is stated on the wire representation, in the unit that
 				// representation is measured in: base64 characters. The DECODED 30 MiB ceiling
 				// is a different constraint on a different quantity and is enforced in the
-				// handler (maxCreativeEncodedBytes / maxCreativeDecodedBytes in
-				// internal/service), which is the only layer that sees decoded bytes.
+				// handler (maxCreativeStoredBytes, the stored-file ceiling, alongside
+				// maxCreativeDecodedBytes, the pixel budget — both in internal/service), which
+				// is the only layer that sees decoded bytes.
 				MaxLength(41943040) // 4/3 * 30 MiB: the ENCODED ceiling, the unit this schema constrains
 			})
 			Required("project_id", "brief_id", "content_type", "bytes")

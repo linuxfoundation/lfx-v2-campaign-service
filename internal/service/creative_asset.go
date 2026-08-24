@@ -69,8 +69,11 @@ func (s *BriefService) creativeAssetRepo() domain.CreativeAssetRepository {
 // where Meta's per-ad-account image_hash is resolved.
 //
 // The generated decoder already enforces what the CONTRACT can express — content_type is one of
-// the allowed MIME strings, and the decoded byte length is within [1, 30 MiB] — so a request
-// reaching this handler has cleared those. What it cannot express, and what this handler adds,
+// the allowed MIME strings, and the byte length is non-empty and within the design's
+// MaxLength(41943040). That ceiling is stated in base64 CHARACTERS (the unit the wire schema
+// measures), so as a bound on the decoded slice the generated validator applies it to, it admits
+// up to ~40 MiB; the real 30 MiB stored-file ceiling is Stage 0 below, at maxCreativeStoredBytes.
+// So a request reaching this handler has cleared those. What it cannot express, and what this handler adds,
 // is that the BYTES are actually a decodable image of the declared type: a client may send a
 // JPEG under a declared image/png, or arbitrary bytes under either. The stored mime_type is the
 // SNIFFED one, and a declared/sniffed mismatch is refused rather than silently corrected.
