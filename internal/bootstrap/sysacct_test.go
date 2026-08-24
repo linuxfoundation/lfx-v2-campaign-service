@@ -563,10 +563,16 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 //
 // The membership is deliberately described as a rule rather than a roster: this comment has been
 // corrected three times by naming which providers sit on which side, and each correction was
-// falsified by the next ticket that moved one. Read accountDiscoveryProviders for the current
-// set. Microsoft is the one member worth calling out, because the rule does not explain it — it
-// holds both halves as of LFXV2-3064 and is still excluded, which is a sequencing decision, not
-// a capability gap.
+// falsified by the next ticket that moved one — LFXV2-3319 being the fourth, which gave X both
+// halves and so falsified "Microsoft is the one member worth calling out". Read
+// accountDiscoveryProviders for the current set.
+//
+// What the rule does not explain is that holding both halves is NOT sufficient for membership:
+// some providers hold both and are still excluded, which is a sequencing decision rather than a
+// capability gap. That is stated here WITHOUT naming them, because naming them is the thing that
+// has gone stale four times. TestAccountDiscoveryProvidersIsASubsetOfAccountListers pins the
+// invariant that survives the churn (every member holds the first half) and deliberately does
+// not assert equality, so a provider moving between those two states is not a test failure.
 //
 // What this test actually exercises: LinkedIn's refusal directly (an empty account id must be
 // rejected), with Google Ads and Meta as the ALLOWED cases. The other excluded providers are
