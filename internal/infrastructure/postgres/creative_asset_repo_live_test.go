@@ -21,11 +21,14 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// creative_asset_repo.go has no source-text test and cannot get a meaningful one: its two
-// statements each carry behaviour no string assertion can reach — the INSERT ... SELECT ... WHERE
-// EXISTS parent-brief gate, the ON CONFLICT ... DO UPDATE idempotency no-op, and the (project,
-// brief) scoping on both reads. None of those are visible in the SQL text the way a bind-argument
-// count is; they are only observable against a real database. This file is that database test.
+// creative_asset_repo.go has no source-text test and cannot get a meaningful one: every statement
+// it runs carries behaviour no string assertion can reach — the SELECT ... FOR UPDATE that locks
+// the parent brief and orders this write against ArchiveBrief, the guarded insert's parent-brief
+// gate, the ON CONFLICT ... DO UPDATE idempotency no-op, and the (project, brief) scoping on the
+// reads. Deliberately described as a SHAPE rather than counted: an earlier version of this comment
+// said "two statements", which the FOR UPDATE lock silently falsified. None of these are visible
+// in the SQL text the way a bind-argument count is; they are only observable against a real
+// database. This file is that database test.
 //
 // It is in-package (not the external dbtest_test package) for the same reason
 // audience_reconcile_live_test.go is: NewCreativeAssetRepo takes the instrumented *Pool wrapper,
