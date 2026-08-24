@@ -734,8 +734,21 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 // rather than a direct cast — one declared contract, both injection sites.
 func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
-	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+	// ORDER MATTERS between these two, and only in one direction.
+	//
+	// On the cold-start retry path this mutates a BriefService that is ALREADY MOUNTED and
+	// serving, and the two setters take the service's lock independently — so a concurrent
+	// UploadCreativeAsset can observe the state published by the first without the second. The
+	// repo is the handler's AVAILABILITY GATE (a nil repo answers 503), while a nil
+	// DecodeReserver is deliberately a silent no-op. Publishing the gate first would therefore
+	// open uploads for the width of that window with the aggregate pixel-memory bound
+	// unenforced: they would succeed, unbounded — strictly worse than being refused, and
+	// invisible because nothing fails.
+	//
+	// Binding the BOUND first makes the window harmless: while the repo is still nil every
+	// upload is refused with 503, so no request can observe a live repo without a reserver.
 	bb.SetDecodeReserver(service.NewDecodeReserver(constants.DecodeAdmissionBudgetBytes))
+	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
 }
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {

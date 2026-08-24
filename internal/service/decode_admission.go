@@ -52,6 +52,14 @@ import (
 // this reserves it against a budget so N of them are bounded too. A per-image ceiling and an
 // aggregate ceiling are different bounds, and the per-image one was already in place.
 //
+// THE LIFETIME IS THE DECODE, and the caller enforces it by scoping the release around
+// image.Decode rather than deferring it to the method's return — on BOTH the success and the
+// failure arm. This is stated here because the guarantee lives at the CALL SITE, not in this
+// type: reserve hands back a release func, so nothing in this file can prevent a caller from
+// holding it longer. It was deferred to method return once, which held pixel budget through the
+// checksum and the entire insert — memory that stops existing when image.Decode returns, so a
+// slow database shed concurrent uploads for capacity nobody was using.
+//
 // A nil *DecodeReserver reserves nothing, so every construction that does not wire one keeps
 // working unchanged.
 type DecodeReserver struct {

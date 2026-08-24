@@ -1554,3 +1554,63 @@ func (fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAss
 func (fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
 	return nil, domain.ErrNotFound
 }
+
+// orderRecordingBriefSetter records the ORDER in which the live-wiring helper publishes each
+// dependency. The order is the property under test, so it is captured rather than the values.
+type orderRecordingBriefSetter struct {
+	calls []string
+}
+
+func (r *orderRecordingBriefSetter) SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator) {
+	r.calls = append(r.calls, "backend")
+}
+
+func (r *orderRecordingBriefSetter) SetCreativeAssetRepo(domain.CreativeAssetRepository) {
+	r.calls = append(r.calls, "repo")
+}
+
+func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
+	r.calls = append(r.calls, "reserver")
+}
+
+// TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate pins the ORDER of two independently
+// locked setters, which on the cold-start retry path decides whether a memory bound can be
+// bypassed.
+//
+// bindBriefLiveBackends mutates a BriefService that is ALREADY MOUNTED and serving. Each setter
+// takes s.mu on its own, so between them there is a real window in which a concurrent
+// UploadCreativeAsset observes published state. The repo is the handler's availability gate --
+// it returns 503 while the repo is nil -- and a nil DecodeReserver is deliberately a silent
+// no-op. Publishing the gate FIRST therefore opens uploads for the length of that window with
+// the aggregate pixel-memory bound unenforced: they succeed, and they are unbounded, which is
+// worse than being refused.
+//
+// Publishing the bound first closes it: while the repo is still nil every upload is refused with
+// 503, so no request can ever observe a live repo without a reserver.
+//
+// Asserted as a relative order rather than an exact call list, so adding a future dependency
+// does not falsely fail this test -- only moving the reserver after the gate does.
+func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
+	rec := &orderRecordingBriefSetter{}
+
+	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil)
+
+	idx := func(name string) int {
+		for i, c := range rec.calls {
+			if c == name {
+				return i
+			}
+		}
+		return -1
+	}
+	reserver, repo := idx("reserver"), idx("repo")
+	if reserver < 0 || repo < 0 {
+		t.Fatalf("wiring did not publish both dependencies; calls = %v", rec.calls)
+	}
+	if reserver > repo {
+		t.Errorf("decode reserver is published AFTER the creative-asset repo (calls = %v): the "+
+			"repo is the handler's availability gate and a nil reserver is a silent no-op, so "+
+			"on the cold-start retry path an upload arriving between the two setters is served "+
+			"with the aggregate pixel-memory bound unenforced", rec.calls)
+	}
+}
