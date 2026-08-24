@@ -1576,3 +1576,273 @@ func TestGetCampaignMetrics_401InvalidatesCachedToken(t *testing.T) {
 		t.Errorf("token exchanges = %d, want 2: a rejected token must be evicted from the cache so the next read re-exchanges instead of replaying it", got)
 	}
 }
+
+// linkedinConvServer serves one adAnalytics response and captures the request query, so a
+// test can assert both what was ASKED FOR and what was made of the answer.
+func linkedinConvServer(t *testing.T, body string) (*Client, func() string) {
+	t.Helper()
+	var mu sync.Mutex
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, body)
+	}))
+	t.Cleanup(server.Close)
+	c := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+	return c, func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotQuery
+	}
+}
+
+// LinkedIn returns ONLY impressions and clicks when `fields` is omitted, so a metric that is
+// not named is absent rather than zero. If this request stops naming
+// externalWebsiteConversions, every LinkedIn campaign silently reads as unmeasured.
+func TestGetCampaignMetrics_RequestsExternalWebsiteConversions(t *testing.T) {
+	c, query := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50","externalWebsiteConversions":7}]}`)
+	if _, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(query(), "externalWebsiteConversions") {
+		t.Errorf("request does not name externalWebsiteConversions in `fields`, so LinkedIn "+
+			"will never return it; query = %s", query())
+	}
+}
+
+// The documented field name and type: `long`, per LinkedIn's Ads Reporting metrics schema.
+// The fixture mirrors that published shape — a bare JSON integer on the analytics element.
+func TestGetCampaignMetrics_DecodesExternalWebsiteConversions(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50","externalWebsiteConversions":7}]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil for a response carrying externalWebsiteConversions:7")
+	}
+	if *m.Conversions != 7 {
+		t.Errorf("Conversions = %v, want 7", *m.Conversions)
+	}
+}
+
+// The binding absent/zero case for this adapter. An element WITHOUT the key cannot be
+// reported as a measured zero: on LinkedIn that shape most often means the metric was never
+// returned, and turning it into 0 would flag a converting campaign as dead.
+func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
+	absent, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50"}]}`)
+	m, err := absent.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v for an element that never carried the field; an "+
+			"unreported count became a measurement", *m.Conversions)
+	}
+
+	measured, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"costInUsd":"25.50","externalWebsiteConversions":0}]}`)
+	m2, err := measured.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m2.Conversions == nil {
+		t.Fatal("Conversions is nil for an explicit externalWebsiteConversions:0, erasing a real measurement")
+	}
+	if *m2.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *m2.Conversions)
+	}
+}
+
+// A campaign with no activity returns an empty elements array. The client always names
+// externalWebsiteConversions in `fields`, so LinkedIn WAS asked for the metric and answered
+// that the campaign did nothing — an answered zero, not an unmeasured window. The count is
+// therefore a non-nil zero, matching googleads' no-rows branch.
+//
+// This assertion was previously inverted, on the reasoning that an empty array "says nothing
+// about conversions having been MEASURED" and that a zero here was one "the rule would act
+// on". Both halves were wrong: the metric was requested and the window was answered, and
+// no_conversions is gated on Clicks >= minClicksForConversions (50) while this branch reports
+// zero clicks, so the rule cannot fire on it either way.
+func TestGetCampaignMetrics_NoElementsIsAnAnsweredZero(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions = nil on an empty elements array; LinkedIn answered this window " +
+			"and the metric was in the fields list, so the zero is a measurement")
+	}
+	if *m.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *m.Conversions)
+	}
+}
+
+// Multiple elements aggregate, and only the ones that CARRIED the metric contribute — an
+// element missing the key must not act as a zero addend that masks a partial response.
+func TestGetCampaignMetrics_ConversionsAggregateAcrossElements(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30,"externalWebsiteConversions":4},
+		{"impressions":400,"clicks":20,"externalWebsiteConversions":3}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil across two elements that both carried the metric")
+	}
+	if *m.Conversions != 7 {
+		t.Errorf("Conversions = %v, want 7 (4+3): elements are not being summed", *m.Conversions)
+	}
+}
+
+// Above 2^53, float64 can no longer represent every consecutive integer, so an int64
+// count that survives a round trip through float64 is not guaranteed to come back
+// unchanged. The aggregation must therefore hold its running total in an int64 for the
+// WHOLE loop and widen once at the end, the way CostMicros already does — not convert to
+// float64 and back on every element.
+//
+// The fixture is three elements: 2^53, then 1, then 1. The exact total, 2^53+2, IS
+// representable as a float64, so a correct implementation reports it exactly and the
+// single final widen loses nothing. Only the per-iteration round trip corrupts it: after
+// the first element the running total is 2^53, and 2^53+1 is the first integer float64
+// cannot represent, so element two rounds back down to 2^53 and element three does the
+// same. Both increments are swallowed and the result is 2^53 — short by exactly the two
+// conversions the campaign actually recorded.
+func TestGetCampaignMetrics_ConversionsAggregateAboveFloat64IntegerPrecision(t *testing.T) {
+	// 2^53 = 9007199254740992; the exact total below is 9007199254740994.
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30,"externalWebsiteConversions":9007199254740992},
+		{"impressions":400,"clicks":20,"externalWebsiteConversions":1},
+		{"impressions":200,"clicks":10,"externalWebsiteConversions":1}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil across three elements that all carried the metric")
+	}
+	const want = float64(1<<53) + 2
+	if *m.Conversions != want {
+		t.Errorf("Conversions = %.0f, want %.0f: the running total round-tripped through "+
+			"float64 mid-loop and lost %.0f conversions above 2^53",
+			*m.Conversions, want, want-*m.Conversions)
+	}
+}
+
+// A negative count is malformed upstream data, not a small number. The sibling counters
+// reject it for the same reason and this one must too, or it lands in the response as a
+// figure that reads as authoritative.
+func TestGetCampaignMetrics_NegativeConversionsIsAnError(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[{"impressions":1000,"clicks":50,"externalWebsiteConversions":-3}]}`)
+	if _, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday); err == nil {
+		t.Error("a negative externalWebsiteConversions was accepted as a measurement")
+	}
+}
+
+// A response in which SOME elements carry externalWebsiteConversions and others omit it is
+// an INCOMPLETE measurement, and the aggregate must withdraw to nil rather than publish the
+// sum of the present ones. Summing only the elements that carried the metric presents a
+// PARTIAL count to every consumer as a complete one, with nothing left in the type to say
+// otherwise — and the failure mode is not hypothetical. Consider the fixture below: one
+// element omits the field and a later one reports an explicit 0. Summing the present
+// elements yields exactly 0, and because both elements' clicks still aggregate to 50 — the
+// no_conversions rule's minClicksForConversions floor — the rule fires HIGH against a
+// campaign whose true conversion count is simply unknown. That is the rule manufacturing
+// its own finding rather than measuring one.
+//
+// This mirrors internal/platform/microsoft/metrics.go, whose convIncomplete flag poisons
+// the WHOLE ConversionsQualified total when any single cell is blank, for the same reason
+// and against the same rule. LinkedIn was not brought along when that discipline landed.
+func TestGetCampaignMetrics_PartialConversionsCoverageIsNilNotAPartialSum(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30},
+		{"impressions":400,"clicks":20,"externalWebsiteConversions":0}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Clicks != 50 {
+		t.Fatalf("Clicks = %d, want 50: the fixture must reach minClicksForConversions for "+
+			"this test to describe the no_conversions firing it exists to prevent", m.Clicks)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v across elements where one OMITTED the metric and a later "+
+			"one reported 0; an incomplete measurement was published as a measured zero, and "+
+			"with %d clicks the no_conversions rule now fires HIGH on data LinkedIn never "+
+			"fully reported", *m.Conversions, m.Clicks)
+	}
+}
+
+// The withdrawal must not depend on element ORDER: a present value seen BEFORE the omission
+// must be retracted just as a later one is never published. Accumulating into the response
+// field directly would leave the first element's total already written when the second is
+// found to be missing.
+func TestGetCampaignMetrics_ConversionsWithdrawnWhenOmissionFollowsAValue(t *testing.T) {
+	c, _ := linkedinConvServer(t, `{"elements":[
+		{"impressions":600,"clicks":30,"externalWebsiteConversions":9},
+		{"impressions":400,"clicks":20}
+	]}`)
+	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v: a value from the first element survived a later element "+
+			"omitting the metric, publishing a partial sum as a complete count", *m.Conversions)
+	}
+}
+
+// TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero pins the convention that a
+// well-formed empty `elements` array is an ANSWERED zero-activity window, not an unmeasured
+// one. The client always names externalWebsiteConversions in `fields`, so LinkedIn was asked
+// for the metric and replied that nothing happened.
+//
+// The assertion is deliberately two-sided: non-nil AND exactly zero. Asserting only
+// non-nilness would pass on any garbage value, and asserting only nilness (the previous
+// behaviour) is the bug this test exists to prevent regressing to. The fixture returns a real
+// empty array over HTTP rather than constructing a struct, so the empty-elements branch is
+// genuinely executed.
+func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prove the metric really was requested: if the client stopped naming it, a nil
+		// Conversions would be the honest answer and this test's premise would be void.
+		if !strings.Contains(r.URL.RawQuery, "externalWebsiteConversions") {
+			t.Errorf("expected externalWebsiteConversions in the fields list, got %q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"elements": []}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	metrics, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowLast7Days)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics.Conversions == nil {
+		t.Fatal("expected a non-nil Conversions for an answered zero-activity window, got nil (unmeasured)")
+	}
+	if *metrics.Conversions != 0 {
+		t.Errorf("expected Conversions 0, got %v", *metrics.Conversions)
+	}
+	// The sibling measurements must agree with it: all four describe the same answered window.
+	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
+		t.Errorf("expected zero impressions/clicks/cost, got %+v", metrics)
+	}
+}

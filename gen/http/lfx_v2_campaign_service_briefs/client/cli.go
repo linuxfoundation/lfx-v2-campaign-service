@@ -575,7 +575,7 @@ func BuildUpdateCampaignPayload(lfxV2CampaignServiceBriefsUpdateCampaignBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Libero recusandae ut ullam aliquam.\",\n         \"config\": \"Sunt deleniti.\",\n         \"status\": \"Iure consequatur minus nostrum iste nemo.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Consequuntur esse culpa.\",\n         \"config\": \"Minus nostrum iste nemo fugiat sunt.\",\n         \"status\": \"Recusandae ut ullam aliquam dolore iure.\"\n      }\n   }'")
 		}
 		if body.Campaign == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("campaign", "body"))
