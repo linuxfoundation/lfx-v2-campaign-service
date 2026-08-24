@@ -219,7 +219,11 @@ Two absence guards implement that, and both are subtler than they look:
   `json.RawMessage`, so an absent `data` and an explicit null cannot be told apart by a nil
   check on the raw field — and `null` then unmarshals into a nil element slice, reporting a
   healthy zero accounts. The guard therefore tests the DECODED slice for nil after decoding:
-  a present `[]` yields a non-nil empty slice, while both absent and null leave it nil.
+  a present `[]` yields a non-nil empty slice, while both absent and null leave it nil. Every
+  walk that reads `data` makes this check, for the same reason it reads the cursor carefully —
+  a body that reported no result set must not become a claim that the thing does not exist. The
+  name lookup answers a false "not found" with a create POST, so there it is a duplicate paid
+  campaign; the accounts walk would present a truncated picker as a complete one.
 * **Only the documented null is exhaustion.** X documents termination as an explicit null
   ("If less than `count` entities are returned in the current page of the result set, the
   `next_cursor` value will be `null`"). A plain string field collapses null, absent and empty

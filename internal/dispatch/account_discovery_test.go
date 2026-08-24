@@ -25,9 +25,16 @@ import (
 // type-asserts, misses, and answers ErrAccountsUnsupported — the endpoint would exist and
 // always fail. A compile-time assertion catches that at build rather than at runtime.
 //
-// Every provider claiming discovery belongs in THIS block, including ones whose behavioural
-// tests live in another file, so the set is readable in one place and gaining a provider does
-// not also require editing a count in this comment.
+// This block is NOT the discovery roster. It pins the three providers whose behavioural tests
+// live in this file, and a provider can satisfy AccountLister without appearing here — Google
+// Ads and Meta both do today. Reading it as the full set is what the comment it replaces got
+// wrong, and an enumeration in prose is exactly the thing that goes stale as providers land.
+//
+// The authoritative roster is derived, not written down: accountListerProviders in
+// accountlister_prose_parity_test.go type-asserts every candidate dispatcher against
+// service.AccountLister, so it moves with the code and cannot silently omit an implementation.
+// Consult that when the question is "which providers support discovery?"; these assertions
+// only guarantee that the three exercised below still compile against the interface.
 var (
 	_ service.AccountLister = (*LinkedInDispatcher)(nil)
 	_ service.AccountLister = (*MicrosoftDispatcher)(nil)

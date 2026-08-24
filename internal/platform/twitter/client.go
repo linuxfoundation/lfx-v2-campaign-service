@@ -1188,9 +1188,34 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 		if resp == nil {
 			return "", fmt.Errorf("lookup %q: empty response", name)
 		}
+		// Declared INSIDE the loop so it starts nil on every iteration and its nil-ness
+		// is decided by this page's body alone.
 		var items []campaignElement
-		if err := json.Unmarshal(resp.Data, &items); err != nil {
-			return "", fmt.Errorf("lookup %q: decode list: %w", name, err)
+		// resp.Data is nil ONLY when the `data` key was absent entirely. An explicit
+		// `"data":null` is NOT nil here — encoding/json stores the four bytes `null` in a
+		// json.RawMessage — so neither a nil nor a length check separates absent from null
+		// from a present `[]`. Both shapes are admitted to the decode and the check that
+		// catches them is on `items` AFTER decoding: a present `[]` decodes to a non-nil
+		// empty slice, while both absent and null leave it nil.
+		if len(resp.Data) > 0 {
+			if err := json.Unmarshal(resp.Data, &items); err != nil {
+				return "", fmt.Errorf("lookup %q: decode list: %w", name, err)
+			}
+		}
+		// A nil slice means the body carried no result set at all, which is NOT the same
+		// claim as an empty one. `"data":null` decodes without error, so nothing upstream
+		// of here objects, and the walk would otherwise fall through to the cursor
+		// classification — where a null cursor reads as X's documented exhaustion and
+		// yields ("", nil). That is a confident not-found derived from a body that never
+		// reported a result set, and the caller answers it with a create POST.
+		//
+		// A present `[]` is a genuine, well-formed "no elements" answer and must keep
+		// flowing through to the ordinary not-found path, or the first create on an empty
+		// account would break. That is the distinction the post-decode nil check makes and
+		// a length check cannot. ListAdAccounts guards identically; the two walks must not
+		// diverge on what an absent result set means.
+		if items == nil {
+			return "", fmt.Errorf("lookup %q: 2xx response carried no data field, so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name)
 		}
 		for _, it := range items {
 			if it.Name == name {

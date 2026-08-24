@@ -4089,3 +4089,109 @@ func TestFindByNameShortPageWithEmptyCursorIsGenuineNotFound(t *testing.T) {
 		t.Errorf("id = %q, want empty", id)
 	}
 }
+
+// A 2xx body whose `data` key is an explicit JSON null decodes SUCCESSFULLY into a nil
+// items slice, so nothing on the decode path errors and the walk falls through to the
+// cursor classification. With `"next_cursor":null` that classifies as X's documented
+// exhaustion signal and findByName returns ("", nil) — a CONFIDENT not-found derived from
+// a body that carried no result set at all. The caller answers that with a create POST, so
+// a malformed 2xx duplicates a live paid campaign.
+//
+// The distinction that has to survive here is absent/null `data` vs a present `[]`.
+// json.RawMessage cannot make it before decoding: `null` is the four bytes `null` (len 4),
+// not nil, so a length check reads it as present. Only the POST-decode nil check separates
+// them — both absent and null leave the slice nil, while a present `[]` yields a non-nil
+// empty one. ListAdAccounts already guards exactly this way; this is the sibling walk
+// acquiring the same guard so the two cannot diverge.
+func TestFindByNameNullDataIsNotAConfidentNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"null data, null cursor", `{"data":null,"next_cursor":null}`},
+		{"null data, absent cursor", `{"data":null}`},
+		{"null data, empty cursor", `{"data":null,"next_cursor":""}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1"},
+				WithBaseURL(srv.URL),
+				WithWriteDelay(0),
+			)
+			c.nonceFn = func() string { return "n" }
+			c.timeFn = staticTime
+
+			id, err := c.findCampaignByName(context.Background(), "target")
+			if err == nil {
+				t.Fatalf("a 2xx body with no data field must not read as a confident not-found; "+
+					"got id=%q, nil error — the caller answers that with a create POST and "+
+					"duplicates the campaign", id)
+			}
+			if id != "" {
+				t.Errorf("id = %q, want empty on an inconclusive walk", id)
+			}
+		})
+	}
+}
+
+// The line_items caller shares findByName, so the nil-data guard must hold for it too.
+// Asserting only the campaign path would let a fix that special-cased one caller pass.
+func TestFindLineItemByNameNullDataIsNotAConfidentNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":null,"next_cursor":null}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findLineItemByName(context.Background(), "camp1", "target")
+	if err == nil {
+		t.Fatalf("a 2xx body with no data field must not read as a confident not-found; got id=%q, nil error", id)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty on an inconclusive walk", id)
+	}
+}
+
+// The counterpart that keeps the guard honest: a PRESENT empty array is a real, well-formed
+// answer meaning "this account has no campaigns", and must stay a clean not-found so
+// find-or-create still works on an empty account. Without this a fix could satisfy the two
+// tests above by erroring whenever len(items)==0, breaking the first create on every new
+// account.
+func TestFindByNameEmptyArrayDataIsGenuineNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[],"next_cursor":null}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findCampaignByName(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("a present empty array is a well-formed 'no campaigns' answer and must stay a "+
+			"clean not-found, or the first create on an empty account breaks: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty", id)
+	}
+}
