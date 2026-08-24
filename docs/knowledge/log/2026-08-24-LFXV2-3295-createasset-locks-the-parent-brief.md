@@ -50,9 +50,9 @@ The `WHERE EXISTS` gate is retained on top of the lock: it carries the TENANT bo
 the status rule, and dropping it would let a caller scoped to project A attach an asset to
 project B's brief.
 
-`domain.CreativeAssetPort` was updated to match. Serialization is now a REQUIREMENT of the port
-rather than something an implementation "MAY" do, because the consequence of not doing it is
-permanent rather than transient.
+The `CreativeAssetRepository` port in `internal/domain/creative_asset_port.go` was updated to
+match. Serialization is now a REQUIREMENT of the port rather than something an implementation
+"MAY" do, because the consequence of not doing it is permanent rather than transient.
 
 *(History note: `FOR UPDATE` had never previously appeared as SQL in this file — `git log -S`
 matches only its mention in a prose comment, in both the file's creating commit and the later
