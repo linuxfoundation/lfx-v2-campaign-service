@@ -129,8 +129,11 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// IHDR chunk passes it while being unrecoverable image data. Storing that yields a corrupt
 	// asset that fails much later at dispatch, far from the upload that caused it, so the bytes
 	// are proven decodable HERE. This is the allocating step, which is exactly why stage 2 runs
-	// first: the buffer it may allocate is now bounded by the pixel cap, not by what the header
-	// claims. The decoded image itself is discarded — only the verdict matters.
+	// first: the buffer it may allocate is now bounded by the DECODED-BYTE budget, not by what
+	// the header claims. Byte budget rather than pixel count deliberately — the bound that
+	// matters is bytes allocated, and a 16-bit image costs 8 bytes per pixel where an 8-bit one
+	// costs 4, so a pixel-only cap admits twice the memory it appears to for 16-bit uploads.
+	// The decoded image itself is discarded — only the verdict matters.
 	if _, _, err := image.Decode(bytes.NewReader(p.Bytes)); err != nil {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image data is incomplete or corrupt"}
 	}
@@ -166,8 +169,8 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 //
 // maxCreativeDecodedBytes is 80 MiB of decoded pixel buffer. That figure is deliberately the
 // ceiling the previous pixel-only bound INTENDED — its comment promised ~76 MiB — rather than
-// the ~153 MiB it actually permitted once 16-bit images are priced correctly. Setting the budget
-// to that larger real number would have blessed the defect instead of fixing it: nothing
+// the ~152.6 MiB it actually permitted once 16-bit images are priced correctly. Setting the
+// budget to that larger real number would have blessed the defect instead of fixing it: nothing
 // previously admitted would newly be refused, and the gate would have been rewritten to no
 // effect.
 //
@@ -179,9 +182,11 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 // bytesPerPixel is what makes the budget honest across bit depths. Go's image/png decodes a
 // 16-bit colour-type-6 PNG to *image.NRGBA64 at EIGHT bytes per pixel, not four — so a
 // pixel-only cap silently permits twice the memory it appears to. An earlier revision of this
-// code capped 20M pixels and its comment claimed ~76 MiB; the true worst case was ~160 MiB. The
-// budget is now expressed in bytes and the per-pixel cost is read from the declared colour
-// model, so a 16-bit image is charged what it actually costs.
+// code capped 20M pixels and its comment claimed ~76 MiB; the true worst case was 152.6 MiB
+// (20,000,000 px x 8 B/px = 160,000,000 B, which is 160 MB decimal but 152.6 MiB binary — the
+// same quantity in two units, which is why both are named explicitly here rather than left to
+// the reader). The budget is now expressed in bytes and the per-pixel cost is read from the
+// declared colour model, so a 16-bit image is charged what it actually costs.
 //
 // maxCreativeDimension additionally bounds each SIDE, because a byte budget alone admits a
 // degenerate 1x20,000,000 strip that is no image any creative pipeline should accept.

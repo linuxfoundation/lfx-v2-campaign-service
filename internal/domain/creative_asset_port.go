@@ -23,21 +23,26 @@ type CreativeAssetRepository interface {
 	// The parent-brief gate is part of the write, not a preceding read: the insert takes effect
 	// only if an active brief exists for (a.ProjectID, a.BriefID), and CreateAsset returns
 	// ErrNotFound when none does — a missing, archived, or cross-project brief are one outcome
-	// to the caller, none of which may accrue an asset THROUGH THIS CALL (see the serialization
-	// note below: a brief archived CONCURRENTLY is a separate case, and is not refused).
-	// Requiring only ACTIVE (not approved) is deliberate: uploading a creative is part of
-	// COMPOSING a brief, which happens before approval, unlike campaign creation which gates
-	// on approval.
+	// to the caller, none of which may accrue an asset. Requiring only ACTIVE (not approved) is
+	// deliberate: uploading a creative is part of COMPOSING a brief, which happens before
+	// approval, unlike campaign creation which gates on approval.
 	//
-	// The gate is not SERIALIZED against archival, and callers should not read it as if it were.
-	// The Postgres implementation performs it in one unlocked statement, so under READ COMMITTED
-	// an ArchiveBrief committing concurrently can leave an asset stored under a brief that is
-	// archived by the time the insert lands. This mirrors the plain CreateAudience, which holds
-	// the same position with the same predicate; the SELECT ... FOR UPDATE treatment is reserved
-	// for CreateAudienceForApprovedBrief, where losing that race creates real external objects.
-	// The consequence here is a stored blob nothing can reach — an archived brief refuses every
-	// later operation, GetAsset included — rather than an action taken on a stale decision. An
-	// implementation MAY serialize; none is required to.
+	// The gate IS serialized against archival, and that is part of the contract rather than an
+	// implementation detail. The guarantee is an ORDERING one, and it is worth stating exactly
+	// because the stronger-sounding version is false: an implementation MUST make this call and
+	// ArchiveBrief take effect in some serial order, so the two outcomes are
+	//   - archival first  → this call observes the archived brief and returns ErrNotFound; and
+	//   - this call first → the asset commits under a still-active brief, and the archival
+	//     applies afterwards to a brief that now has one more asset.
+	// What is EXCLUDED is the interleaving where both appear to win: an upload admitted against
+	// a brief the archival has already committed. A guarded insert alone does not exclude it,
+	// because under READ COMMITTED its snapshot can observe an active brief while the archival
+	// commits. The Postgres implementation takes SELECT ... FOR UPDATE on the parent brief and
+	// inserts on that transaction.
+	//
+	// It is required rather than optional because the consequence is permanent: creative_assets
+	// has no prune and briefs are never hard-deleted, so an asset committed under an archived
+	// brief is unreachable storage retained forever.
 	//
 	// It is idempotent on (BriefID, Checksum): re-uploading identical bytes to the same brief
 	// returns the EXISTING asset rather than storing a second copy or raising a conflict. The

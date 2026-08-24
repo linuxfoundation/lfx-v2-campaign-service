@@ -5,6 +5,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -323,3 +324,115 @@ func (w *writeTimingRecorder) Write(p []byte) (int, error) {
 }
 
 func (w *writeTimingRecorder) wrote() bool { return w.written }
+
+// TestDeferredBufferWriter_ExposesFlusherHijackerUnwrap covers the interface-dropping gap:
+// MaxBodyBytes wraps EVERY request with a non-nil body, so any capability the wrapper fails to
+// forward is silently lost to every in-mux handler. Silently is the operative word — a handler
+// type-asserting for http.Flusher simply gets ok==false and degrades, with no error anywhere.
+func TestDeferredBufferWriter_ExposesFlusherHijackerUnwrap(t *testing.T) {
+	var (
+		sawFlusher  bool
+		sawHijacker bool
+		sawUnwrap   bool
+	)
+
+	h := MaxBodyBytes(1 << 20)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, sawFlusher = w.(http.Flusher)
+		_, sawHijacker = w.(http.Hijacker)
+		type unwrapper interface{ Unwrap() http.ResponseWriter }
+		_, sawUnwrap = w.(unwrapper)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	h.ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{}`)))
+
+	if !sawFlusher {
+		t.Error("wrapped writer does not implement http.Flusher: streaming handlers lose Flush")
+	}
+	if !sawHijacker {
+		t.Error("wrapped writer does not implement http.Hijacker: upgrade handlers lose Hijack")
+	}
+	if !sawUnwrap {
+		t.Error("wrapped writer exposes no Unwrap: ResponseController cannot reach the base writer")
+	}
+}
+
+// TestDeferredBufferWriter_UnwrapReturnsTheBaseWriter asserts Unwrap returns the ACTUAL embedded
+// writer, not merely something non-nil. A wrapper that returned itself would satisfy the
+// interface check above while leaving ResponseController in an infinite unwrap loop.
+func TestDeferredBufferWriter_UnwrapReturnsTheBaseWriter(t *testing.T) {
+	base := httptest.NewRecorder()
+	w := &deferredBufferWriter{ResponseWriter: base, buffering: func() bool { return false }}
+
+	got := w.Unwrap()
+	if got != http.ResponseWriter(base) {
+		t.Errorf("Unwrap() = %#v, want the embedded base writer %#v", got, base)
+	}
+}
+
+// flushRecorder counts Flush calls that actually reach the base writer.
+type flushRecorder struct {
+	*httptest.ResponseRecorder
+	flushes int
+}
+
+func (f *flushRecorder) Flush() { f.flushes++ }
+
+// TestDeferredBufferWriter_FlushPassesThroughUnderLimit proves Flush is forwarded on the
+// ordinary (pass-through) path, which is the case a streaming handler depends on.
+func TestDeferredBufferWriter_FlushPassesThroughUnderLimit(t *testing.T) {
+	base := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := &deferredBufferWriter{ResponseWriter: base, buffering: func() bool { return false }}
+
+	w.WriteHeader(http.StatusOK)
+	w.Flush()
+
+	if base.flushes != 1 {
+		t.Errorf("base writer saw %d flushes, want 1: Flush was not forwarded", base.flushes)
+	}
+}
+
+// TestDeferredBufferWriter_FlushDoesNotEscapeBuffering is the REGRESSION guard on the half of M2
+// that is already correct. Forwarding Flush unconditionally would push a response describing a
+// truncated request onto the wire and make it unrewritable — defeating the buffering the two
+// write-timing tests protect. While held, Flush must be inert.
+func TestDeferredBufferWriter_FlushDoesNotEscapeBuffering(t *testing.T) {
+	base := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := &deferredBufferWriter{ResponseWriter: base, buffering: func() bool { return true }}
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("truncated-body-response"))
+	w.Flush()
+
+	if base.flushes != 0 {
+		t.Errorf("base writer saw %d flushes while buffering, want 0: "+
+			"Flush escaped the buffer and committed a response that must stay rewritable",
+			base.flushes)
+	}
+	if w.committed() {
+		t.Error("writer reports committed while buffering: the 413 rewrite would be skipped")
+	}
+	if base.Body.Len() != 0 {
+		t.Errorf("buffered bytes reached the base writer: %q", base.Body.String())
+	}
+}
+
+// TestDeferredBufferWriter_HijackWithoutSupportReturnsErrNotSupported asserts the degradation is
+// an explicit error rather than a panic when the base writer cannot hijack.
+func TestDeferredBufferWriter_HijackWithoutSupportReturnsErrNotSupported(t *testing.T) {
+	w := &deferredBufferWriter{
+		ResponseWriter: httptest.NewRecorder(), // does not implement http.Hijacker
+		buffering:      func() bool { return false },
+	}
+	c, rw, err := w.Hijack()
+	if err == nil {
+		t.Fatal("Hijack on a non-hijackable writer returned nil error")
+	}
+	if !errors.Is(err, http.ErrNotSupported) {
+		t.Errorf("err = %v, want http.ErrNotSupported", err)
+	}
+	if c != nil || rw != nil {
+		t.Error("Hijack returned a connection despite failing")
+	}
+}

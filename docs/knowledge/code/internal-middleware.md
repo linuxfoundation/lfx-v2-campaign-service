@@ -52,4 +52,63 @@ In the handler chain the cap sits inside the request-ID/debug/OTel wrappers (so 
 carries a request id and is still traced) but outside the mux, since the Goa decoders behind the
 mux are what would otherwise do the buffering.
 
+## Upload admission bound (LFXV2-3295)
+
+`UploadAdmission(budget, weight, wait)` bounds the TOTAL bytes concurrent uploads may cause the
+process to allocate. The body cap above bounds ONE request; this bounds how many run at once.
+
+The distinction is the point. Against a fixed pod memory limit, N concurrent and entirely LEGAL
+uploads multiply a per-request allocation until the pod is OOM-killed — a cheap denial of service
+that no tightening of a per-request number can fix, because the quantity being bounded is
+different in kind.
+
+Placement is the security property, and it is why this is NOT a semaphore inside
+`UploadCreativeAsset`. Goa's generated handler calls `decodeRequest(r)` and only then
+`endpoint(...)`, and the generated endpoint calls `authJWTFn` as its first statement — so the
+body read and the base64 decode both complete BEFORE any JWT is examined. A guard in the service
+method would acquire after ~72 MiB had already been allocated for an unauthenticated caller,
+bounding only the decode tail while reading as though the problem were solved. Admission
+therefore sits immediately outside `MaxBodyBytes` and outside the mux, taking its permit before
+the decoder touches the body.
+
+Scope, stated honestly: this bounds the pod's memory. It does not authenticate, and it does not
+prevent an unauthenticated body from being read — auth-before-body-read belongs at the gateway.
+It ensures such a read cannot happen without first taking a permit from a budget tied to the
+pod's real limit.
+
+What the weight accounts, precisely: the INBOUND request — buffered body, base64-decoded slice,
+and the pixel buffer `image.Decode` may allocate for one upload. It does NOT account memory an
+unrelated path later allocates from bytes stored earlier. Outbound dispatch reads assets back out
+of Postgres and can multiply their resident bytes (Meta's `createVariantAd` uploads per variant,
+so N variants naming one asset hold N copies), but that runs in a dispatch worker long after the
+HTTP request returned and released its permit — a different lifetime and code path, not an
+undercount of this one. Bounding dispatch-side amplification needs its own control there.
+
+The budget is DERIVED, not chosen: `constants.UploadAdmissionBudgetBytes` is
+`PodMemoryLimitBytes / 4`, and `PodMemoryLimitBytes` mirrors the chart's
+`resources.limits.memory`. Because that number lives in a file the Go build cannot read,
+`TestPodMemoryLimitMatchesChart` parses `values.yaml` and fails when the two drift — the
+relationship is enforced rather than trusted.
+
+Under saturation a request waits a bounded `UploadAdmissionWait` (250 ms, absorbing ordinary
+jitter) and is then shed with an explicit `503` plus `Retry-After` in the service's
+`{code, message}` shape. Never a `200`, never an empty body: a refusal that surfaced as success
+would tell a caller its asset was stored when the body was never read. Non-upload routes are
+never gated, so a memory control cannot become an availability regression.
+
+`DefaultReadTimeout` accompanies it: `ReadHeaderTimeout` alone leaves a slowloris able to dribble
+a body indefinitely while holding a permit, which would exhaust the budget with requests that
+never complete.
+
+## Response-writer capabilities
+
+`deferredBufferWriter` wraps every request with a non-nil body, so any interface it fails to
+forward is silently lost to every in-mux handler — a type assertion simply returns `ok == false`
+with no error anywhere. It implements `Unwrap`, `Flush` and `Hijack` for that reason.
+
+`Flush` is deliberately inert while the response is being held: flushing a buffered response
+would put a body describing a truncated request on the wire and make it unrewritable, defeating
+the deferred buffering. `Hijack` marks the response committed, since a hijacked connection can no
+longer be rewritten to a 413.
+
 See [internal/middleware](../../../internal/middleware).

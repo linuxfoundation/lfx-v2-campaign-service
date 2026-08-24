@@ -1166,38 +1166,52 @@ paths bind the repo through `bindBriefLiveBackends` (see
 [internal/container](internal-container.md)). `GetAsset` still has no caller: the dispatch-time
 asset resolution that reads the stored bytes lands in the follow-on PR.
 
-`CreateAsset` runs a single statement:
+`CreateAsset` runs a TRANSACTION: it locks the parent brief with `SELECT status FROM
+campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`, checks the status, then runs
 `INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
-checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>`. Four things
-are doing work here and each has a failure mode if changed:
+checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>` on that same
+transaction. Six things are doing work here and each has a failure mode if changed:
 
-- **The `WHERE EXISTS` gate is the parent-brief check, in SQL, not in Go.** The row is inserted
-  only if a brief with this `id` and `project_id` exists and is not archived. A brief that is
-  absent, archived, or owned by ANOTHER project produces no inserted row, so `RETURNING` comes
-  back empty → `pgx.ErrNoRows` → `domain.ErrNotFound`. Folding the check into the insert's
-  `SELECT` removes the application-level window a separate `SELECT`-then-`INSERT` would open,
-  but it does **not** serialize against archival: the statement takes no lock on the parent, so
-  under READ COMMITTED its snapshot can still see an active brief while a concurrent
-  `ArchiveBrief` commits. This is the same position the plain `CreateAudience` holds with the
-  identical `status <> 'archived'` guarded insert, and it is deliberate — the `SELECT … FOR
-  UPDATE` treatment is reserved for `CreateAudienceForApprovedBrief`, where losing the race
-  creates REAL HubSpot lists from a brief that is no longer approved. Storing an image under a
-  just-archived brief has no external side effect: the bytes sit unreferenced, the archived
-  brief refuses every subsequent operation, and a later dispatch cannot reach them. **That last
-  clause is the whole justification, and it is a property of the READ path rather than of this
-  insert** — which is why the gate has been re-raised in review repeatedly by readers who could
-  see the unlocked statement but not the thing making its claim true. `getCreativeAssetQuery`'s
-  `EXISTS` on a non-archived parent is that thing, and
-  `TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant`'s "an archived parent brief makes
-  the asset unreadable" subtest fails when it is removed. Both the insert's comment and that
-  subtest now name each other, so weakening the read cannot silently retire the insert's
-  justification — the author's own escape clause names exactly that change ("a path that reads
-  assets without re-checking the parent") as the trigger for locking this insert. Dropping the
-  clause, by contrast, does not merely widen an error path — it lets a
-  caller scoped to project A attach an asset to project B's brief, so it is a tenant boundary.
+- **The parent brief is LOCKED before the insert, and that lock is what orders this against
+  archival.** An earlier revision ran the insert as a single unlocked autocommit statement and
+  relied on the `WHERE EXISTS` gate alone. That does not serialize: under READ COMMITTED each
+  statement takes a fresh snapshot of the last committed state, and a concurrent non-key status
+  update does not conflict with the FK's key-share lock, so the gate can read a brief that
+  `ArchiveBrief` is in the act of archiving. It reproduces deterministically —
+  `TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival` holds an uncommitted
+  `ArchiveBrief` on the parent row and the unlocked insert sails past it. Removing just the two
+  words `FOR UPDATE` turns that test red, so the lock is what binds rather than the transaction
+  wrapper.
+
+  **The single-statement atomicity of `INSERT ... SELECT` is not the property needed**, and the
+  distinction is what made the unlocked version look sufficient: atomicity means the statement
+  does not half-apply, and says nothing about what its snapshot may miss.
+  `campaign_repo.go`'s `lockAdoptBriefQuery` states the same rule from the other side — what is
+  required is `FOR UPDATE`, "not a plain re-read, and not the single-statement atomicity of the
+  INSERT".
+
+  This is the treatment the rest of this package already gives a brief-parented write
+  (`AudienceRepo.CreateAudienceForApprovedBrief`, `JobRepo.CreateJobForApprovedBrief`,
+  `BriefRepo`'s guarded update, and `campaign_repo.go`'s `lockAdoptBriefQuery` — all four
+  locking `campaign_briefs`); `CreateAsset` was the outlier. The cost is narrow and per-row: uploads to the SAME brief
+  serialize on that brief's row for the duration of the insert, while uploads to different
+  briefs never contend.
+
+  Why "the blob is merely unreachable" was not an acceptable answer, which is what the earlier
+  reasoning assumed: `creative_assets` has no prune and briefs are never hard-deleted, so a row
+  committed under an archived brief is retained FOREVER with nothing able to read or clean it.
+  That is a different category from a row a later operation would refuse.
+- **The `WHERE EXISTS` gate is RETAINED on top of the lock**, because it carries the tenant
+  boundary as well as the status rule. The row is inserted only if a brief with this `id` and
+  `project_id` exists and is not archived. Dropping the clause does not merely widen an error
+  path — it lets a caller scoped to project A attach an asset to project B's brief.
   `TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief` asserts each of the three
   refusals AND that no row was stored, because returning `ErrNotFound` and storing nothing are
-  two separate claims and a broken gate can do one without the other.
+  two separate claims and a broken gate can do one without the other. The read path carries the
+  same `EXISTS` on a non-archived parent (`getCreativeAssetQuery`), pinned by
+  `TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant`'s "an archived parent brief makes
+  the asset unreadable" subtest — that remains a tenancy/visibility rule in its own right, no
+  longer load-bearing for the insert's correctness now that the insert locks.
 - **`DO UPDATE SET byte_size = creative_assets.byte_size` is a deliberate NO-OP, not a real
   update.** The point is idempotency: a re-upload of identical bytes collides on
   `(brief_id, checksum)` and must RETURN the existing row. `DO NOTHING` would suppress
