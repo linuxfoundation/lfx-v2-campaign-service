@@ -65,6 +65,10 @@ type BriefService struct {
 	// live/cold-start paths (SetCreativeAssetRepo), so it is nil in the no-database and
 	// cold-start-pending modes — which is why that handler checks it rather than ready().
 	creativeAssets domain.CreativeAssetRepository
+	// decodeReserve bounds the AGGREGATE pixel-buffer memory concurrent creative-asset decodes
+	// may allocate. Nil in every construction that does not wire one (SetDecodeReserver), which
+	// reserves nothing — so tests and cold-start paths behave exactly as before.
+	decodeReserve *DecodeReserver
 }
 
 // SetClock overrides the time source used for pacing. For tests.
@@ -638,6 +642,16 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is not a valid campaign id for this platform"}
 		case errors.Is(lerr, ErrPlatformCampaignAbsent):
 			return nil, &briefs.NotFoundError{Code: "404", Message: "no such campaign exists on the ad platform under this project's connection"}
+		case errors.Is(lerr, domain.ErrServiceDefect):
+			// ABOVE every connection arm below, for the reason given on the metrics branch:
+			// the fault is in a request THIS SERVICE constructed, so "repair the connection"
+			// and "connect your own ad account" both name a remedy nobody here can apply.
+			// Adoption resolves credentials through the same dispatcher path as metrics and
+			// the toggle, so it reaches this sentinel the same way.
+			slog.ErrorContext(ctx, "campaign adoption blocked by a defect in this service, not in the connection; a caller-fault status here would send an operator to audit a correct configuration",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"reason", unusableConnectionReason(lerr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be verified with the ad platform"}
 		case errors.Is(lerr, domain.ErrAdoptionRequiresOwnConnection):
 			// ABOVE every connection arm below, which would otherwise send an operator to
 			// repair a connection that is working exactly as designed. Nothing is broken
@@ -946,6 +960,25 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
 				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
+
+		case errors.Is(merr, domain.ErrServiceDefect):
+			// ABOVE every connection arm below. This service built a request the platform
+			// refused, so nothing the caller or the operator owns is broken — and each arm
+			// below would tell one of them otherwise. The general 409 says "repair the
+			// connection"; the account arm says "select an account". Both are actionable and
+			// provably useless here, which is the precise failure the reason sentinel behind
+			// this one (ErrTokenRequestRejected) was split out to retire.
+			//
+			// A 500, and an ERROR log that pages us: this is our defect, and the only person
+			// who can act on it reads the log, not the response. The response says nothing
+			// specific because there is nothing the caller can do with specifics.
+			//
+			// The reason token is safe to log and the error is not, for the reason spelled
+			// out at unusableConnectionReason.
+			slog.ErrorContext(ctx, "campaign metrics read blocked by a defect in this service, not in the connection; a caller-fault status here would send an operator to audit a correct configuration",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
 
 		case errors.Is(merr, domain.ErrAccountNotSelected):
@@ -1319,6 +1352,16 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// no ambiguous mutation to protect — nothing was sent, and the campaign's stored
 			// status is still correct.
 			slog.ErrorContext(ctx, "the LF system connection is not usable; campaign status toggles are failing for every project without its own connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
+		case errors.Is(terr, domain.ErrServiceDefect):
+			// ABOVE every connection arm below, for the reason given on the metrics branch:
+			// this is OUR defect, and each arm below names a remedy belonging to someone who
+			// has nothing to repair. Credential resolution refused before the platform was
+			// contacted, so — like the connection arms — nothing changed upstream and the
+			// campaign's stored status is still correct.
+			slog.ErrorContext(ctx, "campaign status toggle blocked by a defect in this service, not in the connection; a caller-fault status here would send an operator to audit a correct configuration",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
@@ -1969,6 +2012,17 @@ func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason
 		// system row did not cover it. There is nothing to retry against — the fix is to
 		// connect the platform. GetCampaignMetrics answers 404.
 		return "connection_problem", "this project has no connection for the campaign's channel — connect it before reading metrics"
+	case errors.Is(err, domain.ErrServiceDefect):
+		// ABOVE every connection arm below. This is the per-campaign row of a brief-wide
+		// read, so it carries no status code — but it carries the STRING an operator reads,
+		// and "reconnect it" is the same provably useless remedy a 409 would have been.
+		// `connection_problem` would be a misdiagnosis outright: the connection is fine.
+		//
+		// `failed` rather than a new status: the vocabulary is a consumer-facing contract,
+		// and `failed` already means "not this campaign's configuration, and retrying is the
+		// caller's only move" — which is true here, since only a deploy changes the outcome.
+		// The message is what distinguishes it, and it names no remedy the reader owns.
+		return "failed", "this campaign's metrics could not be read because of a defect in this service — the connection is not at fault and needs no repair; the failure has been logged for the LFX team"
 	case errors.Is(err, domain.ErrSystemConnectionNotUsable):
 		// Its OWN arm, above the general one, because the remedy differs and the general
 		// wording is unfollowable here: this fires when the project has NO connection of its
@@ -2043,19 +2097,28 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 				// rotated CREDENTIAL_ENCRYPTION_KEY failing every project at once, and the
 				// cheap discriminator is the COUNT of these lines. Aggregated into per-row
 				// WARNs, a key rotation that breaks every campaign on every brief would page
-				// nobody. GetCampaignMetrics answers 500 here for the same reason.
+				// nobody. GetCampaignMetrics answers 500 here for the same reason — as it does
+				// for each of the other no-caller-owns-this sentinels raised to ERROR below.
 				//
 				// not_ready is INFO because it is the ordinary state of a staged email draft.
 				lvl := slog.LevelWarn
 				switch {
 				case errors.Is(merr, domain.ErrCredentialDecryptionFailed),
 					errors.Is(merr, domain.ErrSystemConnectionNotUsable),
-					errors.Is(merr, domain.ErrSystemConnectionMissing):
-					// All three are OPERATOR-scope defects on shared infrastructure: a rotated
-					// key, a broken LF system row, or — under force-system mode — no LF row at
-					// all. Each fails every project that depends on it, and the discriminator is
-					// the COUNT of these lines. Left at WARN they page nobody. GetCampaignMetrics
-					// answers 500 for all three for the same reason.
+					errors.Is(merr, domain.ErrSystemConnectionMissing),
+					errors.Is(merr, domain.ErrServiceDefect):
+					// Every sentinel here is a defect on a scope NO caller owns — shared
+					// infrastructure (a rotated key, a broken LF system row, or under
+					// force-system mode no LF row at all) or this service's own code. None is
+					// repaired by anything the project can edit, each fails every project that
+					// depends on it, and the discriminator is the COUNT of these lines. Left at
+					// WARN they page nobody. The synchronous handlers answer 500 and log at
+					// ERROR for every one of them, and this level must not diverge from that:
+					// the brief-wide read returns a SUCCESSFUL aggregate, so for these rows the
+					// log line is the only signal the defect happened at all.
+					//
+					// Stated as the property rather than a count, because a count is falsified
+					// by the next sentinel added to this arm without anything failing.
 					lvl = slog.LevelError
 				case status == "not_ready":
 					lvl = slog.LevelInfo

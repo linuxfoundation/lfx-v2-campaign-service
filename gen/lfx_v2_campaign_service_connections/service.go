@@ -533,8 +533,17 @@ type LinkedinAdsConnectionConfig struct {
 
 // LinkedIn Ads credential. Write-only; never returned.
 type LinkedinAdsCredentials struct {
-	// OAuth access token
+	// OAuth access token (LinkedIn: valid 60 days)
 	AccessToken string
+	// OAuth refresh token (optional; MDP-approved apps only, valid ~365 days).
+	// Must be supplied together with client_id and client_secret.
+	RefreshToken *string
+	// OAuth client id (optional; required together with refresh_token and
+	// client_secret)
+	ClientID *string
+	// OAuth client secret (optional; required together with refresh_token and
+	// client_id)
+	ClientSecret *string
 }
 
 // ListGoogleAdsAccountsPayload is the payload type of the

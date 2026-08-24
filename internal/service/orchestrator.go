@@ -128,10 +128,14 @@ const providerCallTimeout = 2 * time.Minute
 // toggleCallTimeout bounds the SYNCHRONOUS status-toggle platform call, which runs on the
 // HTTP request goroutine (unlike the async dispatch above). Without it, a cascade of
 // sequential PATCHes — each with its own retry budget — could exceed the server's
-// DefaultWriteTimeout (60s), so the platform + DB would change but the response could no
-// longer reach the caller (a silent "did it apply?" for the operator). Kept comfortably
-// under the 60s write timeout so a failed toggle still returns an error the client receives;
-// on timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
+// DefaultWriteTimeout, so the platform + DB would change but the response could no
+// longer reach the caller (a silent "did it apply?" for the operator).
+//
+// The requirement is stated as a RELATIONSHIP rather than a repeated figure: this must stay
+// comfortably under constants.DefaultWriteTimeout so a failed toggle still returns an error the
+// client receives. Naming the number here meant this comment said 60s after the write budget was
+// raised to 120s — a stale figure that a reader sizing the next timeout would have trusted. On
+// timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
 const toggleCallTimeout = 45 * time.Second
 
 // metricsCallTimeout bounds the SYNCHRONOUS metrics-read platform call, which — like the
@@ -1411,6 +1415,15 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// already logs it beside the same reason token.
 			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
 			switch {
+			case errors.Is(derr, domain.ErrServiceDefect):
+				// ABOVE both connection arms. This path has no response to classify — the 202
+				// was answered long ago — so the LOG is the entire diagnosis, and both lines
+				// below assert a connection defect. Reporting one for a request this service
+				// built wrongly sends whoever reads it to repair a healthy row, which is the
+				// same misdirection the synchronous 409 produced, minus the status code.
+				slog.ErrorContext(ctx, "platform dispatch failed before upstream create because of a defect in this service; the connection is NOT at fault and needs no repair (claim released)",
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
+					"reason", unusableConnectionReason(derr))
 			case errors.Is(derr, domain.ErrSystemConnectionMissing):
 				// Forced-system mode is on and no LF row is installed for this provider, so
 				// EVERY paid-ads dispatch on this deployment fails the same way. Its own arm

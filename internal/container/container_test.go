@@ -1519,10 +1519,21 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 	s := service.NewBriefService(nil, nil, nil, nil)
 	require.False(t, s.CreativeAssetRepoIsSet(), "premise: unbound before wiring")
 
+	require.False(t, s.DecodeReserverIsSet(), "premise: unbound before wiring")
+
 	bindBriefLiveBackends(s, nil, nil, nil, nil, nil)
 
 	assert.True(t, s.CreativeAssetRepoIsSet(),
 		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
+
+	// The decode budget is bound by the same helper and needs the same assertion, for a worse
+	// failure mode: an unbound repo makes uploads fail LOUDLY with a 503, but an unbound
+	// reserver makes them succeed with the aggregate pixel-buffer bound silently absent — the
+	// pod OOMs under concurrent compressed uploads and nothing in the code path says why.
+	// Verified to be necessary: deleting the bind from the helper compiled and left the suite
+	// green until this line existed.
+	assert.True(t, s.DecodeReserverIsSet(),
+		"the shared live-wiring helper must bind the decode reserver; without it BOTH startup paths decode concurrent uploads with no aggregate memory bound")
 }
 
 // TestSetCreativeAssetRepo_IgnoresNil guards the degraded path: a nil repo must leave the service

@@ -332,6 +332,13 @@ the remedy is identical, an operator repairs the connection) and `failed` (the 5
 deliberately NOT merged — a staged email draft and an ad-platform outage produce the same
 absence of numbers and want opposite responses.
 
+`domain.ErrServiceDefect` takes `failed`, NOT `connection_problem`, and its own arm above the
+connection ones. This row carries no status code — it carries the STRING an operator reads — and
+`connection_problem` renders as "go fix your connection" for a connection that is fine, which is
+the same provably useless remedy a 409 would have been. `failed` already means "not this
+campaign's configuration, and retrying is the caller's only move"; the MESSAGE is what
+distinguishes it, and it names the fault as ours and no remedy the reader owns.
+
 Two sentinels reach this path WITHOUT `ErrConnectionNotUsable` and so need their own arms
 above the connection ones, or they fall through to the retryable default and tell an operator
 to retry something only a human edit clears: `domain.ErrNotFound` (no connection row for this
@@ -353,6 +360,18 @@ absence is real), so the broad arm wins if placed first and answers "connect you
 deployment-wide, operator-owned fault — force-system mode is on and nobody installed the LF row,
 which is precisely the connection a project cannot create. 500 + ERROR log, like the
 not-usable case; the repair differs (install a row, not fix one).
+
+**The brief-wide row logs a defect at the SAME level as the synchronous paths, and the rule
+is a property rather than a list.** Every sentinel whose remedy belongs to nobody the request
+can reach — the shared-infrastructure ones above, and `domain.ErrServiceDefect` for a fault in
+this service's own code — logs at ERROR in the fan-out, matching the 500 + ERROR the
+campaign-scoped handler, the toggle and the discovery handler answer for the identical error.
+The reason this endpoint in particular cannot afford to diverge: it returns a SUCCESSFUL
+aggregate (a `failed` row inside a 200), so unlike every other consumer there is no status
+code carrying the alarm and the log line is the entire signal that the defect happened. A row
+logged at WARN sits below the threshold anyone watches while the caller is told the request
+succeeded. Stated as the property because the arm previously carried a comment counting "all
+three", which the next sentinel added to it falsified without failing anything.
 
 **A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
 measurement; substituting one for a campaign that could not be read is indistinguishable from
@@ -529,6 +548,17 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   key is not. It logs at ERROR because it is the arm that should page someone, and the cause IS
   logged here — it is produced by the encryptor from ciphertext and key material only, never from
   plaintext.
+- `domain.ErrServiceDefect` → **500** — matched ABOVE every connection arm below. The failure is
+  in a request THIS SERVICE constructed, so nothing the caller or the operator owns is broken.
+  Each arm below names a remedy belonging to someone who has nothing to repair: the 400 tells an
+  operator their stored connection "cannot be used as configured" and lists fields to check that
+  are all correct. That is the audit-a-correct-configuration outcome the reason vocabulary exists
+  to prevent, and tagging the error `ErrConnectionNotUsable` reintroduced it while the reason token
+  reached only the log. **The reason sentinel and the STATUS sentinel are separate axes.** A 5xx
+  because the only actor who can act reads the log, not the response; the body names no remedy
+  because the caller has none. Produced today by `linkedinExpiry` for a token request LinkedIn
+  refused on protocol grounds (`ErrTokenRequestRejected`), and wrapped ALONGSIDE that reason so
+  `unusableConnectionReason` keeps reporting `token_request_rejected`.
 - `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
   stands: inactive, an incomplete or undecodable credential blob, or a malformed stored config
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
@@ -881,7 +911,8 @@ impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
 `UnauthorizedError` (401). The SECOND was 400 before, which classified an absent or refused
 credential as a MALFORMED REQUEST, and told the caller not to retry a token a refresh would
 fix. The 503 case was never a 400 — only that branch can involve a credential that is
-genuinely valid, because nothing about it was ever checked.
+genuinely valid, because during a JWKS outage no token is checked at all. The 401 branch is
+not that case: it answers a credential that was absent or genuinely refused.
 The verdict is returned separately rather than sniffed from the message: "invalid bearer
 token" is deliberately the *same* string for every token-side refusal, so it cannot carry
 the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on

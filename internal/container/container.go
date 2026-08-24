@@ -69,6 +69,11 @@ type briefBackendSetter interface {
 	// UploadCreativeAsset serving 503 forever on a cold-started pod while every other route
 	// worked — the same silent gap that pulled SetBriefRepo/SetBuilder onto audienceBackendSetter.
 	SetCreativeAssetRepo(domain.CreativeAssetRepository)
+	// SetDecodeReserver is on this interface for the same reason SetCreativeAssetRepo is: it is
+	// a memory BOUND, and a cold-started pod that bound the repo without it would serve uploads
+	// with the aggregate decode budget unenforced — working normally, and unbounded, which is
+	// the failure a compile-time contract exists to prevent.
+	SetDecodeReserver(*service.DecodeReserver)
 }
 
 // audienceBackendSetter late-binds the audience repo after a cold-start retry.
@@ -746,6 +751,7 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
 	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+	bb.SetDecodeReserver(service.NewDecodeReserver(constants.DecodeAdmissionBudgetBytes))
 }
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
