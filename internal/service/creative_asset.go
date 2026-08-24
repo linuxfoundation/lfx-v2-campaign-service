@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"image"
 	"image/color"
 
@@ -23,6 +24,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // SetCreativeAssetRepo injects the creative-asset repository.
@@ -206,8 +208,45 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		// uploader, so this attributes creation, not re-sending.
 		CreatedBy: marshalActor(attributedActor(ctx, "upload creative asset")),
 	}
-	stored, created, err := repo.CreateAsset(ctx, asset)
+	// BOUND the persistence span, because it is held under the admission permit.
+	//
+	// UploadAdmission takes its permit before next.ServeHTTP and releases it only after the whole
+	// handler returns, so every span in here runs under it. CreateAsset is
+	// BEGIN → SELECT ... FOR UPDATE on the parent brief → INSERT → COMMIT, and concurrent uploads
+	// to the SAME brief serialize on that row lock. net/http gives a handler's r.Context() no
+	// deadline — ReadTimeout and WriteTimeout install deadlines on the SOCKET and never cancel the
+	// context — and there is no pool statement_timeout/lock_timeout and no http.TimeoutHandler on
+	// the chain. Without a bound here a stalled or lock-blocked insert therefore pins its permit
+	// until the client disconnects, and enough of those exhaust the upload budget with no memory
+	// pressure at all: the control that exists to stop uploads denying service becomes the thing
+	// denying it.
+	//
+	// UploadHandlerHeadroom is the budget rather than a new constant because it already NAMES this
+	// span — the response time reserved inside WriteTimeout after the body is read, for exactly
+	// "decode, persist, and write". Inventing a second number would leave two constants describing
+	// one window, free to drift apart. A pool-level statement_timeout/lock_timeout would also bound
+	// it, but it is set per-pool and would apply the upload's budget to every other query in the
+	// service, so the bound is applied here where the span it protects is known.
+	//
+	// This is the same class as the decode wait: a bound that must not become a hang.
+	insertCtx, cancelInsert := context.WithTimeout(ctx, constants.UploadHandlerHeadroom)
+	defer cancelInsert()
+
+	stored, created, err := repo.CreateAsset(insertCtx, asset)
 	if err != nil {
+		// Expiry is reported as an explicit, retryable 503 rather than falling through to
+		// mapBriefErr's default 500. The distinction is real: the request did not fail because it
+		// was malformed or because the server is broken, but because persistence did not complete
+		// inside the budget — which a client SHOULD retry. It must never surface as a success or
+		// an empty result: the transaction was cut off, so the asset may not be stored, and
+		// telling the caller otherwise is the worse failure. errors.Is on the context sentinels
+		// rather than on insertCtx.Err(), so a deadline propagated from the repo is caught too.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return nil, &briefs.ConnServiceUnavailableError{
+				Code:    "503",
+				Message: "storing the creative asset did not complete in time; retry shortly",
+			}
+		}
 		return nil, mapBriefErr(err)
 	}
 	// created selects the response status in the generated encoder: 201 when this request stored

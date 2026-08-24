@@ -23,10 +23,12 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // TestBriefService_UploadCreativeAsset_UnavailableWithoutRepo pins that a BriefService with no
@@ -803,5 +805,110 @@ func TestBriefService_UploadCreativeAsset_RefusesOversizeStoredFile(t *testing.T
 	if repo.stored != nil {
 		t.Errorf("an oversize image reached the repository (%d bytes); the guard must run before "+
 			"the write", len(repo.stored.Bytes))
+	}
+}
+
+// deadlineObservingAssetRepo reports the deadline its CreateAsset context carried, and blocks
+// until that context is done so the call cannot return before the bound fires.
+//
+// Blocking on ctx.Done() rather than on a timer is what keeps this test free of sleeps and
+// elapsed-time thresholds: the only thing that can release it is the context the handler built,
+// so if the handler passes an unbounded context the call parks and the test fails by timeout
+// rather than by a threshold someone tuned.
+type deadlineObservingAssetRepo struct {
+	hadDeadline bool
+	// budget records how much time the handler allowed, so the test can assert a bound was set
+	// without pinning the exact constant twice.
+	budget time.Duration
+	err    error
+}
+
+func (f *deadlineObservingAssetRepo) CreateAsset(ctx context.Context, _ *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
+	dl, ok := ctx.Deadline()
+	f.hadDeadline = ok
+	if ok {
+		f.budget = time.Until(dl)
+	}
+	// Simulate the stalled or lock-blocked insert: wait for the context to end. With a bound
+	// this returns as soon as the deadline expires; without one it waits forever.
+	<-ctx.Done()
+	if f.err != nil {
+		return nil, false, f.err
+	}
+	return nil, false, ctx.Err()
+}
+
+func (f *deadlineObservingAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+// TestUploadCreativeAsset_BoundsTheInsertHeldUnderThePermit pins the availability property that
+// the UploadAdmission permit cannot be pinned by a stalled insert.
+//
+// The permit is taken in the middleware before next.ServeHTTP and released only after the whole
+// handler returns, so every span inside the handler is held under it. CreateAsset runs
+// BEGIN -> SELECT ... FOR UPDATE on the parent brief -> INSERT -> COMMIT, and concurrent uploads
+// to the SAME brief serialize on that row lock. Under the raw request context -- which net/http
+// gives no deadline -- a lock-blocked insert therefore holds its permit until the client
+// disconnects, and enough of those exhaust the upload budget with no memory pressure at all.
+//
+// The test asserts the bound exists AND that expiry is reported as an explicit retryable status.
+// A timeout that surfaced as success, or as an empty result, would be the worse failure: the
+// caller would believe the asset was stored when the transaction was cut off.
+func TestUploadCreativeAsset_BoundsTheInsertHeldUnderThePermit(t *testing.T) {
+	repo := &deadlineObservingAssetRepo{}
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+
+	// context.Background() has no deadline, exactly like the r.Context() the real handler runs
+	// under. Any bound observed inside CreateAsset can therefore only have been applied by the
+	// handler itself.
+	if _, ok := context.Background().Deadline(); ok {
+		t.Fatal("premise broken: the inbound context already carries a deadline")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+			ProjectID:   "cncf",
+			BriefID:     "b1",
+			ContentType: "image/png",
+			Bytes:       pngBytes(t),
+		})
+		done <- err
+	}()
+
+	var uerr error
+	select {
+	case uerr = <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("UploadCreativeAsset never returned: the insert runs under an unbounded context, " +
+			"so a stalled insert pins its admission permit until the client disconnects")
+	}
+
+	if !repo.hadDeadline {
+		t.Fatal("CreateAsset ran with NO deadline: the permit is held across an unbounded insert")
+	}
+	if repo.budget <= 0 {
+		t.Errorf("CreateAsset deadline budget = %v, want a positive bound", repo.budget)
+	}
+	// The bound must leave the handler room to answer within the write deadline rather than
+	// being an arbitrary number: it may not exceed the reserved handler headroom.
+	if repo.budget > constants.UploadHandlerHeadroom {
+		t.Errorf("CreateAsset budget = %v, want at most the reserved handler headroom %v",
+			repo.budget, constants.UploadHandlerHeadroom)
+	}
+
+	// Expiry must be an explicit, retryable failure -- never a success, never an empty result.
+	if uerr == nil {
+		t.Fatal("a timed-out insert returned nil error: the caller is told the asset was stored")
+	}
+	var unavail *briefs.ConnServiceUnavailableError
+	if !errors.As(uerr, &unavail) {
+		t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError: a persistence timeout "+
+			"is transient and retryable, not a generic 500", uerr, uerr)
+	}
+	if unavail.Code != "503" {
+		t.Errorf("code = %q, want %q", unavail.Code, "503")
 	}
 }

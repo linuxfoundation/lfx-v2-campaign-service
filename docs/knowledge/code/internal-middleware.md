@@ -57,8 +57,9 @@ mux are what would otherwise do the buffering.
 
 ## Upload admission bound (LFXV2-3295)
 
-`UploadAdmission(budget, weight, wait)` bounds the TOTAL bytes concurrent uploads may cause the
-process to allocate. The body cap above bounds ONE request; this bounds how many run at once.
+`UploadAdmission(budgetBytes, maxBodyBytes, weightFor, wait)` bounds the TOTAL bytes concurrent
+uploads may cause the process to allocate. The body cap above bounds ONE request; this bounds how
+many run at once.
 
 The distinction is the point. Against a fixed pod memory limit, N concurrent and entirely LEGAL
 uploads multiply a per-request allocation until the pod is OOM-killed — a cheap denial of service
@@ -100,6 +101,31 @@ The budget is DERIVED, not chosen: `constants.UploadAdmissionBudgetBytes` is
 `resources.limits.memory`. Because that number lives in a file the Go build cannot read,
 `TestPodMemoryLimitMatchesChart` parses `values.yaml` and fails when the two drift — the
 relationship is enforced rather than trusted.
+
+Two refusals, and their ORDER is deliberate. A body whose DECLARED `Content-Length` already
+exceeds `maxBodyBytes` is answered `413` immediately, before any permit is sought: that verdict is
+permanent and knowable from the headers, so shedding it with a retryable `503` because the budget
+happened to be busy would tell the caller to retry something that can never succeed at any size of
+budget. The check reads an already-parsed header and consumes no body, so it does not weaken the
+pre-auth placement above. An UNDECLARED or chunked body is deliberately not covered here — its
+size is unknowable without reading it, so it proceeds through admission and meets `MaxBodyBytes`'
+`MaxBytesReader` arm, which is where that case belongs.
+
+The weight is PRICED per request, not charged flat, by `constants.UploadAdmissionWeightFor`. A
+flat charge equal to the budget made effective concurrency exactly 1 — a 200 KiB logo held the
+same permit as a 30 MiB image. Declared sizes are charged proportionally
+(`UploadAdmissionAmplification`) between a floor (`UploadAdmissionMinWeightBytes`, 8 MiB) and the
+worst-case ceiling, so ordinary uploads run ~16 at a time against the 128 MiB budget.
+
+Unknown length (chunked or absent, `ContentLength < 0`) is charged the FLOOR, not the ceiling.
+The ceiling equals the whole budget, so pricing the unknown case there re-created concurrency 1 —
+and not hypothetically: goa's generated `RequestEncoder` never sets `ContentLength`, so the
+shipped briefs client streams this upload chunked and hit exactly that path. Charging the floor
+does not make an omitted header the cheapest permit, because the permit is not what bounds
+spending: the body is bounded by `MaxBodyBytes`' `MaxBytesReader` and the pixel buffer by the
+separate `DecodeReserver` budget, and neither consults the declared length. Making the generated
+client declare an encoded length so it is priced by its true size is the complementary
+client-side fix, tracked as issue #183.
 
 Under saturation a request waits a bounded `UploadAdmissionWait` (250 ms, absorbing ordinary
 jitter) and is then shed with an explicit `503` plus `Retry-After` in the service's

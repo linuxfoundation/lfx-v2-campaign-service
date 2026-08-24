@@ -133,25 +133,43 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 //     A liar therefore buys a cheap permit and still cannot spend more than the ceiling this
 //     function would have charged it.
 //
-// Absent or chunked (ContentLength < 0) is charged the FULL worst-case weight rather than the
-// floor: nothing is known about the size, and the unknown case must be priced at the ceiling or
-// it becomes the cheapest way to buy a permit. Charging the floor would be the wrong direction:
-// an undeclared 42 MiB body's true worst case is ~168 MiB at UploadAdmissionAmplification,
-// ABOVE the 128 MiB ceiling charged here, so the ceiling already under-states that risk.
+// Absent or chunked (ContentLength < 0) is charged the FLOOR, the same as the smallest declared
+// upload. Pricing the unknown case at the worst-case ceiling is the intuitive choice and it was
+// the wrong one, because the ceiling EQUALS UploadAdmissionBudgetBytes: one undeclared request
+// took the entire budget, so undeclared uploads ran strictly one at a time. That is not a
+// theoretical branch — goa's generated RequestEncoder never sets ContentLength, so the shipped
+// briefs client streams this upload chunked and lands here. The pricing model's whole benefit
+// was therefore defeated for the only generated client that exists, as an artifact of encoder
+// behaviour rather than as a decision anyone made.
 //
-// KNOWN CONSEQUENCE — an undeclared-length upload SERIALIZES. The ceiling equals
-// UploadAdmissionBudgetBytes (both are PodMemoryLimitBytes/4), so one such request consumes the
-// whole budget and concurrent undeclared uploads shed with 503 + Retry-After after
-// UploadAdmissionWait rather than running together. This is a THROUGHPUT property, not a safety
-// gap: the aggregate memory bound holds either way, and the shed is honest and retryable. It is
-// also not hypothetical — goa's generated RequestEncoder never sets ContentLength, so the
-// generated briefs client sends this upload chunked and lands here. The real caller (the TS/BFF)
-// sets Content-Length and is priced by size, so it is unaffected. Accepted deliberately for now;
-// the fix is to publish the encoded length from an upload-specific request encoder so the
-// generated client is priced by size too — tracked as issue #183.
+// Charging the floor does NOT make an omitted Content-Length the cheapest way to buy a permit,
+// which is the objection that kept the ceiling here. The permit does not bound what the request
+// may spend; two other controls do, and neither one reads the declared length:
+//
+//   - The BODY is bounded by MaxBodyBytes, which wraps every request in http.MaxBytesReader at
+//     MaxRequestBodyBytes (see buildHandler: MaxBodyBytes wraps the mux, immediately INSIDE this
+//     middleware, so it is on this route's chain). An undeclared body cannot be read past that
+//     cap whatever it claims or omits, so omitting the header buys no additional bytes.
+//   - The PIXEL BUFFER — the larger and less predictable cost, which compression severs from the
+//     wire size entirely — is bounded by the separate aggregate DecodeAdmissionBudgetBytes
+//     reservation taken around image.Decode. That budget is charged from the DECODED size read
+//     out of the image header, so it is unaffected by what the request declared on the wire.
+//
+// Under-declaring therefore buys a cheaper permit and still cannot spend more than a declaring
+// caller, which is the same asymmetry the UNDER-declaring bullet above already relies on. The
+// undeclared case is not a new hole; it is that same closed one reached by omitting the header
+// instead of understating it.
+//
+// This is the SERVER-SIDE half. Making the generated client declare a length so it is priced by
+// its actual size — rather than at the floor like every other unknown — is the separate,
+// complementary fix tracked as issue #183; both are wanted, and this one does not depend on it.
 func UploadAdmissionWeightFor(contentLength int64) int64 {
 	if contentLength < 0 {
-		return UploadAdmissionWeightBytes
+		// Unknown length is charged the same as the smallest declared upload, not the
+		// worst-case ceiling. See the doc comment: the ceiling equals the whole budget, so it
+		// serialized the shipped chunked client, and the body and pixel-buffer bounds that
+		// actually cap spending do not consult the declared length at all.
+		return UploadAdmissionMinWeightBytes
 	}
 	// Overflow-safe: contentLength is bounded by MaxRequestBodyBytes downstream, but this
 	// function must not depend on a bound applied by a different middleware, so the compare

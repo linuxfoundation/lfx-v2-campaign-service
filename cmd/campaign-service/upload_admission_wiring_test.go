@@ -52,11 +52,16 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker())
 
 	// The parked requests below stream a body of UNKNOWN length (blockingBody carries no
-	// Content-Length), which constants.UploadAdmissionWeightFor prices at the worst-case
-	// ceiling — the deliberate choice that stops an unknown size being the cheapest permit.
-	// The saturation count is therefore computed from that same ceiling price rather than
-	// from the raw weight constant, so it tracks the pricing rule the chain actually applies
-	// instead of restating an arithmetic the middleware no longer performs.
+	// Content-Length), which constants.UploadAdmissionWeightFor prices at the FLOOR — the
+	// same charge as the smallest declared upload, because omitting the header cannot buy
+	// more bytes than declaring them (MaxBodyBytes bounds the body, the decode reservation
+	// bounds the pixel buffer, and neither consults the declared length).
+	//
+	// The saturation count is therefore computed from that same pricing function rather than
+	// from the raw weight constant, so it tracks the rule the chain actually applies instead
+	// of restating an arithmetic the middleware no longer performs. That matters more now
+	// than it did when unknown length priced at the ceiling: saturating the budget takes as
+	// many parked requests as the floor admits, not one.
 	admits := int(constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(-1))
 
 	release := make(chan struct{})
