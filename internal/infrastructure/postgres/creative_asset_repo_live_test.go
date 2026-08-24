@@ -553,11 +553,13 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 		// reach" — and names the change that would invalidate it: "a path that reads assets
 		// without re-checking the parent [means] this insert needs the locking treatment".
 		//
-		// The stranded row and the row below are the same row to a reader: both are assets
-		// whose parent is archived. So this assertion is what makes "nothing can reach it"
-		// true, and dropping the EXISTS from getCreativeAssetQuery fails here. Anyone loosening
-		// this is also reopening the locking question in createCreativeAssetQuery, not just
-		// relaxing a read scope.
+		// This subtest independently pins LIFECYCLE VISIBILITY: an archived brief must refuse
+		// its children on every operation, so dropping the EXISTS from getCreativeAssetQuery
+		// fails here. It is no longer load-bearing for the INSERT: CreateAsset takes
+		// SELECT ... FOR UPDATE on the parent, and
+		// TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival carries that decision.
+		// Weakening this read would expose archived assets — its own bug — but would not
+		// reopen the archival race.
 		liveBriefID, liveProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 		a := newTestAsset(t, liveProjectID, liveBriefID)
 		created, err := repo.CreateAsset(ctx, a)
@@ -636,23 +638,52 @@ func TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival(t *testing.T) {
 		done <- result{err: cerr}
 	}()
 
-	// A correctly serialized CreateAsset takes the same brief row lock and therefore BLOCKS here.
-	// An unlocked EXISTS gate reads the pre-archival committed state and returns immediately.
-	select {
-	case res := <-done:
-		if res.err == nil {
-			t.Fatal("CreateAsset returned a stored asset while an uncommitted archival held the " +
-				"parent brief row: the parent gate read past the concurrent archival instead of " +
-				"serializing against it, so this blob can be committed under an archived brief. " +
-				"creative_assets has no prune, so that row is unreachable storage retained forever")
+	// A correctly serialized CreateAsset takes the same brief row lock and therefore BLOCKS.
+	//
+	// Assert that POSITIVELY, by asking Postgres which backends are waiting on another
+	// backend's lock — not by sleeping and inferring a block from the absence of a return. A
+	// timeout proves only that nothing came back within the window, which a goroutine that was
+	// never scheduled or was waiting on a pool connection satisfies just as well; the archival
+	// would then commit and even an unlocked implementation would read the archived row and
+	// return ErrNotFound, passing the test for the wrong reason. Same shape as
+	// waitForBlockedBackend in dbtest/audience_lease_live_test.go, which exists for this reason.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case res := <-done:
+			if res.err == nil {
+				t.Fatal("CreateAsset returned a stored asset while an uncommitted archival held " +
+					"the parent brief row: the parent gate read past the concurrent archival " +
+					"instead of serializing against it, so this blob can be committed under an " +
+					"archived brief. creative_assets has no prune, so that row is unreachable " +
+					"storage retained forever")
+			}
+			t.Fatalf("CreateAsset returned %v while the archival held the row: it did not wait "+
+				"on the parent row lock", res.err)
+		default:
 		}
-		t.Fatalf("CreateAsset returned %v without waiting for the archival to resolve: it did not "+
-			"take the parent row lock", res.err)
-	case <-time.After(750 * time.Millisecond):
-		// Blocked on the lock, which is the correct behaviour.
+		var blocked int
+		if qerr := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity a
+			WHERE a.datname = current_database()
+			  AND a.pid <> pg_backend_pid()
+			  AND cardinality(pg_blocking_pids(a.pid)) > 0`).Scan(&blocked); qerr != nil {
+			t.Fatalf("inspect pg_stat_activity for a blocked backend: %v", qerr)
+		}
+		if blocked > 0 {
+			break // CreateAsset is genuinely waiting on the archival's row lock.
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no backend ever blocked on the archival transaction's row lock; CreateAsset " +
+				"is not taking FOR UPDATE against the parent brief row")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Let the archival win. CreateAsset must now observe the archived parent and refuse.
+	// Let the archival win. This test forces the ARCHIVE-FIRST order only: because the archival
+	// transaction already owns the lock, CreateAsset must wait, then observe 'archived' and store
+	// nothing. The opposite order (upload first) is legitimate and commits — see the port's
+	// ordering contract; it is deliberately not what this test exercises.
 	if cerr := tx.Commit(ctx); cerr != nil {
 		t.Fatalf("commit archival: %v", cerr)
 	}

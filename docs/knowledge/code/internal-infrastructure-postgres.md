@@ -1165,7 +1165,7 @@ asset resolution land in the two follow-on PRs, and the repo is wired into the c
 campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`, checks the status, then runs
 `INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
 checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>` on that same
-transaction. Five things are doing work here and each has a failure mode if changed:
+transaction. Six things are doing work here and each has a failure mode if changed:
 
 - **The parent brief is LOCKED before the insert, and that lock is what orders this against
   archival.** An earlier revision ran the insert as a single unlocked autocommit statement and
