@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1092,40 +1091,46 @@ func TestGoogleAds_ReadSettings_AbsentProvenanceOutranksAnUnusableConnection(t *
 // callers. This test makes the split executable, so a future caller that changes
 // side cannot leave the prose behind.
 //
-// It derives each caller's rule from the SOURCE of the guard rather than
-// restating it, so it tracks the code instead of agreeing with a copy of it.
+// Both halves are asserted by BEHAVIOUR, through the dispatcher, on the same
+// absent-provenance input. An earlier version of this test grepped googleads.go
+// for the guard expressions instead; Bugbot correctly identified that as vacuous,
+// and a mutation confirmed it: deleting the settings readback's refusal left both
+// substrings present elsewhere in the file and the test stayed green. Asserting on
+// source text cannot distinguish a live guard from a comment that mentions it.
 func TestGoogleAdsCreationCustomerIDContractIsSplitByCaller(t *testing.T) {
-	src, err := os.ReadFile("googleads.go")
-	if err != nil {
-		t.Fatalf("read googleads.go: %v", err)
+	// One campaign, no recorded creating customer: the single input the two sides
+	// of the contract answer differently.
+	absentProvenance := func() *model.Campaign {
+		return &model.Campaign{
+			ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+			Result: []byte(`{}`),
+		}
 	}
-	text := string(src)
+	const searchBody = `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`
 
-	// The PERMISSIVE callers guard with `created != ""`, which lets an unknown
-	// provenance through untouched. Both the toggle and metrics paths must keep
-	// that shape: they only ever COMPARE, so a legacy row cannot prove a mismatch.
-	permissive := strings.Count(text, `if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID()`)
-	if permissive < 2 {
-		t.Errorf("found %d permissive `created != \"\"` guards, want at least 2 (toggle and metrics): "+
-			"if a caller stopped permitting absence, googleAdsCreationCustomerID's documented "+
-			"split is no longer accurate", permissive)
-	}
+	t.Run("fail-closed caller refuses absent provenance", func(t *testing.T) {
+		d, _ := settingsDispatcher(t, searchBody)
+		_, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, absentProvenance())
+		if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+			t.Fatalf("ReadSettings err = %v, want ErrCampaignProvenanceUnknown: the settings readback "+
+				"is the caller whose answer is meaningless without provenance, so absence must fail closed", err)
+		}
+	})
 
-	// The FAIL-CLOSED caller rejects the same input, joining ErrCampaignProvenanceUnknown.
-	if !strings.Contains(text, `created := googleAdsCreationCustomerID(campaign)`) ||
-		!strings.Contains(text, "domain.ErrCampaignProvenanceUnknown") {
-		t.Error("no fail-closed caller joins domain.ErrCampaignProvenanceUnknown on absent provenance: " +
-			"googleAdsCreationCustomerID's documented split claims one exists")
-	}
-
-	// The helper's own doc must NOT state a single universal rule for absence, which
-	// is what made it inaccurate. It must describe unknown as unknown.
-	doc := text[strings.Index(text, "// googleAdsCreationCustomerID recovers"):strings.Index(text, "func googleAdsCreationCustomerID")]
-	if strings.Contains(doc, "the caller must treat that as permission to proceed") {
-		t.Error("googleAdsCreationCustomerID's doc still states absence is universally permission to " +
-			"proceed, but the settings readback fails closed on it")
-	}
-	if !strings.Contains(doc, "UNKNOWN") {
-		t.Error("googleAdsCreationCustomerID's doc no longer describes an empty return as unknown")
-	}
+	t.Run("permissive caller proceeds on absent provenance", func(t *testing.T) {
+		d, _ := settingsDispatcher(t, searchBody)
+		// The metrics read only ever COMPARES a recorded id, so an unrecorded one
+		// cannot prove a mismatch and must not be turned into a refusal. It must get
+		// PAST the provenance guard; whatever the stubbed upstream then answers is
+		// beside the point, so only the provenance sentinels are excluded.
+		_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds,
+			absentProvenance(), model.MetricsWindowLast7Days)
+		if errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+			t.Fatalf("ReadMetrics err = %v, want it NOT to refuse on absent provenance: a legacy row "+
+				"cannot prove a mismatch, and refusing every one would break reads that work today", err)
+		}
+		if errors.Is(err, domain.ErrCampaignAccountMismatch) {
+			t.Fatalf("ReadMetrics err = %v, want no mismatch: absence is not disagreement", err)
+		}
+	})
 }

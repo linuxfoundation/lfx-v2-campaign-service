@@ -30,3 +30,17 @@ two answers legitimately differ. The doc now states that shape and deliberately 
 callers, since an enumeration is falsified by the next one added. Sweeping the sibling helpers
 found Microsoft's and Meta's "unknown, proceed" wording still accurate — every one of their
 callers permits absence — so only Google Ads' contract had actually split.
+
+A second round on this same commit is worth recording, because the first fix repeated the
+mistake it was fixing. The test pinning that split originally asserted it by grepping
+`googleads.go` for the guard EXPRESSIONS. Bugbot called it vacuous, and the mutation agreed:
+deleting the settings readback's absent-provenance refusal left `created :=
+googleAdsCreationCustomerID(campaign)` and `domain.ErrCampaignProvenanceUnknown` present
+elsewhere in the file — the latter in the helper's own doc comment — so the assertion stayed
+green. A source-text assertion cannot tell a live guard from a comment that mentions one.
+
+Both halves are now asserted through the dispatcher on the same absent-provenance input:
+`ReadSettings` must return `ErrCampaignProvenanceUnknown`, `ReadMetrics` must not. Re-running
+the original mutation after the fix kills it, and collapsing the permissive guard to
+`created != client.CustomerID()` kills the other half. Re-running the mutation AFTER fixing is
+the step that distinguishes this from the version that merely cited the finding.
