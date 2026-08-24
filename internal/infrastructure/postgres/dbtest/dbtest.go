@@ -48,6 +48,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
@@ -232,10 +233,54 @@ func UniqueID(t *testing.T, suffix string) string {
 // specific malformation is not worth a credential.
 //
 // Errors that are NOT a *url.Error keep their text, since they are driver and connection
-// failures whose messages are diagnostic rather than echoes of the input, with
-// redact.URLUserinfo as the backstop for any that embedded the value anyway. It is
-// string-based and needs no parse to succeed -- see its package doc, which names this
-// exact path. Callers pass the error, never the DSN.
+// failures whose messages are diagnostic rather than echoes of the input -- but only after
+// they are checked against the CONFIGURED DSN's own identifiers, because that premise does
+// not hold on its own.
+//
+// redact.URLUserinfo was the backstop here and it is not sufficient, because it understands
+// only URL-shaped `user:pass@` text. A DSN has a second legal shape. pgx accepts KEYWORD/VALUE
+// connection strings (`host=h user=u password=p dbname=d`), and its errors are built from that
+// shape, so a URL-shaped redactor passes them through untouched. Verified against pgx v5.9.2:
+//
+//   - `*pgconn.ConnectError` renders `failed to connect to `+"`"+`user=%s database=%s`+"`"+“ from
+//     Config fields -- the username, verbatim, on every connection failure.
+//   - `*pgconn.ParseConfigError` renders the whole connection string through pgx's own
+//     `redactPW`, which masks `password=` and userinfo but KEEPS the username in every branch.
+//
+// Neither unwraps to a *url.Error, so the arm above never sees them, and both reached the
+// URL-shaped fallback and were returned unchanged.
+//
+// Scrubbing those two templates is the fix this rejects. It is a denylist, and the shape that
+// defeats it is already in evidence: the username also arrives from a channel that has nothing
+// to do with DSN formatting at all. PostgreSQL itself quotes the role and database in its
+// diagnostics -- `role "u" does not exist` (28000), `database "d" does not exist` (3D000),
+// `password authentication failed for user "u"` (28P01) -- so the identifier appears in text
+// the SERVER generated, which no amount of template-matching on our side can anticipate.
+//
+// So the test is on VALUES, not on shapes. pgconn.ParseConfig reads both DSN forms into the
+// same Config, giving the user, password, database and host actually configured; if the
+// rendered error contains any of them, the message is replaced WHOLESALE with a sentinel.
+// This is the discipline internal/infrastructure/config's redactDatabaseURL already applies to
+// the same value class, for the same stated reason -- a keyword DSN is not safely parseable as
+// userinfo, so it is masked rather than picked apart.
+//
+// The replacement is wholesale rather than surgical because excising the matched bytes is its
+// own defect: an identifier may be short or ordinary (`app`, `a`, a database literally named
+// `connection`) and cutting it out of the driver's prose corrupts the diagnosis into something
+// an operator cannot read -- trading a leak for an unreadable log rather than fixing either.
+// A message that must be censored is one this package declines to reproduce.
+//
+// A message with NO configured identifier in it keeps its text in full, which is what preserves
+// diagnosability: `connection refused`, `password authentication failed`, `does not exist` and
+// the rest name the fault without naming the credential, and those are the errors an operator
+// actually meets. redact.URLUserinfo still runs on that text as the URL-shaped backstop.
+//
+// When the DSN cannot be parsed at all there are no identifiers to compare against, so no
+// message can be PROVEN clean and the sentinel applies unconditionally. That is the safe
+// direction for the case where the value is least trustworthy, and it is unreachable in the
+// ordinary run: an unparseable DSN fails at Migrate, which is the *url.Error arm above.
+//
+// Callers pass the error, never the DSN.
 //
 // It is exported so the harness in this package and the live tests in dbtest_test share ONE
 // implementation. Two formatting sites disagreeing about what "redacted" means is the bug
@@ -249,5 +294,46 @@ func SafeDSNErr(err error) string {
 		return "the DSN does not parse as a URL (the value and the parser's message are " +
 			"withheld: both can carry the credential)"
 	}
-	return redact.URLUserinfo(err.Error())
+	msg := redact.URLUserinfo(err.Error())
+	if dsnIdentifiersPresent(msg) {
+		return "the driver's message names a value from " + EnvDatabaseURL + " (it is " +
+			"withheld: the user, database and host are half of the credential)"
+	}
+	return msg
+}
+
+// dsnIdentifiersPresent reports whether msg reproduces any identifier from the configured
+// DSN.
+//
+// It reads TEST_DATABASE_URL rather than taking the DSN as an argument because SafeDSNErr's
+// callers are six live tests and the harness, none of which holds the value -- reporting the
+// env-var NAME instead of its value is this package's whole discipline, so threading the DSN
+// through those call sites would put it back in the places it is kept out of.
+//
+// pgconn.ParseConfig is what makes this shape-independent: it accepts BOTH the URL and the
+// keyword/value forms and yields the same Config, so the comparison is against what the DSN
+// MEANS rather than against how it was written.
+//
+// An unparseable or absent DSN yields no identifiers to clear a message with, so it reports
+// true -- withhold -- rather than false. Failing open here would restore the leak in exactly
+// the case where the configured value is least well understood.
+//
+// The empty-string guard is not decoration. A DSN with no password (the local peer-auth case)
+// leaves Config.Password empty, and strings.Contains(msg, "") is true for every message, so
+// omitting it would withhold every error the package ever prints.
+func dsnIdentifiersPresent(msg string) bool {
+	dsn := DSN()
+	if dsn == "" {
+		return false
+	}
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		return true
+	}
+	for _, id := range []string{cfg.Password, cfg.User, cfg.Database, cfg.Host} {
+		if id != "" && strings.Contains(msg, id) {
+			return true
+		}
+	}
+	return false
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // migrateURL rewrites a postgres:// DSN onto golang-migrate's internal pgx5:// scheme.
@@ -728,11 +729,23 @@ func TestWithDatabaseRepointsTheDSN(t *testing.T) {
 // The assertion is therefore two-sided. It requires the driver's own words to survive AND
 // the credential to stay out, so neither a leak nor a silent constant can pass it.
 //
-// This test needs no database: it calls the pure helper directly.
+// This test needs no database: it calls the pure helper directly. It does, however, PIN
+// the environment, and that is not tidying. SafeDSNErr clears a message by checking it
+// against the identifiers in the CONFIGURED DSN, so what this test asserts depends on the
+// value TEST_DATABASE_URL happens to hold on the runner. Its fixtures say `host=localhost`
+// — the commonest hostname there is — so a developer or CI job whose DSN also says
+// `localhost` saw the helper correctly withhold a message that names the configured host,
+// and this test read that correct behaviour as a regression. Pinning a DSN that shares no
+// identifier with the fixtures makes the assertion depend on the helper alone, which is
+// what it was always trying to measure.
 func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
-	t.Parallel()
-
+	// No t.Parallel: t.Setenv forbids it.
 	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
+
+	// Deliberately shares nothing with the fixture messages below, so a message is kept
+	// or withheld on its own merits rather than on a coincidence with the runner's DSN.
+	t.Setenv(dbtest.EnvDatabaseURL,
+		"host=pinned.invalid port=5432 user=pinneduser password=pinnedpw dbname=pinneddb") // secretlint-disable-line
 
 	cases := []struct {
 		name string
@@ -781,5 +794,224 @@ func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
 				t.Errorf("SafeDSNErr leaked the password: %q", got)
 			}
 		})
+	}
+}
+
+// TestSafeDSNErrWithholdsKeywordDSNIdentifiers covers the THIRD leak arm in this
+// redaction, and the first one that is not URL-shaped at all.
+//
+// The two arms before it were both about a *url.Error: first that `%v` on one embeds the
+// whole DSN, then that unwrapping to its cause still quotes the fragment net/url choked
+// on. Both were fixed by withholding, and both left the fallback arm — every error that
+// is NOT a *url.Error — reading `redact.URLUserinfo(err.Error())`.
+//
+// That backstop only understands URL-shaped `user:pass@` text, and a DSN has a second
+// legal shape. pgx accepts keyword/value connection strings and builds its errors out of
+// them, so the identifiers arrive in a form the redactor does not recognise and are
+// returned verbatim. Two channels do it, and they are independent:
+//
+//   - pgx SPLICES the DSN into its own messages. `*pgconn.ConnectError` formats
+//     "failed to connect to `user=%s database=%s`" from Config; `*pgconn.ParseConfigError`
+//     prints the whole connection string through pgx's `redactPW`, which masks the
+//     password and keeps the username. Neither unwraps to a *url.Error.
+//   - PostgreSQL QUOTES the identifiers back in its own diagnostics, with no involvement
+//     from the DSN's formatting at all: `role "u" does not exist`, `database "d" does not
+//     exist`, `password authentication failed for user "u"`.
+//
+// The second channel is why this test does not simply assert that pgx's two templates are
+// scrubbed. A denylist of message shapes cannot cover text the server generated, and this
+// redaction has already been defeated twice by fixes that pattern-matched the shapes then
+// in evidence. So the assertion is the invariant itself: no identifier from the configured
+// DSN appears in the output, whatever produced the message.
+//
+// The username is asserted absent alongside the password deliberately. This package's
+// contract — stated on pkg/redact and pinned by the *url.Error tests above — is that
+// userinfo goes ENTIRELY, because a username issued alongside a password is half of one
+// credential rather than a public identifier.
+//
+// This test needs no database. It calls the pure helper directly, and sets the env var
+// only so the helper has a configured DSN to compare against; nothing connects.
+func TestSafeDSNErrWithholdsKeywordDSNIdentifiers(t *testing.T) {
+	// No t.Parallel: t.Setenv forbids it, and the helper reads the environment.
+	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
+	const username = "ciuser"
+	const database = "campaigndb"
+	const host = "db.internal"
+
+	// The keyword/value form, which is exactly the shape redact.URLUserinfo cannot read.
+	t.Setenv(dbtest.EnvDatabaseURL,
+		"host="+host+" port=5432 user="+username+" password="+password+" dbname="+database)
+
+	cases := []struct {
+		name string
+		err  error
+		// the identifier this case demonstrates leaking, so a case cannot quietly stop
+		// exercising the arm it guards.
+		leaks string
+	}{
+		{
+			name:  "pgx ConnectError splices user and database",
+			err:   errors.New("failed to connect to `user=" + username + " database=" + database + "`: dial error: connection refused"),
+			leaks: username,
+		},
+		{
+			name:  "pgx ParseConfigError keeps the username after its own redactPW",
+			err:   errors.New("cannot parse `host=" + host + " user=" + username + " password=xxxxx dbname=" + database + "`: failed to configure TLS (sslmode is invalid)"),
+			leaks: username,
+		},
+		{
+			name:  "a keyword DSN carrying the password verbatim",
+			err:   errors.New("host=" + host + " user=" + username + " password=" + password + " dbname=" + database),
+			leaks: password,
+		},
+		{
+			name:  "the server quotes the role back (28000)",
+			err:   errors.New(`server error: FATAL: role "` + username + `" does not exist (SQLSTATE 28000)`),
+			leaks: username,
+		},
+		{
+			name:  "the server quotes the role back on auth failure (28P01)",
+			err:   errors.New(`server error (FATAL: password authentication failed for user "` + username + `" (SQLSTATE 28P01))`),
+			leaks: username,
+		},
+		{
+			name:  "the server quotes the database back (3D000)",
+			err:   errors.New(`server error (FATAL: database "` + database + `" does not exist (SQLSTATE 3D000))`),
+			leaks: database,
+		},
+		{
+			name:  "wrapped, so the leak is not at the top level",
+			err:   fmt.Errorf("init migrator: %w", errors.New("failed to connect to `user="+username+" database="+database+"`: connection refused")),
+			leaks: username,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The control: the UNFIXED rendering leaks. redact.URLUserinfo is what the
+			// fallback arm used to return, so running the raw message through it is
+			// exactly the old behaviour. If this stops holding, the case no longer
+			// demonstrates the leak it guards and the assertions below prove nothing.
+			if old := redact.URLUserinfo(tc.err.Error()); !strings.Contains(old, tc.leaks) {
+				t.Fatalf("precondition failed: the URL-shaped redactor did not pass %q "+
+					"through, so this case cannot demonstrate the leak it guards", tc.leaks)
+			}
+
+			got := dbtest.SafeDSNErr(tc.err)
+
+			for _, id := range []string{password, username, database, host} {
+				if strings.Contains(got, id) {
+					t.Errorf("SafeDSNErr = %q, want no identifier from %s; it echoed %q",
+						got, dbtest.EnvDatabaseURL, id)
+				}
+			}
+			// It must still be actionable. A redaction that leaks nothing and says
+			// nothing trades one defect for another, so the output has to name the
+			// variable an operator should go and look at.
+			if !strings.Contains(got, dbtest.EnvDatabaseURL) {
+				t.Errorf("SafeDSNErr = %q, want it to still name %s so the operator knows "+
+					"which value to inspect", got, dbtest.EnvDatabaseURL)
+			}
+		})
+	}
+}
+
+// TestSafeDSNErrWithholdsEachIdentifierIndependently pins that EVERY field of the
+// configured DSN is compared, not just the ones that happen to travel together.
+//
+// The table above cannot see this. Its messages are realistic, and a realistic pgx error
+// names several identifiers at once — `user=u database=d` carries both — so dropping any
+// single field from the comparison still leaves the message caught by one of the others.
+// Mutations removing cfg.Host and cfg.Password from the compared set both SURVIVED that
+// table for exactly this reason: a test whose cases each trip several assertions cannot
+// tell which assertion is load-bearing.
+//
+// So each case here names ONE identifier and nothing else, which is the only shape that
+// fails when that identifier's comparison is removed. The host and the database matter as
+// much as the user: an internal hostname is infrastructure detail an operator should not
+// have to paste into a public CI log, and this package's contract is that the DSN's
+// contents do not appear, not that its password does not.
+func TestSafeDSNErrWithholdsEachIdentifierIndependently(t *testing.T) {
+	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
+	const username = "ciuser"
+	const database = "campaigndb"
+	const host = "db.internal"
+
+	t.Setenv(dbtest.EnvDatabaseURL,
+		"host="+host+" port=5432 user="+username+" password="+password+" dbname="+database)
+
+	// Each message mentions its identifier and NOTHING else from the DSN, so it is caught
+	// only by that identifier's own comparison.
+	cases := []struct{ name, only string }{
+		{"user alone", username},
+		{"database alone", database},
+		{"host alone", host},
+		{"password alone", password},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := errors.New("server error: FATAL: something went wrong near " + tc.only)
+
+			got := dbtest.SafeDSNErr(err)
+			if strings.Contains(got, tc.only) {
+				t.Errorf("SafeDSNErr = %q, want %q withheld; every field of %s is compared, "+
+					"not only the ones that travel alongside another", got, tc.only,
+					dbtest.EnvDatabaseURL)
+			}
+		})
+	}
+}
+
+// TestSafeDSNErrWithholdsWhenTheDSNCannotBeParsed pins the direction the unparseable case
+// fails in.
+//
+// dsnIdentifiersPresent clears a message by proving it contains none of the configured
+// identifiers. When the DSN does not parse there are no identifiers to prove that with, so
+// nothing can be cleared and the sentinel has to apply. Returning false there instead —
+// "we found no identifiers, so the message is fine" — reads like the same sentence and is
+// the opposite guarantee: it restores the verbatim passthrough in precisely the case where
+// the configured value is least well understood. That mutation compiles and SURVIVED the
+// tables above, because none of their cases drives an unparseable DSN.
+func TestSafeDSNErrWithholdsWhenTheDSNCannotBeParsed(t *testing.T) {
+	const username = "ciuser"
+
+	// A DSN pgconn.ParseConfig rejects outright.
+	t.Setenv(dbtest.EnvDatabaseURL, "host=h user=u sslmode=notamode")
+
+	if _, err := pgconn.ParseConfig("host=h user=u sslmode=notamode"); err == nil {
+		t.Fatal("precondition failed: the DSN parses, so this test no longer exercises " +
+			"the unparseable branch it guards")
+	}
+
+	got := dbtest.SafeDSNErr(errors.New(`server error: FATAL: role "` + username + `" does not exist`))
+	if !strings.Contains(got, dbtest.EnvDatabaseURL) {
+		t.Errorf("SafeDSNErr = %q, want the sentinel naming %s: with an unparseable DSN "+
+			"there are no identifiers to clear a message with, so nothing can be proven "+
+			"safe to print", got, dbtest.EnvDatabaseURL)
+	}
+}
+
+// TestSafeDSNErrKeepsDiagnosticsWhenAFieldIsEmpty pins the guard that keeps an absent DSN
+// field from swallowing every message in the package.
+//
+// The local setup is peer auth: a DSN with no password at all, which leaves Config.Password
+// empty. `strings.Contains(msg, "")` is true for EVERY string, so comparing an empty field
+// would report that every error names the credential, and SafeDSNErr would answer every
+// call — including a plain "connection refused" — with the sentinel. That is the failure
+// this whole helper exists to avoid, reached from the other side: a redaction that leaks
+// nothing and diagnoses nothing.
+//
+// Dropping the `id != ""` test compiles and SURVIVES every table above, because they all
+// configure a DSN in which every compared field is populated.
+func TestSafeDSNErrKeepsDiagnosticsWhenAFieldIsEmpty(t *testing.T) {
+	// Peer auth: a user and a database, no password.
+	t.Setenv(dbtest.EnvDatabaseURL, "host=/var/run/postgresql user=peer dbname=campaign_test")
+
+	got := dbtest.SafeDSNErr(errors.New("connection refused"))
+	if !strings.Contains(got, "connection refused") {
+		t.Errorf("SafeDSNErr = %q, want the driver's text preserved: an EMPTY DSN field "+
+			"matches every message, so comparing it would withhold every error this "+
+			"package prints", got)
 	}
 }
