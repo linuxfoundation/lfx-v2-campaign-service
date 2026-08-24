@@ -154,6 +154,37 @@ func TestGetKeywordPerformance_MissingIDsIsAnError(t *testing.T) {
 	}
 }
 
+// campaign_id is Required on the google-ads-keyword design type and is selected by the same
+// GAQL query as the other two ids, so an absent campaign.id is the SAME SELECT/decoder drift
+// the guard above already fails closed on. Letting it through emits campaign_id:"" — a row a
+// caller cannot associate with any campaign, on a read whose entire scope is "this project's
+// OWN campaigns". The assertion is that the call ERRORS; it deliberately does not match the
+// message text, which would move with the wording.
+func TestGetKeywordPerformance_MissingCampaignIDIsAnError(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Both ids the old guard checks ARE present; only campaign.id is absent.
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"305729261","keyword":{"text":"x","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"176216228"},"campaign":{},"metrics":{"impressions":"5","clicks":"1","costMicros":"10"}}]}`)
+	})
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+		t.Fatal("a keyword row with no campaign id must not be returned as campaign_id:\"\", which is unusable to the caller and violates the Required() on the design type")
+	}
+}
+
+// A campaign id present but WHITESPACE-ONLY is the same defect: TrimSpace is what the sibling
+// guards use, so " " must not survive as a usable id either.
+func TestGetKeywordPerformance_WhitespaceCampaignIDIsAnError(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"305729261","keyword":{"text":"x","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"176216228"},"campaign":{"id":"   "},"metrics":{"impressions":"5","clicks":"1","costMicros":"10"}}]}`)
+	})
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+		t.Fatal("a whitespace-only campaign id must be rejected exactly as the criterion and ad group ids are")
+	}
+}
+
 // The window is concatenated into the GAQL string, so an unvalidated value is a query
 // injection vector exactly as an unvalidated id is.
 func TestGetKeywordPerformance_RejectsUnknownWindowBeforeCalling(t *testing.T) {

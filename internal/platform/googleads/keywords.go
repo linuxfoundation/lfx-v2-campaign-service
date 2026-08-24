@@ -376,8 +376,15 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		// keyword-actions endpoint needs BOTH to address a criterion. Returning it would
 		// hand the caller a row whose action button cannot work, so fail loudly instead —
 		// an absent id here means the SELECT and this struct have drifted apart.
-		if strings.TrimSpace(row.AdGroupCriterion.CriterionID) == "" || strings.TrimSpace(row.AdGroup.ID) == "" {
-			return nil, fmt.Errorf("get keyword performance: row %d is missing its criterion or ad group id", i)
+		//
+		// campaign.id is held to the SAME standard, and for the same reason rather than a
+		// weaker one: it is selected by this query, it is Required() on the design type, and
+		// a row carrying campaign_id:"" cannot be associated with any campaign by a caller —
+		// on a read whose whole scope is the project's OWN campaigns. Admitting it would let
+		// exactly the drift rejected for the other two ids through as a success.
+		if strings.TrimSpace(row.AdGroupCriterion.CriterionID) == "" || strings.TrimSpace(row.AdGroup.ID) == "" ||
+			strings.TrimSpace(row.Campaign.ID) == "" {
+			return nil, fmt.Errorf("get keyword performance: row %d is missing its criterion, ad group or campaign id", i)
 		}
 		out = append(out, KeywordRow{
 			CriterionID: row.AdGroupCriterion.CriterionID,

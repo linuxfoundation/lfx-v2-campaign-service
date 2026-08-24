@@ -633,9 +633,24 @@ into `CampaignInput.Keywords`/`.AudienceSegments`.
 
 ## Metrics reads (GA-5)
 
-`GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost, and
-CTR for one campaign over a predefined date-range window (e.g. `LAST_30_DAYS`)
-via a single GAQL `googleAds:search` query. The window and campaign id are
+`GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost,
+CTR and CONVERSIONS for one campaign over a predefined date-range window (e.g.
+`LAST_30_DAYS`) via a single GAQL `googleAds:search` query.
+
+`metrics.conversions` is handled differently from the other metrics in two ways,
+both of which are properties of the upstream encoding. It is declared **DOUBLE**
+in Google's field reference — Google credits fractional conversions under
+data-driven and position-based attribution — so it arrives as a BARE JSON NUMBER
+rather than one of the quoted int64 strings, and its fraction is carried through
+UNROUNDED: a campaign holding 0.4 of a conversion that was rounded to 0 would be
+reported as converting nobody, and the `no_conversions` rule reads exactly this
+number. Second, because the field is ALWAYS in the SELECT list and Google Ads
+REST is proto3 JSON (which omits default-valued fields), an **absent conversions
+member is the encoding of a measured 0.0**, not "unmeasured" — the adapter
+materialises a non-nil zero, the same way `parseMetricInt` treats an omitted
+impressions value as a measured 0. A nil conversions count is reserved for the
+platforms that cannot report one at all (Meta, X, Reddit, email), which is what
+the pointer in `model.CampaignMetrics` exists to distinguish. The window and campaign id are
 both validated as constrained (an allow-list of GAQL predefined-date-range
 literals, and digits-only respectively) BEFORE string concatenation into the
 query, since GAQL has no parameterized queries. int64 metric fields arrive as

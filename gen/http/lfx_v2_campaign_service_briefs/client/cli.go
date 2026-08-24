@@ -24,7 +24,7 @@ func BuildCreateBriefPayload(lfxV2CampaignServiceBriefsCreateBriefBody string, l
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsCreateBriefBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Quo corporis recusandae dicta quibusdam.\",\n         \"event_details\": \"Ut commodi et voluptas tenetur nobis facere.\",\n         \"event_slug\": \"wn\",\n         \"keywords\": \"Blanditiis mollitia dolores illo nostrum magnam.\",\n         \"platforms\": [\n            \"At ut necessitatibus dolor.\",\n            \"Cum nisi numquam.\",\n            \"Id unde veritatis officiis aut fugiat.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Nostrum tempore.\",\n         \"url\": \"Sed voluptatem sed illo numquam praesentium.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Quam officiis aut sit architecto ut unde.\",\n         \"event_details\": \"Assumenda dignissimos beatae vitae aut ea dolor.\",\n         \"event_slug\": \"x\",\n         \"keywords\": \"Sapiente possimus.\",\n         \"platforms\": [\n            \"Et voluptatem deserunt consequuntur omnis sed dolore.\",\n            \"Voluptatibus quod necessitatibus non iste ad rem.\",\n            \"Sunt qui cupiditate ullam ab suscipit et.\",\n            \"Harum corporis deleniti doloribus.\"\n         ],\n         \"program_type\": \"events\",\n         \"targeting\": \"Voluptates atque.\",\n         \"url\": \"Ut aperiam.\"\n      }\n   }'")
 		}
 		if body.Brief == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
@@ -135,7 +135,7 @@ func BuildUpdateBriefPayload(lfxV2CampaignServiceBriefsUpdateBriefBody string, l
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateBriefBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Quo corporis recusandae dicta quibusdam.\",\n         \"event_details\": \"Ut commodi et voluptas tenetur nobis facere.\",\n         \"event_slug\": \"wn\",\n         \"keywords\": \"Blanditiis mollitia dolores illo nostrum magnam.\",\n         \"platforms\": [\n            \"At ut necessitatibus dolor.\",\n            \"Cum nisi numquam.\",\n            \"Id unde veritatis officiis aut fugiat.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Nostrum tempore.\",\n         \"url\": \"Sed voluptatem sed illo numquam praesentium.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Quam officiis aut sit architecto ut unde.\",\n         \"event_details\": \"Assumenda dignissimos beatae vitae aut ea dolor.\",\n         \"event_slug\": \"x\",\n         \"keywords\": \"Sapiente possimus.\",\n         \"platforms\": [\n            \"Et voluptatem deserunt consequuntur omnis sed dolore.\",\n            \"Voluptatibus quod necessitatibus non iste ad rem.\",\n            \"Sunt qui cupiditate ullam ab suscipit et.\",\n            \"Harum corporis deleniti doloribus.\"\n         ],\n         \"program_type\": \"events\",\n         \"targeting\": \"Voluptates atque.\",\n         \"url\": \"Ut aperiam.\"\n      }\n   }'")
 		}
 		if body.Brief == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
@@ -575,7 +575,7 @@ func BuildUpdateCampaignPayload(lfxV2CampaignServiceBriefsUpdateCampaignBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Nulla sint.\",\n         \"config\": \"Commodi qui mollitia et eum veniam.\",\n         \"status\": \"Alias voluptatem ut consequatur ut recusandae.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Veritatis impedit aut.\",\n         \"config\": \"Exercitationem accusamus pariatur saepe ab qui.\",\n         \"status\": \"Earum doloribus.\"\n      }\n   }'")
 		}
 		if body.Campaign == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("campaign", "body"))
