@@ -226,6 +226,13 @@ func UniqueID(t *testing.T, suffix string) string {
 	return strings.ToLower(name+"-"+suffix) + "-" + hex.EncodeToString(b[:])
 }
 
+// dsnUnparseableMsg is the single rendering of the *url.Error arm, shared by SafeDSNErr and
+// SafeDSNErrFor. It is a constant rather than a literal at each site so the two cannot drift:
+// two formatting sites disagreeing about what "redacted" means is the bug that produced
+// pkg/redact in the first place.
+const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the parser's " +
+	"message are withheld: both can carry the credential)"
+
 // SafeDSNErr renders an error that may carry the DSN into a form safe to print.
 //
 // The DSN is the one value this package must never let reach a log. Locally it is a
@@ -265,8 +272,9 @@ func UniqueID(t *testing.T, suffix string) string {
 // connection strings (`host=h user=u password=p dbname=d`), and its errors are built from that
 // shape, so a URL-shaped redactor passes them through untouched. Verified against pgx v5.9.2:
 //
-//   - `*pgconn.ConnectError` renders `failed to connect to `+"`"+`user=%s database=%s`+"`"+“ from
-//     Config fields -- the username, verbatim, on every connection failure.
+//   - `*pgconn.ConnectError` renders a "failed to connect to ..." message embedding a
+//     user=%s database=%s fragment built from Config fields -- the username,
+//     verbatim, on every connection failure.
 //   - `*pgconn.ParseConfigError` renders the whole connection string through pgx's own
 //     `redactPW`, which masks `password=` and userinfo but KEEPS the username in every branch.
 //
@@ -314,8 +322,7 @@ func SafeDSNErr(err error) string {
 	}
 	var ue *url.Error
 	if errors.As(err, &ue) {
-		return "the DSN does not parse as a URL (the value and the parser's message are " +
-			"withheld: both can carry the credential)"
+		return dsnUnparseableMsg
 	}
 	return SafeDSNErrFor(DSN(), err)
 }
@@ -339,8 +346,7 @@ func SafeDSNErrFor(dsn string, err error) string {
 	}
 	var ue *url.Error
 	if errors.As(err, &ue) {
-		return "the DSN does not parse as a URL (the value and the parser's message are " +
-			"withheld: both can carry the credential)"
+		return dsnUnparseableMsg
 	}
 	msg := redact.URLUserinfo(err.Error())
 	if dsnIdentifiersPresent(dsn, msg) {
