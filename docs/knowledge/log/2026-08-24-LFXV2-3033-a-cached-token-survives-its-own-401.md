@@ -45,8 +45,34 @@ Each invalidator clears the EXPIRY as well as the token, so the cache reads empt
 half of the fast-path condition and a later edit to that test cannot resurrect the token. An
 in-flight single-flight refresh is deliberately left alone: it is already fetching a new token.
 
+## The first fix was racy: compare-and-clear, not clear
+
+The first version cleared unconditionally, and Copilot re-reviewed it into a real ABA race on
+all three providers. With a SHARED client the invalidator can be called about a token the cache
+no longer holds: request A leaves carrying `tok_1`, request B refreshes and caches `tok_2`, and
+A's late 401 then arrives naming `tok_1`. An unconditional clear evicts `tok_2` — a token
+nothing rejected — and a burst of late responses drives serial re-exchanges, defeating the very
+single-flight coalescing these clients already have.
+
+Proved it before fixing: seeding the cache with `tok_current` and invoking the unconditional
+invalidator emptied it, though no 401 had named that token.
+
+So the invalidator now takes the PRESENTED token and clears only on a match. That makes it
+idempotent and self-limiting — the rejected token is dropped exactly once, and every later 401
+naming it is a no-op because the cache has moved on. The token is threaded through every 401
+arm, which for microsoft meant widening `statusAwareReadError` to carry it (its two callers are
+the unreadable and oversize arms, where the token is still in scope in `attempt`).
+
+An empty `presented` never clears, so a caller that cannot name a token cannot flush the cache.
+
 ## Mutation
 
-Neutering all three `invalidateAccessToken` bodies to `{}` compiles, and kills all five tests
-(3 readable-401, 2 unreadable-401). Removing only microsoft's `statusAwareReadError` call kills
-the unreadable test alone. No survivors.
+Two independent properties, two independent mutations, both compiling:
+
+- **Neuter one provider's invalidator** (`_ = presented`) → kills ONLY that provider's 401
+  tests; the other two stay green. Run for each of the three, the diagonal is clean. A single
+  shared test would not have discriminated.
+- **Remove the CAS guard** (revert to unconditional) → kills the ABA test in all three while
+  every 401 test stays green, confirming the invalidation and the race are covered separately.
+
+No survivors.

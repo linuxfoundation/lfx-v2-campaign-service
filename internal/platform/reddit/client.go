@@ -580,11 +580,24 @@ type tokenResponse struct {
 //
 // Any in-flight single-flight refresh is deliberately left alone: it is already fetching a NEW
 // token from the token endpoint and its result is not the rejected one.
-func (c *Client) invalidateAccessToken() {
+func (c *Client) invalidateAccessToken(presented string) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Compare-and-clear. The cache may already hold a NEWER token than the one this 401
+	// answered: with a shared client, request A can leave carrying tok_1, request B can
+	// refresh and cache tok_2, and A's late 401 then arrives describing tok_1. An
+	// unconditional clear would evict tok_2 — a token nothing rejected — and a burst of
+	// late responses would drive serial re-exchanges, defeating the single-flight
+	// coalescing this client already has.
+	//
+	// Clearing only on a match makes the operation idempotent and self-limiting: the
+	// rejected token is dropped exactly once, and every later 401 naming it is a no-op
+	// because the cache has already moved on.
+	if presented == "" || c.cachedToken != presented {
+		return
+	}
 	c.cachedToken = ""
 	c.tokenExpireAt = time.Time{}
-	c.mu.Unlock()
 }
 
 func (c *Client) refreshToken(ctx context.Context) (string, error) {
@@ -1023,7 +1036,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 				// unparseable 401 body is still a 401, and making invalidation depend on
 				// reading the body would leave the ambiguous case — the one likeliest to
 				// accompany a broken auth response — serving the rejected token.
-				c.invalidateAccessToken()
+				c.invalidateAccessToken(token)
 			}
 			body := truncate(string(raw), redditErrBodyMaxRunes)
 			if readErr != nil {

@@ -378,11 +378,24 @@ type tokenResponse struct {
 //
 // Any in-flight single-flight refresh is deliberately left alone: it is already fetching a NEW
 // token and its result is not the rejected one.
-func (c *Client) invalidateAccessToken() {
+func (c *Client) invalidateAccessToken(presented string) {
 	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	// Compare-and-clear. The cache may already hold a NEWER token than the one this 401
+	// answered: with a shared client, request A can leave carrying tok_1, request B can
+	// refresh and cache tok_2, and A's late 401 then arrives describing tok_1. An
+	// unconditional clear would evict tok_2 — a token nothing rejected — and a burst of
+	// late responses would drive serial re-exchanges, defeating the single-flight
+	// coalescing this client already has.
+	//
+	// Clearing only on a match makes the operation idempotent and self-limiting: the
+	// rejected token is dropped exactly once, and every later 401 naming it is a no-op
+	// because the cache has already moved on.
+	if presented == "" || c.accessToken != presented {
+		return
+	}
 	c.accessToken = ""
 	c.tokenExpiry = time.Time{}
-	c.tokenMu.Unlock()
 }
 
 func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
@@ -682,7 +695,7 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 			// the status line is known and no 401 can reach a return without passing it.
 			// It also means an ambiguous or unparseable 401 is handled exactly like a
 			// readable one, which is the case likeliest to accompany a broken auth response.
-			c.invalidateAccessToken()
+			c.invalidateAccessToken(token)
 		}
 
 		buf := new(bytes.Buffer)

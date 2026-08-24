@@ -72,3 +72,34 @@ func TestRequest_401InvalidatesTheCachedToken(t *testing.T) {
 			presented[0])
 	}
 }
+
+// TestABA_LateUnauthorizedDoesNotEvictANewerToken pins the compare-and-clear property.
+//
+// The invalidator is called from a 401 that describes ONE specific token, but a shared client
+// may have moved on by the time that response lands: request A leaves carrying tok_1, request B
+// refreshes and caches tok_2, and A's late 401 then arrives naming tok_1. Clearing
+// unconditionally would evict tok_2 — a token nothing rejected — and a burst of late responses
+// would drive serial re-exchanges, defeating the single-flight coalescing.
+//
+// The assertion is on the CACHE CONTENT after a stale invalidation, not on a mint count,
+// because the mint count cannot distinguish "kept the good token" from "never had one".
+func TestABA_LateUnauthorizedDoesNotEvictANewerToken(t *testing.T) {
+	c := NewClient(testCreds, testAccount)
+
+	c.mu.Lock()
+	c.cachedToken = "tok_current"
+	c.mu.Unlock()
+
+	// A late 401 answering an OLDER token must be a no-op.
+	c.invalidateAccessToken("tok_stale")
+	if got := c.cachedToken; got != "tok_current" {
+		t.Errorf("cached token = %q, want it untouched: a 401 naming an older token must not "+
+			"evict the newer one the cache now holds", got)
+	}
+
+	// The token the 401 actually named IS dropped.
+	c.invalidateAccessToken("tok_current")
+	if got := c.cachedToken; got != "" {
+		t.Errorf("cached token = %q, want it cleared: the token the 401 named must be dropped", got)
+	}
+}
