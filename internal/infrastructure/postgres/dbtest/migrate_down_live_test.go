@@ -729,23 +729,25 @@ func TestWithDatabaseRepointsTheDSN(t *testing.T) {
 // The assertion is therefore two-sided. It requires the driver's own words to survive AND
 // the credential to stay out, so neither a leak nor a silent constant can pass it.
 //
-// This test needs no database: it calls the pure helper directly. It does, however, PIN
-// the environment, and that is not tidying. SafeDSNErr clears a message by checking it
-// against the identifiers in the CONFIGURED DSN, so what this test asserts depends on the
-// value TEST_DATABASE_URL happens to hold on the runner. Its fixtures say `host=localhost`
-// — the commonest hostname there is — so a developer or CI job whose DSN also says
-// `localhost` saw the helper correctly withhold a message that names the configured host,
-// and this test read that correct behaviour as a regression. Pinning a DSN that shares no
-// identifier with the fixtures makes the assertion depend on the helper alone, which is
-// what it was always trying to measure.
+// This test needs no database, and it now names its DSN EXPLICITLY rather than inheriting
+// whatever the runner exported. That is not tidying. SafeDSNErr clears a message by checking
+// it against the identifiers in the configured DSN, so while it read the environment this
+// test's result depended on a value it did not choose: its fixtures say `host=localhost` —
+// the commonest hostname there is — so a developer or CI job whose DSN also said `localhost`
+// saw the helper correctly withhold a message naming the configured host, and read that
+// correct behaviour as a regression. Passing the DSN through SafeDSNErrFor makes the
+// assertion depend on the helper alone, which is what it was always trying to measure, and
+// it keeps the test parallel: pinning via t.Setenv would have forced it serial and mutated
+// process-global state that this file's parallel tests read.
 func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
-	// No t.Parallel: t.Setenv forbids it.
+	t.Parallel()
+
 	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
 
-	// Deliberately shares nothing with the fixture messages below, so a message is kept
-	// or withheld on its own merits rather than on a coincidence with the runner's DSN.
-	t.Setenv(dbtest.EnvDatabaseURL,
-		"host=pinned.invalid port=5432 user=pinneduser password=pinnedpw dbname=pinneddb") // secretlint-disable-line
+	// Passed EXPLICITLY, and deliberately sharing nothing with the fixture messages below,
+	// so a message is kept or withheld on its own merits rather than on a coincidence with
+	// whatever DSN the runner happens to export.
+	const pinnedDSN = "host=pinned.invalid port=5432 user=pinneduser password=pinnedpw dbname=pinneddb" // secretlint-disable-line
 
 	cases := []struct {
 		name string
@@ -778,7 +780,7 @@ func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := dbtest.SafeDSNErr(tc.err)
+			got := dbtest.SafeDSNErrFor(pinnedDSN, tc.err)
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("SafeDSNErr = %q, want it to preserve the driver's text %q; a "+
 					"redaction that answers every cause with a fixed string diagnoses "+
@@ -832,15 +834,15 @@ func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
 // This test needs no database. It calls the pure helper directly, and sets the env var
 // only so the helper has a configured DSN to compare against; nothing connects.
 func TestSafeDSNErrWithholdsKeywordDSNIdentifiers(t *testing.T) {
-	// No t.Parallel: t.Setenv forbids it, and the helper reads the environment.
+	t.Parallel()
+
 	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
 	const username = "ciuser"
 	const database = "campaigndb"
 	const host = "db.internal"
 
 	// The keyword/value form, which is exactly the shape redact.URLUserinfo cannot read.
-	t.Setenv(dbtest.EnvDatabaseURL,
-		"host="+host+" port=5432 user="+username+" password="+password+" dbname="+database)
+	dsn := "host=" + host + " port=5432 user=" + username + " password=" + password + " dbname=" + database
 
 	cases := []struct {
 		name string
@@ -888,6 +890,8 @@ func TestSafeDSNErrWithholdsKeywordDSNIdentifiers(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			// The control: the UNFIXED rendering leaks. redact.URLUserinfo is what the
 			// fallback arm used to return, so running the raw message through it is
 			// exactly the old behaviour. If this stops holding, the case no longer
@@ -897,7 +901,7 @@ func TestSafeDSNErrWithholdsKeywordDSNIdentifiers(t *testing.T) {
 					"through, so this case cannot demonstrate the leak it guards", tc.leaks)
 			}
 
-			got := dbtest.SafeDSNErr(tc.err)
+			got := dbtest.SafeDSNErrFor(dsn, tc.err)
 
 			for _, id := range []string{password, username, database, host} {
 				if strings.Contains(got, id) {
@@ -932,13 +936,14 @@ func TestSafeDSNErrWithholdsKeywordDSNIdentifiers(t *testing.T) {
 // have to paste into a public CI log, and this package's contract is that the DSN's
 // contents do not appear, not that its password does not.
 func TestSafeDSNErrWithholdsEachIdentifierIndependently(t *testing.T) {
+	t.Parallel()
+
 	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
 	const username = "ciuser"
 	const database = "campaigndb"
 	const host = "db.internal"
 
-	t.Setenv(dbtest.EnvDatabaseURL,
-		"host="+host+" port=5432 user="+username+" password="+password+" dbname="+database)
+	dsn := "host=" + host + " port=5432 user=" + username + " password=" + password + " dbname=" + database
 
 	// Each message mentions its identifier and NOTHING else from the DSN, so it is caught
 	// only by that identifier's own comparison.
@@ -951,9 +956,11 @@ func TestSafeDSNErrWithholdsEachIdentifierIndependently(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := errors.New("server error: FATAL: something went wrong near " + tc.only)
 
-			got := dbtest.SafeDSNErr(err)
+			got := dbtest.SafeDSNErrFor(dsn, err)
 			if strings.Contains(got, tc.only) {
 				t.Errorf("SafeDSNErr = %q, want %q withheld; every field of %s is compared, "+
 					"not only the ones that travel alongside another", got, tc.only,
@@ -974,17 +981,19 @@ func TestSafeDSNErrWithholdsEachIdentifierIndependently(t *testing.T) {
 // the configured value is least well understood. That mutation compiles and SURVIVED the
 // tables above, because none of their cases drives an unparseable DSN.
 func TestSafeDSNErrWithholdsWhenTheDSNCannotBeParsed(t *testing.T) {
+	t.Parallel()
+
 	const username = "ciuser"
 
 	// A DSN pgconn.ParseConfig rejects outright.
-	t.Setenv(dbtest.EnvDatabaseURL, "host=h user=u sslmode=notamode")
+	const badDSN = "host=h user=u sslmode=notamode"
 
-	if _, err := pgconn.ParseConfig("host=h user=u sslmode=notamode"); err == nil {
+	if _, err := pgconn.ParseConfig(badDSN); err == nil {
 		t.Fatal("precondition failed: the DSN parses, so this test no longer exercises " +
 			"the unparseable branch it guards")
 	}
 
-	got := dbtest.SafeDSNErr(errors.New(`server error: FATAL: role "` + username + `" does not exist`))
+	got := dbtest.SafeDSNErrFor(badDSN, errors.New(`server error: FATAL: role "`+username+`" does not exist`))
 	if !strings.Contains(got, dbtest.EnvDatabaseURL) {
 		t.Errorf("SafeDSNErr = %q, want the sentinel naming %s: with an unparseable DSN "+
 			"there are no identifiers to clear a message with, so nothing can be proven "+
@@ -1005,13 +1014,42 @@ func TestSafeDSNErrWithholdsWhenTheDSNCannotBeParsed(t *testing.T) {
 // Dropping the `id != ""` test compiles and SURVIVES every table above, because they all
 // configure a DSN in which every compared field is populated.
 func TestSafeDSNErrKeepsDiagnosticsWhenAFieldIsEmpty(t *testing.T) {
-	// Peer auth: a user and a database, no password.
-	t.Setenv(dbtest.EnvDatabaseURL, "host=/var/run/postgresql user=peer dbname=campaign_test")
+	t.Parallel()
 
-	got := dbtest.SafeDSNErr(errors.New("connection refused"))
+	// Peer auth: a user and a database, no password.
+	const peerDSN = "host=/var/run/postgresql user=peer dbname=campaign_test"
+
+	got := dbtest.SafeDSNErrFor(peerDSN, errors.New("connection refused"))
 	if !strings.Contains(got, "connection refused") {
 		t.Errorf("SafeDSNErr = %q, want the driver's text preserved: an EMPTY DSN field "+
 			"matches every message, so comparing it would withhold every error this "+
 			"package prints", got)
+	}
+}
+
+// TestSafeDSNErrReadsTheConfiguredDSN pins the one thing the explicit-DSN tests cannot see:
+// that the environment-reading wrapper actually forwards the CONFIGURED value.
+//
+// Every other test here calls SafeDSNErrFor with a DSN it names itself, which is what keeps
+// them parallel and free of process-global state. The cost is that they say nothing about
+// SafeDSNErr, and the harness calls SafeDSNErr — so replacing DSN() with "" in the wrapper
+// compiles, keeps all of them green, and silently restores the verbatim passthrough on the
+// only call path that runs in CI. That mutation SURVIVED until this test existed.
+//
+// This is the one case that must touch the environment, so it is deliberately serial and
+// deliberately minimal: it asserts the wiring, not the redaction.
+func TestSafeDSNErrReadsTheConfiguredDSN(t *testing.T) {
+	// No t.Parallel: t.Setenv forbids it, and this test exists precisely to check the
+	// environment read. It is the ONLY test in this file that needs that.
+	const username = "envwireduser"
+
+	t.Setenv(dbtest.EnvDatabaseURL,
+		"host=env.invalid port=5432 user="+username+" password=envpw dbname=envdb") // secretlint-disable-line
+
+	got := dbtest.SafeDSNErr(errors.New(`server error: FATAL: role "` + username + `" does not exist`))
+	if strings.Contains(got, username) {
+		t.Errorf("SafeDSNErr = %q, want the identifier withheld; the wrapper must pass the "+
+			"CONFIGURED DSN to SafeDSNErrFor, or the harness's own call path redacts "+
+			"nothing", got)
 	}
 }

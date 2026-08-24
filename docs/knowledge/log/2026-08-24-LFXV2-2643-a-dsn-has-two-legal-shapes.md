@@ -66,3 +66,36 @@ writes the DSN to the pod log at startup and on every retry — and is tracked b
 This change is test-only and deliberately does not touch it, but the shape transfers: production
 holds the DSN it dialled, so it can run the same value-keyed comparison without reading the
 environment.
+
+**Fix** — the first cut of this made the redaction read `TEST_DATABASE_URL` inside the
+helper, and that was the wrong seam. Reading the environment is the CALLER's convenience,
+not a property of the redaction, and baking it in forced every test of the behaviour to pin
+the value with `t.Setenv` — which mutates process-global state, so Go forbids it in a test
+with parallel ancestors. Bugbot caught the immediate symptom: subtests still called
+`t.Parallel()` under a parent that had become serial.
+
+Its stated mechanism was wrong — it claimed `Parallel` walks ancestors for `denyParallel`
+and that the suite panics. Checking `testing.go`: `Setenv` sets `denyParallel` on `t` ALONE,
+`Parallel` tests only its own `t`, and the ancestor walk runs the other way (`Setenv` looks
+UP for `isParallel`). Nothing panicked, and the suite was green. The conclusion was right
+anyway, for a reason it did not give: a serial test that sets the variable runs concurrently
+with this file's PARALLEL tests, which read the same variable through `DSN()`. `Cleanup`
+restores it, so the window is invisible in a green run and would surface only as a flake.
+
+So the fix was to remove the shared mutable state rather than to serialise more tests.
+`SafeDSNErrFor(dsn, err)` takes the DSN explicitly and holds the logic; `SafeDSNErr(err)` is
+a one-line wrapper passing `DSN()`. Every test now names the DSN it means, uses no `Setenv`,
+and is parallel again.
+
+That refactor introduced one new untested seam, and the mutation sweep found it: replacing
+`DSN()` with `""` in the wrapper compiles, keeps all nine explicit-DSN tests green, and
+silently restores the verbatim passthrough on the ONLY path the harness actually calls.
+`TestSafeDSNErrReadsTheConfiguredDSN` closes it — the single test in the file that touches
+the environment, deliberately serial and asserting the wiring rather than the redaction.
+All ten mutations are killed.
+
+**Note** — a reviewer's conclusion can be correct while its proof is not. The proof was
+checkable against `testing.go` in a minute, and checking it changed the fix: had the panic
+claim been taken at face value, the repair would have been "drop `t.Parallel()` from the
+subtests", which leaves the real hazard — global env mutation racing this file's parallel
+readers — untouched.

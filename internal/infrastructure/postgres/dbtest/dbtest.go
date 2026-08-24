@@ -294,8 +294,33 @@ func SafeDSNErr(err error) string {
 		return "the DSN does not parse as a URL (the value and the parser's message are " +
 			"withheld: both can carry the credential)"
 	}
+	return SafeDSNErrFor(DSN(), err)
+}
+
+// SafeDSNErrFor is SafeDSNErr against an EXPLICIT DSN rather than the environment.
+//
+// It exists because reading the environment is a property of the CALLER's convenience, not
+// of the redaction, and baking it in made the helper untestable without t.Setenv. Setenv
+// mutates process-global state and Go therefore forbids it in a test with parallel
+// ancestors, so every test of this behaviour had to be serial -- and, worse, a serial test
+// that sets TEST_DATABASE_URL runs concurrently with the package's PARALLEL tests, which
+// read the same variable through DSN(). Nothing detects that: the env var is restored by
+// Cleanup, so the window is invisible in a green run and would surface as a flake.
+//
+// Taking the DSN as an argument removes the shared mutable state from the question
+// entirely. The tests pass the value they mean and never touch the environment; the harness
+// keeps its one-argument convenience.
+func SafeDSNErrFor(dsn string, err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return "the DSN does not parse as a URL (the value and the parser's message are " +
+			"withheld: both can carry the credential)"
+	}
 	msg := redact.URLUserinfo(err.Error())
-	if dsnIdentifiersPresent(msg) {
+	if dsnIdentifiersPresent(dsn, msg) {
 		return "the driver's message names a value from " + EnvDatabaseURL + " (it is " +
 			"withheld: the user, database and host are half of the credential)"
 	}
@@ -305,10 +330,8 @@ func SafeDSNErr(err error) string {
 // dsnIdentifiersPresent reports whether msg reproduces any identifier from the configured
 // DSN.
 //
-// It reads TEST_DATABASE_URL rather than taking the DSN as an argument because SafeDSNErr's
-// callers are six live tests and the harness, none of which holds the value -- reporting the
-// env-var NAME instead of its value is this package's whole discipline, so threading the DSN
-// through those call sites would put it back in the places it is kept out of.
+// The DSN is an ARGUMENT rather than an environment read, so the comparison has no hidden
+// input: see SafeDSNErrFor for why the environment version is a caller convenience only.
 //
 // pgconn.ParseConfig is what makes this shape-independent: it accepts BOTH the URL and the
 // keyword/value forms and yields the same Config, so the comparison is against what the DSN
@@ -321,8 +344,7 @@ func SafeDSNErr(err error) string {
 // The empty-string guard is not decoration. A DSN with no password (the local peer-auth case)
 // leaves Config.Password empty, and strings.Contains(msg, "") is true for every message, so
 // omitting it would withhold every error the package ever prints.
-func dsnIdentifiersPresent(msg string) bool {
-	dsn := DSN()
+func dsnIdentifiersPresent(dsn, msg string) bool {
 	if dsn == "" {
 		return false
 	}
