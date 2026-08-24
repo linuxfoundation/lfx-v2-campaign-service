@@ -516,11 +516,24 @@ type tokenResponse struct {
 //
 // Any in-flight single-flight refresh is deliberately left alone: it is already fetching a NEW
 // token and its result is not the rejected one.
-func (c *Client) invalidateAccessToken() {
+func (c *Client) invalidateAccessToken(presented string) {
 	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	// Compare-and-clear. The cache may already hold a NEWER token than the one this 401
+	// answered: with a shared client, request A can leave carrying tok_1, request B can
+	// refresh and cache tok_2, and A's late 401 then arrives describing tok_1. An
+	// unconditional clear would evict tok_2 — a token nothing rejected — and a burst of
+	// late responses would drive serial re-exchanges, defeating the single-flight
+	// coalescing this client already has.
+	//
+	// Clearing only on a match makes the operation idempotent and self-limiting: the
+	// rejected token is dropped exactly once, and every later 401 naming it is a no-op
+	// because the cache has already moved on.
+	if presented == "" || c.accessToken != presented {
+		return
+	}
 	c.accessToken = ""
 	c.tokenExpiry = time.Time{}
-	c.tokenMu.Unlock()
 }
 
 func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
@@ -904,7 +917,7 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 		// status line clearly warrants — so this uses the same retryAfterIf429/
 		// is429Status signalling as the oversize path below. Mirrors the siblings.
 		return nil, c.retryAfterIf429(resp), c.is429Status(resp.StatusCode),
-			c.statusAwareReadError(resp.StatusCode, method, path, rerr)
+			c.statusAwareReadError(resp.StatusCode, method, path, token, rerr)
 	}
 	if int64(buf.Len()) > maxResponseBytes {
 		// Same status-aware discipline for an oversized body: an oversized 2xx create
@@ -913,7 +926,7 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 		// definite. A plain fmt.Errorf here would be neither, letting createOutcome-
 		// Ambiguous return false and inviting a duplicate create.
 		return nil, c.retryAfterIf429(resp), c.is429Status(resp.StatusCode),
-			c.statusAwareReadError(resp.StatusCode, method, path, fmt.Errorf("response exceeds %d bytes", maxResponseBytes))
+			c.statusAwareReadError(resp.StatusCode, method, path, token, fmt.Errorf("response exceeds %d bytes", maxResponseBytes))
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -926,7 +939,7 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 		// body is parsed: an unreadable or unparseable 401 body is still a 401, and making
 		// invalidation depend on the body would leave the ambiguous case serving the
 		// rejected token.
-		c.invalidateAccessToken()
+		c.invalidateAccessToken(token)
 	}
 
 	// Non-2xx: build a classified apiError. Parse error codes from the FULL body; the
@@ -955,7 +968,7 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 // status as an apiError so definite-4xx and 429-retry classification survive. The
 // cause is never surfaced verbatim (transportError uses safeCause; apiError.Error()
 // omits the body). Mirrors the google-ads read-failure handling.
-func (c *Client) statusAwareReadError(status int, method, path string, cause error) error {
+func (c *Client) statusAwareReadError(status int, method, path, token string, cause error) error {
 	if status >= 200 && status < 300 {
 		return &transportError{Method: method, Path: path, err: cause}
 	}
@@ -965,7 +978,7 @@ func (c *Client) statusAwareReadError(status int, method, path string, cause err
 		// miss — and the two read-failure exits above return from attempt() before the
 		// status check further down, so invalidating only there would leave both of them
 		// re-presenting the rejected token.
-		c.invalidateAccessToken()
+		c.invalidateAccessToken(token)
 	}
 	return &apiError{StatusCode: status, Method: method, Path: path}
 }
