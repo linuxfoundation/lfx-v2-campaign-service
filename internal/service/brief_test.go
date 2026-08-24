@@ -4543,6 +4543,48 @@ func TestBriefService_GetCampaignSettings_AccountMismatchIs409(t *testing.T) {
 	}
 }
 
+// TestBriefService_GetCampaignSettings_ResponseValidationFailureIsNotAConnectivityClaim
+// pins that the 503 default does not diagnose the network.
+//
+// The fallback is reached by TWO different classes of failure, and only one of them is a
+// transport problem. Pre-contact failures — a refused dial, a timeout, a 5xx — genuinely mean
+// the platform could not be reached. But every RESPONSE-VALIDATION refusal in
+// campaign_settings.go arrives here too: more than one row for a unique id, a row whose two
+// identity fields disagree, an id filter the platform did not honour, mutually exclusive
+// budget amounts, a period contradicting its amount, an unparseable budget, a duplicate JSON
+// key. Those are cases where the platform WAS reached and answered — the answer just could not
+// be trusted.
+//
+// Telling an operator "the platform could not be reached" for those sends them to check
+// connectivity, credentials and Google's status page, none of which is the fault. Worse, this
+// endpoint's whole purpose is to report what the platform says, so a response this service
+// refused to read is a finding, not an outage. The message must stay accurate for BOTH classes.
+//
+// The error here is a response-validation refusal spelled exactly as the client spells it,
+// carrying no transport error underneath, so a message claiming unreachability is false on
+// its face.
+func TestBriefService_GetCampaignSettings_ResponseValidationFailureIsNotAConnectivityClaim(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	validationErr := errors.New("google-ads campaign settings: expected at most 1 row for campaign ga-1, got 2; refusing to trust this response")
+	s := newMetricsService(camp, &settingsOnlyDispatcher{err: validationErr})
+	_, err := s.GetCampaignSettings(context.Background(), &briefs.GetCampaignSettingsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected a ServiceUnavailable (503), got %T: %v", err, err)
+	}
+	if strings.Contains(unavailable.Message, "could not be reached") {
+		t.Errorf("503 message = %q; the platform WAS reached and answered here — the response "+
+			"could not be trusted. Claiming unreachability gives the operator a false "+
+			"connectivity diagnosis and sends them to check a network that is fine",
+			unavailable.Message)
+	}
+}
+
 // TestBriefService_GetCampaignSettings_PlatformFailureIs503: an unclassified upstream
 // failure is the retryable default.
 func TestBriefService_GetCampaignSettings_PlatformFailureIs503(t *testing.T) {

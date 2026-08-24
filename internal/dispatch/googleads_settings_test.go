@@ -1134,3 +1134,107 @@ func TestGoogleAdsCreationCustomerIDContractIsSplitByCaller(t *testing.T) {
 		}
 	})
 }
+
+// TestGoogleAds_ReadSettings_AmountWithoutPeriodIsUnknown pins that the AMOUNT is selected
+// only once the period has established its semantics.
+//
+// The two upstream budget fields mean different things — amount_micros is a DAILY rate,
+// total_amount_micros a WHOLE-FLIGHT cap — and googleAdsUpstreamBudgetAmount reads whichever
+// one is present without consulting the period. So a campaign recorded as a daily 500 against
+// an upstream row carrying only total_amount_micros=500000000 and NO period reported
+// `budget_amount: match`, when the two numbers describe different quantities: a 500/day rate
+// and a 500 lifetime cap are not the same budget, and the equal digits are a coincidence of
+// the units rather than an agreement.
+//
+// The client cannot catch this pair. Its own contradiction check at campaign_settings.go
+// refuses an amount that disagrees with a NAMED period, and deliberately lets an absent one
+// through — absence means "Google did not report this field" everywhere on CampaignSettings,
+// pinned by TestGetCampaignSettings_UnreadableFieldIsAbsentNotZero, and cannot start
+// signalling "inconsistent pair" without breaking that meaning. Its comment states the reason
+// the pair is safe to pass on: the dispatcher is supposed to yield `unknown` rather than a
+// fabricated verdict. This test is what makes that stated contract true.
+//
+// The recorded side is deliberately 500 — the value that makes the buggy path report `match`.
+// A test recording a different amount would read `divergent` either way and pass against the
+// bug.
+func TestGoogleAds_ReadSettings_AmountWithoutPeriodIsUnknown(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"totalAmountMicros":"500000000"}}]}`)
+
+	recorded := 500.0
+	bt := model.BudgetDaily
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
+		BudgetAmount: &recorded, BudgetType: &bt,
+	}
+
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	budget := settingsField(t, rb, settingsFieldBudgetAmount)
+	if budget.Upstream != nil {
+		t.Errorf("budget_amount Upstream = %q, want nil: with no period, an upstream "+
+			"total_amount_micros is a whole-flight cap of unestablished meaning, and reporting "+
+			"it beside a recorded DAILY amount invites exactly the comparison that is unsound",
+			*budget.Upstream)
+	}
+	if budget.Comparison != model.SettingsUnknown {
+		t.Errorf("budget_amount comparison = %q, want %q: a 500/day rate and a 500 lifetime cap "+
+			"are different budgets, and reporting `match` tells an operator the platform agrees "+
+			"with a configuration it may well contradict",
+			budget.Comparison, model.SettingsUnknown)
+	}
+}
+
+// TestGoogleAds_ReadSettings_AmountWithUnknownPeriodIsUnknown is the same guarantee for the
+// period Google DID send but declined to name. UNKNOWN/UNSPECIFIED establish the amount's
+// semantics no better than absence does, and the client passes both through for that reason.
+func TestGoogleAds_ReadSettings_AmountWithUnknownPeriodIsUnknown(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"totalAmountMicros":"500000000","period":"UNKNOWN"}}]}`)
+
+	recorded := 500.0
+	bt := model.BudgetDaily
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
+		BudgetAmount: &recorded, BudgetType: &bt,
+	}
+
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	budget := settingsField(t, rb, settingsFieldBudgetAmount)
+	if budget.Comparison != model.SettingsUnknown {
+		t.Errorf("budget_amount comparison = %q, want %q for an UNKNOWN period: a value Google "+
+			"explicitly declined to name cannot establish which quantity the amount is",
+			budget.Comparison, model.SettingsUnknown)
+	}
+}
+
+// TestGoogleAds_ReadSettings_DailyAmountWithPeriodStillCompares is the other half: gating the
+// amount on the period must not make every ordinary budget read `unknown`. A DAILY period with
+// amount_micros is the common case and must still compare.
+func TestGoogleAds_ReadSettings_DailyAmountWithPeriodStillCompares(t *testing.T) {
+	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"ENABLED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`)
+
+	recorded := 500.0
+	bt := model.BudgetDaily
+	camp := &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Result:       settingsProvenance(),
+		BudgetAmount: &recorded, BudgetType: &bt,
+	}
+
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderGoogleAds, camp)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	budget := settingsField(t, rb, settingsFieldBudgetAmount)
+	if budget.Comparison != model.SettingsMatch {
+		t.Errorf("budget_amount comparison = %q, want %q: a DAILY period with amount_micros is "+
+			"the ordinary case and gating on the period must not suppress it",
+			budget.Comparison, model.SettingsMatch)
+	}
+}

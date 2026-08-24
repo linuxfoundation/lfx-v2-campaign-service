@@ -337,6 +337,28 @@ upstream `10.004` to `"10.00"` would make it compare EQUAL to a recorded `10.00`
 `match` for two budgets that genuinely differ. Sub-cent micros are therefore rendered at FULL
 precision, so they can only ever read as a divergence.
 
+**The PERIOD selects which budget amount is read, and an unnamed period reads none.**
+Google's two amount fields are different quantities — `amount_micros` is a DAILY rate,
+`total_amount_micros` a whole-flight CAP — so `googleAdsUpstreamBudgetAmount` picks by
+`BudgetPeriod` rather than by whichever field happens to be present. Taking "whichever is
+there" is not a reading of the budget but a guess at which question the number answers: a
+campaign recorded as a daily `500` against an upstream row carrying only
+`total_amount_micros=500000000` and NO period reported `match`, though a 500/day rate and a
+500 lifetime cap are different budgets and the equal digits were a coincidence of the units.
+
+The gate reuses `googleAdsBudgetTypeFromPeriod`, so one period cannot name a budget type for
+that field while failing to select an amount for this one, and it inherits that function's
+fail-closed default: an absent, `UNKNOWN`/`UNSPECIFIED`, or padded `" DAILY "` period selects
+nothing and the field reads `unknown`.
+
+**The client relies on this half being here.** `GetCampaignSettings` refuses an amount that
+contradicts a NAMED period, and deliberately passes an ABSENT one, because absence means
+"Google did not report this field" across all of `CampaignSettings` — pinned by
+`TestGetCampaignSettings_UnreadableFieldIsAbsentNotZero` — and cannot start signalling
+"inconsistent pair" without breaking that meaning everywhere else. Its comment states that the
+partial pair is safe to pass on precisely because the dispatcher yields `unknown`. That was a
+claim about behaviour the dispatcher did not yet have; the gate is what makes it true.
+
 **A REMOVED campaign must be REPORTED, and getting that requires an explicit status
 predicate.** GAQL excludes removed resources by default unless the filter names `REMOVED`, so
 a `FROM campaign WHERE campaign.id = N` query with no status clause silently returns nothing

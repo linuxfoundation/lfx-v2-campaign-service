@@ -1368,6 +1368,26 @@ func googleAdsBudgetTypeFromPeriod(period string) model.BudgetType {
 // The two sides are compared as whole units rather than micros because that is what the
 // row stores; the conversion happens here, once, rather than in the comparison.
 //
+// The PERIOD selects the field, and an amount whose period does not name one of the two real
+// values is not read at all. The two upstream fields are different quantities — a daily RATE
+// and a whole-flight CAP — so "whichever one is present" is not a reading of the budget, it is
+// a guess at which question the number answers. A campaign recorded as a daily 500 against an
+// upstream row carrying only total_amount_micros=500000000 and no period reported `match`,
+// though a 500/day rate and a 500 lifetime cap are different budgets and the equal digits were
+// a coincidence of the units.
+//
+// This is where that pair must be caught, and the client says so. Its contradiction check in
+// campaign_settings.go refuses an amount that disagrees with a NAMED period and deliberately
+// passes an absent or UNKNOWN one — absence means "Google did not report this field" across
+// all of CampaignSettings, and cannot start signalling "inconsistent pair" without breaking
+// that meaning everywhere else. It permits the partial pair precisely because an unread period
+// is supposed to yield `unknown` here rather than a fabricated verdict.
+//
+// The gate is the SAME mapping the budget-type field uses, googleAdsBudgetTypeFromPeriod, so
+// one period cannot name a type for one field and fail to select an amount for the other. It
+// already fails closed on UNKNOWN/UNSPECIFIED and on a padded " DAILY " that blankToNil left
+// malformed on purpose.
+//
 // A budget carrying SUB-CENT micros is rendered at full precision instead of at the row's two
 // decimal places, and that exception is the whole point of this function's care. The row's
 // column is NUMERIC(14,2), so rounding an upstream 10.004 to "10.00" would make it compare
@@ -1380,9 +1400,20 @@ func googleAdsUpstreamBudgetAmount(s *googleads.CampaignSettings) *string {
 	if s == nil {
 		return nil
 	}
-	micros := s.BudgetAmountMicros
-	if micros == nil {
+	if s.BudgetPeriod == nil {
+		return nil
+	}
+	var micros *int64
+	switch googleAdsBudgetTypeFromPeriod(*s.BudgetPeriod) {
+	case model.BudgetDaily:
+		micros = s.BudgetAmountMicros
+	case model.BudgetLifetime:
 		micros = s.BudgetTotalAmountMicros
+	default:
+		// A period this API version cannot name establishes nothing about which quantity an
+		// amount would be, so no amount is read. Same fail-closed choice, and for the same
+		// reason, as googleAdsBudgetTypeFromPeriod's own default arm.
+		return nil
 	}
 	if micros == nil {
 		return nil

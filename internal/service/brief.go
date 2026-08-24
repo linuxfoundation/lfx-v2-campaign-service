@@ -2470,10 +2470,32 @@ func (s *BriefService) GetCampaignSettings(ctx context.Context, p *briefs.GetCam
 				"platform", existing.Platform, "reason", unusableConnectionReason(rerr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project's connection for the campaign's channel is not usable — reconnect it before reading settings"}
 		}
+		// The DEFAULT arm, and it answers for two different kinds of failure, which is why
+		// the message names neither.
+		//
+		// Pre-contact failures land here — a refused dial, a timeout, a 5xx — and for those
+		// "could not be reached" would be accurate. But so does every RESPONSE-VALIDATION
+		// refusal in the client: more than one row for a unique id, a row whose id and
+		// resource name disagree, an id filter Google did not honour, mutually exclusive
+		// budget amounts, a period contradicting its amount, an unparseable budget, a
+		// duplicate JSON key. In all of those the platform WAS reached and DID answer — the
+		// answer simply could not be trusted, and the client refused it rather than report
+		// settings it could not attribute.
+		//
+		// Naming connectivity would give that second class a false diagnosis and send an
+		// operator to check a network, credentials and a status page that are all fine. The
+		// wording therefore says what is true of BOTH: the settings could not be read. That
+		// matches the sibling metrics arm above, which answers the same mixed population.
+		//
+		// The distinction is preserved where it can be acted on rather than discarded: the
+		// specific refusal reaches the LOG through safeErrSummary, so an operator reading it
+		// sees which of the two happened, while the CLIENT — who can act on neither — is not
+		// told a story about the network that may be false. A retry remains the right advice
+		// for both, since a contradictory response can be transient as easily as a timeout.
 		slog.WarnContext(ctx, "campaign settings readback failed",
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 			"platform", existing.Platform, "error", safeErrSummary(rerr))
-		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the platform could not be reached to read this campaign's settings"}
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "this campaign's settings could not be read from its channel"}
 	}
 	return settingsReadbackResult(rb), nil
 }
