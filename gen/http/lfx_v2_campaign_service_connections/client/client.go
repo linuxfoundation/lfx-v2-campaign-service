@@ -190,6 +190,14 @@ type Client struct {
 	// list-google-ads-accounts endpoint.
 	ListGoogleAdsAccountsDoer goahttp.Doer
 
+	// GetGoogleAdsKeywords Doer is the HTTP client used to make requests to the
+	// get-google-ads-keywords endpoint.
+	GetGoogleAdsKeywordsDoer goahttp.Doer
+
+	// GetGoogleAdsAudience Doer is the HTTP client used to make requests to the
+	// get-google-ads-audience endpoint.
+	GetGoogleAdsAudienceDoer goahttp.Doer
+
 	// ListMetaAdsAccounts Doer is the HTTP client used to make requests to the
 	// list-meta-ads-accounts endpoint.
 	ListMetaAdsAccountsDoer goahttp.Doer
@@ -274,6 +282,8 @@ func NewClient(
 		TestHubspotDoer:               doer,
 		SetCredentialHubspotDoer:      doer,
 		ListGoogleAdsAccountsDoer:     doer,
+		GetGoogleAdsKeywordsDoer:      doer,
+		GetGoogleAdsAudienceDoer:      doer,
 		ListMetaAdsAccountsDoer:       doer,
 		ListLinkedinAdsAccountsDoer:   doer,
 		ListMicrosoftAdsAccountsDoer:  doer,
@@ -1317,6 +1327,54 @@ func (c *Client) ListGoogleAdsAccounts() goa.Endpoint {
 		resp, err := c.ListGoogleAdsAccountsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetGoogleAdsKeywords returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-google-ads-keywords server.
+func (c *Client) GetGoogleAdsKeywords() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetGoogleAdsKeywordsRequest(c.encoder)
+		decodeResponse = DecodeGetGoogleAdsKeywordsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetGoogleAdsKeywordsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetGoogleAdsKeywordsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetGoogleAdsAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-google-ads-audience server.
+func (c *Client) GetGoogleAdsAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetGoogleAdsAudienceRequest(c.encoder)
+		decodeResponse = DecodeGetGoogleAdsAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetGoogleAdsAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetGoogleAdsAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
 		}
 		return decodeResponse(resp)
 	}

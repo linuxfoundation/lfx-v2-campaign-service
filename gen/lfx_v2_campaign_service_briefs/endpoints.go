@@ -31,6 +31,7 @@ type Endpoints struct {
 	GenerateEmailCopy    goa.Endpoint
 	UpdateCampaign       goa.Endpoint
 	ToggleCampaignStatus goa.Endpoint
+	ApplyKeywordActions  goa.Endpoint
 	DeleteCampaign       goa.Endpoint
 	GetJob               goa.Endpoint
 }
@@ -56,6 +57,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GenerateEmailCopy:    NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
 		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
 		ToggleCampaignStatus: NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
+		ApplyKeywordActions:  NewApplyKeywordActionsEndpoint(s, a.JWTAuth),
 		DeleteCampaign:       NewDeleteCampaignEndpoint(s, a.JWTAuth),
 		GetJob:               NewGetJobEndpoint(s, a.JWTAuth),
 	}
@@ -79,6 +81,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GenerateEmailCopy = m(e.GenerateEmailCopy)
 	e.UpdateCampaign = m(e.UpdateCampaign)
 	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
+	e.ApplyKeywordActions = m(e.ApplyKeywordActions)
 	e.DeleteCampaign = m(e.DeleteCampaign)
 	e.GetJob = m(e.GetJob)
 }
@@ -425,6 +428,29 @@ func NewToggleCampaignStatusEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 			return nil, err
 		}
 		return s.ToggleCampaignStatus(ctx, p)
+	}
+}
+
+// NewApplyKeywordActionsEndpoint returns an endpoint function that calls the
+// method "apply-keyword-actions" of service "lfx-v2-campaign-service-briefs".
+func NewApplyKeywordActionsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ApplyKeywordActionsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ApplyKeywordActions(ctx, p)
 	}
 }
 

@@ -5983,6 +5983,306 @@ func EncodeListGoogleAdsAccountsError(encoder func(context.Context, http.Respons
 	}
 }
 
+// EncodeGetGoogleAdsKeywordsResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-connections get-google-ads-keywords endpoint.
+func EncodeGetGoogleAdsKeywordsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsKeywords)
+		enc := encoder(ctx, w)
+		body := NewGetGoogleAdsKeywordsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetGoogleAdsKeywordsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-connections get-google-ads-keywords endpoint.
+func DecodeGetGoogleAdsKeywordsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload
+		var (
+			projectID   string
+			window      *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		windowRaw := r.URL.Query().Get("window")
+		if windowRaw != "" {
+			window = &windowRaw
+		}
+		if window != nil {
+			if !(*window == "today" || *window == "yesterday" || *window == "last_7_days" || *window == "last_14_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetGoogleAdsKeywordsPayload(projectID, window, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetGoogleAdsKeywordsError returns an encoder for errors returned by
+// the get-google-ads-keywords lfx-v2-campaign-service-connections endpoint.
+func EncodeGetGoogleAdsKeywordsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsKeywordsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsKeywordsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsKeywordsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsKeywordsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsKeywordsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsKeywordsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeGetGoogleAdsAudienceResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-connections get-google-ads-audience endpoint.
+func EncodeGetGoogleAdsAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsAudience)
+		enc := encoder(ctx, w)
+		body := NewGetGoogleAdsAudienceResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetGoogleAdsAudienceRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-connections get-google-ads-audience endpoint.
+func DecodeGetGoogleAdsAudienceRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload, error) {
+		var payload *lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload
+		var (
+			projectID   string
+			window      *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		windowRaw := r.URL.Query().Get("window")
+		if windowRaw != "" {
+			window = &windowRaw
+		}
+		if window != nil {
+			if !(*window == "today" || *window == "yesterday" || *window == "last_7_days" || *window == "last_14_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetGoogleAdsAudiencePayload(projectID, window, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetGoogleAdsAudienceError returns an encoder for errors returned by
+// the get-google-ads-audience lfx-v2-campaign-service-connections endpoint.
+func EncodeGetGoogleAdsAudienceError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsAudienceBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsAudienceConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsAudienceServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsAudienceInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsAudienceNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsAudienceUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeListMetaAdsAccountsResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint.
 func EncodeListMetaAdsAccountsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -6811,6 +7111,42 @@ func marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountR
 	res := &AccessibleAccountResponseBody{
 		ID:    v.ID,
 		Label: v.Label,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsGoogleAdsKeywordToGoogleAdsKeywordResponseBody
+// builds a value of type *GoogleAdsKeywordResponseBody from a value of type
+// *lfxv2campaignserviceconnections.GoogleAdsKeyword.
+func marshalLfxv2campaignserviceconnectionsGoogleAdsKeywordToGoogleAdsKeywordResponseBody(v *lfxv2campaignserviceconnections.GoogleAdsKeyword) *GoogleAdsKeywordResponseBody {
+	res := &GoogleAdsKeywordResponseBody{
+		CriterionID: v.CriterionID,
+		AdGroupID:   v.AdGroupID,
+		CampaignID:  v.CampaignID,
+		Text:        v.Text,
+		MatchType:   v.MatchType,
+		Status:      v.Status,
+		Impressions: v.Impressions,
+		Clicks:      v.Clicks,
+		CostMicros:  v.CostMicros,
+		Ctr:         v.Ctr,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsGoogleAdsAudienceBucketToGoogleAdsAudienceBucketResponseBody
+// builds a value of type *GoogleAdsAudienceBucketResponseBody from a value of
+// type *lfxv2campaignserviceconnections.GoogleAdsAudienceBucket.
+func marshalLfxv2campaignserviceconnectionsGoogleAdsAudienceBucketToGoogleAdsAudienceBucketResponseBody(v *lfxv2campaignserviceconnections.GoogleAdsAudienceBucket) *GoogleAdsAudienceBucketResponseBody {
+	res := &GoogleAdsAudienceBucketResponseBody{
+		Dimension:   v.Dimension,
+		Value:       v.Value,
+		Impressions: v.Impressions,
+		Clicks:      v.Clicks,
+		CostMicros:  v.CostMicros,
+		Ctr:         v.Ctr,
 	}
 
 	return res

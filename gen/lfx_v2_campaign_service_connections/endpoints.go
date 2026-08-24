@@ -59,6 +59,8 @@ type Endpoints struct {
 	TestHubspot               goa.Endpoint
 	SetCredentialHubspot      goa.Endpoint
 	ListGoogleAdsAccounts     goa.Endpoint
+	GetGoogleAdsKeywords      goa.Endpoint
+	GetGoogleAdsAudience      goa.Endpoint
 	ListMetaAdsAccounts       goa.Endpoint
 	ListLinkedinAdsAccounts   goa.Endpoint
 	ListMicrosoftAdsAccounts  goa.Endpoint
@@ -115,6 +117,8 @@ func NewEndpoints(s Service) *Endpoints {
 		TestHubspot:               NewTestHubspotEndpoint(s, a.JWTAuth),
 		SetCredentialHubspot:      NewSetCredentialHubspotEndpoint(s, a.JWTAuth),
 		ListGoogleAdsAccounts:     NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
+		GetGoogleAdsKeywords:      NewGetGoogleAdsKeywordsEndpoint(s, a.JWTAuth),
+		GetGoogleAdsAudience:      NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
 		ListMetaAdsAccounts:       NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsAccounts:   NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
 		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
@@ -169,6 +173,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.TestHubspot = m(e.TestHubspot)
 	e.SetCredentialHubspot = m(e.SetCredentialHubspot)
 	e.ListGoogleAdsAccounts = m(e.ListGoogleAdsAccounts)
+	e.GetGoogleAdsKeywords = m(e.GetGoogleAdsKeywords)
+	e.GetGoogleAdsAudience = m(e.GetGoogleAdsAudience)
 	e.ListMetaAdsAccounts = m(e.ListMetaAdsAccounts)
 	e.ListLinkedinAdsAccounts = m(e.ListLinkedinAdsAccounts)
 	e.ListMicrosoftAdsAccounts = m(e.ListMicrosoftAdsAccounts)
@@ -1176,6 +1182,54 @@ func NewListGoogleAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc)
 			return nil, err
 		}
 		return s.ListGoogleAdsAccounts(ctx, p)
+	}
+}
+
+// NewGetGoogleAdsKeywordsEndpoint returns an endpoint function that calls the
+// method "get-google-ads-keywords" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetGoogleAdsKeywordsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetGoogleAdsKeywordsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetGoogleAdsKeywords(ctx, p)
+	}
+}
+
+// NewGetGoogleAdsAudienceEndpoint returns an endpoint function that calls the
+// method "get-google-ads-audience" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetGoogleAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetGoogleAdsAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetGoogleAdsAudience(ctx, p)
 	}
 }
 

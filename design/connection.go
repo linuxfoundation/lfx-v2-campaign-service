@@ -927,6 +927,77 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("get-google-ads-keywords", func() {
+		Description("Read Google Ads keyword performance for this project's own campaigns, live from the " +
+			"platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad " +
+			"account: the Google Ads customer is shared across foundations, so an account-wide read would " +
+			"return other projects' keywords. A pure read-through — nothing is persisted, and this service " +
+			"stores no keyword of its own. Rows are the TOP keywords by impressions over the window, capped; " +
+			"`truncated` reports whether the project's campaigns hold more. The returned " +
+			"criterion_id/ad_group_id pairs are the handles the keyword-actions endpoint takes.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id")
+		})
+		Result(GoogleAdsKeywords)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/google-ads/keywords")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("get-google-ads-audience", func() {
+		Description("Read Google Ads audience demographics — age, gender and device — for this project's " +
+			"own campaigns, live from the platform. Scoped to the campaigns this service holds for the " +
+			"project, NOT to the connected ad account, which is a Google Ads customer shared across " +
+			"foundations. A pure read-through; nothing is persisted. The three " +
+			"breakdowns are returned in one array discriminated by `dimension`. Each breakdown covers the " +
+			"SAME traffic independently, so impressions must be totalled within a dimension, never across " +
+			"them. Google's UNDETERMINED/UNKNOWN buckets are returned as-is rather than dropped: they are " +
+			"real unattributed traffic, and hiding them would make the buckets silently under-sum.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id")
+		})
+		Result(GoogleAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/google-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
 			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +
