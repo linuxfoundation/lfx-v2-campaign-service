@@ -204,6 +204,10 @@ func safeAssetIDForError(id string) string {
 // resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
 // the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
 // campaignFromMeta for the degraded-count check and the config snapshot — is not mutated.
+// The copy is for CALLER ISOLATION: those later readers must see the config the caller
+// sent, not one this function rewrote. It is not what keeps bytes out of the persisted
+// snapshot — meta.AdVariant.ImageBytes is tagged `json:"-"` (internal/platform/meta/
+// client.go:2469), so resolved bytes never marshal into config_snapshot regardless.
 // A variant with no imageAssetId passes through unchanged (a link-only or by-URL creative).
 //
 // Every failure here is a caller/wiring error that MUST fail the dispatch BEFORE any

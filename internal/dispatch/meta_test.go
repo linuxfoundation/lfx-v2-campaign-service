@@ -2241,10 +2241,15 @@ func TestMeta_DispatchNoAssetMakesNoUploadCall(t *testing.T) {
 }
 
 // TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig proves resolution returns a
-// COPY. cfg.Variants is reused after resolution — by campaignFromMeta for the config
-// snapshot and by Dispatch for the degraded-ad count — and the variants slice shares
-// its backing array with the decoded config, so an in-place write would put
-// multi-megabyte image bytes into the persisted config_snapshot.
+// COPY, for CALLER ISOLATION. cfg.Variants is reused after resolution — by
+// campaignFromMeta for the config snapshot and by Dispatch for the degraded-ad count —
+// and the variants slice shares its backing array with the decoded config, so an
+// in-place write would hand those later readers a config that no longer matches what
+// the caller sent.
+//
+// It is NOT a persistence guard: AdVariant.ImageBytes is tagged `json:"-"`
+// (internal/platform/meta/client.go:2469), so resolved bytes cannot enter the
+// marshalled config_snapshot even if the slice were mutated in place.
 func TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig(t *testing.T) {
 	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
@@ -2261,7 +2266,7 @@ func TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig(t *testing.T) {
 		t.Fatal("resolved variant carries no image bytes")
 	}
 	if original[0].ImageBytes != nil {
-		t.Errorf("the caller's variant was mutated in place; image bytes would reach the persisted config snapshot")
+		t.Errorf("the caller's variant was mutated in place; campaignFromMeta and the degraded-ad count would no longer see the config the caller sent")
 	}
 }
 

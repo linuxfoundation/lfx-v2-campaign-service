@@ -60,9 +60,13 @@ revoked or deleted.
    loads each referenced asset's bytes through a narrow read-only port
    (`creativeAssetReader`, `GetAsset` only — a dispatcher must never create an asset),
    scoped to the dispatching brief's project and id so one brief cannot reference
-   another's asset, and writes them into a COPY of the variants (the caller's config
-   stays pristine, or multi-megabyte bytes would land in the persisted
-   `config_snapshot`). This runs BEFORE the client is constructed and therefore before
+   another's asset, and writes them into a COPY of the variants — for CALLER ISOLATION:
+   `cfg.Variants` is read again afterwards (by `campaignFromMeta` for the config
+   snapshot and by `Dispatch` for the degraded-ad count), and those readers must see
+   the config the caller sent. The copy is NOT what keeps bytes out of storage:
+   `meta.AdVariant.ImageBytes` is tagged `json:"-"`
+   (`internal/platform/meta/client.go:2469`), so resolved bytes cannot marshal into
+   `config_snapshot` even from an in-place write. This runs BEFORE the client is constructed and therefore before
    any upstream call: every failure here — malformed id, unknown or foreign asset, an
    asset with no stored bytes, an unbound store — is wrapped in `notCreated`, so the
    (brief, platform) claim is RELEASED rather than stranded. A bad asset must never fall
