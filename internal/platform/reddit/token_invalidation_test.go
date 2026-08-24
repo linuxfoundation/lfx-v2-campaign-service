@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -117,7 +118,9 @@ func TestABA_LateUnauthorizedDoesNotEvictANewerToken(t *testing.T) {
 // with the guard in either position.
 func TestRequest_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
 	bodyGate := make(chan struct{})
+	statusFlushed := make(chan struct{})
 	observed := make(chan string, 1)
+	presented := make(chan string, 1)
 
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok_1", "expires_in": 3600})
@@ -125,10 +128,17 @@ func TestRequest_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
 	defer tokenSrv.Close()
 
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		presented <- r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusUnauthorized)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
+		// The status line is on the wire and the body is deliberately withheld. Signal
+		// HERE, from inside the handler, rather than letting the sampler guess with a
+		// timer: a fixed sleep is not synchronised with either the token mint or this
+		// flush, so on a loaded runner it can sample a cache that was simply never
+		// populated and record a FALSE PASS.
+		close(statusFlushed)
 		<-bodyGate
 		_, _ = w.Write([]byte(`{"error":"invalid_token"}`))
 	}))
@@ -138,17 +148,207 @@ func TestRequest_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
 		WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
 
 	go func() {
-		time.Sleep(150 * time.Millisecond)
-		c.mu.Lock()
-		observed <- c.cachedToken
-		c.mu.Unlock()
+		<-statusFlushed
+		// The 401 status is out; the client clears a moment later, as Do returns. Poll the
+		// cache until it does, instead of sampling once (which races the client) or
+		// sleeping (a wall-clock guess that goes flaky under load). This cannot pass
+		// vacuously: the BODY is still withheld below, so a guard placed after
+		// readResponseBody stays blocked on bodyGate -- which only this goroutine releases
+		// -- for as long as the loop runs. Bounded so a real regression fails rather than
+		// hangs.
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			c.mu.Lock()
+			got := c.cachedToken
+			c.mu.Unlock()
+			if got == "" || time.Now().After(deadline) {
+				observed <- got
+				break
+			}
+			runtime.Gosched()
+		}
 		close(bodyGate)
 	}()
 
 	_, _ = c.request(context.Background(), http.MethodGet, "/thing", nil)
 
+	// Positive control. Without this the assertion below passes just as happily against a
+	// cache that was never populated at all -- the exact false pass a fixed sleep invites.
+	// Proving a token was minted AND presented makes the empty read below mean eviction.
+	if got := <-presented; got != "Bearer tok_1" {
+		t.Fatalf("Authorization = %q, want Bearer tok_1: the assertion below is only "+
+			"meaningful if a token was actually minted and presented", got)
+	}
+
 	if got := <-observed; got != "" {
 		t.Errorf("cached token = %q while the 401 body was still in flight, want it already "+
 			"cleared: invalidation must happen on the status line, not after readResponseBody", got)
+	}
+}
+
+// TestInvalidate_DoesNotLeakThroughAPublishedFlight closes the publication-order gap between
+// the cache write and the flight teardown.
+//
+// fetchToken stores cachedToken and UNLOCKS (client.go, "Re-acquire the lock only to store
+// the freshly obtained token"). Only afterwards, under a SECOND lock acquisition, does the
+// leader goroutine in refreshToken set inflight.token, clear c.inflight and close done. In
+// that window the cache already holds tok_1 while c.inflight still points at the flight that
+// is about to publish tok_1 again. So:
+//
+//	leader: cachedToken = tok_1, unlock
+//	A:      fast path takes tok_1 -> 401 -> invalidateAccessToken("tok_1") clears the CACHE
+//	B:      cache empty, c.inflight still non-nil -> joins the flight
+//	leader: inflight.token = tok_1, close(done)
+//	B:      receives tok_1 -- the token the platform just rejected
+//
+// Compare-and-clear on the cache alone therefore does NOT establish "the rejected token is
+// gone": an in-flight refresh can be the very source of the token the 401 rejected.
+//
+// The window is reconstructed directly rather than raced for, so the test is deterministic
+// and cannot pass by scheduling luck. A COMPLETED flight holding tok_1 is published, the
+// cache holds tok_1, and a 401 naming tok_1 arrives; afterwards no caller may be handed
+// tok_1 from EITHER source. The assertion goes through refreshToken -- the real waiter path
+// a joining caller takes -- not the field, so it fails if the value leaks by any route.
+func TestInvalidate_DoesNotLeakThroughAPublishedFlight(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "tok_fresh", "expires_in": 3600,
+		})
+	}))
+	defer tokenSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	// A flight that has ALREADY completed with tok_1 and is still published, exactly the
+	// state fetchToken leaves behind between its cache write and the leader's teardown.
+	done := make(chan struct{})
+	close(done)
+	c.mu.Lock()
+	c.cachedToken = "tok_1"
+	c.tokenExpireAt = c.now().Add(time.Hour)
+	c.inflight = &tokenRefresh{done: done, token: "tok_1"}
+	c.mu.Unlock()
+
+	// The 401 for tok_1 arrives.
+	c.invalidateAccessToken("tok_1")
+
+	// A caller that missed the cache now joins. It must not be handed tok_1.
+	got, err := c.refreshToken(context.Background())
+	if err != nil {
+		t.Fatalf("refreshToken after invalidation: %v", err)
+	}
+	if got == "tok_1" {
+		t.Errorf("refreshToken returned the rejected token %q: an in-flight refresh "+
+			"republished the value the 401 just invalidated", got)
+	}
+}
+
+// TestInvalidate_LeavesAnUnrelatedFlightAlone is the OPPOSED failure mode, and the reason the
+// fix cannot simply be "clear more".
+//
+// The compare-and-clear exists because an unconditional clear evicted a NEWER token that no
+// 401 had rejected (see TestABA_LateUnauthorizedDoesNotEvictANewerToken). Poisoning the
+// in-flight result must be exactly as selective: a flight carrying a DIFFERENT token was
+// never rejected, and blanking it would force a needless re-exchange and reintroduce the very
+// over-invalidation the guard was written to prevent.
+func TestInvalidate_LeavesAnUnrelatedFlightAlone(t *testing.T) {
+	c := NewClient(testCreds, testAccount, WithNowFunc(fixedRedditClock()))
+
+	done := make(chan struct{})
+	close(done)
+	c.mu.Lock()
+	c.cachedToken = "tok_1"
+	c.tokenExpireAt = c.now().Add(time.Hour)
+	c.inflight = &tokenRefresh{done: done, token: "tok_2"}
+	c.mu.Unlock()
+
+	c.invalidateAccessToken("tok_1")
+
+	// tok_2 was never rejected, so a caller joining that flight must still receive it --
+	// with no upstream token server configured, a re-exchange would fail outright.
+	got, err := c.refreshToken(context.Background())
+	if err != nil {
+		t.Fatalf("refreshToken: %v", err)
+	}
+	if got != "tok_2" {
+		t.Errorf("refreshToken = %q, want tok_2: a flight carrying a token no 401 named "+
+			"must survive, or the fix reintroduces the ABA over-invalidation", got)
+	}
+}
+
+// TestInvalidate_DoesNotStrandANewerFlight pins the consequence of unpublishing.
+//
+// Because invalidateAccessToken now retracts a poisoned flight from c.inflight, a REAL leader
+// goroutine can still be running against a flight that is no longer the published one. If
+// that leader retracted c.inflight unconditionally it would erase the newer flight, and every
+// caller waiting on it would block forever on a result nobody completes.
+//
+// The test drives the ACTUAL leader (refreshToken -> fetchToken -> the teardown goroutine)
+// rather than replaying the teardown inline: a test that re-implements the branch it is
+// checking agrees with itself and survives the branch being deleted. The token server is held
+// until the flight has been unpublished, so the leader tears down into a client that has
+// genuinely moved on.
+func TestInvalidate_DoesNotStrandANewerFlight(t *testing.T) {
+	release := make(chan struct{})
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "tok_stale", "expires_in": 3600,
+		})
+	}))
+	defer tokenSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	// A real leader starts and blocks in fetchToken, with its flight published.
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		_, _ = c.refreshToken(context.Background())
+	}()
+
+	stale := waitForFlight(t, c, nil)
+
+	// Retract that flight the way invalidateAccessToken does, then publish a newer one in
+	// its place -- the state a 401 plus a following caller produces.
+	newer := &tokenRefresh{done: make(chan struct{})}
+	c.mu.Lock()
+	c.inflight = newer
+	c.mu.Unlock()
+
+	// Let the stale leader finish and run its teardown against the moved-on client.
+	close(release)
+	<-leaderDone
+
+	c.mu.Lock()
+	published := c.inflight
+	c.mu.Unlock()
+
+	if published != newer {
+		t.Errorf("published flight = %p, want the newer flight %p (stale was %p): the stale "+
+			"leader retracted a flight it did not own, stranding every caller waiting on it",
+			published, newer, stale)
+	}
+}
+
+// waitForFlight blocks until c.inflight is non-nil and different from prev, returning it.
+// It rendezvouses on the client's own state rather than sleeping, so it observes the
+// publication itself instead of guessing at how long one takes.
+func waitForFlight(t *testing.T, c *Client, prev *tokenRefresh) *tokenRefresh {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		c.mu.Lock()
+		got := c.inflight
+		c.mu.Unlock()
+		if got != nil && got != prev {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for a refresh flight to be published")
+		}
+		runtime.Gosched()
 	}
 }

@@ -54,6 +54,17 @@ rejected and let a burst of late responses drive serial re-exchanges, defeating 
 single-flight coalescing above. Matching makes it idempotent: the rejected token is dropped
 exactly once, and every later 401 naming it is a no-op.
 
+Matching the CACHE alone is not sufficient, because the cache is not the only place the
+rejected value lives. `fetchToken` stores the token and unlocks; only under a LATER lock
+acquisition does the leader publish it on the flight and retract `inflight`. In that window a
+fast-path caller can take the token, be rejected, and clear the cache, while a caller that
+missed the cache joins the still-published flight and is handed the very same token. So a
+flight whose token MATCHES the rejected one is blanked and unpublished as well — as selective
+as the cache clear, so a flight carrying any other token still survives. Blanking without
+unpublishing recurses without bound (a waiter re-leads, finds the same poisoned flight, and
+reads the blank again), and because invalidation can now retract a flight early, the leader's
+own teardown compares identity before clearing so a stale leader cannot erase a newer flight.
+
 ## Request layer
 
 `doRequest` applies the repo's standard discipline: no-follow redirects
