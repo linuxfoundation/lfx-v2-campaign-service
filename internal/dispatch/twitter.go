@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -464,4 +465,137 @@ func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 		// Totalling those would require picking which event types count as conversions —
 		// the same per-advertiser decision the Meta adapter declines to make.
 	}, nil
+}
+
+// ListAccounts discovers the X Ads accounts reachable via the project's stored, encrypted
+// connection credential, returning the alphanumeric account handle the connection's
+// account_id takes verbatim, plus a display label.
+//
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform.
+//
+// It deliberately does NOT require an account id. Discovery exists to answer "which ad
+// account should this connection use?", so demanding one would make the endpoint reachable
+// only by connections that no longer need it — the account-less connection it is meant to
+// rescue is exactly the one it would refuse. The Meta, LinkedIn and Microsoft discovery
+// paths draw the same distinction.
+//
+// It shares validateTwitterConnection with Dispatch and ToggleStatus rather than repeating
+// its status / decode / completeness rules, tolerating exactly ONE of its outcomes:
+// ErrAccountNotSelected, the state this endpoint serves. Every other sentinel propagates
+// intact, so the endpoint's 400-vs-503 mapping stays pinned to the same sentinels the
+// dispatch path answers with, and a credential rejected at dispatch cannot be accepted here
+// — which would make a discovery endpoint actively misleading rather than merely permissive.
+//
+// X is the strongest form of that guarantee available, and it is worth stating precisely
+// because it differs by provider: validateTwitterConnection is called by Dispatch ITSELF
+// (not only by the toggle and metrics paths), so discovery and create genuinely cannot
+// diverge. That matches Microsoft; LinkedIn's equivalent is shared by toggle and metrics
+// but NOT by Dispatch, which validates inline, and it has already drifted once in practice.
+//
+// The funding instrument is NOT required. It is a create-only field that
+// validateTwitterConnection already declines to check, and an account-less connection has
+// no reason to have chosen one yet — requiring it would refuse the very connection this
+// endpoint exists to complete.
+func (d *TwitterDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, _, verr := validateTwitterConnection(projectID, res)
+	if verr != nil && !errors.Is(verr, domain.ErrAccountNotSelected) {
+		return nil, res.systemScoped(verr)
+	}
+	// AccountConfig is left ZERO. ListAdAccounts asks what the CREDENTIAL reaches, so
+	// naming an account would narrow the response to a subset of the question — the same
+	// reason meta's, linkedin's and microsoft's discovery clients carry a zero account
+	// config. Empty means "discover them", which is the question being asked.
+	//
+	// **This zero is a convention here, not an enforced invariant, and the difference is
+	// recorded because a mutation SURVIVED it.** Populating AccountID on this call changes
+	// nothing observable today: twitter.ListAdAccounts builds its URL from baseURL and
+	// apiVersion only and never reads AccountConfig, so no test can distinguish the two —
+	// and the mutation that passes the stored id here compiles and passes the whole suite.
+	// That is a real gap, not a test defect, and weakening the mutation to "fix" it would
+	// only hide it. What DOES bind is one layer down, where
+	// TestListAdAccounts_RequestsTheCollectionNotTheConfiguredAccount asserts the outbound
+	// path and query against a client built WITH an account id — so the moment the client
+	// starts consulting AccountConfig, that test fails. This zero therefore protects
+	// against a future client change, and the client-side request assertion is what
+	// protects against the scoping bug itself. LinkedIn's discovery path carries the same
+	// shape and the same caveat.
+	client := twitter.NewClient(
+		twitter.Credentials{
+			ConsumerKey:       creds.ConsumerKey,
+			ConsumerSecret:    creds.ConsumerSecret,
+			AccessToken:       creds.AccessToken,
+			AccessTokenSecret: creds.AccessTokenSecret,
+		},
+		twitter.AccountConfig{},
+		d.opts...,
+	)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// make(..., 0, n), never nil: a credential that legitimately reaches zero accounts is
+	// an empty ANSWER, not an error, and Orchestrator.ReadAccounts rejects a nil result as
+	// a contract violation precisely so empty keeps its meaning.
+	accounts := make([]model.AccessibleAccount, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: twitterAccountLabel(a)})
+	}
+	return accounts, nil
+}
+
+// twitterAccountLabel builds the string a picker shows for one X Ads account.
+//
+// It never returns "" for an account carrying any identifying information: Name may be
+// empty on a real account, so it falls back to the id — a blank row in a picker is
+// unpickable, and the id is what actually gets stored.
+//
+// Unusable accounts are LABELLED, not filtered — the same discipline the other discovery
+// paths use. Dropping them would answer "your credential reaches no accounts" about an
+// account sitting right there; returning them unmarked is worse still, because an account
+// under review or rejected then looks exactly as selectable as an accepted one and the
+// refusal arrives later at dispatch, with no way back to this list.
+//
+// ApprovalLabel renders only a KNOWN-BAD approval_status and returns "" for an accepted,
+// absent or unrecognised one, so an unexpected value is never labelled as a defect — X
+// publishes no complete enum for the field. The `deleted` flag is labelled separately
+// because it is a different question that X answers with its own field.
+//
+// The timezone is rendered into the name the way linkedInAccountLabel renders Currency, and
+// for the same reason: X reports campaign schedules and daily budget resets against the
+// account's timezone, so two otherwise identically-named accounts differing only by timezone
+// are genuinely different choices and a picker that hides it makes them indistinguishable. It
+// is a PROPERTY of the account, not a defect, so it joins the name rather than the notes —
+// notes are reserved for reasons an account may not be usable.
+//
+// The TrimSpace calls are defence-in-depth, not the only trim: ListAdAccounts already trims
+// both Name and Timezone as it decodes, so no value arriving from the client can be untrimmed
+// and neither call here is independently revert-binding. They guard hand-constructed
+// AdAccount values — this function takes the struct, not a response body, so a caller can
+// build one directly — and keep the empty-name fallback keyed on the same notion of "empty"
+// the client uses. Do not read a test that exercises whitespace here as covering the client's
+// trim; that path is pinned in internal/platform/twitter/accounts_test.go.
+func twitterAccountLabel(a twitter.AdAccount) string {
+	name := strings.TrimSpace(a.Name)
+	if name == "" {
+		name = a.ID
+	}
+	if tz := strings.TrimSpace(a.Timezone); tz != "" {
+		name += " [" + tz + "]"
+	}
+	var notes []string
+	if s := a.ApprovalLabel(); s != "" {
+		notes = append(notes, s)
+	}
+	if a.Deleted {
+		notes = append(notes, "deleted")
+	}
+	if len(notes) == 0 {
+		return name
+	}
+	return name + " — " + strings.Join(notes, ", ")
 }

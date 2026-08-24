@@ -877,9 +877,18 @@ the client will actually use.
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher` and `MicrosoftDispatcher`
-implement it too — four in total, the last two added in LFXV2-3064. Reddit and X do not, because
-their platform clients expose no `ListAdAccounts` for a dispatcher method to call.
+of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher`, `MicrosoftDispatcher` and
+`TwitterDispatcher` implement it too — five in total, two added in LFXV2-3064 and X in
+LFXV2-3319. Reddit does not, because its platform client exposes no `ListAdAccounts` for a
+dispatcher method to call.
+
+`TwitterDispatcher.ListAccounts` shares `validateTwitterConnection` with `Dispatch` and
+`ToggleStatus`, tolerating exactly one of its outcomes — `ErrAccountNotSelected`, the state the
+endpoint serves — and propagating every other sentinel intact so the 400-vs-503 mapping stays
+pinned. That is the MICROSOFT shape rather than the LinkedIn one, and the difference matters:
+X's `Dispatch` calls the shared validator ITSELF rather than validating inline, so discovery and
+create genuinely cannot drift. It also does not require `funding_instrument_id` — a create-only
+field an account-less connection has no reason to have chosen yet.
 
 **Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
 this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
@@ -1231,21 +1240,84 @@ poison a project-owned entry.
 **The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
 platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
 the token however cheap the credential lookup became — measured at five token-endpoint hits across
-five resolves. `GoogleAdsDispatcher` therefore also caches the built `*googleads.Client`
-(`clientCache`), keyed and validated by the same (row id, version) identity as the credential, so a
-rotation invalidates the client in the same step. A client is exactly as stale as the credential it
-was built from; validating it any more loosely would let a revoked credential keep authenticating
-inside a cached token. The discovery path is deliberately excluded (it builds an account-agnostic
-client with an empty CustomerID), as is adoption's owned-connection path, which is a one-shot
-rather than the polling loop this exists for. `Dispatch` also builds its client directly: it makes
-roughly twenty calls on the one instance, so its token is already amortised across them, and the
-locals it validates inline would become redundant.
+five resolves. `GoogleAdsDispatcher`, `RedditDispatcher` and `MicrosoftDispatcher` therefore also
+cache the built client (`clientCache`), keyed and validated by the same (row id, version) identity
+as the credential, so a rotation invalidates the client in the same step. A client is exactly as
+stale as the credential it was built from; validating it any more loosely would let a revoked
+credential keep authenticating inside a cached token. Discovery paths are deliberately excluded —
+Google Ads' builds an account-agnostic client with an empty CustomerID, and Microsoft's
+`ListAccounts` builds a ZERO `AccountConfig` (no account AND no customer, because naming either
+narrows the answer discovery exists to give), so caching it under the connection's identity would
+let a discovery call and a dispatch call serve each other's client. Google Ads' adoption
+owned-connection path is likewise excluded as a one-shot rather than the polling loop this exists
+for.
+
+**"Wired" is a claim about a provider; the bypasses are per-PATH, and Google Ads' CREATE path is
+one of them.** `GoogleAdsDispatcher.Dispatch` builds its client inline with `googleads.NewClient`
+rather than through `cachedGoogleAdsClient`, so a Google Ads dispatch burst re-mints an OAuth token
+per campaign and gets no reuse at all. Google Ads is genuinely wired — but only on the
+toggle/metrics entry point (`resolveGoogleAdsClient`, serving `ToggleStatus` and `ReadMetrics`).
+Microsoft's create path is the opposite: `MicrosoftDispatcher.Dispatch` DOES go through
+`cachedMicrosoftClient`. That asymmetry between the two providers is what made this omission
+plausible for two tickets, and both behaviours are now pinned by tests —
+`TestClientCache_GoogleAdsDispatchBypassesTheCache` and
+`TestClientCache_MicrosoftDispatchUsesTheCachedClient` — so wiring the Google Ads create path fails
+the first test and forces this paragraph and `clientCache`'s roster comment to be updated in the
+same change. The full set of Google Ads `googleads.NewClient` construction sites is three:
+`Dispatch` (bypass), `googleAdsClientFor` (reached BOTH through `cachedGoogleAdsClient`, which is
+the cached toggle/metrics path, and directly through `resolveOwnedGoogleAdsClient`, which is the
+adoption bypass), and `resolveGoogleAdsDiscoveryClient` (bypass).
+
+**Sharing one client instance across concurrent callers is a per-client property, verified per
+provider rather than inherited.** All three cached clients guard everything they write after
+construction with a mutex and stash no per-call state on the receiver, so the instance is safe to
+share. For Google Ads and Reddit that is the token cache plus its in-flight refresh handle, under
+one mutex. Microsoft has TWO locks and the count matters: `tokenMu` for the token cache and its
+refresh handle, and the separate `geo.mu` for the parsed geo-locations snapshot and its in-flight
+fetch — separate because a token refresh is a small JSON round trip while a locations refresh is a
+multi-MiB download, and one lock would let a slow file fetch stall every token read. Caching the
+client is also what made that geo cache SHARED state: it now spans creates for one connection
+rather than living and dying with a single `Dispatch`. Microsoft needed the check most: it is the client with multi-customer discovery, so a
+`CustomerID` that VARIED per caller would have made a shared instance serve one caller against
+another's customer. It does not — but not because the id is request-local. The configured customer
+is held ON the receiver in `c.account.CustomerID`, and `doCustomerRequest` reads that field rather
+than taking a customer argument. Sharing is safe because `c.account` is an immutable
+`AccountConfig` fixed at construction and the cache key pins the connection row id and version, so
+every caller of a given cached client is a caller for that same customer. The genuinely
+per-customer path is `accountsInfoForCustomer`, whose `ListAccounts` client is built with a ZERO
+`AccountConfig` and deliberately bypasses this cache. A future provider whose client stashes
+MUTABLE per-call state must NOT be wired to this cache without changing the client first.
+
+**LinkedIn, Meta and X/Twitter are not yet wired** — a deliberate partial rollout under LFXV2-3033,
+deferred only because open PRs owned those files at the time (cs#148, cs#152, cs#158). They still
+rebuild a client per resolve — but "rebuilds a client" is not "re-mints a token", and none of the
+three re-mints one: Meta and LinkedIn are handed an already-minted bearer token and do no exchange
+at construction, and X signs each request with stored OAuth 1.0a credentials. The win for them is
+allocation, not a saved token round-trip. X additionally documents its client as safe for
+SEQUENTIAL use only, so it must not be shared across concurrent callers on the strength of this
+pattern; each provider needs its own safety and benefit analysis before wiring.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
 mints its own token from its own instance cache — measured at 16 exchanges across 16 concurrent
 callers, i.e. a cold key behaved as though there were no cache at all. That is the shape a
 dashboard produces when several panels load at once or a pod restarts.
+
+**Three properties of these tests were asserted before they were exercised, and each needed a
+compiling mutation to expose.** They are recorded here because the shapes recur:
+
+* A probe reached a base URL the fixture did not stub. `microsoft.Client` splits its API across
+  three hosts, an un-overridden origin falls back to the PRODUCTION default rather than failing,
+  and the probes discard their API error — so the Microsoft cache tests dialled
+  `reporting.api.bingads.microsoft.com` on every run while passing, with the cache assertions
+  resting on a live network error. The guard is a dialler that refuses non-loopback addresses, not
+  a timing assertion.
+* A bookkeeping mutex held across the probe (`mu.Lock(); defer mu.Unlock()` before the call) made
+  the 16-caller `-race` burst run strictly serially. Deleting the production-side locking from
+  `reddit.Client.refreshToken` left it passing; the lock must cover only the shared appends.
+* The cache tests all drove `resolveMicrosoftClient`, so `Dispatch`'s own construction line was
+  unbound — reverting it to a direct `microsoft.NewClient` kept the whole suite green. The binding
+  assertion is the token COUNT across two dispatches of an unchanged connection.
 
 **The TTL bounds memory residency, not staleness.** Correctness comes from the id+version check;
 the 5-minute TTL and 512-entry LRU cap exist because entries hold plaintext, and an unbounded cache
@@ -1261,8 +1333,9 @@ version)` — the same four components the cache entry is validated on, so a bur
 rotation OR a reconnect cannot be served the other's plaintext — so
 N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
 receives its own clone and builds its own client, and the access token is cached on the client
-INSTANCE, so collapsing the token exchange is the separate job of the client cache below (wired
-today only into Google Ads; Reddit and Microsoft still rebuild per resolve and still re-mint).
+INSTANCE, so collapsing the token exchange is the separate job of the client cache above (wired
+into Google Ads, Reddit and Microsoft; LinkedIn, Meta and X/Twitter still rebuild a client per
+resolve, though rebuilding is not re-minting for those three — see the roster above).
 The version in that
 key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
 pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of
@@ -1301,9 +1374,33 @@ One arm is NOT shared. A dispatcher with no `EmailSearcher` yields `ErrEmailSear
 a separate sentinel from `ErrAccountsUnsupported`, because the two capabilities are genuinely
 independent: HubSpot searches emails and has no ad accounts, while the ad platforms that
 implement `AccountLister` are the reverse — Google Ads, Meta, LinkedIn and Microsoft as of
-LFXV2-3064. Reddit and X implement neither capability, their clients having no
+LFXV2-3064, plus X as of LFXV2-3319. Reddit implements neither capability, its client having no
 `ListAdAccounts`. Folding the two sentinels into one
 would make "this platform cannot do X" ambiguous about which X.
+
+**The `AccountLister` roster is pinned by a test rather than restated in prose, and the reason is
+worth reading before adding another enumeration.** The set has moved four times (Google Ads, then
+Meta under LFXV2-3062, then LinkedIn and Microsoft under LFXV2-3064, then X under LFXV2-3319), and
+each move left a member list somewhere describing the previous world. `internal/bootstrap/sysacct.go`
+carried a comment that had been "corrected three times, each correction falsified by the next
+ticket"; LFXV2-3319 falsified it a fourth time and simultaneously left
+`docs/knowledge/kubernetes/ruleset.md` naming `twitter-ads` among the providers "whose clients have
+no `ListAdAccounts`" while its companion `httproute.md` was updated.
+
+`TestAccountListerProseMatchesTheInterface` (`internal/dispatch`) derives the roster from
+`service.AccountLister` by type assertion and fails when the HTTPRoute template or `ruleset.md`
+disagrees with it. It also fails if the sentence it binds to disappears, so a doc restructure
+cannot turn it into a check that passes forever.
+
+**What is deliberately NOT derived: the second eligibility half.** `accountDiscoveryProviders` (the
+bootstrap CLI's credentials-first gate) needs both halves — discovery AND a create path that names
+the missing choice with `ErrAccountNotSelected`. The second is a call-graph property, "does
+`Dispatch` itself call the tagging validator", and every dispatcher including Reddit mentions that
+sentinel, so no grep or reflection separates LinkedIn (tagged in a resolver `Dispatch` never calls)
+from X (whose `Dispatch` calls the validator itself). `TestAccountDiscoveryProvidersIsASubsetOfAccountListers`
+therefore pins only the invariant that survives — every member holds the first half — and
+deliberately does not assert equality, because the sets are unequal on purpose and forcing that
+judgement to be relitigated as a test failure is what produced the serial corrections.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"

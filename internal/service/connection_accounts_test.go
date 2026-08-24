@@ -764,6 +764,12 @@ func TestListAccounts_RejectsTheReservedSystemScope(t *testing.T) {
 				&conn.ListMicrosoftAdsAccountsPayload{ProjectID: model.SystemProjectID})
 			return err
 		}},
+		// The route LFXV2-3319 added, here for the same reason as the two above.
+		{"twitter ads", func(s *ConnectionService) error {
+			_, err := s.ListTwitterAdsAccounts(context.Background(),
+				&conn.ListTwitterAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
 		// Not account discovery, same reserved scope. A GET here would decrypt the LF system
 		// credential and list the Linux Foundation's own marketing emails — subjects and all —
 		// for whoever asked.
@@ -877,4 +883,132 @@ func TestListLinkedinAndMicrosoftAccounts_MessagesNameTheirOwnProvider(t *testin
 			}
 		}
 	})
+}
+
+// TestListTwitterAdsAccounts_MessagesNameXNotAnotherProvider extends the descriptor
+// assertion to the handler LFXV2-3319 added.
+//
+// X's remedy is the one that differs most from every other ad platform's: X Ads is the only
+// OAuth 1.0a provider here, so its credential is a FOUR-tuple where the others carry a
+// single token. A handler wired to Meta's or LinkedIn's descriptor would tell an X operator
+// to check `access_token` — which an X credential does have, but which is only a QUARTER of
+// what the connection stores, so the operator fixes one field and the endpoint keeps
+// failing. Every status-code assertion passes while that happens, which is why the text is
+// the assertion.
+//
+// The field names asserted are the PUBLISHED wire names from design/connection.go's
+// TwitterAdsCredentials, not the PascalCase Go keys the blob is persisted under, which an
+// operator has no way to address.
+func TestListTwitterAdsAccounts_MessagesNameXNotAnotherProvider(t *testing.T) {
+	newSvc := func(dispatchErr error) *ConnectionService {
+		svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+		svc.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{
+				model.ProviderTwitterAds: &mockAccountListerDispatcher{err: dispatchErr},
+			},
+		})
+		return svc
+	}
+
+	t.Run("404 names x/twitter, not another provider", func(t *testing.T) {
+		_, err := newSvc(domain.ErrNotFound).ListTwitterAdsAccounts(
+			context.Background(), &conn.ListTwitterAdsAccountsPayload{ProjectID: "p"})
+		notFound, ok := err.(*conn.NotFoundError)
+		if !ok {
+			t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+		}
+		if !strings.Contains(notFound.Message, "x/twitter ads") {
+			t.Errorf("message = %q, want it to name x/twitter ads", notFound.Message)
+		}
+		for _, other := range []string{"google", "meta", "linkedin", "microsoft"} {
+			if strings.Contains(notFound.Message, other) {
+				t.Errorf("message = %q names %s on the x/twitter endpoint", notFound.Message, other)
+			}
+		}
+	})
+
+	t.Run("400 names all four fields an x credential carries", func(t *testing.T) {
+		wrapped := fmt.Errorf("%w: %w: twitter credentials are incomplete",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+		_, err := newSvc(wrapped).ListTwitterAdsAccounts(
+			context.Background(), &conn.ListTwitterAdsAccountsPayload{ProjectID: "p"})
+		badRequest, ok := err.(*conn.BadRequestError)
+		if !ok {
+			t.Fatalf("expected BadRequestError, got %T: %v", err, err)
+		}
+		// All four, not just access_token: naming one field of an OAuth 1.0a four-tuple
+		// sends the operator to fix a quarter of the problem.
+		for _, field := range []string{"consumer_key", "consumer_secret", "access_token", "access_token_secret"} {
+			if !strings.Contains(badRequest.Message, field) {
+				t.Errorf("remedy = %q, want it to name %s — an X credential is a four-tuple",
+					badRequest.Message, field)
+			}
+		}
+		if strings.Contains(badRequest.Message, "login_customer_id") || strings.Contains(badRequest.Message, "developer_token") {
+			t.Errorf("remedy = %q names another provider's field", badRequest.Message)
+		}
+		// The cause is credential-derived and is neither returned nor logged.
+		if strings.Contains(badRequest.Message, "are incomplete") {
+			t.Errorf("message %q echoes the wrapped cause", badRequest.Message)
+		}
+	})
+}
+
+// TestListTwitterAdsAccounts_PassesTheAlphanumericIDThrough pins the one SHAPE difference
+// between X and the other discovery providers: LinkedIn's and Microsoft's ids are digits,
+// X's are alphanumeric handles. A handler (or a future shared normalizer) that assumed
+// numeric ids would reject or mangle every real X answer, and the status code would not
+// change.
+func TestListTwitterAdsAccounts_PassesTheAlphanumericIDThrough(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderTwitterAds: &mockAccountListerDispatcher{accounts: []model.AccessibleAccount{
+				{ID: "18ce54d4x5t", Label: "Linux Foundation"},
+				{ID: "8r7gb", Label: "CNCF — under review"},
+			}},
+		},
+	})
+
+	res, err := svc.ListTwitterAdsAccounts(context.Background(), &conn.ListTwitterAdsAccountsPayload{ProjectID: "p"})
+	if err != nil {
+		t.Fatalf("ListTwitterAdsAccounts: %v", err)
+	}
+	wantIDs := []string{"18ce54d4x5t", "8r7gb"}
+	if len(res.Accounts) != len(wantIDs) {
+		t.Fatalf("accounts = %+v, want %d", res.Accounts, len(wantIDs))
+	}
+	for i, got := range res.Accounts {
+		if got.ID != wantIDs[i] {
+			t.Errorf("account %d: id = %q, want %q — the alphanumeric handle is the stored form and must survive verbatim",
+				i, got.ID, wantIDs[i])
+		}
+		if got.Label == nil || *got.Label == "" {
+			t.Errorf("account %d: label is empty; a blank row in a picker is unpickable", i)
+		}
+	}
+}
+
+// TestListTwitterAdsAccounts_EmptyIsNotNil pins that a credential reaching zero accounts
+// serializes as `[]`, never `null`. The generated result type carries a slice, and a nil
+// one would hand every client a null to special-case — undoing the deliberate zero-length
+// allocation the dispatcher makes one layer down.
+func TestListTwitterAdsAccounts_EmptyIsNotNil(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderTwitterAds: &mockAccountListerDispatcher{accounts: []model.AccessibleAccount{}},
+		},
+	})
+
+	res, err := svc.ListTwitterAdsAccounts(context.Background(), &conn.ListTwitterAdsAccountsPayload{ProjectID: "p"})
+	if err != nil {
+		t.Fatalf("ListTwitterAdsAccounts: %v", err)
+	}
+	if res.Accounts == nil {
+		t.Fatal("accounts is nil; an empty answer must serialize as [] rather than null")
+	}
+	if len(res.Accounts) != 0 {
+		t.Fatalf("accounts = %+v, want empty", res.Accounts)
+	}
 }

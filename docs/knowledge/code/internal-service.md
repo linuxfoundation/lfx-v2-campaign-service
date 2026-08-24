@@ -478,12 +478,19 @@ exists to prevent.
 
 ## Account discovery
 
-`ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts` and
-`ListMicrosoftAdsAccounts` (backing `GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads}/accounts`)
+`ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts`,
+`ListMicrosoftAdsAccounts` and `ListTwitterAdsAccounts` (backing
+`GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads,twitter-ads}/accounts`)
 enumerate the ad accounts reachable UPSTREAM with the connection's stored credential, so an
 operator can pick one instead of pasting an account id by hand. LinkedIn and Microsoft joined in
-LFXV2-3064; Reddit and X have no handler because their clients expose no `ListAdAccounts`, so
-there is nothing for one to call.
+LFXV2-3064 and X in LFXV2-3319; Reddit has no handler because its client exposes no
+`ListAdAccounts`, so there is nothing for one to call.
+
+X's ids are ALPHANUMERIC handles (e.g. `18ce54d4x5t`), not digits like LinkedIn's and
+Microsoft's, and are returned verbatim because that is the form its `account_id` stores. Its
+`notUsableRemedy` names all FOUR OAuth 1.0a fields — `consumer_key`, `consumer_secret`,
+`access_token`, `access_token_secret` — since X is the only OAuth1 provider here and naming one
+field of a four-tuple would send an operator to fix a quarter of the problem.
 
 **Every handler is three lines over one `listAccounts` helper**, parameterized by an
 `accountDiscovery{provider, displayName, notUsableRemedy}` value. The mapping below encodes
@@ -703,17 +710,19 @@ reaches operators here through the log. A client must treat an absent `reason` a
 conflict"; see `mapAudienceErr` in `internal/service/audience.go` for the populated case.
 
 **The message names no accounts endpoint**, and that constraint is load-bearing rather than
-stylistic. FOUR providers now have one — Google Ads, Meta, LinkedIn and Microsoft Ads
-(`design/connection.go`) — but Reddit and X/Twitter still do not, and they tag this defect too,
-so they reach the same arm. A message pointing them at `.../accounts` would prescribe a route
+stylistic. FIVE providers now have one — Google Ads, Meta, LinkedIn, Microsoft and X/Twitter Ads
+(`design/connection.go`) — but Reddit still does not, and it tags this defect too, so it reaches
+the same arm. A message pointing them at `.../accounts` would prescribe a route
 that 404s, which reads as a service bug rather than a value the caller has to supply. "Save an ad
 account id on the connection" is true of every provider, which is why the shared message says
 that and nothing more. `assertNoAccountsEndpointPromised` pins it.
 
 Note the earlier wording claimed Microsoft's `/accounts` would 404. That was true before
-LFXV2-3064 and false after it — the constraint survives on Reddit and X alone, and stating it in
-terms of a provider that has since gained the route is how a correct rule ends up cited as
-evidence for a wrong fact.
+LFXV2-3064 and false after it; the same then happened to X, true before LFXV2-3319 and false
+after. The constraint survives on Reddit ALONE, and stating it in terms of a provider that has
+since gained the route is how a correct rule ends up cited as evidence for a wrong fact. Because
+the rule now rests on a single provider, state it as "not every provider has one" rather than by
+naming the members.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:
@@ -758,8 +767,8 @@ between the two; only the operation noun differs. One arm is not shared: a dispa
 `EmailSearcher` yields `ErrEmailSearchUnsupported`, a separate sentinel from
 `ErrAccountsUnsupported` because the capabilities are independent — HubSpot searches emails and
 has no ad accounts, while the ad platforms that implement `AccountLister` are the reverse
-(Google Ads, Meta, LinkedIn and Microsoft as of LFXV2-3064; Reddit and X implement neither,
-having no `ListAdAccounts` in their clients). Folding them into one sentinel would
+(Google Ads, Meta, LinkedIn and Microsoft as of LFXV2-3064, plus X as of LFXV2-3319; Reddit
+implements neither, having no `ListAdAccounts` in its client). Folding them into one sentinel would
 make "this platform cannot do X" ambiguous about which X.
 
 An omitted `q` lists rather than fails, because the first screen of a picker nobody has typed into

@@ -28,7 +28,7 @@ func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|apply-keyword-actions|delete-campaign|get-job)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-hubspot-emails)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
@@ -425,6 +425,10 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags           = flag.NewFlagSet("list-twitter-ads-accounts", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsListTwitterAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceConnectionsListHubspotEmailsFlags           = flag.NewFlagSet("list-hubspot-emails", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag   = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag           = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.String("q", "", "")
@@ -513,6 +517,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListMetaAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsUsage
+	lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Usage = lfxV2CampaignServiceConnectionsListHubspotEmailsUsage
 
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
@@ -783,6 +788,9 @@ func ParseEndpoint(
 			case "list-microsoft-ads-accounts":
 				epf = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsFlags
 
+			case "list-twitter-ads-accounts":
+				epf = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags
+
 			case "list-hubspot-emails":
 				epf = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags
 
@@ -1045,6 +1053,9 @@ func ParseEndpoint(
 			case "list-microsoft-ads-accounts":
 				endpoint = c.ListMicrosoftAdsAccounts()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListMicrosoftAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsBearerTokenFlag)
+			case "list-twitter-ads-accounts":
+				endpoint = c.ListTwitterAdsAccounts()
+				data, err = lfxv2campaignserviceconnectionsc.BuildListTwitterAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListTwitterAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerTokenFlag)
 			case "list-hubspot-emails":
 				endpoint = c.ListHubspotEmails()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListHubspotEmailsPayload(*lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag, *lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag, *lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag)
@@ -1742,6 +1753,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    list-meta-ads-accounts: Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.`)
 	fmt.Fprintln(os.Stderr, `    list-linkedin-ads-accounts: Enumerate the LinkedIn ad accounts accessible via the stored connection credential. Returns bare numeric account ids, ready to store as the connection's account_id.`)
 	fmt.Fprintln(os.Stderr, `    list-microsoft-ads-accounts: Enumerate the Microsoft Advertising accounts accessible via the stored connection credential, across every customer the credential can reach. Returns account ids as digits, ready to store as the connection's account_id; the label carries Microsoft's human-facing account number, which is what its own UI shows.`)
+	fmt.Fprintln(os.Stderr, `    list-twitter-ads-accounts: Enumerate the X/Twitter Ads accounts accessible via the stored connection credential. Returns account ids as the alphanumeric handle X uses, ready to store as the connection's account_id. Accounts that are under review or rejected are RETURNED with the reason in the label rather than hidden, so a caller whose only account is unusable sees it and why. DELETED accounts are a different case and are not promised: the walk does not send `+"`"+`with_deleted`+"`"+`, so it takes X's documented default of false and deleted accounts are normally excluded upstream — a deleted account is not a choice. The per-row deleted flag is still honoured defensively, so a row X flags anyway is labelled rather than passing as live.`)
 	fmt.Fprintln(os.Stderr, `    list-hubspot-emails: Search the marketing emails reachable via the stored HubSpot connection, most-recently-updated first. This is a TEMPLATE picker, not an account picker: a HubSpot connection is already scoped to the portal its private-app token authenticates against, but staging an email campaign clones a caller-specified source email (sourceEmailId is required and has no default), so the caller has to be able to find one.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
@@ -2765,6 +2777,26 @@ func lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-microsoft-ads-accounts --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsListTwitterAdsAccountsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections list-twitter-ads-accounts", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Enumerate the X/Twitter Ads accounts accessible via the stored connection credential. Returns account ids as the alphanumeric handle X uses, ready to store as the connection's account_id. Accounts that are under review or rejected are RETURNED with the reason in the label rather than hidden, so a caller whose only account is unusable sees it and why. DELETED accounts are a different case and are not promised: the walk does not send `+"`"+`with_deleted`+"`"+`, so it takes X's documented default of false and deleted accounts are normally excluded upstream — a deleted account is not a choice. The per-row deleted flag is still honoured defensively, so a row X flags anyway is labelled rather than passing as live.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-twitter-ads-accounts --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsListHubspotEmailsUsage() {

@@ -355,6 +355,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-meta-ads/accounts", true},
 		{"/projects/p1/connection-linkedin-ads/accounts", true},
 		{"/projects/p1/connection-microsoft-ads/accounts", true},
+		// X/Twitter joined the discovery branch with LFXV2-3319, which added
+		// twitter.ListAdAccounts and TwitterDispatcher.ListAccounts. This row is what
+		// fails if only one chart side is edited.
+		{"/projects/p1/connection-twitter-ads/accounts", true},
 		// HubSpot's extra sub-path is /emails, not /accounts (LFXV2-3197): the connection is
 		// already portal-scoped by its token, so there is no account to discover — the choice
 		// is which marketing email a campaign clones. It gets its own branch for that reason,
@@ -422,15 +426,14 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- rejected: unknown provider / unknown connection action ---
 		{"/projects/p1/connection-tiktok-ads", false},
 		{"/projects/p1/connection-google-ads/delete", false},
-		// reddit-ads and twitter-ads have NO account discovery: neither platform client has
-		// a ListAdAccounts, so their dispatchers do not implement AccountLister and the
-		// endpoint does not exist. Admitting the path would route a request the service
-		// answers with a 400 by construction. linkedin-ads and microsoft-ads used to sit
-		// here for the same reason and now have it -- these two rows are what fails if a
-		// future edit collapses the discovery branch back into the shared alternation
-		// before their clients grow one.
+		// reddit-ads has NO account discovery: its platform client has no ListAdAccounts,
+		// so its dispatcher does not implement AccountLister and the endpoint does not
+		// exist. Admitting the path would route a request the service answers with a 400
+		// by construction. linkedin-ads, microsoft-ads and twitter-ads used to sit here
+		// for the same reason and now have it -- this row is what fails if a future edit
+		// collapses the discovery branch back into the shared alternation before reddit's
+		// client grows one.
 		{"/projects/p1/connection-reddit-ads/accounts", false},
-		{"/projects/p1/connection-twitter-ads/accounts", false},
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
 		// --- rejected: metrics/keywords on the wrong provider ---

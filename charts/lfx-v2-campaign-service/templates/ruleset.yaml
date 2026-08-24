@@ -90,10 +90,10 @@ spec:
           - path: /projects/:projectId/connection-google-ads/test
           - path: /projects/:projectId/connection-google-ads/set-credential
           # Account discovery — a live, credential-scoped read of the ad accounts
-          # reachable upstream. Ruled for the four providers whose dispatchers
-          # implement AccountLister: google-ads, meta-ads, linkedin-ads and
-          # microsoft-ads. reddit-ads and twitter-ads have no ListAdAccounts in their
-          # platform clients, so the endpoint does not exist for them and ruling the
+          # reachable upstream. Ruled for the five providers whose dispatchers
+          # implement AccountLister: google-ads, meta-ads, linkedin-ads,
+          # microsoft-ads and twitter-ads. reddit-ads has no ListAdAccounts in its
+          # platform client, so the endpoint does not exist for it and ruling the
           # path would admit one the service does not serve. Each entry must be ruled
           # here AND admitted by the HTTPRoute regex or the path is unreachable
           # through the gateway.
@@ -112,6 +112,7 @@ spec:
           - path: /projects/:projectId/connection-twitter-ads
           - path: /projects/:projectId/connection-twitter-ads/test
           - path: /projects/:projectId/connection-twitter-ads/set-credential
+          - path: /projects/:projectId/connection-twitter-ads/accounts
           - path: /projects/:projectId/connection-microsoft-ads
           - path: /projects/:projectId/connection-microsoft-ads/test
           - path: /projects/:projectId/connection-microsoft-ads/set-credential
