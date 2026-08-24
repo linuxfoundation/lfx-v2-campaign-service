@@ -98,9 +98,9 @@ func insertCreativeAssetTestBrief(ctx context.Context, t *testing.T, pool *Pool,
 }
 
 // newTestAsset builds an in-memory asset for a (project, brief) with a unique checksum, so two
-// distinct assets never collide on the (brief_id, checksum) key by accident. checksum is returned
-// separately so a caller can build a SECOND asset that deliberately reuses it (the idempotency
-// case).
+// distinct assets never collide on the (brief_id, checksum) key by accident. A caller that needs
+// a SECOND asset deliberately reusing the same key (the idempotency case) reads it back off the
+// returned asset's Checksum field.
 func newTestAsset(t *testing.T, projectID, briefID string) *model.CreativeAsset {
 	t.Helper()
 	imgBytes := []byte("\x89PNG\r\n\x1a\n" + creativeAssetUniqueID(t, "bytes"))

@@ -29,9 +29,11 @@ nothing about what its snapshot may miss. `campaign_repo.go`'s `lockAdoptBriefQu
 stated the rule from the other side — what is required is `FOR UPDATE`, "not a plain re-read, and
 not the single-statement atomicity of the INSERT".
 
-This makes one outlier consistent with four established call sites in the same package
-(`CreateAudienceForApprovedBrief`, `BriefRepo`'s guarded update, `lockAdoptBriefQuery`, and the
-campaign-repo lock) rather than introducing a new pattern.
+This makes one outlier consistent with the established call sites in the same package —
+`AudienceRepo.CreateAudienceForApprovedBrief`, `JobRepo.CreateJobForApprovedBrief`, `BriefRepo`'s
+guarded update, and `campaign_repo.go`'s `lockAdoptBriefQuery` — rather than introducing a new
+pattern. (All four lock `campaign_briefs`. `campaign_repo.go`'s other `FOR UPDATE` locks the
+`campaigns` row instead, so it is a different lock and not a fifth example of this one.)
 
 **Cost, stated precisely:** uploads to the SAME brief serialize on that brief's row for the
 duration of the insert. Uploads to different briefs never contend — the lock is per-brief-row,

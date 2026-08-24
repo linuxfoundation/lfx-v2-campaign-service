@@ -75,12 +75,13 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // can read it or clean it up. Storage that only grows and is unreachable by every code path is a
 // different category from a row a later operation would refuse.
 //
-// The second of those triggers is CHECKED rather than left to review. getCreativeAssetQuery's
-// EXISTS on a non-archived parent is what makes "nothing can reach it" true, and
+// getCreativeAssetQuery carries the same EXISTS on a non-archived parent, pinned by
 // TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant's "an archived parent brief makes
-// the asset unreadable" subtest fails if it is dropped. That subtest is therefore load-bearing
-// for THIS decision as well as for its own lifecycle-consistency point, and says so, so that
-// weakening it cannot quietly remove this insert's justification.
+// the asset unreadable" subtest. That is a lifecycle-visibility rule in its own right — an
+// archived brief must refuse its children on every operation — and it is NO LONGER load-bearing
+// for this insert's correctness: the insert is correct because it locks, not because a later
+// read happens to hide what it stored. Weakening the read would be its own bug, not a
+// reopening of the archival race.
 //
 // ON CONFLICT (brief_id, checksum) DO UPDATE — not DO NOTHING — is what makes a repeat upload
 // return the EXISTING asset. DO NOTHING suppresses the RETURNING clause on a conflict (Postgres
@@ -99,12 +100,12 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // (DO NOTHING plus a follow-up SELECT) costs a second round trip on every duplicate and
 // reintroduces the read-after-write race this single statement avoids.
 //
-// No explicit transaction wraps this, unlike CreateAudience. That insert holds a (brief,platform)
-// build lease whose row a lost commit-ack would strand, so it reconciles inside a tx; a creative
-// asset carries no lease and no external side effect, and its idempotency key makes a
-// lost-ack retry harmless — the retry returns the row the first attempt committed rather than
-// duplicating it. A single autocommit statement is therefore both sufficient and safer (no
-// connection held across a reconcile loop).
+// This DOES run inside an explicit transaction, because the parent-brief lock and the insert
+// have to be one atomic unit (see the ordering argument above). The idempotency key still makes
+// a lost commit-ack harmless — the retry returns the row the first attempt committed rather than
+// duplicating it — so the transaction is here for ORDERING, not for the reconcile reason
+// CreateAudience has one (that insert holds a (brief,platform) build lease whose row a lost ack
+// would strand).
 const createCreativeAssetQuery = `INSERT INTO creative_assets
 		(project_id, brief_id, mime_type, byte_size, checksum, bytes, created_by)
 		SELECT $1, $2, $3, $4, $5, $6, $7

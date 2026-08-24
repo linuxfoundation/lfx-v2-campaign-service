@@ -28,11 +28,17 @@ type CreativeAssetRepository interface {
 	// approval, unlike campaign creation which gates on approval.
 	//
 	// The gate IS serialized against archival, and that is part of the contract rather than an
-	// implementation detail: a brief archived CONCURRENTLY with an upload is refused, not stored.
-	// An implementation MUST order this call against ArchiveBrief — a guarded insert alone does
-	// not, because under READ COMMITTED its snapshot can observe an active brief while the
-	// archival commits. The Postgres implementation takes SELECT ... FOR UPDATE on the parent
-	// brief and inserts on that transaction.
+	// implementation detail. The guarantee is an ORDERING one, and it is worth stating exactly
+	// because the stronger-sounding version is false: an implementation MUST make this call and
+	// ArchiveBrief take effect in some serial order, so the two outcomes are
+	//   - archival first  → this call observes the archived brief and returns ErrNotFound; and
+	//   - this call first → the asset commits under a still-active brief, and the archival
+	//     applies afterwards to a brief that now has one more asset.
+	// What is EXCLUDED is the interleaving where both appear to win: an upload admitted against
+	// a brief the archival has already committed. A guarded insert alone does not exclude it,
+	// because under READ COMMITTED its snapshot can observe an active brief while the archival
+	// commits. The Postgres implementation takes SELECT ... FOR UPDATE on the parent brief and
+	// inserts on that transaction.
 	//
 	// It is required rather than optional because the consequence is permanent: creative_assets
 	// has no prune and briefs are never hard-deleted, so an asset committed under an archived

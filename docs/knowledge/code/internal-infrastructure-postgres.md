@@ -1186,8 +1186,9 @@ transaction. Five things are doing work here and each has a failure mode if chan
   INSERT".
 
   This is the treatment the rest of this package already gives a brief-parented write
-  (`CreateAudienceForApprovedBrief`, `BriefRepo`'s guarded update, `lockAdoptBriefQuery`);
-  `CreateAsset` was the outlier. The cost is narrow and per-row: uploads to the SAME brief
+  (`AudienceRepo.CreateAudienceForApprovedBrief`, `JobRepo.CreateJobForApprovedBrief`,
+  `BriefRepo`'s guarded update, and `campaign_repo.go`'s `lockAdoptBriefQuery` — all four
+  locking `campaign_briefs`); `CreateAsset` was the outlier. The cost is narrow and per-row: uploads to the SAME brief
   serialize on that brief's row for the duration of the insert, while uploads to different
   briefs never contend.
 
