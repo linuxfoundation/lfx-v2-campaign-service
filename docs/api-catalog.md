@@ -717,6 +717,33 @@ imageUrl?: string               — OPTIONAL https URL to a single image for thi
                                   Meta rejects over the image fails only THAT variant's ad
                                   (non-fatal), and is reported in the result Steps with the
                                   URL's query/fragment stripped (it may be pre-signed).
+imageAssetId?: string            — OPTIONAL id of a creative asset previously uploaded against
+                                  THIS brief (see POST .../briefs/{brief_id}/creative-assets).
+                                  The alternative to `imageUrl`: instead of Meta fetching a
+                                  URL, the service resolves the asset to its stored bytes at
+                                  dispatch, POSTs them to `/act_<id>/adimages`, and attaches
+                                  the returned account-scoped hash as
+                                  `object_story_spec.link_data.image_hash`.
+                                  Must be a valid UUID naming an asset that exists FOR THIS
+                                  BRIEF — an asset belonging to another brief or project is
+                                  rejected, as is an asset with no stored bytes. Every such
+                                  failure fails the platform job BEFORE any paid resource is
+                                  created (no campaign, no ad set, no spend) and RELEASES the
+                                  dispatch claim; a bad reference never degrades to a
+                                  link-only ad, because the caller asked for an image and
+                                  silently creating an imageless ad would spend budget on a
+                                  creative nobody approved.
+                                  Resolution is bounded: variants naming the SAME asset id
+                                  resolve once and share one buffer, and a config naming more
+                                  than 240 MiB of DISTINCT assets is refused pre-create.
+                                  MUTUALLY EXCLUSIVE with `imageUrl`. Meta documents
+                                  `link_data.picture` as "Specify this field or `image_hash`
+                                  but not both", so a variant supplying BOTH has no correct
+                                  interpretation and is REFUSED — locally, before any
+                                  upstream call is made, rather
+                                  than discovered at the per-variant creative step where the
+                                  campaign and ad set already exist. Supply one or neither;
+                                  neither still yields the bare-link creative.
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that

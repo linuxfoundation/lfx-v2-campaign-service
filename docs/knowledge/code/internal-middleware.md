@@ -90,11 +90,12 @@ budget, by `service.DecodeReserver` (`DecodeAdmissionBudgetBytes`) — see
 `docs/knowledge/code/internal-service.md`. Reading this middleware as covering pixels would make
 that second reservation look redundant and invite its removal.
 
-It also does NOT account memory an unrelated path later allocates from bytes stored earlier. Outbound dispatch reads assets back out
-of Postgres and can multiply their resident bytes (Meta's `createVariantAd` uploads per variant,
-so N variants naming one asset hold N copies), but that runs in a dispatch worker long after the
-HTTP request returned and released its permit — a different lifetime and code path, not an
-undercount of this one. Bounding dispatch-side amplification needs its own control there.
+It also does NOT account memory an unrelated path later allocates from bytes stored
+earlier. Outbound dispatch reads assets back out of Postgres, but that runs in a dispatch
+worker long after the HTTP request returned and released its permit — a different lifetime and code path, not an undercount of this one. Dispatch-side
+memory is bounded by its own control on that path: the Meta dispatcher resolves each distinct
+asset once per dispatch and caps the total distinct bytes one dispatch may hold, so repeating a
+single asset across variants does not multiply what is resident.
 
 The budget is DERIVED, not chosen: `constants.UploadAdmissionBudgetBytes` is
 `PodMemoryLimitBytes / 4`, and `PodMemoryLimitBytes` mirrors the chart's
