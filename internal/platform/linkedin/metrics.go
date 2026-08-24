@@ -553,16 +553,7 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 // (resp, false, 0, nil) on success, (nil, true, wait, nil) when the caller
 // should retry after wait, or (nil, false, 0, err) on a terminal error.
 func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAnalyticsResponse, bool, time.Duration, error) {
-	attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		cancel()
-		return nil, false, 0, fmt.Errorf("new request: %w", err)
-	}
-
-	// Resolve through accessTokenValue, NOT c.creds.AccessToken: this is the metrics
+	// Resolve through authorizedAttempt, NOT c.creds.AccessToken: this is the metrics
 	// read path — the one that surfaced the expired-token 500 — so it must take the
 	// same refresh and fail-closed discipline as doRequest. Reading the field directly
 	// would send a known-expired token and would never see a refreshed one.
@@ -570,11 +561,22 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	// It is NOT a data race: c.creds is injected at construction and never written
 	// afterwards — a rotated refresh token is adopted into c.refreshToken/c.refreshExpiry
 	// precisely so c.creds stays immutable (see fetchToken in token.go). The reason to go
-	// through accessTokenValue is correctness of the VALUE, not memory safety.
-	token, err := c.accessTokenValue(attemptCtx)
+	// through the token accessor is correctness of the VALUE, not memory safety.
+	//
+	// authorizedAttempt also fixes the ORDER: the refresh runs on the parent ctx under
+	// its own bound, so a refresh that succeeds near that bound still leaves this Ad
+	// Analytics request a full per-attempt budget.
+	attemptCtx, cancel, token, err := c.authorizedAttempt(ctx)
 	if err != nil {
 		cancel()
 		return nil, false, 0, err
+	}
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		cancel()
+		return nil, false, 0, fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("LinkedIn-Version", c.apiVersion)

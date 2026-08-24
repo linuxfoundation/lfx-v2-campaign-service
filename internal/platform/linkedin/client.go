@@ -399,6 +399,46 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("LinkedIn API %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
 
+// authorizedAttempt acquires the bearer token and THEN opens the per-attempt
+// deadline, returning both the bounded context and its cancel func.
+//
+// ORDER IS THE POINT, and it is why this exists as a single constructor rather
+// than as two statements repeated at each call site. Token acquisition must run
+// on the PARENT ctx: every refresh-capable client performs an OAuth exchange on
+// its first request (see accessTokenValue), and that exchange is already
+// independently bounded by its own requestTimeout on a detached context (see the
+// leader goroutine in token.go). Starting the attempt deadline first would make
+// the exchange a charge against the request's budget, so an exchange that
+// succeeds near the bound would leave the real LinkedIn call little or no time
+// and a healthy refreshed credential would still fail. Mirrors the Google Ads
+// and Microsoft clients, which both resolve the token from the parent ctx before
+// creating their attempt context.
+//
+// Every path that sends an authenticated LinkedIn request routes through here,
+// so a new call site cannot reintroduce the nested-budget defect by construction.
+//
+// The caller owns cancel() and must invoke it on every exit path. On error the
+// returned cancel is a no-op, so an unconditional defer/call stays safe.
+func (c *Client) authorizedAttempt(ctx context.Context) (context.Context, context.CancelFunc, string, error) {
+	// Fail CLOSED: an unrefreshable credential aborts before any deadline is
+	// opened and before the request is sent, rather than degrading into an
+	// unauthenticated or knowingly-expired call.
+	token, err := c.accessTokenValue(ctx)
+	if err != nil {
+		return nil, func() {}, "", err
+	}
+
+	// Bound EACH attempt with a per-attempt context deadline, NOT just the
+	// http.Client.Timeout: WithHTTPClient can inject an *http.Client whose Timeout
+	// is 0 or larger than requestTimeout, and callers may pass context.Background(),
+	// so without this a call could hang indefinitely — and the past-start buffer
+	// (startTimeBuffer) sizing assumes every attempt is capped by requestTimeout.
+	// The caller ctx is the parent, so a real caller cancel/deadline still
+	// propagates.
+	attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	return attemptCtx, cancel, token, nil
+}
+
 // transportError wraps a failure of the HTTP round-trip itself (httpClient.Do)
 // that happened AFTER the request was plausibly sent (mid-flight timeout,
 // unexpected EOF, connection reset), OR a failure to read/decode a 2xx response:
@@ -971,31 +1011,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			reqBody = bytes.NewReader(nil)
 		}
 
-		// Bound EACH attempt with a per-attempt context deadline, NOT just the
-		// http.Client.Timeout: WithHTTPClient can inject an *http.Client whose Timeout
-		// is 0 or larger than requestTimeout, and doRequest takes the caller ctx
-		// directly (which may be context.Background()), so without this a create could
-		// hang indefinitely — and the past-start buffer (startTimeBuffer) sizing assumes
-		// every attempt is capped by requestTimeout. The caller ctx is the parent, so a
-		// real caller cancel/deadline still propagates. cancel() is invoked on every
-		// exit path (return AND the 429 continue) to avoid leaking the timer. Mirrors the
-		// Reddit client's request() per-attempt context.WithTimeout.
-		attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		// Resolve the bearer token per attempt so a long 429 backoff cannot send a
+		// just-expired token on the resumed attempt, then open the per-attempt
+		// deadline. authorizedAttempt owns that ORDER: the token exchange runs on the
+		// parent ctx under its own independent bound, so it cannot eat this request's
+		// budget. cancel() is invoked on every exit path (return AND the 429 continue)
+		// to avoid leaking the timer.
+		attemptCtx, cancel, token, err := c.authorizedAttempt(ctx)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
 
 		req, err := http.NewRequestWithContext(attemptCtx, method, u.String(), reqBody)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("new request: %w", err)
-		}
-		// Resolve the bearer token per attempt so a long 429 backoff cannot send a
-		// just-expired token on the resumed attempt. Uses the ATTEMPT context so a
-		// refresh is bounded by the same per-attempt timeout as the request itself.
-		token, err := c.accessTokenValue(attemptCtx)
-		if err != nil {
-			// Fail CLOSED: an unrefreshable credential aborts before the request is sent
-			// rather than degrading into an unauthenticated or knowingly-expired call.
-			cancel()
-			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("LinkedIn-Version", c.apiVersion)

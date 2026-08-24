@@ -1,6 +1,6 @@
 # 2026-08-24 — an append/append conflict is a union, and diff3 has a THIRD section
 
-**Merge** — merging `origin/main` (which carried the conversions work, `d947dfb8`) into
+**Fix** — merge resolution: merging `origin/main` (which carried the conversions work, `d947dfb8`) into
 `feat/LFXV2-3281-linkedin-refresh` conflicted in
 `internal/platform/linkedin/metrics_test.go`. Both sides had appended new tests to the end of
 the same file and neither had touched the other's lines, so the correct resolution keeps
