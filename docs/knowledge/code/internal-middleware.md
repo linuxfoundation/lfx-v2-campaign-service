@@ -76,6 +76,14 @@ prevent an unauthenticated body from being read — auth-before-body-read belong
 It ensures such a read cannot happen without first taking a permit from a budget tied to the
 pod's real limit.
 
+What the weight accounts, precisely: the INBOUND request — buffered body, base64-decoded slice,
+and the pixel buffer `image.Decode` may allocate for one upload. It does NOT account memory an
+unrelated path later allocates from bytes stored earlier. Outbound dispatch reads assets back out
+of Postgres and can multiply their resident bytes (Meta's `createVariantAd` uploads per variant,
+so N variants naming one asset hold N copies), but that runs in a dispatch worker long after the
+HTTP request returned and released its permit — a different lifetime and code path, not an
+undercount of this one. Bounding dispatch-side amplification needs its own control there.
+
 The budget is DERIVED, not chosen: `constants.UploadAdmissionBudgetBytes` is
 `PodMemoryLimitBytes / 4`, and `PodMemoryLimitBytes` mirrors the chart's
 `resources.limits.memory`. Because that number lives in a file the Go build cannot read,

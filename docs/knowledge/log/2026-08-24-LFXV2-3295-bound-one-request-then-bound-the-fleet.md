@@ -51,6 +51,22 @@ numbers ~7 MiB apart and cannot tell which unit either is in.
 
 Corrected to state the unit explicitly and show the conversion, so the ambiguity cannot recur.
 
+## Name what the bound accounts
+
+A bound that under-counts is worse than none, because it reads as protection. So the weight's
+scope is stated in the code rather than left to inference: it accounts the INBOUND request's
+allocation, and nothing else.
+
+The case that forces the distinction is dispatch-side amplification. Meta's `createVariantAd`
+uploads per variant, so five variants naming one 30 MiB asset hold five copies. That is real, but
+it is not an undercount of this bound: fan-out reads from Postgres in a dispatch worker, long
+after the HTTP request returned and released its permit. Different lifetime, different code path,
+and no request gated here can multiply its own resident bytes that way. Bounding it needs a
+control in the dispatch path; this middleware neither provides nor claims one.
+
+The general form: when documenting a resource bound, state the quantity it accounts AND name the
+adjacent quantity it does not, or a reader will assume the larger scope.
+
 ## The rule
 
 A bound on one request is not a bound on the service. When a per-request limit is added, ask what
