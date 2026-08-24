@@ -59,8 +59,12 @@ gained the concurrency paragraph its Reddit and Microsoft counterparts already h
 
 **This is a deliberate partial rollout.** LinkedIn, Meta and X/Twitter are NOT wired, because open
 PRs owned those files (cs#148 linkedin, cs#152 meta+twitter, cs#158 meta) and touching them would
-have created merge conflicts. They still rebuild per resolve and still re-mint per operation. The
-follow-up should reuse this same pattern once those PRs land.
+have created merge conflicts. They still rebuild a client per resolve — but rebuilding a client is
+not re-minting a token, and none of these three re-mints one: Meta and LinkedIn are handed an
+already-minted bearer token and do no exchange at construction, and X signs each request with
+stored OAuth 1.0a credentials. Their remaining win is allocation reuse, not a saved token
+round-trip. The follow-up should reuse this same pattern once those PRs land, subject to the
+per-provider concurrency check the roster documents.
 
 Six tests were added in `internal/dispatch/clientcache_providers_test.go` — reuse, rotation +
 reconnect, and cold-key concurrent coalescing, per provider. The rotation tests assert the
