@@ -370,7 +370,7 @@ type tokenResponse struct {
 // as the cache being cleared. Be precise about what that arm does and does not buy today.
 //
 // It is NOT reachable on the current leader path. The leader sets inflight.token, retracts
-// c.inflight and closes done inside ONE unbroken critical section (see refreshToken), so a
+// c.inflight and closes done inside ONE unbroken critical section (see accessTokenValue), so a
 // published flight is never observable holding a non-empty token: by the time the token is
 // set, the flight is already unpublished in the same lock hold. A 3s racing probe over ~7M
 // observations of a published flight saw the (c.inflight != nil && token != "") state ZERO
