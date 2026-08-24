@@ -1,6 +1,6 @@
 # 2026-08-24 — a per-request bound says nothing about the aggregate
 
-**Security** — the creative-upload path had three carefully-derived size limits and still had no
+**Fix** — the creative-upload path had three carefully-derived size limits and still had no
 answer to "how many at once".
 
 `MaxRequestBodyBytes` (42 MiB) bounds one body. The design's `MaxLength(31457280)` bounds one
