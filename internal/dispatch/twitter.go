@@ -456,5 +456,12 @@ func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		// Conversions is deliberately LEFT NIL. X has no single conversions metric to read:
+		// its analytics endpoint splits them across per-event-type metrics
+		// (conversion_purchases, conversion_sign_ups, conversion_site_visits, …), each a JSON
+		// OBJECT carrying counts and sale amounts rather than a scalar, and only under the
+		// WEB_CONVERSION / MOBILE_CONVERSION metric groups this client does not request.
+		// Totalling those would require picking which event types count as conversions —
+		// the same per-advertiser decision the Meta adapter declines to make.
 	}, nil
 }

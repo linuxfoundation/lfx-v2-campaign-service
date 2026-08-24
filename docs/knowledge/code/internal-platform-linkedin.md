@@ -105,6 +105,47 @@ NUMERIC id persisted by `campaignFromLinkedIn` (`trailingID` of the creation res
 campaign URN, not a URN) — this method builds the `urn:li:sponsoredCampaign:{id}` and
 `urn:li:sponsoredAccount:{acctID}` URNs the Ad Analytics finder itself requires.
 
+Conversions come from `externalWebsiteConversions`, which must be NAMED in the request's
+`fields` list: LinkedIn returns only impressions and clicks by default, so an unrequested
+metric comes back absent rather than zero. Unlike Google's and Microsoft's, the field is typed
+`long` in the Ads Reporting schema and carries no fraction, so the running total is accumulated
+in a local int64 for the WHOLE loop (keeping the exact overflow guard) and widened to the float64
+the domain model uses exactly once, after aggregation — the same shape `CostMicros` uses. The
+accumulator is deliberately NOT the `*float64` domain field itself: reading the running total back
+out of it converts int64 to float64 and back on every element, and above 2^53 float64 cannot
+represent every consecutive integer, so each round trip can silently drop increments and hand the
+overflow check a value that is no longer the true sum. Separate booleans, not a non-nil pointer,
+carry the presence state, so the nil-versus-measured-zero distinction survives without the
+field doubling as storage.
+
+The count is published ONLY when EVERY element carried the metric. One element omitting it
+withdraws the whole total to nil, even if other elements reported values and even if the
+omission is found after they were already summed — which is why the accumulator lives outside
+the response field. Summing just the elements that carried the metric would hand consumers a
+PARTIAL count labelled as a complete one: an element that omits the field followed by one
+reporting `0` sums to exactly `0` while the clicks of BOTH elements still aggregate, so once
+they clear `minClicksForConversions` the `no_conversions` rule fires HIGH against a campaign
+whose real conversion count is unknown — the rule manufacturing its own finding. Treating an
+absent element value as a zero addend is the substitution the pointer exists to prevent, and
+it lands most often on exactly the responses where the field was never requested. This is the
+same discipline `microsoft/metrics.go` applies with `convIncomplete`, where one blank
+`ConversionsQualified` cell withdraws that report's entire total.
+
+An EMPTY `elements` array is the opposite case and answers a non-nil zero. The client always
+names `externalWebsiteConversions` in `fields`, and a well-formed empty array (a null/missing
+`elements` is rejected as a decode error upstream) is LinkedIn stating the campaign had no
+activity — the metric WAS asked for and the window WAS answered, so a no-activity window is a
+MEASUREMENT of zero, not an absence of one. This matches `googleads.GetCampaignMetrics`'s
+no-rows branch. Per `model.CampaignMetrics.Conversions`, nil is reserved for platforms that
+cannot report a campaign-level count AT ALL (Meta, X, Reddit, HubSpot); LinkedIn is not one of
+them, so returning nil here would assert something false about the platform. Note the two
+branches differ in what the response contains, not in how much is known: an element LinkedIn
+RETURNED without the metric is missing data about activity that happened, while an empty array
+means there was no activity to measure. `Impressions`/`Clicks`/`CostMicros` already answer 0 as
+measurements on that branch, so the pointer now agrees with its siblings instead of
+contradicting them inside one struct. The `no_conversions` rule is unaffected either way: it is
+gated on `Clicks >= minClicksForConversions` and this branch reports zero clicks.
+
 The same Rest.li-vs-transport encoding split applies to the find-or-create name filter, and
 `doRequest` handles it inline rather than by bypass. `restliEncode` produces the FINAL bytes
 for a name embedded in a Rest.li literal — the COMPLETE query component via `url.QueryEscape`

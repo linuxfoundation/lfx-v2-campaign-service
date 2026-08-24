@@ -401,6 +401,13 @@ func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, plat
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		// Conversions is deliberately LEFT NIL, which is a statement about Meta's API rather
+		// than an unfinished mapping. The Insights edge exposes no scalar campaign-level
+		// conversions field: conversions arrive inside the `actions` array as
+		// {action_type, value} objects, and reducing that to one number means deciding which
+		// action types count as a conversion for this advertiser — a configuration input this
+		// service does not have. Setting 0 here would report every Meta campaign as having
+		// converted nothing, which the conversions rule would then flag as a finding.
 	}, nil
 }
 
