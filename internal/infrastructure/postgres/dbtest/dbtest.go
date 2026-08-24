@@ -138,8 +138,13 @@ func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 		// discipline to hold. postgres.Migrate reaches golang-migrate's database.Open,
 		// which parses the URL and returns a *url.Error embedding it in full, so a plain
 		// %w here would put TEST_DATABASE_URL (with its CI `user:password@`) into the
-		// build log via Pool's t.Fatalf. redact.URLUserinfo is string-based, so it works
-		// on exactly this path -- where the parse FAILED and there is no *url.URL.
+		// build log via Pool's t.Fatalf.
+		//
+		// On THIS path SafeDSNErr takes its *url.Error arm and discards the rendering
+		// outright: net/url's causes quote the fragment they choked on, which can be a
+		// slice of the credential, so nothing derived from the input is carried. The
+		// string redactor is the fallback for causes that are NOT a *url.Error and does
+		// not run here.
 		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, SafeDSNErr(err))
 	}
 	// 30s covers a cold container that has just passed its health check but is still

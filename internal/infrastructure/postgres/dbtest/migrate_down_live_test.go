@@ -842,8 +842,8 @@ func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
 // userinfo goes ENTIRELY, because a username issued alongside a password is half of one
 // credential rather than a public identifier.
 //
-// This test needs no database. It calls the pure helper directly, and sets the env var
-// only so the helper has a configured DSN to compare against; nothing connects.
+// This test needs no database and touches no process-global state. It calls the pure helper
+// directly and passes the DSN it means as an argument, so it stays parallel; nothing connects.
 func TestSafeDSNErrWithholdsKeywordDSNIdentifiers(t *testing.T) {
 	t.Parallel()
 
