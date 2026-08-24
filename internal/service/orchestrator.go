@@ -472,6 +472,9 @@ const (
 	opReadSettings   = "read_settings"
 	opListAccounts   = "list_accounts"
 	opSearchEmails   = "search_emails"
+	opReadKeywords   = "read_keywords"
+	opReadAudience   = "read_audience"
+	opKeywordActions = "keyword_actions"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -1960,3 +1963,256 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 	}
 	return emails, nil
 }
+
+// KeywordInsightsReader is an OPTIONAL dispatcher capability: read keyword performance and
+// audience demographics for the campaigns a project OWNS, live from the platform. Type-asserted
+// like MetricsReader and AccountLister, so a dispatcher without it yields a clean
+// ErrKeywordInsightsUnsupported → 400.
+//
+// Both methods are project-scoped and confined to the project's OWN campaigns. The connection
+// alone is NOT the scope: Google Ads is one customer shared across every foundation
+// (docs/architecture.md, "Account Tenancy"), so a read scoped only by the connection returns
+// every project's keywords, spend and demographics. scope carries the upstream campaigns the
+// caller owns, and the adapter must confine its query to them.
+//
+// Each scope entry pairs the id with its PROVENANCE rather than being a bare id, because an id
+// alone cannot be scoped safely: it is a bare numeric unique only within the customer it was
+// created under, and a connection can be re-pointed between create and read. The adapter must
+// REFUSE THE WHOLE READ when any entry's recorded customer disagrees with the one its client
+// resolves to — not drop the mismatched entries and return the rest. Neither result carries an
+// omitted count or partial-coverage flag, so a silently reduced scope is indistinguishable from
+// a project that genuinely owns fewer campaigns, and a demographic distribution computed over
+// half a project looks exactly like a complete one. Refusing is the same invariant ReadMetrics
+// and the keyword mutation enforce, and it is what googleAdsScopeForCustomer implements.
+//
+// scope is never empty — the orchestrator answers an empty result WITHOUT calling the
+// adapter, because an empty scope is exactly when an unscoped query would expose everyone else's
+// data. An adapter must still refuse an empty slice rather than widening, so the guarantee does
+// not rest on one caller. The same applies AFTER the provenance filter: if it removes every
+// entry, the adapter must refuse rather than query unscoped.
+//
+// Both are pure reads that never mutate platform or DB state, and neither result is persisted.
+type KeywordInsightsReader interface {
+	// ReadKeywordPerformance returns the top keywords by impressions over window, across the
+	// caller's own campaigns only. The result is capped; KeywordPerformance.Truncated reports
+	// whether more exist.
+	ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordPerformance, error)
+	// ReadAudienceInsights returns age, gender and device breakdowns over window for the
+	// caller's own campaigns. Each dimension independently covers the same traffic, so a
+	// consumer must total within a dimension, never across them.
+	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error)
+}
+
+// KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
+// existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
+// clean ErrKeywordActionsUnsupported → 400.
+//
+// Deliberately SEPARATE from KeywordInsightsReader. This one MUTATES what serves; that one
+// reads. A platform could plausibly gain the read without the mutation, and folding them
+// into one interface would make that state unrepresentable — a dispatcher would have to
+// implement a spend-affecting mutation it cannot support in order to expose a read it can.
+type KeywordActioner interface {
+	// ApplyKeywordActions applies every action or none — the batch is atomic upstream.
+	// campaign is the persisted row so the adapter can enforce that each criterion belongs
+	// to this campaign's ad group and that the campaign's account still matches the
+	// project's connection, both BEFORE the platform is contacted.
+	ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error)
+}
+
+// keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
+// "not supported" sentinel. Shared by the two read paths so both answer identically for an
+// unregistered or non-capable platform.
+func (o *Orchestrator) keywordInsightsFor(platform model.Provider) (KeywordInsightsReader, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(KeywordInsightsReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	return reader, nil
+}
+
+// projectCampaignScope returns the upstream campaign ids this project owns on platform.
+//
+// The single place the authorization scope for the two insight reads is established. It is a
+// database read scoped by project_id in SQL, not a filter applied to platform results after the
+// fact: the platform read must never see another project's rows in the first place.
+func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	ids, err := o.campaigns.ListProjectPlatformCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("resolve campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	return ids, nil
+}
+
+// ReadKeywordPerformance reads keyword performance across the project's OWN campaigns.
+func (o *Orchestrator) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error) {
+	reader, err := o.keywordInsightsFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	campaignIDs, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// EMPTY SCOPE RETURNS EARLY, BEFORE ANY UPSTREAM CALL. This is the arm that decides
+	// whether option A actually closes the hole: a project with no campaigns has nothing to
+	// show, and passing an empty scope down would either build `campaign.id IN ()` or drop the
+	// predicate, restoring the account-wide read on the shared customer — exposing every other
+	// project's data to precisely the caller with no campaigns of its own.
+	//
+	// An empty result, NOT a 409: "you have not run any campaigns yet" is an ordinary state,
+	// and reporting it as an error would make it indistinguishable from a broken connection.
+	if len(campaignIDs) == 0 {
+		return &model.KeywordPerformance{Window: window, Rows: []model.KeywordRow{}}, nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kp, rerr := reader.ReadKeywordPerformance(callCtx, projectID, platform, window, campaignIDs)
+	o.recordUpstream(ctx, platform, opReadKeywords, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kp == nil {
+		// (nil, nil) is a contract violation, not success — the handler dereferences the
+		// result unconditionally on a nil error. Same guard ReadCampaignMetrics applies.
+		return nil, fmt.Errorf("%s keyword reader returned a nil result with no error", platform)
+	}
+	// A successful read MUST carry a non-nil slice, for the reason ListAccounts documents:
+	// the caller cannot otherwise tell "this account authoritatively has no keywords" from an
+	// implementation that fell through a branch, and the two mean opposite things.
+	if kp.Rows == nil {
+		kp.Rows = []model.KeywordRow{}
+	}
+	return kp, nil
+}
+
+// ReadAudienceInsights reads demographic breakdowns across the project's OWN campaigns.
+func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.AudienceInsights, error) {
+	reader, err := o.keywordInsightsFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	campaignIDs, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Same early return as ReadKeywordPerformance, and for the same reason — see the comment
+	// there. Both endpoints need it or the exposure simply moves to the other one.
+	if len(campaignIDs) == 0 {
+		return &model.AudienceInsights{Window: window, Buckets: []model.AudienceBucket{}}, nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	ai, rerr := reader.ReadAudienceInsights(callCtx, projectID, platform, window, campaignIDs)
+	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if ai == nil {
+		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
+	}
+	if ai.Buckets == nil {
+		ai.Buckets = []model.AudienceBucket{}
+	}
+	return ai, nil
+}
+
+// ApplyKeywordActions pauses or removes keywords on one campaign.
+//
+// The provisioning guard mirrors ToggleCampaignStatus's — never contact the ad platform for a
+// campaign with nothing provisioned upstream — but it is applied only where no adapter will
+// apply it, and the ORDER matters. The adapter validates the batch BEFORE it checks
+// provisioning or resolves a connection, deliberately, "so a permanent input fault masks any
+// contingent connection fault rather than the other way round" (dispatch/googleads.go). Running
+// this guard ahead of the adapter inverted that: a malformed batch against an unprovisioned
+// campaign answered 409 ("try later") instead of 400 ("fix your request"), so a caller retried
+// forever on input only they could correct. A permanent input fault must dominate a contingent
+// state fault, and the two layers must not disagree about which one wins.
+//
+// So the id check is DELEGATED to the adapter, which raises the same
+// ErrCampaignNotProvisioned in more detail (it also requires an ad group) and raises it in the
+// right order — after validating the batch. A VALID batch against an unprovisioned campaign
+// therefore still answers 409 exactly as before; only the malformed-batch case changes, and it
+// changes to the 400 the caller can act on.
+//
+// A nil campaign is still refused HERE, ahead of everything: it is not an input fault the
+// caller can fix and not a state a KeywordActioner should have to defend against — every
+// adapter would have to nil-check before it could validate anything at all.
+//
+// It uses toggleCallTimeout rather than metricsCallTimeout: this is a mutation on the same
+// footing as a status change, and a mutate that times out client-side may still have been
+// applied, so it gets the longer budget the other mutating path uses.
+func (o *Orchestrator) ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordActionsUnsupported, platform)
+	}
+	actioner, ok := d.(KeywordActioner)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordActionsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, aerr := actioner.ApplyKeywordActions(callCtx, projectID, platform, campaign, actions)
+	o.recordUpstream(ctx, platform, opKeywordActions, start, aerr)
+	if aerr != nil {
+		return nil, aerr
+	}
+	// A short or nil outcome slice on a successful MUTATION is a contract violation with
+	// teeth. The handler reports applied_count from this length and the published contract
+	// promises one result per requested action — the batch is atomic upstream, so a partial
+	// application is not a representable outcome. Returning N-1 outcomes as a 200 would tell
+	// a caller that some subset of their keywords changed without saying which, which is the
+	// exact ambiguity the all-or-nothing batch exists to remove.
+	//
+	// Checked on the COUNT, not merely on nil: a nil slice is just the len()==0 case of the
+	// same defect, and an adapter returning one outcome for a two-action batch is the more
+	// likely bug. The platform client already fails closed on a short mutate response
+	// (UNCONFIRMED), so reaching here means a dispatcher dropped an outcome after the fact.
+	//
+	// The error is marked UNCONFIRMED rather than returned plain. Reaching here means the
+	// mutate was ISSUED and the dispatcher then failed to account for it — the atomic batch may
+	// well have applied upstream, and only the reporting is short. A plain error classifies as
+	// a DEFINITE failure ("could not be applied"), whose ordinary remedy is a retry; for a
+	// batch containing an irreversible REMOVE that is exactly the wrong instruction. Marked
+	// structurally with Unconfirmed(), the service's verify-before-retry arm answers instead.
+	if len(outcomes) != len(actions) {
+		return nil, &unconfirmedOutcomeCountError{
+			platform: string(platform),
+			got:      len(outcomes),
+			want:     len(actions),
+		}
+	}
+	return outcomes, nil
+}
+
+// unconfirmedOutcomeCountError reports a dispatcher that returned a different number of keyword
+// outcomes than the batch requested.
+//
+// It carries Unconfirmed() because of WHERE it is detected: the mutate has already been issued
+// upstream by the time the count can be wrong, so the batch may be fully applied with only the
+// accounting short. Detected by BEHAVIOUR (errors.As on the Unconfirmed() interface), which is
+// the same detection classifyKeywordActionError and the status toggle use — no sentinel needs
+// to cross the dispatch/service boundary.
+type unconfirmedOutcomeCountError struct {
+	platform string
+	got      int
+	want     int
+}
+
+func (e *unconfirmedOutcomeCountError) Error() string {
+	return fmt.Sprintf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success, and the mutation may already have been applied",
+		e.platform, e.got, e.want)
+}
+
+// Unconfirmed marks the outcome as ambiguous-applied for the service's verify-before-retry arm.
+func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }

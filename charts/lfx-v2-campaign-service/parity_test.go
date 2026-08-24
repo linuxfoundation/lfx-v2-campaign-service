@@ -387,6 +387,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// otherwise be caught by nothing, and an unroutable read is indistinguishable from
 		// a platform that cannot be reached.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/settings", true},
+		// keyword-actions (LFXV2-2641) is the same shape again, and it is the one route in
+		// this set that MUTATES what serves: it pauses or removes live keywords, and REMOVE
+		// is irreversible upstream. Pinned for exactly the reason the rows above are — a
+		// future narrowing of the briefs match/rule must fail here loudly rather than leave
+		// a spend-affecting mutation routed-but-unauthorized.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-actions", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future

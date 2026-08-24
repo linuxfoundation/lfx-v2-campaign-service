@@ -265,6 +265,39 @@ func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.P
 	return []model.MarketingEmail{}, nil
 }
 
+func (d upstreamCapableDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordPerformance{}, nil
+}
+
+func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceInsights{}, nil
+}
+
+// ApplyKeywordActions returns ONE outcome per requested action, which is the contract the
+// orchestrator enforces. A fake returning an empty slice makes every "success" call fail with
+// unconfirmedOutcomeCountError, so a test that does not assert the success arm's error would
+// pass while the operation it claims to instrument actually failed.
+func (d upstreamCapableDispatcher) ApplyKeywordActions(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	out := make([]model.KeywordActionOutcome, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, model.KeywordActionOutcome{
+			AdGroupID:   a.AdGroupID,
+			CriterionID: a.CriterionID,
+			Action:      a.Action,
+		})
+	}
+	return out, nil
+}
+
 func (d upstreamCapableDispatcher) LookupCampaign(context.Context, string, model.Provider, string) (*model.PlatformCampaignRef, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -337,6 +370,30 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			name: "read keywords",
+			op:   opReadKeywords,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadKeywordPerformance(ctx, "p1", platform, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "read audience",
+			op:   opReadAudience,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadAudienceInsights(ctx, "p1", platform, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "keyword actions",
+			op:   opKeywordActions,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ApplyKeywordActions(ctx, "p1", platform, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}})
+				return err
+			},
+		},
+		{
 			name: "lookup campaign",
 			op:   opLookupCampaign,
 			call: func(ctx context.Context, o *Orchestrator) error {
@@ -372,7 +429,11 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 		} {
 			t.Run(tc.name+"/"+arm.name, func(t *testing.T) {
 				rec := &recordingMetrics{}
-				orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				// A non-empty campaign scope: the two insight reads answer an empty scope
+				// WITHOUT an upstream call, so with the default fake they would record
+				// nothing and this instrumentation assertion would fail for the right
+				// reason but the wrong cause.
+				orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 					platform: upstreamCapableDispatcher{err: arm.platformErr},
 				})
 				orch.SetMetrics(rec)
@@ -380,6 +441,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				err := tc.call(context.Background(), orch)
 				if arm.platformErr != nil && err == nil {
 					t.Fatalf("%s: expected the platform error to surface", tc.name)
+				}
+				// The success arm must actually SUCCEED. Without this, a fake that violates a
+				// downstream contract (e.g. returning fewer outcomes than actions) makes the
+				// call fail while the subtest still passes — the instrumentation would be
+				// asserted over an operation that errored, and a post-dispatch regression
+				// would stay green.
+				if arm.platformErr == nil && err != nil {
+					t.Fatalf("%s: success arm returned an error, so this asserts instrumentation over a failed call: %v", tc.name, err)
 				}
 
 				got := rec.upstreamCalls()

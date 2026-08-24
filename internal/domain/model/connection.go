@@ -269,3 +269,101 @@ type MarketingEmail struct {
 	// share a name and the date is what distinguishes them in a list.
 	UpdatedAt string
 }
+
+// KeywordRow is one keyword's live performance on an ad platform, in the
+// platform-agnostic vocabulary. Never persisted — it is a read-through snapshot.
+//
+// CriterionID and AdGroupID travel together because a criterion id is unique only within
+// its ad group: acting on a criterion id alone would mean guessing the ad group, and a
+// wrong guess addresses a different, real keyword rather than failing.
+type KeywordRow struct {
+	CriterionID string
+	AdGroupID   string
+	CampaignID  string
+	Text        string
+	MatchType   string
+	Status      string
+	Impressions int64
+	Clicks      int64
+	CostMicros  int64
+	Ctr         float64
+}
+
+// KeywordPerformance is a keyword read over one window, confined to the CALLING PROJECT'S
+// OWN CAMPAIGNS — not the connected account.
+//
+// Same tenant boundary as AudienceInsights below: the Google Ads customer is shared across
+// foundations, so `campaignScopePredicate` narrows the query to the project's own
+// `platform_campaign_id`s. An account-wide read here would hand every project the others'
+// keyword text and spend.
+type KeywordPerformance struct {
+	Window MetricsWindow
+	Rows   []KeywordRow
+	// Truncated reports that the project's campaigns hold MORE keywords than Rows carries —
+	// these are the TOP rows by impressions, not the full set. A consumer must not total a
+	// truncated slice and present it as the project's whole spend, and must not present an
+	// untruncated one as the ACCOUNT's: neither figure covers the campaigns this project
+	// does not own.
+	Truncated bool
+}
+
+// Audience breakdown dimensions. A bucket names which breakdown it belongs to so all
+// three can share one flat array.
+const (
+	AudienceDimensionAge    = "age"
+	AudienceDimensionGender = "gender"
+	AudienceDimensionDevice = "device"
+)
+
+// AudienceBucket is one demographic slice's counters over a window.
+type AudienceBucket struct {
+	Dimension   string
+	Value       string
+	Impressions int64
+	Clicks      int64
+	CostMicros  int64
+	Ctr         float64
+}
+
+// AudienceInsights is a demographic read across every breakdown, over the CALLING PROJECT'S
+// OWN CAMPAIGNS — not the connected account.
+//
+// The distinction is the tenant boundary, not a nicety of wording. Google Ads is ONE customer
+// shared across every foundation, so a read scoped only by the connection would return every
+// other project's demographics; `campaignScopePredicate` confines the query to the
+// `platform_campaign_id`s this service holds for the project. Describing the result as
+// account-wide invites a consumer to present these buckets as the account's audience, and
+// invites a future author to treat the scope as an optimisation they may drop.
+//
+// Each dimension independently covers the SAME traffic, so impressions may be totalled
+// within a dimension but never across them — summing age, gender and device triple-counts.
+type AudienceInsights struct {
+	Window  MetricsWindow
+	Buckets []AudienceBucket
+}
+
+// KeywordAction is one requested keyword mutation on a live campaign.
+type KeywordAction struct {
+	AdGroupID   string
+	CriterionID string
+	// Action is KeywordActionPause or KeywordActionRemove.
+	Action string
+}
+
+// Keyword actions. There is deliberately no "enable": this surface only ever reduces what
+// serves. Widening delivery goes through the create/dispatch path, where budget and flight
+// are validated together.
+const (
+	KeywordActionPause = "PAUSE"
+	// KeywordActionRemove is IRREVERSIBLE upstream — a removed criterion cannot be
+	// re-enabled, only re-created with a new id.
+	KeywordActionRemove = "REMOVE"
+)
+
+// KeywordActionOutcome is one applied keyword mutation.
+type KeywordActionOutcome struct {
+	AdGroupID    string
+	CriterionID  string
+	Action       string
+	ResourceName string
+}

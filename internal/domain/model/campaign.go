@@ -672,3 +672,23 @@ func (r *CampaignSettingsReadback) SummariseSettings() {
 		}
 	}
 }
+
+// ProjectCampaignScope is ONE campaign a project owns upstream, as the authorization scope
+// for an otherwise account-wide platform read.
+//
+// It pairs the id with its provenance deliberately. A platform_campaign_id is a bare numeric
+// unique only WITHIN the customer it was created under, so an id on its own cannot be scoped
+// safely: Google Ads is one customer shared across every foundation, and UpdateGoogleAds can
+// re-point a project's connection between create and read. Handing the adapter a bare id list
+// would let a stale id address a DIFFERENT customer's campaign of the same number — the very
+// invariant ReadMetrics and the keyword mutation already fail closed on. Carrying Result means
+// the adapter can apply that same check rather than trusting the id.
+type ProjectCampaignScope struct {
+	// PlatformCampaignID is the upstream campaign id, as recorded when it was dispatched.
+	PlatformCampaignID string
+	// Result is the platform-shaped provenance blob the row recorded at create time. For
+	// Google Ads it carries the creating customer id, read back by
+	// googleAdsCreationCustomerID. EMPTY means "unknown" — a row written before provenance
+	// tracking existed — and per the service-wide convention a READ may proceed on it.
+	Result json.RawMessage
+}
