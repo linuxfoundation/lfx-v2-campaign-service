@@ -10,8 +10,8 @@ used `127.0.0.1:1`, and a CI `TEST_DATABASE_URL` points at `127.0.0.1` too. A re
 names the host in its text, so redaction fired on the shared HOST alone — the user,
 password and database comparisons the test is actually about never decided anything.
 Verified rather than reasoned: with the fix reverted and `TEST_DATABASE_URL` set to
-`postgres://ciuser:cipw@127.0.0.1:5432/cidb`, the test still **passed**. A test that cannot
-fail in the environment it is written to protect is not evidence there.
+a DSN of the form `postgres://USER:PASS@127.0.0.1:5432/DB`, the test still **passed**. A
+test that cannot fail in the environment it is written to protect is not evidence there.
 
 The probe host is now `127.0.0.2` — still loopback, nothing listening, but a host no harness
 DSN uses. Reverting the fix now fails under a CI-like env, under no env, and passes only
@@ -24,8 +24,17 @@ returns — including `""`. It now asserts the output carries the REDACTOR's ren
 fails first if that rendering is empty. Mutating `SafeDSNErrFor` to return `""` fires it;
 under the old form that mutation was invisible.
 
-The pattern worth keeping: an assertion whose subject is produced by the CALLER's format
-string tests the format string, not the thing under test. Both defects here were the test
+This is the SECOND accidental environment-coupling on this branch, not an isolated slip.
+The first was a fixture spelling `host=localhost` while the runner's own DSN also said
+`localhost`, in `a-dsn-has-two-legal-shapes`. Same class both times: **a test whose fixture
+shares an identifier with the runner's real environment can pass for a reason that has
+nothing to do with the code under test**, and it passes most reliably on the machine you
+least want it to be vacuous on. The defence is not vigilance about hosts specifically — it
+is choosing fixture values that CANNOT collide with any environment the suite runs in, and
+proving it by reverting the fix under an environment that mimics the runner.
+
+The pattern worth keeping alongside it: an assertion whose subject is produced by the
+CALLER's format string tests the format string, not the thing under test. Both defects here were the test
 agreeing with itself, one via a shared host and one via a self-supplied substring, and
 neither was visible without running the mutation the test claims to catch.
 

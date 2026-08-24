@@ -1211,22 +1211,24 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 
 	// bareErrArgs collects identifiers passed DIRECTLY as an argument to the format
 	// call -- the leak shape. An identifier nested inside a redactor is not direct.
-	// bareErrArgs collects error identifiers that reach the format call WITHOUT passing
-	// through a redactor. It descends into nested calls rather than looking only at
-	// top-level arguments, because fmt.Sprintf("%v", err) leaks exactly as much as err
-	// does — wrapping an error in a non-redactor call renders it just the same. Descent
-	// stops at a redactor: everything below SafeDSNErr/SafeDSNErrFor is already safe.
+	// bareErrArgs collects occurrences of the BOUND error identifiers that reach the
+	// format call without passing through a redactor. It descends into nested calls
+	// rather than looking only at top-level arguments, because fmt.Sprintf("%v", err)
+	// leaks exactly as much as err does — wrapping an error in a non-redactor call
+	// renders it just the same. Descent stops at a redactor: everything below
+	// SafeDSNErr/SafeDSNErrFor is already safe.
 	//
-	// Safety is a property of each OCCURRENCE, not of the identifier. An earlier version
-	// kept a set of names seen inside any redactor and treated every later occurrence of
-	// that name as safe, so t.Fatalf("%s: %v", SafeDSNErr(err), err) passed while its
-	// second argument printed the DSN-bearing error raw. Deciding per position is what
-	// makes the mixed safe/raw call a finding.
-	bareErrArgs := func(call *ast.CallExpr) []string {
+	// Safety is a property of each OCCURRENCE, not of the identifier, so the walk decides
+	// per position: t.Fatalf("%s: %v", SafeDSNErr(err), err) is a finding on its second
+	// argument even though the first is redacted.
+	//
+	// `bound` comes from the ASSIGNMENT that produced the error, never from how it is
+	// spelled. An earlier version asked whether a name was "err" or ended in Err/Error,
+	// which is a claim about spelling rather than about the value: renaming the result to
+	// `failure` and passing it raw left this empty and the guard green. The AST knows
+	// which identifier the DSN-bearing call actually bound, so it is asked instead.
+	bareErrArgs := func(call *ast.CallExpr, bound map[string]bool) []string {
 		var bare []string
-		isErrName := func(n string) bool {
-			return n == "err" || strings.HasSuffix(n, "Err") || strings.HasSuffix(n, "Error")
-		}
 		for _, a := range call.Args {
 			ast.Inspect(a, func(n ast.Node) bool {
 				if c, ok := n.(*ast.CallExpr); ok {
@@ -1243,7 +1245,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if !isErrName(id.Name) {
+				if !bound[id.Name] {
 					return true
 				}
 				bare = append(bare, id.Name)
@@ -1251,6 +1253,32 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			})
 		}
 		return bare
+	}
+
+	// boundErrs returns the identifiers a DSN-bearing statement assigns. Both the plain
+	// `x, err := call(...)` form and an `if x, err := call(...); err != nil` initializer
+	// bind here, and the LAST result is the error by Go convention — the same convention
+	// `go vet`'s errcheck relies on. Taking the last result rather than a named one is
+	// what makes the check independent of spelling.
+	boundErrs := func(stmt ast.Stmt) map[string]bool {
+		bound := map[string]bool{}
+		record := func(as *ast.AssignStmt) {
+			if len(as.Rhs) != 1 || !isDSNCall(as.Rhs[0]) || len(as.Lhs) == 0 {
+				return
+			}
+			if id, ok := as.Lhs[len(as.Lhs)-1].(*ast.Ident); ok && id.Name != "_" {
+				bound[id.Name] = true
+			}
+		}
+		switch st := stmt.(type) {
+		case *ast.AssignStmt:
+			record(st)
+		case *ast.IfStmt:
+			if as, ok := st.Init.(*ast.AssignStmt); ok {
+				record(as)
+			}
+		}
+		return bound
 	}
 
 	checked := 0
@@ -1265,6 +1293,10 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			if !isDSNCall(stmt) {
 				continue
 			}
+			// The identifier the call BOUND, so the check below is about that value
+			// rather than about what it was named.
+			bound := boundErrs(stmt)
+
 			// The handler is the `if err != nil { ... }` (or `if err == nil`) that
 			// follows, plus the call statement itself if it is inline.
 			var handlers []ast.Node
@@ -1274,7 +1306,18 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			if i+1 < len(block.List) {
 				if ifs, ok := block.List[i+1].(*ast.IfStmt); ok {
 					handlers = append(handlers, ifs.Body)
+					// `x, err := call(); if err != nil` binds in the assignment above,
+					// not in the if -- so the handler's own initializer is folded in
+					// only when it is the one holding the DSN call.
+					for k := range boundErrs(block.List[i+1]) {
+						bound[k] = true
+					}
 				}
+			}
+			// A site whose error is discarded (`_`) or never bound has nothing to
+			// render raw, so there is nothing to check and nothing to report.
+			if len(bound) == 0 {
+				continue
 			}
 			for _, h := range handlers {
 				ast.Inspect(h, func(n ast.Node) bool {
@@ -1287,7 +1330,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 						return true
 					}
 					checked++
-					for _, bare := range bareErrArgs(call) {
+					for _, bare := range bareErrArgs(call, bound) {
 						pos := fset.Position(call.Pos())
 						t.Errorf("line %d renders a DSN-bearing connect error raw (%s passed "+
 							"directly to %s):\n  %s\npgx builds *pgconn.ConnectError and "+
