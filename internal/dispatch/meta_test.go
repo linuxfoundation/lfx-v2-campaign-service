@@ -4,9 +4,11 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +22,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+
+	"github.com/google/uuid"
 )
 
 const goodMetaCreds = `{"AccessToken":"tok"}`
@@ -1847,6 +1851,584 @@ func TestMeta_ConfigSnapshotSanitizeDoesNotMutateCallerConfig(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Creative-asset resolution AT THE DISPATCH LEVEL (LFXV2-3295)
+// ---------------------------------------------------------------------------
+
+// fakeCreativeAssets is a creativeAssetReader that records what was asked for and
+// answers with a fixed asset or error. calls is read by the tests to prove a lookup
+// was SCOPED to the dispatching brief, not merely that one happened.
+type fakeCreativeAssets struct {
+	asset *model.CreativeAsset
+	err   error
+
+	mu    sync.Mutex
+	calls []string // "projectID/briefID/assetID" per call
+}
+
+func (f *fakeCreativeAssets) GetAsset(_ context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, projectID+"/"+briefID+"/"+assetID)
+	f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.asset, nil
+}
+
+func (f *fakeCreativeAssets) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// metaConfigWithVariant builds a dispatch config whose single variant carries the
+// supplied raw JSON fields, so a test can send `imageAssetId`, `imageUrl`, or both
+// exactly as a caller would over the wire.
+func metaConfigWithVariant(variantFields string) json.RawMessage {
+	// Empty fields must not leave a dangling comma, so the separator is added here
+	// rather than baked into each caller's literal.
+	variantSuffix := ""
+	if strings.TrimSpace(variantFields) != "" {
+		variantSuffix = "," + variantFields
+	}
+	return json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"objective":"traffic","geoTargets":["US"],"currencyOffset":100,
+		"variants":[{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native"` + variantSuffix + `}]
+	}}`)
+}
+
+// countingMetaServer is a Meta stub that answers the read-only preflight but FAILS
+// the test on any mutating call. It is how these tests prove "no upstream create was
+// attempted" as an observation of the wire rather than as an inference from an error
+// value: a guard that fails to bind reaches one of these arms and the count is
+// non-zero, whatever the returned error happens to say.
+func countingMetaServer(t *testing.T, mutations *int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		default:
+			// Any POST — /adimages, /campaigns, /adsets, /adcreatives, /ads — is money or
+			// a durable object. Reaching here at all is the failure.
+			atomic.AddInt32(mutations, 1)
+			t.Errorf("upstream create attempted before the pre-spend guard: %s %s", r.Method, r.URL.Path)
+			_, _ = io.WriteString(w, `{"id":"SHOULD_NOT_EXIST"}`)
+		}
+	}))
+}
+
+// assertPreSpendRefusal is the shared assertion for every bad-asset dispatch: the
+// dispatch failed, NOTHING was created upstream, and the error carries
+// NoUpstreamCreate() so the orchestrator RELEASES the (brief, platform) claim
+// instead of stranding it.
+//
+// The NoUpstreamCreate check goes through errors.As on the same anonymous interface
+// the orchestrator uses, not through a *preCreateError type assertion, so the test
+// binds the CONTRACT the orchestrator actually consults rather than the concrete
+// type that happens to satisfy it today.
+func assertPreSpendRefusal(t *testing.T, camp *model.Campaign, err error, mutations int32, wantMsg string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Dispatch returned nil error; a bad creative asset must fail the dispatch")
+	}
+	// (a) no upstream create was attempted.
+	if mutations != 0 {
+		t.Errorf("%d upstream create call(s) were made; the guard must refuse BEFORE any spend", mutations)
+	}
+	// A non-nil campaign would tell the orchestrator a paid resource may exist.
+	if camp != nil {
+		t.Errorf("Dispatch returned a non-nil campaign %+v; nothing was created", camp)
+	}
+	// (b) the error satisfies NoUpstreamCreate() — (c) which is what releases the claim.
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) {
+		t.Fatalf("error does not expose NoUpstreamCreate(); the orchestrator would STRAND the claim: %v", err)
+	}
+	if !nuc.NoUpstreamCreate() {
+		t.Errorf("NoUpstreamCreate() = false; the orchestrator would STRAND the claim: %v", err)
+	}
+	if wantMsg != "" && !strings.Contains(err.Error(), wantMsg) {
+		t.Errorf("error %q does not explain the failure (want it to mention %q)", err.Error(), wantMsg)
+	}
+}
+
+// TestMeta_DispatchBadAssetRefusesBeforeAnySpend drives a BAD creative-asset
+// reference through the REAL Dispatch path — not resolveVariantAssets in isolation —
+// and pins the three properties that make the guard worth having: no upstream create
+// was attempted, the error is NoUpstreamCreate, and the claim is therefore released.
+//
+// This test exists because the helper-level tests could not see any of that. They
+// call resolveVariantAssets directly, so they pass identically whether or not its
+// error is wrapped in notCreated at the call site and whether or not the call site
+// sits before the client is built. Both of those mutations SURVIVED against the
+// helper-level tests alone: dropping notCreated strands the (brief, platform) claim,
+// and letting a bad asset fall through builds a link-only ad and spends money. Each
+// is now killed here.
+func TestMeta_DispatchBadAssetRefusesBeforeAnySpend(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+
+	cases := []struct {
+		name     string
+		assets   creativeAssetReader // nil → the store is not configured
+		bindRepo bool
+		variant  string
+		wantMsg  string
+	}{
+		{
+			name:     "asset absent for this brief",
+			assets:   &fakeCreativeAssets{err: domain.ErrNotFound},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "does not exist for this brief",
+		},
+		{
+			name:     "malformed asset id",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("x"), MimeType: model.MimeTypePNG}},
+			bindRepo: true,
+			variant:  `"imageAssetId":"not-a-uuid"`,
+			wantMsg:  "not a valid asset id",
+		},
+		{
+			name:     "store not configured but a variant references an asset",
+			bindRepo: false,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "creative-asset store is not configured",
+		},
+		{
+			name:     "asset resolves with no stored bytes",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{MimeType: model.MimeTypePNG}},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "no stored image bytes",
+		},
+		{
+			name:     "repository error other than not-found",
+			assets:   &fakeCreativeAssets{err: errors.New("connection refused")},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "load creative asset",
+		},
+		{
+			// Meta forbids picture and image_hash on ONE creative. Supplying both has no
+			// correct interpretation, so it is refused locally, pre-spend — never sent
+			// upstream to be rejected after the campaign and ad set already exist.
+			name:     "variant supplies BOTH an image url and an image asset id",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("\x89PNG"), MimeType: model.MimeTypePNG}},
+			bindRepo: true,
+			variant:  `"imageUrl":"https://cdn.example.org/hero.png","imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "mutually exclusive",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mutations int32
+			srv := countingMetaServer(t, &mutations)
+			defer srv.Close()
+
+			clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+			)
+			if tc.bindRepo {
+				d.SetCreativeAssetRepo(tc.assets)
+			}
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, metaConfigWithVariant(tc.variant))
+			assertPreSpendRefusal(t, camp, err, atomic.LoadInt32(&mutations), tc.wantMsg)
+		})
+	}
+}
+
+// TestMeta_DispatchResolvesAssetToImageHash is the by-STORED-BYTES happy path, end to
+// end through Dispatch: an imageAssetId is resolved to bytes, uploaded to /adimages,
+// and the returned hash lands on the creative as link_data.image_hash — with NO
+// picture field, since the two are mutually exclusive.
+//
+// It also pins the lookup SCOPE: the asset is fetched for the dispatching brief's
+// project and id, which is what stops one brief's campaign referencing another's
+// asset.
+func TestMeta_DispatchResolvesAssetToImageHash(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+	imageBytes := []byte("\x89PNG\r\n\x1a\nFAKEPIXELS")
+
+	var (
+		mu           sync.Mutex
+		creativeBody string
+		uploadBody   []byte
+		uploadType   string
+		uploadCalls  int32
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/adimages"):
+			atomic.AddInt32(&uploadCalls, 1)
+			mu.Lock()
+			uploadType = r.Header.Get("Content-Type")
+			uploadBody, _ = io.ReadAll(r.Body)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"images":{"source":{"hash":"HASH_FROM_UPLOAD","url":"https://scontent.example/x.png"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			creativeBody = string(b)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	assets := &fakeCreativeAssets{asset: &model.CreativeAsset{
+		ID: validUUID, ProjectID: "cncf", BriefID: "brief-1",
+		Bytes: imageBytes, MimeType: model.MimeTypeJPEG,
+	}}
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	d.SetCreativeAssetRepo(assets)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds,
+		metaConfigWithVariant(`"imageAssetId":"`+validUUID+`"`))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
+		t.Fatalf("campaign not mapped: %+v", camp)
+	}
+	// A degraded status would mean the ad was never created.
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("campaign status = %q, want %q — the asset-backed ad did not get created", camp.Status, campaignStatusCreated)
+	}
+
+	// The asset was looked up SCOPED to the dispatching brief.
+	if got, want := assets.calls, []string{"cncf/brief-1/" + validUUID}; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("asset lookup scope = %v, want %v", got, want)
+	}
+	if n := atomic.LoadInt32(&uploadCalls); n != 1 {
+		t.Errorf("/adimages called %d times, want exactly 1", n)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// The upload carried the asset's BYTES as a multipart FILE part, not a url field.
+	// Note the transport is deliberately NOT the documented `bytes` create parameter:
+	// `bytes` is Meta's base64 scalar, whereas this request sends a multipart file part
+	// (named `source`) to avoid the ~33% base64 inflation. See uploadImage's godoc for
+	// why the part NAME is not the contract and the filename is what matters.
+	if !strings.HasPrefix(uploadType, "multipart/form-data") {
+		t.Errorf("upload Content-Type = %q, want multipart/form-data", uploadType)
+	}
+	if !bytes.Contains(uploadBody, imageBytes) {
+		t.Error("upload body does not carry the asset's bytes")
+	}
+	if !bytes.Contains(uploadBody, []byte(model.MimeTypeJPEG)) {
+		t.Errorf("upload body does not label the part with the asset's verified MIME type %q", model.MimeTypeJPEG)
+	}
+
+	// The hash from the upload landed on the creative...
+	if !strings.Contains(creativeBody, `"image_hash":"HASH_FROM_UPLOAD"`) {
+		t.Errorf("creative body missing link_data.image_hash from the upload: %s", creativeBody)
+	}
+	// ...and no picture accompanies it (Meta forbids both on one creative).
+	if strings.Contains(creativeBody, "picture") {
+		t.Errorf("creative body sent picture alongside image_hash: %s", creativeBody)
+	}
+	// The image bytes must never appear in the creative body.
+	if strings.Contains(creativeBody, "FAKEPIXELS") {
+		t.Errorf("creative body embedded the raw image bytes: %s", creativeBody)
+	}
+
+	// The per-variant image_hash is persisted in the campaign result for reconciliation.
+	var res meta.CampaignResult
+	if uerr := json.Unmarshal(camp.Result, &res); uerr != nil {
+		t.Fatalf("unmarshal persisted result: %v", uerr)
+	}
+	if len(res.Ads) != 1 {
+		t.Fatalf("persisted result has %d ads, want 1: %s", len(res.Ads), string(camp.Result))
+	}
+	if res.Ads[0].ImageHash != "HASH_FROM_UPLOAD" {
+		t.Errorf("persisted ad ImageHash = %q, want %q", res.Ads[0].ImageHash, "HASH_FROM_UPLOAD")
+	}
+	if res.Ads[0].Variant != 1 || res.Ads[0].AdID != "ad_1" || res.Ads[0].CreativeID != "creative_1" {
+		t.Errorf("persisted ad identifiers wrong: %+v", res.Ads[0])
+	}
+}
+
+// TestMeta_DispatchNoAssetMakesNoUploadCall pins that the by-URL and link-only paths
+// are UNAFFECTED by the asset machinery: neither consults the creative-asset store
+// nor calls /adimages. A variant with no imageAssetId must not acquire an upload
+// round-trip just because the capability now exists.
+func TestMeta_DispatchNoAssetMakesNoUploadCall(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		variant string
+	}{
+		{"link-only variant", ``},
+		{"by-url variant", `"imageUrl":"https://cdn.example.org/hero.png"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var uploadCalls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					_, _ = io.WriteString(w, `{"data":[]}`)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+					_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+				case strings.HasSuffix(r.URL.Path, "/adimages"):
+					atomic.AddInt32(&uploadCalls, 1)
+					_, _ = io.WriteString(w, `{"images":{"x":{"hash":"SHOULD_NOT_BE_USED"}}}`)
+				case strings.HasSuffix(r.URL.Path, "/campaigns"):
+					_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+				case strings.HasSuffix(r.URL.Path, "/adsets"):
+					_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/ads"):
+					_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+				default:
+					http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			// The store is bound and would answer, so a zero call count proves the
+			// by-URL/link-only paths never consult it — not that nothing was wired.
+			assets := &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("x"), MimeType: model.MimeTypePNG}}
+			clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+			)
+			d.SetCreativeAssetRepo(assets)
+
+			if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, metaConfigWithVariant(tc.variant)); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if n := atomic.LoadInt32(&uploadCalls); n != 0 {
+				t.Errorf("/adimages was called %d times for a variant with no imageAssetId", n)
+			}
+			if n := assets.callCount(); n != 0 {
+				t.Errorf("the creative-asset store was consulted %d times for a variant with no imageAssetId", n)
+			}
+		})
+	}
+}
+
+// TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig proves resolution returns a
+// COPY, for CALLER ISOLATION. cfg.Variants is reused after resolution — by
+// campaignFromMeta for the config snapshot and by Dispatch for the degraded-ad count —
+// and the variants slice shares its backing array with the decoded config, so an
+// in-place write would hand those later readers a config that no longer matches what
+// the caller sent.
+//
+// It is NOT a persistence guard: AdVariant.ImageBytes is tagged `json:"-"`
+// (internal/platform/meta/client.go:2469), so resolved bytes cannot enter the
+// marshalled config_snapshot even if the slice were mutated in place.
+func TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(&fakeCreativeAssets{asset: &model.CreativeAsset{
+		Bytes: []byte("SECRETPIXELS"), MimeType: model.MimeTypePNG,
+	}})
+
+	original := []meta.AdVariant{{Headline: "h1", ImageAssetID: validUUID}}
+	resolved, err := d.resolveVariantAssets(context.Background(), testBrief(), original)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets: %v", err)
+	}
+	if len(resolved[0].ImageBytes) == 0 {
+		t.Fatal("resolved variant carries no image bytes")
+	}
+	if original[0].ImageBytes != nil {
+		t.Errorf("the caller's variant was mutated in place; campaignFromMeta and the degraded-ad count would no longer see the config the caller sent")
+	}
+}
+
+// multiCreativeAssets serves a DIFFERENT asset per id (and records every lookup), which
+// is what the dedupe and aggregate-bound tests need — the shared fakeCreativeAssets
+// returns one asset for any id, so it cannot distinguish "resolved twice" from
+// "resolved once and reused".
+type multiCreativeAssets struct {
+	assets map[string]*model.CreativeAsset
+
+	mu    sync.Mutex
+	calls []string // assetID per call, in order
+}
+
+func (m *multiCreativeAssets) GetAsset(_ context.Context, _, _, assetID string) (*model.CreativeAsset, error) {
+	m.mu.Lock()
+	m.calls = append(m.calls, assetID)
+	m.mu.Unlock()
+	a, ok := m.assets[assetID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return a, nil
+}
+
+func (m *multiCreativeAssets) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.calls)
+}
+
+// TestMeta_ResolveVariantAssetsDedupesByAssetID is the memory bound's load-bearing half.
+//
+// Nothing caps how many variants a config may carry and each asset may be 30 MiB, so the
+// earlier implementation performed one DB read and retained one full buffer PER VARIANT —
+// and the cheapest way to trigger that was the SAME asset id repeated, which requires no
+// extra stored data. This asserts the repeat costs exactly ONE read, and that every
+// variant still receives the bytes (dedupe must not silently drop the image from the
+// later variants, which would build link-only ads that spend money).
+func TestMeta_ResolveVariantAssetsDedupesByAssetID(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		id: {Bytes: []byte("IMAGE_BYTES"), MimeType: "image/png"},
+	}}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	// Five variants, all naming the SAME asset.
+	in := []meta.AdVariant{
+		{ImageAssetID: id}, {ImageAssetID: id}, {ImageAssetID: id},
+		{ImageAssetID: id}, {ImageAssetID: id},
+	}
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets error: %v", err)
+	}
+	if n := assets.callCount(); n != 1 {
+		t.Errorf("GetAsset called %d times for 5 variants naming one asset, want 1 — a repeated id must cost one read and one buffer, not N", n)
+	}
+	for i := range out {
+		if string(out[i].ImageBytes) != "IMAGE_BYTES" {
+			t.Errorf("variant %d bytes = %q, want the resolved asset's bytes — dedupe must not drop the image", i+1, out[i].ImageBytes)
+		}
+		if out[i].ImageMIME != "image/png" {
+			t.Errorf("variant %d mime = %q, want image/png", i+1, out[i].ImageMIME)
+		}
+	}
+	// The repeated variants must ALIAS one buffer rather than hold five copies; that
+	// aliasing is the allocation saving the dedupe exists for.
+	if len(out) > 1 && &out[0].ImageBytes[0] != &out[1].ImageBytes[0] {
+		t.Errorf("repeated variants hold distinct buffers; they must alias the single resolved copy")
+	}
+}
+
+// TestMeta_ResolveVariantAssetsBoundsAggregateBytes proves the aggregate ceiling refuses a
+// config naming more DISTINCT asset bytes than one dispatch may hold, and that it refuses
+// BEFORE retaining them. Distinct ids defeat dedupe, so this is the case the byte budget
+// (not the dedupe) has to catch.
+//
+// The fixture carries TEN assets to bound a NINE-asset refusal, and that gap is the point.
+// 30 MiB each against the 240 MiB (8-asset) ceiling means the ninth read is the one that
+// trips it, so a correct implementation stops there having read exactly 9. An earlier
+// version of this test built only 9 variants and asserted `callCount() > 9`, which the
+// fixture's own shape made unreachable — the loop could not produce a tenth call, so the
+// assertion held no matter what the code did, including an implementation that read every
+// asset before checking the total. Supplying a tenth asset is what gives "it stops AT the
+// ceiling" something to fail against.
+func TestMeta_ResolveVariantAssetsBoundsAggregateBytes(t *testing.T) {
+	// Ten assets of 30 MiB each = 300 MiB, past the 240 MiB (8-asset) ceiling, which the
+	// running total crosses at the NINTH. The buffers are allocated by the fake, not by the
+	// code under test; what is asserted is that resolution REFUSES rather than accumulating
+	// them into its own result.
+	const perAsset = 30 << 20
+	const wantReads = 9 // the read whose running total first exceeds maxVariantAssetBytes
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{}}
+	var in []meta.AdVariant
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("%08d-1111-1111-1111-111111111111", i)
+		assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, perAsset), MimeType: "image/png"}
+		in = append(in, meta.AdVariant{ImageAssetID: id})
+	}
+	// Pin the premise rather than trusting the arithmetic: if the ceiling or the per-asset
+	// maximum moves, the read count below is no longer nine and this says so directly
+	// instead of failing as a mysterious off-by-one.
+	if int64(wantReads)*perAsset <= maxVariantAssetBytes || int64(wantReads-1)*perAsset > maxVariantAssetBytes {
+		t.Fatalf("fixture no longer trips the ceiling at read %d: %d assets of %d bytes against a %d-byte ceiling",
+			wantReads, len(in), perAsset, maxVariantAssetBytes)
+	}
+
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err == nil {
+		t.Fatalf("resolveVariantAssets accepted %d distinct maximum-size assets; the aggregate bound must refuse", len(out))
+	}
+	if out != nil {
+		t.Errorf("a refused resolution must return no variants, got %d", len(out))
+	}
+	if !strings.Contains(err.Error(), "distinct creative assets") {
+		t.Errorf("error = %v, want the aggregate-bytes refusal", err)
+	}
+	// It must stop AT the ceiling rather than reading every asset first. Asserted as an
+	// EQUALITY: reading fewer than nine would mean it refused before the budget was actually
+	// exceeded, and reading ten means the check happens after the whole set is in memory —
+	// which is precisely the unbounded retention the ceiling exists to prevent.
+	if n := assets.callCount(); n != wantReads {
+		t.Errorf("GetAsset called %d times, want exactly %d — resolution must stop at the read that "+
+			"crosses the ceiling, not buffer every named asset first", n, wantReads)
+	}
+}
+
+// TestMeta_ResolveVariantAssetsAcceptsRealisticCampaign is the other side of the bound:
+// it must not refuse a legitimate campaign. Real Meta creatives are a few hundred KiB
+// (Meta's recommended feed image is 1936x1936), so a many-variant A/B test of realistic
+// images sits far under the ceiling and must resolve cleanly.
+func TestMeta_ResolveVariantAssetsAcceptsRealisticCampaign(t *testing.T) {
+	const realistic = 400 << 10 // 400 KiB, a generous real-world PNG
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{}}
+	var in []meta.AdVariant
+	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("%08d-2222-2222-2222-222222222222", i)
+		assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, realistic), MimeType: "image/png"}
+		in = append(in, meta.AdVariant{ImageAssetID: id})
+	}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("50 realistic (400 KiB) creatives were refused, but the bound must not reject a legitimate campaign: %v", err)
+	}
+	if len(out) != 50 {
+		t.Fatalf("resolved %d variants, want 50", len(out))
+	}
+	for i := range out {
+		if len(out[i].ImageBytes) != realistic {
+			t.Errorf("variant %d did not receive its bytes", i+1)
+		}
+	}
+}
+
 // TestMeta_ConfigFieldsReachTheWire pins the metaConfig -> meta.CampaignInput hop for the
 // Instagram identity and the two EU DSA disclosures, by observing the REQUEST BODIES the
 // dispatcher actually produces.
@@ -1940,5 +2522,141 @@ func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
 		t.Errorf("instagram_user_id on the wire = %v, want the configured IGSID. Absent means "+
 			"the metaConfig -> CampaignInput mapping in meta.go dropped it, and Meta will refuse "+
 			"to publish with \"Please add Instagram account\"", got)
+	}
+}
+
+// TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError covers the log-injection and
+// unbounded-field surface on the ONE value here that is opaque caller JSON.
+//
+// imageAssetId has no length or charset bound anywhere on its path, and a rejected value
+// is quoted back in an error that reaches operator-facing output AND the orchestrator's
+// structured error log (notCreated → the default pre-create arm's slog "error" attribute).
+// So a caller controls both how MUCH text and WHAT text lands there.
+//
+// Asserted as BEHAVIOUR of the rendered error, not as source text: the message must stay
+// bounded, must not carry newlines a caller could use to forge a second log entry, and
+// must still identify the variant so the operator can act on it.
+func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(&multiCreativeAssets{assets: map[string]*model.CreativeAsset{}})
+
+	t.Run("length is bounded", func(t *testing.T) {
+		// 100 KiB of caller-chosen text in a field whose valid form is a 36-char UUID.
+		huge := strings.Repeat("A", 100<<10)
+		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+			[]meta.AdVariant{{ImageAssetID: huge}})
+		if err == nil {
+			t.Fatal("a malformed asset id must be refused")
+		}
+		msg := err.Error()
+		// The whole message must stay small. The bound is on what the VALUE contributes,
+		// so compare against the value's cap plus generous room for the fixed wording.
+		if len(msg) > maxAssetIDInError+300 {
+			t.Errorf("error is %d bytes for a %d-byte caller value; the quoted id must be truncated", len(msg), len(huge))
+		}
+		if strings.Contains(msg, huge) {
+			t.Error("the full caller value was echoed into the error unchanged")
+		}
+		if !strings.Contains(msg, "truncated") {
+			t.Errorf("a truncated value must say so, got %q", msg)
+		}
+		// Still actionable: the operator needs to know WHICH variant.
+		if !strings.Contains(msg, "variant 1") {
+			t.Errorf("error must still name the variant, got %q", msg)
+		}
+	})
+
+	t.Run("control characters cannot forge a log line", func(t *testing.T) {
+		// A newline plus a plausible-looking forged record. If this reaches a line-oriented
+		// log sink intact, the caller has written a second entry.
+		inject := "aaa\nlevel=INFO msg=\"campaign created successfully\"\rmore"
+		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+			[]meta.AdVariant{{ImageAssetID: inject}})
+		if err == nil {
+			t.Fatal("a malformed asset id must be refused")
+		}
+		msg := err.Error()
+		if strings.ContainsAny(msg, "\n\r") {
+			t.Errorf("error carries a raw newline/carriage return, so a caller can forge a log entry: %q", msg)
+		}
+		// The neutralised text may remain; what must not survive is the line break.
+		if strings.Contains(msg, "\nlevel=INFO") {
+			t.Errorf("the injected log line survived intact: %q", msg)
+		}
+	})
+
+	t.Run("a valid uuid is still accepted", func(t *testing.T) {
+		// The sanitiser must not become a new rejection path: a well-formed id must still
+		// reach the repo lookup (and fail there as "does not exist"), not be refused as
+		// malformed.
+		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+			[]meta.AdVariant{{ImageAssetID: "11111111-2222-3333-4444-555555555555"}})
+		if err == nil {
+			t.Fatal("an absent asset must still be refused")
+		}
+		if strings.Contains(err.Error(), "not a valid asset id") {
+			t.Errorf("a well-formed uuid was rejected as malformed: %v", err)
+		}
+	})
+}
+
+// TestMeta_AssetIDAliasesResolveAsOneAsset covers the identity the dedupe cache keys on.
+//
+// uuid.Parse accepts FOUR spellings of the same uuid — canonical, braced, URN and
+// unhyphenated — so the caller's raw spelling is not a stable identity. Keying the cache
+// on it lets a config name ONE asset through several valid aliases and defeat the dedupe:
+// each alias misses the map, reads the row again, retains another buffer, and is charged
+// against the aggregate budget again. That is the unbounded case the dedupe exists to
+// prevent, and it needs no extra stored data to trigger.
+//
+// Asserted through the OBSERVED read count and the bytes each variant received, so it
+// fails if canonicalization is dropped and equally if canonicalization broke resolution.
+func TestMeta_AssetIDAliasesResolveAsOneAsset(t *testing.T) {
+	const canonical = "11111111-2222-3333-4444-555555555555"
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		canonical: {Bytes: []byte("IMAGE_BYTES"), MimeType: "image/png"},
+	}}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	// Four spellings of ONE uuid. Pin the premise: every one of these must actually parse,
+	// otherwise this test would be asserting dedupe over values that are simply rejected.
+	aliases := []string{
+		canonical,
+		"{11111111-2222-3333-4444-555555555555}",
+		"urn:uuid:11111111-2222-3333-4444-555555555555",
+		"11111111222233334444555555555555",
+	}
+	for _, a := range aliases {
+		if _, err := uuid.Parse(a); err != nil {
+			t.Fatalf("fixture alias %q does not parse, so this test would not exercise dedupe: %v", a, err)
+		}
+	}
+
+	in := make([]meta.AdVariant, 0, len(aliases))
+	for _, a := range aliases {
+		in = append(in, meta.AdVariant{ImageAssetID: a})
+	}
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets error: %v", err)
+	}
+	if n := assets.callCount(); n != 1 {
+		t.Errorf("GetAsset called %d times for 4 ALIASES of one asset id, want 1 — "+
+			"alias spellings must not defeat the dedupe", n)
+	}
+	for i := range out {
+		if string(out[i].ImageBytes) != "IMAGE_BYTES" {
+			t.Errorf("variant %d (alias %q) bytes = %q, want the resolved asset's bytes",
+				i+1, aliases[i], out[i].ImageBytes)
+		}
+	}
+	// All four must alias the ONE resolved buffer, which is the allocation saving.
+	for i := 1; i < len(out); i++ {
+		if &out[0].ImageBytes[0] != &out[i].ImageBytes[0] {
+			t.Errorf("variant %d (alias %q) holds a distinct buffer; aliases must share the single resolved copy",
+				i+1, aliases[i])
+		}
 	}
 }

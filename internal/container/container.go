@@ -414,12 +414,28 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 // dispatcher registered" for that platform (logged as a startup warning).
 // audiences is the audience repository the HubSpot (email) dispatcher reads to resolve a brief's
 // built send-list. The ad dispatchers don't need it, so it is a distinct arg rather than folded
-// into the connection repo.
-func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo) map[model.Provider]service.PlatformDispatcher {
+// into the connection repo. creatives is the same shape for Meta: the creative-asset store it
+// reads to resolve a variant's imageAssetId to the image bytes it uploads.
+func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo, creatives *postgres.CreativeAssetRepo) map[model.Provider]service.PlatformDispatcher {
+	// Bound here rather than in NewMetaDispatcher's signature so the ~30 direct-construction
+	// dispatch tests that create no asset-backed variants stay unchanged, and so BOTH call
+	// sites of registerDispatchers (fast path and cold-start retry) get the binding from one
+	// statement — the same reasoning that put the brief repos behind bindBriefLiveBackends.
+	metaDispatcher := dispatch.NewMetaDispatcher(repo, enc)
+	// Guard on the CONCRETE pointer, not inside SetCreativeAssetRepo: passing a nil
+	// *postgres.CreativeAssetRepo into an interface parameter yields a NON-nil interface
+	// holding a nil pointer, so the callee's `r == nil` check cannot see it. Left unguarded,
+	// resolveVariantAssets' "store is not configured" branch would be skipped and an
+	// asset-backed variant would nil-panic mid-dispatch instead of failing cleanly
+	// pre-spend. The no-database tests call registerDispatchers with all-nil args, so this
+	// is a reachable path, not a hypothetical.
+	if creatives != nil {
+		metaDispatcher.SetCreativeAssetRepo(creatives)
+	}
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
-		model.ProviderMetaAds:      dispatch.NewMetaDispatcher(repo, enc),
+		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
@@ -764,7 +780,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
-	dispatchers := registerDispatchers(repo, enc, audienceRepo)
+	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool))
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -841,7 +857,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
-			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
+			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool))
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
