@@ -50,7 +50,15 @@ type CreativeAssetRepository interface {
 	// so "same checksum" means "same image", and a second upload is a no-op that returns what
 	// is already there — the same id every time, which is what lets the caller (and the Meta
 	// image-upload step at dispatch) treat upload as safe to retry.
-	CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error)
+	//
+	// The second return reports whether THIS call performed the insert: true when the row was
+	// created, false when an existing row was returned by the idempotent path. It exists because
+	// the two outcomes are indistinguishable in the returned row — the idempotent path returns a
+	// fully-populated asset with a real id and the FIRST upload's created_at — and the HTTP layer
+	// has to tell them apart to answer 201 (created) rather than 200 (already existed). Without
+	// it the transport can only report creation unconditionally, which tells a retrying client it
+	// created something it did not.
+	CreateAsset(ctx context.Context, a *model.CreativeAsset) (asset *model.CreativeAsset, created bool, err error)
 
 	// GetAsset loads a single stored asset — INCLUDING its Bytes — by id, scoped to
 	// (projectID, briefID) AND to an ACTIVE parent brief. The scope is part of the lookup, not

@@ -136,13 +136,25 @@ validates and stores an uploaded image so a Meta ad creative can later reference
 touches NO ad platform — the bytes are held until dispatch, where Meta's per-ad-account
 `image_hash` is resolved (see [internal/platform/meta](internal-platform-meta.md)).
 
-The generated validator already enforces what the CONTRACT can express — `content_type` is one of
-the allowed MIME strings and the byte length is within `[1, 30 MiB]` — so what this handler ADDS
-is that the BYTES are actually a decodable image of the DECLARED type. Note what the declared
-`MaxLength` does NOT do: it is checked against the already-DECODED slice, which the validator
-only sees after the JSON decoder has read the whole request body and base64-decoded it, so it
-never bounds the bytes read off the wire. That bound is a separate, inbound one —
-`constants.MaxRequestBodyBytes`, applied by `middleware.MaxBodyBytes` (see
+The generated validator enforces what the CONTRACT can express — `content_type` is one of the
+allowed MIME strings, and the base64 string is within `[1, 41,943,040]` CHARACTERS — so what this
+handler ADDS is the DECODED-size ceiling and the proof that the BYTES are actually a decodable
+image of the DECLARED type.
+
+The `MaxLength` figure is the ENCODED ceiling on purpose, and the reason is a representation
+mismatch worth stating. Goa publishes that attribute as `type: string` and emits `MaxLength` as
+`maxLength` on the JSON string, where it counts CHARACTERS; base64 expands by 4/3, so declaring the
+decoded 30 MiB there published a constraint rejecting uploads at ~22.5 MiB decoded — inside what
+this endpoint accepts. Server and schema agreed only because the generated validator applied the
+same number to the decoded slice, so both were wrong together and nothing local disagreed. The
+design now declares `41943040` (= `base64.StdEncoding.EncodedLen(30 MiB)`), the unit that schema
+actually measures, and the DECODED 30 MiB ceiling is **stage 0** in this handler
+(`maxCreativeStoredBytes`) — a `len()` on an already-decoded slice, so it costs nothing and refuses
+an oversize upload before `DecodeConfig` reads its header.
+
+Note also what neither bound does: neither one bounds the bytes read off the WIRE, because both are
+applied after the JSON decoder has read the whole request body. That bound is a separate, inbound
+one — `constants.MaxRequestBodyBytes`, applied by `middleware.MaxBodyBytes` (see
 [internal/middleware](internal-middleware.md)). Validation then runs in three stages, and the ORDER is
 the security property. **Stage 1**, `image.DecodeConfig`, reads only the header — enough to name
 the format and read the declared dimensions — and rejects garbage a declared `content_type`
@@ -205,9 +217,20 @@ Unlike `CreateCampaigns`/`AdoptCampaign` there is no `validateProjectSlug`: an a
 `project_id` is only a tenant-scoping predicate, never an attribution or connection-lookup key,
 so it stays UUID-or-slug like the other nested brief routes. The `checksum` is the
 lowercase-hex SHA-256 of the bytes (`sha256Hex`), which is the `(brief_id, checksum)` dedupe key
-— a repeat upload of the same image returns the existing asset. `created_by` is the attributed
-actor (NULL when none decodes, same as `CreateBrief`); on an idempotent re-upload the repo
-preserves the FIRST uploader, so this attributes creation, not re-sending. The `bytes` are
+— a repeat upload of the same image returns the existing asset, and the RESPONSE STATUS says so:
+**201** when this request stored the asset, **200** when it resolved to one that already existed.
+
+That distinction cannot be read off the returned row — it is fully populated and identical on both
+paths, carrying the same id and the FIRST upload's `created_at` — so it is recovered in SQL and
+carried up. `createCreativeAssetQuery`'s `RETURNING` includes `(xmax = 0) AS inserted`, true for
+exactly the rows the statement inserted (an INSERT leaves `xmax` 0; the `ON CONFLICT DO UPDATE` arm
+writes a row version whose `xmax` is the current transaction). `CreateAsset` returns it as its
+second value, and the handler renders it into the `created` attribute the generated encoder
+switches on. An unconditional 201 gave a retrying client false creation semantics.
+
+`created_by` is the attributed actor (NULL when none decodes, same as `CreateBrief`); on an
+idempotent re-upload the repo preserves the FIRST uploader, so this attributes creation, not
+re-sending. The `bytes` are
 deliberately NOT echoed in the result (`creativeAssetResult` returns metadata only — the caller
 already has the bytes it sent, and a multi-megabyte base64 body on every upload would be pure
 overhead). Like the other late-bound methods, an unwired repo returns a typed `503`

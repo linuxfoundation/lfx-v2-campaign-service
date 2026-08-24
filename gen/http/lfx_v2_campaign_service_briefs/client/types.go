@@ -253,10 +253,10 @@ type FetchEventURLResponseBody struct {
 	ExtractedFrom *string `form:"extracted_from,omitempty" json:"extracted_from,omitempty" xml:"extracted_from,omitempty"`
 }
 
-// UploadCreativeAssetResponseBody is the type of the
+// UploadCreativeAssetCreatedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
 // HTTP response body.
-type UploadCreativeAssetResponseBody struct {
+type UploadCreativeAssetCreatedResponseBody struct {
 	// Creative asset UUID
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Owning project
@@ -271,6 +271,34 @@ type UploadCreativeAssetResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// UploadCreativeAssetOKResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetOKResponseBody struct {
+	// Creative asset UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
+	// Size of the stored image in bytes
+	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -2887,7 +2915,7 @@ func NewFetchEventURLUnauthorized(body *FetchEventURLUnauthorizedResponseBody, w
 // NewUploadCreativeAssetCreativeAssetCreated builds a
 // "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
 // result from a HTTP "Created" response.
-func NewUploadCreativeAssetCreativeAssetCreated(body *UploadCreativeAssetResponseBody) *lfxv2campaignservicebriefs.CreativeAsset {
+func NewUploadCreativeAssetCreativeAssetCreated(body *UploadCreativeAssetCreatedResponseBody) *lfxv2campaignservicebriefs.CreativeAsset {
 	v := &lfxv2campaignservicebriefs.CreativeAsset{
 		ID:        *body.ID,
 		ProjectID: *body.ProjectID,
@@ -2895,6 +2923,24 @@ func NewUploadCreativeAssetCreativeAssetCreated(body *UploadCreativeAssetRespons
 		MimeType:  *body.MimeType,
 		ByteSize:  *body.ByteSize,
 		Checksum:  *body.Checksum,
+		Created:   body.Created,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetCreativeAssetOK builds a
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// result from a HTTP "OK" response.
+func NewUploadCreativeAssetCreativeAssetOK(body *UploadCreativeAssetOKResponseBody) *lfxv2campaignservicebriefs.CreativeAsset {
+	v := &lfxv2campaignservicebriefs.CreativeAsset{
+		ID:        *body.ID,
+		ProjectID: *body.ProjectID,
+		BriefID:   *body.BriefID,
+		MimeType:  *body.MimeType,
+		ByteSize:  *body.ByteSize,
+		Checksum:  *body.Checksum,
+		Created:   body.Created,
 	}
 
 	return v
@@ -4207,9 +4253,9 @@ func ValidateFetchEventURLResponseBody(body *FetchEventURLResponseBody) (err err
 	return
 }
 
-// ValidateUploadCreativeAssetResponseBody runs the validations defined on
-// Upload-Creative-AssetResponseBody
-func ValidateUploadCreativeAssetResponseBody(body *UploadCreativeAssetResponseBody) (err error) {
+// ValidateUploadCreativeAssetCreatedResponseBody runs the validations defined
+// on Upload-Creative-AssetCreatedResponseBody
+func ValidateUploadCreativeAssetCreatedResponseBody(body *UploadCreativeAssetCreatedResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
@@ -4234,6 +4280,48 @@ func ValidateUploadCreativeAssetResponseBody(body *UploadCreativeAssetResponseBo
 	if body.MimeType != nil {
 		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Created != nil {
+		if !(*body.Created == "true" || *body.Created == "false") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.created", *body.Created, []any{"true", "false"}))
+		}
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetOKResponseBody runs the validations defined on
+// Upload-Creative-AssetOKResponseBody
+func ValidateUploadCreativeAssetOKResponseBody(body *UploadCreativeAssetOKResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mime_type", "body"))
+	}
+	if body.ByteSize == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("byte_size", "body"))
+	}
+	if body.Checksum == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("checksum", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
+	}
+	if body.MimeType != nil {
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Created != nil {
+		if !(*body.Created == "true" || *body.Created == "false") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.created", *body.Created, []any{"true", "false"}))
 		}
 	}
 	return

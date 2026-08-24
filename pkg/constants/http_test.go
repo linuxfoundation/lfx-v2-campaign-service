@@ -57,6 +57,55 @@ func TestPodMemoryLimitMatchesChart(t *testing.T) {
 	}
 }
 
+// TestPodMemoryLimitIsRenderedByTheDeployment closes the gap TestPodMemoryLimitMatchesChart leaves
+// open, and the gap is worth stating precisely because the two tests look redundant.
+//
+// The test above reads values.yaml, which is the chart DEFAULT. templates/deployment.yaml renders
+// the container's limits from `{{- with .Values.resources }}`, so an installation that overrides
+// resources — `--set resources.limits.memory=...`, or a values file in the deploying repo —
+// replaces that block wholesale. The pod then runs with a limit the Go constant never saw, and the
+// admission budget silently stops being the quarter-of-the-pod it is documented to be, with no
+// test failing anywhere.
+//
+// What this asserts is the LINK rather than a number: that the value the constant mirrors is the
+// value the template actually renders into the container, and that the path it renders through is
+// the overridable one. It cannot stop an operator overriding the limit — nothing in Go can — but
+// it makes the override visible as the thing that must be kept in step, instead of leaving the
+// budget's premise resting on a default nobody re-checks.
+func TestPodMemoryLimitIsRenderedByTheDeployment(t *testing.T) {
+	tmpl := filepath.Join("..", "..", "charts", "lfx-v2-campaign-service", "templates", "deployment.yaml")
+	raw, err := os.ReadFile(tmpl) //nolint:gosec // fixed repo-relative path in a test
+	if err != nil {
+		t.Fatalf("read deployment template: %v", err)
+	}
+	text := string(raw)
+
+	// The limit must reach the container through .Values.resources. If the template ever hardcoded
+	// it, or renamed the key, the constant would be mirroring a value the pod no longer uses.
+	if !strings.Contains(text, ".Values.resources") {
+		t.Error("deployment.yaml does not render .Values.resources: PodMemoryLimitBytes claims to " +
+			"mirror the pod's memory limit, but the template no longer sources it from the values " +
+			"this test and TestPodMemoryLimitMatchesChart check")
+	}
+
+	// And it must be the OVERRIDABLE path — which is the whole point. A `with` guard means an
+	// installation supplying its own resources block replaces the default entirely, so the
+	// default this suite validates is not necessarily what runs.
+	if !regexp.MustCompile(`\{\{-?\s*with\s+\.Values\.resources\s*-?\}\}`).MatchString(text) {
+		t.Error("the resources block is no longer rendered through `with .Values.resources`; " +
+			"re-check whether the pod limit can still be overridden independently of " +
+			"PodMemoryLimitBytes, and update this test's reasoning if the mechanism changed")
+	}
+
+	// Guard the derivation itself, so the relationship the budget documents is checked against the
+	// number the chart declares rather than assumed. This is the invariant an override breaks.
+	if UploadAdmissionBudgetBytes != PodMemoryLimitBytes/4 {
+		t.Errorf("upload budget %d MiB is not a quarter of the %d MiB pod limit; the constant's "+
+			"documented derivation no longer holds",
+			UploadAdmissionBudgetBytes>>20, PodMemoryLimitBytes>>20)
+	}
+}
+
 // TestUploadAdmissionBudgetLeavesHeadroom asserts the PROPERTY the budget exists to hold, rather
 // than restating its formula.
 //

@@ -1255,9 +1255,15 @@ func EncodeFetchEventURLError(encoder func(context.Context, http.ResponseWriter)
 func EncodeUploadCreativeAssetResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
 	return func(ctx context.Context, w http.ResponseWriter, v any) error {
 		res, _ := v.(*lfxv2campaignservicebriefs.CreativeAsset)
+		if res.Created != nil && *res.Created == "true" {
+			enc := encoder(ctx, w)
+			body := NewUploadCreativeAssetCreatedResponseBody(res)
+			w.WriteHeader(http.StatusCreated)
+			return enc.Encode(body)
+		}
 		enc := encoder(ctx, w)
-		body := NewUploadCreativeAssetResponseBody(res)
-		w.WriteHeader(http.StatusCreated)
+		body := NewUploadCreativeAssetOKResponseBody(res)
+		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
 }

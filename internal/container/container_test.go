@@ -1548,8 +1548,8 @@ func TestSetCreativeAssetRepo_IgnoresNil(t *testing.T) {
 // in internal/service.
 type fakeCreativeAssetRepo struct{}
 
-func (fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
-	return a, nil
+func (fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
+	return a, true, nil
 }
 
 func (fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
