@@ -785,3 +785,235 @@ func TestThrottleWaitInterruptionIsWrappedAmbiguous(t *testing.T) {
 		t.Errorf("error = %v, want the throttle-wait wrapper", err)
 	}
 }
+
+// TestUploadBackoffIsExponentialInAttempt pins the /adimages no-header backoff to the
+// SAME capped exponential schedule do() uses, and does so WITHOUT sleeping.
+//
+// HOW THE DELAY IS MADE OBSERVABLE. throttleWait RETURNS the duration it wants the
+// caller to wait; it does not sleep. So the schedule can be read directly as a value,
+// per attempt, with no timer, no elapsed-time threshold and no goroutine scheduling in
+// the assertion. An elapsed-time test would be both slow and unable to discriminate —
+// a wait that is merely unscheduled looks identical to a wait that was never requested.
+//
+// WHAT IT DISCRIMINATES. The defect was that the attempt number never reached the delay
+// computation, so every retry waited retryBaseDelay: 1s/1s/1s instead of 1s/2s/4s.
+// Asserting the FULL per-attempt sequence (not just "some delay happened") is what makes
+// a revert to the base delay fail here: attempt 0 agrees under both behaviours, so a test
+// checking only one attempt would pass against the bug.
+func TestUploadBackoffIsExponentialInAttempt(t *testing.T) {
+	// A 429 carrying NO Retry-After: exactly the no-server-declared-reset case whose
+	// fallback is the exponential schedule under test.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613}}`)
+	}))
+	defer srv.Close()
+
+	// The PRODUCTION base delay, so the asserted numbers are the real schedule rather
+	// than a shrunken test-only one.
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+	)
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("fetch throttle response: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	apiErr := &APIError{StatusCode: http.StatusTooManyRequests, Code: 613}
+
+	// The schedule do() implements: retryBaseDelay << attempt, capped at maxRetryWait.
+	want := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
+	for attempt, expect := range want {
+		got, abort := c.throttleWait(context.Background(), resp, apiErr, http.StatusTooManyRequests, "/act_777/adimages", attempt)
+		if abort != nil {
+			t.Fatalf("attempt %d: unexpected abort: %v", attempt, abort)
+		}
+		if got != expect {
+			t.Errorf("attempt %d: wait = %s, want %s — the /adimages fallback must be "+
+				"capped exponential in the ATTEMPT NUMBER, as do() is; a constant %s on "+
+				"every attempt means the attempt number never reached the computation",
+				attempt, got, expect, c.retryBaseDelay)
+		}
+	}
+}
+
+// TestUploadBackoffMatchesDoBackoff proves the two paths share ONE schedule rather than
+// two that happen to agree today: it compares the upload path's computed wait against
+// the very helper do() calls, for every attempt the retry loop can reach.
+//
+// This is the structural half of the fix. Equal-by-construction is what a future edit
+// cannot silently break — if someone reintroduces a private computation on either side,
+// this fails even if that computation looks plausible.
+func TestUploadBackoffMatchesDoBackoff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+	)
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("fetch throttle response: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	apiErr := &APIError{StatusCode: http.StatusTooManyRequests, Code: 613}
+
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		got, abort := c.throttleWait(context.Background(), resp, apiErr, http.StatusTooManyRequests, "/act_777/adimages", attempt)
+		if abort != nil {
+			t.Fatalf("attempt %d: unexpected abort: %v", attempt, abort)
+		}
+		if want := c.backoffDelay(attempt); got != want {
+			t.Errorf("attempt %d: upload wait = %s, do() wait = %s — both paths must "+
+				"resolve to the SAME shared schedule", attempt, got, want)
+		}
+	}
+}
+
+// TestBackoffDelayCapsAtMaxRetryWait pins the cap arm of the shared helper, which the
+// attempt-threaded shift makes reachable: without a cap, a large attempt number would
+// shift the base delay past maxRetryWait.
+func TestBackoffDelayCapsAtMaxRetryWait(t *testing.T) {
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+	)
+	// 1s << 10 = 1024s, far past the 60s cap.
+	if got := c.backoffDelay(10); got != maxRetryWait {
+		t.Errorf("backoffDelay(10) = %s, want the cap %s", got, maxRetryWait)
+	}
+}
+
+// TestUploadImageLoopThreadsItsAttemptCounter binds the RETRY LOOP's threading of its own
+// attempt counter, end to end through uploadImage.
+//
+// WHY THIS EXISTS SEPARATELY. The tests above call throttleWait directly, so they pin the
+// SCHEDULE but not the wiring: a mutation replacing the loop's `attempt` argument with a
+// constant 0 left every one of them green, because they never exercise the call site that
+// supplies it. This test observes the delays uploadImage actually REQUESTS, so pinning the
+// argument to a constant fails here.
+//
+// NO SLEEPING. sleepFn is replaced with a recorder that captures the requested duration
+// and returns immediately, so the full 1s/2s/4s schedule is asserted as a sequence of
+// VALUES in microseconds of runtime. An elapsed-time assertion could neither run at the
+// production base delay nor distinguish a wait that was requested from one that was merely
+// unscheduled.
+func TestUploadImageLoopThreadsItsAttemptCounter(t *testing.T) {
+	var attempts int32
+	// Always throttle, with no Retry-After, so every retry takes the exponential
+	// fallback and the loop runs to its retryMax bound.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613}}`)
+	}))
+	defer srv.Close()
+
+	var waits []time.Duration
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		// Production base delay: the asserted schedule is the real one, and it costs
+		// nothing because the wait is recorded rather than taken.
+		withSleepFn(func(_ context.Context, d time.Duration) error {
+			waits = append(waits, d)
+			return nil
+		}),
+	)
+
+	if _, err := c.uploadImage(context.Background(), []byte("PNGBYTES"), "image/png"); err == nil {
+		t.Fatal("an always-throttled upload must fail once retries are exhausted")
+	}
+
+	// retryMax retries after the first attempt: waits are taken for attempts 0,1,2.
+	want := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
+	if len(waits) != len(want) {
+		t.Fatalf("recorded %d waits (%v), want %d — the loop must retry up to retryMax",
+			len(waits), waits, len(want))
+	}
+	for i := range want {
+		if waits[i] != want[i] {
+			t.Errorf("wait %d = %s, want %s — uploadImage must thread ITS OWN attempt "+
+				"counter into the backoff; a constant here means the call site discards it",
+				i, waits[i], want[i])
+		}
+	}
+	if n := atomic.LoadInt32(&attempts); n != retryMax+1 {
+		t.Errorf("attempts = %d, want %d", n, retryMax+1)
+	}
+}
+
+// TestUploadImageRetriesTruncated429 pins that a 429 whose BODY CANNOT BE READ is still
+// retried as the throttle it plainly is.
+//
+// THE FAILURE MODE. The throttle arms were once gated on `readErr == nil`, so a 429 with a
+// mismatched Content-Length (io.ReadAll returns "unexpected EOF") fell through to the
+// default arm and was returned as FINAL. That turns a retryable rate limit into a terminal
+// `created_degraded` campaign on the strength of a body the status made unnecessary — and
+// it diverges from do(), which computes isThrottle from the status BEFORE consuming readErr
+// precisely so a throttle it will retry is not short-circuited by an unreadable body.
+//
+// HOW THE TRUNCATION IS PRODUCED. The handler declares a Content-Length larger than what it
+// writes, then closes the connection. That is the real shape of the bug, not a simulated
+// error value, so the test exercises the client's actual read path.
+func TestUploadImageRetriesTruncated429(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&attempts, 1)
+		if n == 1 {
+			// Promise 4096 bytes, send a handful, hang up: the client's io.ReadAll sees
+			// an unexpected EOF, which is exactly the case the readErr gate mishandled.
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Length", "4096")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":`)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if hj, ok := w.(http.Hijacker); ok {
+				conn, _, herr := hj.Hijack()
+				if herr == nil {
+					_ = conn.Close()
+				}
+			}
+			return
+		}
+		// The retry succeeds, proving the first response was treated as retryable.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"images":{"creative":{"hash":"HASH_OK","url":"https://x/y.png"}}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-img"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		withSleepFn(func(context.Context, time.Duration) error { return nil }),
+	)
+
+	hash, err := c.uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+	if err != nil {
+		t.Fatalf("a truncated 429 must be RETRIED, not returned as final: %v", err)
+	}
+	if hash != "HASH_OK" {
+		t.Errorf("hash = %q, want %q", hash, "HASH_OK")
+	}
+	if n := atomic.LoadInt32(&attempts); n != 2 {
+		t.Errorf("attempts = %d, want 2 — the truncated 429 must cost exactly one retry", n)
+	}
+}

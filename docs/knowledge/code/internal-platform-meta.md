@@ -236,6 +236,26 @@ by name" below), and nothing re-dispatches a retained partial — so the UNCONFI
 is surfaced for verification in Ads Manager rather than reconciled on a next run. The
 suppression is scoped to creates, not to POST as a method — the status-update POSTs
 assert a desired state, so repeating them changes nothing and they keep the retry.
+
+The test the suppression actually applies is IDEMPOTENCY, not the HTTP method and not
+the word "create": a request may be retried exactly when repeating it cannot bring a
+second thing into existence. Creates fail that test because Meta exposes no create
+idempotency key, so a re-POST of a shed create can duplicate a PAID object — which is
+why the rule stands as written above.
+
+`POST /act_<id>/adimages` is the one create-shaped call that PASSES it, and therefore
+DOES retry throttles (`uploadImage`/`uploadImageAttempt`, outside `doCreate`). Meta
+content-addresses ad images: posting identical bytes twice returns the same hash and
+creates nothing the first post did not, so the duplicate-paid-object hazard the
+suppression exists to prevent cannot arise. The exception is justified by that property
+alone — it is not a general softening of the create rule, and a future endpoint earns
+the same treatment only by demonstrating the same idempotency. Not retrying here is the
+costly choice: the campaign and ad set already exist by the time the upload runs, so a
+transient throttle drops the variant into a terminal `created_degraded` campaign that no
+re-dispatch repairs. The retry uses the same bounded schedule as `do()` — the same
+`Retry-After` policy including its over-cap abort, and the same capped exponential
+fallback via the shared `backoffDelay` helper, which both paths call so the two cannot
+drift apart. Only the THROTTLE arm retries; every other classification stays final.
 Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
 For a `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with

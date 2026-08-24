@@ -296,6 +296,12 @@ type Client struct {
 	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
 	// retryBaseDelay const; tests may shrink it to keep runs fast.
 	retryBaseDelay time.Duration
+	// sleepFn is the wait used between throttle retries. Defaults to sleepCtx.
+	// Tests replace it to OBSERVE the requested delays without spending them: the
+	// backoff schedule is then asserted as a sequence of values rather than as
+	// elapsed wall time, which no timing threshold could distinguish from a
+	// goroutine that simply was not scheduled.
+	sleepFn func(context.Context, time.Duration) error
 }
 
 // Option customizes a Client.
@@ -355,6 +361,16 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// withSleepFn overrides the inter-retry wait. Unexported: only tests use it, to
+// capture the backoff schedule the retry loops REQUEST without actually waiting.
+func withSleepFn(f func(context.Context, time.Duration) error) Option {
+	return func(c *Client) {
+		if f != nil {
+			c.sleepFn = f
+		}
+	}
+}
+
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	// Trim credential/account fields once at construction so validation (which
@@ -377,6 +393,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		adsManagerURL:  DefaultAdsManagerURL,
 		timeNow:        time.Now,
 		retryBaseDelay: retryBaseDelay,
+		sleepFn:        sleepCtx,
 	}
 	for _, o := range opts {
 		o(c)
@@ -1601,12 +1618,9 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 				}
 				continue
 			}
-			// No server-declared reset: capped exponential backoff.
-			wait := c.retryBaseDelay * time.Duration(1<<uint(attempt))
-			if wait > maxRetryWait {
-				wait = maxRetryWait
-			}
-			if err := sleepCtx(ctx, wait); err != nil {
+			// No server-declared reset: capped exponential backoff, from the shared
+			// helper the /adimages upload loop also uses.
+			if err := sleepCtx(ctx, c.backoffDelay(attempt)); err != nil {
 				return err
 			}
 			continue
@@ -1696,6 +1710,24 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 }
 
 // sleepCtx waits for d, returning early if ctx is cancelled.
+// backoffDelay computes the capped exponential wait for retry attempt `attempt`
+// (0-based) when the server declared NO reset. It is the SINGLE definition of that
+// schedule: do()'s retry loop and the /adimages upload loop both call it, so the two
+// paths cannot drift apart. They did drift — the upload path once ignored the attempt
+// number entirely and waited retryBaseDelay every time, turning the documented
+// 1s/2s/4s schedule into 1s/1s/1s — and a shared helper is what makes repeating that
+// a compile-time impossibility rather than a review catch.
+//
+// The shift is on the ATTEMPT NUMBER, so the caller must thread it in; the cap keeps a
+// long tail from exceeding maxRetryWait.
+func (c *Client) backoffDelay(attempt int) time.Duration {
+	wait := c.retryBaseDelay * time.Duration(1<<uint(attempt))
+	if wait > maxRetryWait {
+		wait = maxRetryWait
+	}
+	return wait
+}
+
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -3496,14 +3528,18 @@ type adImageUploadResponse struct {
 }
 
 // throttleWait decides how long a throttled /adimages attempt should wait before the
-// next one, applying the SAME Retry-After policy do() applies — including its abort.
+// next one, applying the SAME Retry-After policy do() applies — including its abort —
+// and the SAME capped exponential fallback, via the shared backoffDelay helper.
+//
+// `attempt` is the 0-based number of the attempt that was just throttled. It is what the
+// exponential shift is computed on, so it must be threaded from the caller's loop.
 //
 // It returns (wait, nil) to retry after `wait`, or (0, abortErr) when the server's
 // declared reset exceeds maxRetryWait. Clamping an oversized reset would retry while Meta
 // is still throttling, burning attempts and stalling this synchronous flow, so an
 // over-cap reset ABORTS carrying the Graph diagnostics — exactly do()'s behaviour, and
 // the twitter/reddit clients'.
-func (c *Client) throttleWait(ctx context.Context, resp *http.Response, apiErr *APIError, status int, path string) (time.Duration, error) {
+func (c *Client) throttleWait(ctx context.Context, resp *http.Response, apiErr *APIError, status int, path string, attempt int) (time.Duration, error) {
 	_ = ctx
 	retryAfter := c.parseRetryAfter(resp)
 	if retryAfter > 0 {
@@ -3524,14 +3560,13 @@ func (c *Client) throttleWait(ctx context.Context, resp *http.Response, apiErr *
 		}
 		return retryAfter, nil
 	}
-	// No server-declared reset: the same capped exponential backoff do() uses. The
-	// attempt number is not threaded in, so this uses the base delay; the loop bounds
-	// total attempts at retryMax either way.
-	wait := c.retryBaseDelay
-	if wait > maxRetryWait {
-		wait = maxRetryWait
-	}
-	return wait, nil
+	// No server-declared reset: the same capped exponential backoff do() uses —
+	// literally, via the shared backoffDelay helper, so the two paths cannot diverge.
+	// The attempt number IS threaded in (it is what the shift is on): without it every
+	// retry waited retryBaseDelay, so /adimages retried at 1s/1s/1s instead of 1s/2s/4s
+	// and exhausted its budget in ~3s rather than ~7s, degrading the campaign on a
+	// throttle do() would have ridden out.
+	return c.backoffDelay(attempt), nil
 }
 
 // uploadCache memoizes /adimages uploads for the duration of ONE CreateCampaign call, so
@@ -3726,11 +3761,11 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 	contentTypeHeader := mw.FormDataContentType()
 
 	for attempt := 0; ; attempt++ {
-		hash, retryIn, rerr := c.uploadImageAttempt(ctx, path, encoded, contentTypeHeader)
+		hash, retryIn, rerr := c.uploadImageAttempt(ctx, path, encoded, contentTypeHeader, attempt)
 		if retryIn < 0 || attempt >= retryMax {
 			return hash, rerr
 		}
-		if serr := sleepCtx(ctx, retryIn); serr != nil {
+		if serr := c.sleepFn(ctx, retryIn); serr != nil {
 			// The caller's context died while waiting out a throttle we had ALREADY been
 			// shed by. Returning the bare ctx.Err() would lose the outcome's shape: it is
 			// neither *transportError nor *APIError, so createOutcomeAmbiguous (and
@@ -3769,7 +3804,7 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 //
 // Only the THROTTLE arm retries. Every other classification is final and identical to
 // the single-attempt behaviour, so this adds a retry and changes no verdict.
-func (c *Client) uploadImageAttempt(ctx context.Context, path string, encoded []byte, contentTypeHeader string) (string, time.Duration, error) {
+func (c *Client) uploadImageAttempt(ctx context.Context, path string, encoded []byte, contentTypeHeader string, attempt int) (string, time.Duration, error) {
 	const final = time.Duration(-1)
 
 	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(encoded))
@@ -3810,18 +3845,30 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, encoded []
 			// miss the common shape and drop the variant on a limit that was about to
 			// clear.
 			if status == http.StatusTooManyRequests || graphRateLimitCodes[env.Error.Code] {
-				wait, abort := c.throttleWait(ctx, resp, apiErr, status, path)
+				wait, abort := c.throttleWait(ctx, resp, apiErr, status, path, attempt)
 				if abort != nil {
 					return "", final, abort
 				}
 				return "", wait, apiErr
 			}
-		case readErr == nil && status == http.StatusTooManyRequests:
-			// A 429 whose body carries no Graph envelope is still unambiguously a throttle:
-			// the STATUS alone says so. Retry it on the same terms, without trusting the
-			// body (which this path deliberately withholds, see the next arm).
+		case status == http.StatusTooManyRequests:
+			// A 429 is a throttle on the STATUS ALONE, so this arm is deliberately NOT
+			// gated on readErr == nil. A 429 whose body is truncated or unreadable (a
+			// mismatched Content-Length makes io.ReadAll return "unexpected EOF") would
+			// otherwise fall through to the default arm and be returned as FINAL — turning
+			// a retryable throttle into a terminal created_degraded campaign on nothing
+			// more than a body we never needed. do() classifies the same way for the same
+			// reason: it computes isThrottle from the status before consuming readErr, and
+			// deliberately does not short-circuit a throttle it is about to retry.
+			//
+			// Ordering matters: the Graph-envelope arm above still runs FIRST, so a
+			// readable 429 keeps its Type/Code/FBTraceID. Only a 429 we could not parse
+			// reaches here, and it is marked unreadable rather than trusted.
 			apiErr.EnvelopeUnreadable = true
-			wait, abort := c.throttleWait(ctx, resp, apiErr, status, path)
+			if readErr != nil {
+				apiErr.Message = fmt.Sprintf("read response body: %v", readErr)
+			}
+			wait, abort := c.throttleWait(ctx, resp, apiErr, status, path, attempt)
 			if abort != nil {
 				return "", final, abort
 			}
