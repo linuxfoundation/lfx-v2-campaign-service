@@ -123,8 +123,13 @@ every method, not just the body-bearing ones, because the cap is global middlewa
 
 `content_type` is an `Enum("image/png", "image/jpeg")`, but
 the enum only constrains the DECLARED value — the handler re-sniffs the bytes and stores the
-verified type (see [internal/service](internal-service.md)). It responds `201` with NO ETag:
-creative assets are insert-only and carry no version, so there is no optimistic-concurrency
+verified type (see [internal/service](internal-service.md)). It responds `201` when THIS request
+stored the asset and `200` when an identical upload already existed and the stored row was
+returned unchanged — the upload is idempotent on `(brief_id, checksum)`, and an unconditional
+`201` told a retrying client it had created something when nothing was created. The two statuses
+are selected by the `created` attribute via `Response(StatusCreated, Tag("created","true"))` plus
+a default `Response(StatusOK)`; both share one body shape. Neither carries an ETag: creative
+assets are insert-only and carry no version, so there is no optimistic-concurrency
 handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
 uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,
 because the asset is bound to a campaign later by its own id and the id is never stamped into a
