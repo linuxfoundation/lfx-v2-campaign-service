@@ -1891,8 +1891,8 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 }
 
 // KeywordInsightsReader is an OPTIONAL dispatcher capability: read keyword performance and
-// audience demographics for a project's ACCOUNT, live from the platform. Type-asserted like
-// MetricsReader and AccountLister, so a dispatcher without it yields a clean
+// audience demographics for the campaigns a project OWNS, live from the platform. Type-asserted
+// like MetricsReader and AccountLister, so a dispatcher without it yields a clean
 // ErrKeywordInsightsUnsupported → 400.
 //
 // Both methods are project-scoped and confined to the project's OWN campaigns. The connection

@@ -20,9 +20,26 @@ import (
 	"testing"
 )
 
-// keywordRowJSON builds one keyword_view result row.
+// keywordRowJSON builds one POSITIVE keyword_view result row.
+//
+// It OMITS `negative` entirely, because that is what Google actually sends: `negative` is a
+// proto bool and protobuf JSON does not serialise a field at its default value, so
+// `negative: false` never appears on the wire for an ordinary positive keyword. Rendering it
+// explicitly would produce a body no conformant serialiser emits, and every positive-path test
+// built on it would agree with the decoder instead of checking it. See criterionRowJSON, which
+// makes the same choice for the type-resolution query.
 func keywordRowJSON(criterionID, adGroupID, campaignID, text, matchType, status string, impressions, clicks, cost int) string {
 	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"status":%q,"keyword":{"text":%q,"matchType":%q}},`+
+		`"adGroup":{"id":%q},"campaign":{"id":%q},`+
+		`"metrics":{"impressions":"%d","clicks":"%d","costMicros":"%d"}}`,
+		criterionID, status, text, matchType, adGroupID, campaignID, impressions, clicks, cost)
+}
+
+// negativeKeywordRowJSON builds one NEGATIVE (exclusion) keyword_view row, carrying the
+// explicit `negative: true` Google sends for an exclusion. `keyword_view` returns both
+// polarities, so this is a row the read must not publish.
+func negativeKeywordRowJSON(criterionID, adGroupID, campaignID, text, matchType, status string, impressions, clicks, cost int) string {
+	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"status":%q,"negative":true,"keyword":{"text":%q,"matchType":%q}},`+
 		`"adGroup":{"id":%q},"campaign":{"id":%q},`+
 		`"metrics":{"impressions":"%d","clicks":"%d","costMicros":"%d"}}`,
 		criterionID, status, text, matchType, adGroupID, campaignID, impressions, clicks, cost)
@@ -1524,5 +1541,230 @@ func TestGetKeywordPerformance_OutOfScopeProbeRowFailsTheRead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "outside the requested campaign scope") {
 		t.Errorf("error does not name the out-of-scope probe campaign: %v", err)
+	}
+}
+
+// TestGetKeywordPerformance_NegativeKeywordIsNotReturned pins the polarity contract on the
+// READ path. Every row this endpoint publishes is advertised as the criterion_id + ad_group_id
+// handle `keyword-actions` takes, and that endpoint refuses a negative criterion outright,
+// so a returned exclusion is a handle whose only advertised use cannot succeed.
+//
+// The positive row OMITS `negative` (the wire shape of the happy path); the negative row
+// carries the explicit `negative: true` Google sends. Asserting on the returned VALUES rather
+// than on the query text is deliberate: a test that only grepped the GAQL string would pass
+// against a build that requested the filter and then published whatever came back.
+func TestGetKeywordPerformance_NegativeKeywordIsNotReturned(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+
+			keywordRowJSON("111", "176216228", "555", "kubernetes training", "EXACT", "ENABLED", 1000, 40, 25000000)+`,`+
+			negativeKeywordRowJSON("222", "176216228", "555", "free", "BROAD", "ENABLED", 10, 0, 0)+
+			`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	if len(kp.Rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (the negative keyword must not be published)", len(kp.Rows))
+	}
+	if kp.Rows[0].CriterionID != "111" {
+		t.Errorf("criterion id = %q, want 111", kp.Rows[0].CriterionID)
+	}
+	if kp.Rows[0].Text != "kubernetes training" {
+		t.Errorf("text = %q, want the positive keyword", kp.Rows[0].Text)
+	}
+	for _, r := range kp.Rows {
+		if r.CriterionID == "222" || r.Text == "free" {
+			t.Errorf("NEGATIVE criterion %s (%q) was published as an actionable keyword handle", r.CriterionID, r.Text)
+		}
+	}
+}
+
+// TestGetKeywordPerformance_OmittedNegativeIsPositive is the companion guard to the test
+// above, and the one that catches the failure mode a polarity check invites: reading an
+// ABSENT `negative` as "unknown" and dropping the row. Absence already means false in
+// protobuf JSON, so treating it as unknown would empty this endpoint of every ordinary
+// keyword — the same defect that shipped once on the mutate path.
+func TestGetKeywordPerformance_OmittedNegativeIsPositive(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Note: keywordRowJSON omits `negative` entirely, as Google does.
+		_, _ = io.WriteString(w, `{"results":[`+
+			keywordRowJSON("111", "176216228", "555", "kubernetes training", "EXACT", "ENABLED", 1000, 40, 25000000)+`,`+
+			keywordRowJSON("112", "176216228", "555", "linux foundation", "PHRASE", "PAUSED", 500, 10, 5000000)+
+			`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	if len(kp.Rows) != 2 {
+		t.Fatalf("got %d rows, want 2 — a row with `negative` OMITTED is POSITIVE and must be kept", len(kp.Rows))
+	}
+}
+
+// TestGetKeywordPerformance_ExplicitNegativeFalseIsPositive covers the non-default
+// serialisation. A conformant protobuf-JSON serialiser never emits `negative: false`, but a
+// proxy or a future serialiser may, and it must reach the same POSITIVE verdict as omission.
+func TestGetKeywordPerformance_ExplicitNegativeFalseIsPositive(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+
+			`{"adGroupCriterion":{"criterionId":"111","status":"ENABLED","negative":false,`+
+			`"keyword":{"text":"kubernetes training","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"176216228"},"campaign":{"id":"555"},`+
+			`"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000"}}`+
+			`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	if len(kp.Rows) != 1 {
+		t.Fatalf("got %d rows, want 1 — explicit `negative: false` is POSITIVE", len(kp.Rows))
+	}
+}
+
+// TestGetKeywordPerformance_QueryRequestsPositiveKeywordsOnly pins the REQUESTED filter, the
+// half the response-side check cannot prove. Both matter: the predicate keeps exclusions from
+// consuming the row cap upstream, and the enforcement keeps them out of the result if the
+// predicate is ever dropped or not honoured.
+func TestGetKeywordPerformance_QueryRequestsPositiveKeywordsOnly(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(gotBody, "ad_group_criterion.negative = FALSE") {
+		t.Errorf("query does not restrict to positive keywords; body = %s", gotBody)
+	}
+	if !strings.Contains(gotBody, "ad_group_criterion.negative,") {
+		t.Errorf("query does not SELECT the polarity field, so the response cannot be checked; body = %s", gotBody)
+	}
+}
+
+// TestApplyKeywordActions_PreMutationReadFailureIsNotUnconfirmed pins the boundary between a
+// failed pre-mutation READ and an ambiguous MUTATION outcome.
+//
+// resolveKeywordCriteria's GAQL read fails with the same shapes a mutate does (transportError,
+// 5xx, exhausted 429), and createOutcomeAmbiguous reads those as "may have committed". That is
+// the right default for a mutate and the wrong answer here: adGroupCriteria:mutate is never
+// built, so nothing can have landed. Reporting it as unconfirmed tells the caller to go and
+// verify a batch that was never sent, and withholds the retry that is actually safe.
+//
+// The assertion is on the CLASSIFIER's verdict and on the mutate never being reached, not on
+// the error text — the arm already SAID "no keyword was changed" while classifying as
+// ambiguous, which is exactly how the contradiction survived.
+func TestApplyKeywordActions_PreMutationReadFailureIsNotUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var mutateCalled bool
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate") {
+			mu.Lock()
+			mutateCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[]}`)
+			return
+		}
+		// The type-resolution googleAds:search read fails with a 503.
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"backend unavailable"}}`)
+	})
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	})
+	if err == nil {
+		t.Fatal("expected the read failure to surface as an error")
+	}
+	mu.Lock()
+	called := mutateCalled
+	mu.Unlock()
+	if called {
+		t.Fatal("adGroupCriteria:mutate was sent despite the type-resolution read failing")
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a pre-mutation READ failure classified as an UNCONFIRMED mutation outcome; "+
+			"the mutate was never sent, so nothing can have been applied: %v", err)
+	}
+}
+
+// TestApplyKeywordActions_MutateFailureStaysUnconfirmed is the counterpart, and the one that
+// stops the fix above from being over-applied. A 5xx from adGroupCriteria:mutate ITSELF is
+// genuinely ambiguous — Google may have committed the batch — and must still be reported that
+// way. Without this, marking the read arm could be widened until the real ambiguity is lost,
+// which for an irreversible REMOVE is the dangerous direction.
+func TestApplyKeywordActions_MutateFailureStaysUnconfirmed(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"message":"backend unavailable"}}`)
+			return
+		}
+		// The type-resolution read succeeds and reports a POSITIVE keyword (negative omitted).
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+criterionRowJSON("176216228", "305729261", false)+`]}`)
+	})
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	})
+	if err == nil {
+		t.Fatal("expected the mutate failure to surface as an error")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a 5xx from adGroupCriteria:mutate ITSELF must stay UNCONFIRMED — Google may "+
+			"have applied the batch: %v", err)
+	}
+
+	// The check above is satisfied by the structural unconfirmedKeywordError wrapper alone, so
+	// it cannot tell whether the SHAPE-BASED inference still works. Assert that separately on
+	// the unwrapped cause: createOutcomeAmbiguous is what catches any future client arm that
+	// reports a genuinely ambiguous mutate outcome WITHOUT remembering to wrap it, and a
+	// not-attempted marker must not have suppressed it.
+	unwrapped := errors.Unwrap(err)
+	if unwrapped == nil {
+		t.Fatalf("expected the unconfirmed wrapper to carry the underlying mutate error: %v", err)
+	}
+	if !IsOutcomeUnconfirmed(unwrapped) {
+		t.Errorf("the shape-based ambiguity inference no longer classifies a bare mutate 5xx as "+
+			"UNCONFIRMED; an unwrapped ambiguous outcome would be reported as a definite failure: %v", unwrapped)
+	}
+}
+
+// TestApplyKeywordActions_NegativeCriterionStaysPermanentFault guards the unwrap chain through
+// the new not-attempted wrapper. The dispatcher folds
+// ErrKeywordCriterionNotPositiveKeyword onto a 400, and it matches with errors.Is — so a
+// wrapper that failed to Unwrap would silently turn a permanent input fault into a retryable
+// 503 inviting a retry that can never succeed.
+func TestApplyKeywordActions_NegativeCriterionStaysPermanentFault(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+criterionRowJSON("176216228", "305729261", true)+`]}`)
+	})
+
+	_, err := c.ApplyKeywordActions(context.Background(), []KeywordAction{
+		{AdGroupID: "176216228", CriterionID: "305729261", Action: KeywordActionRemove},
+	})
+	if !errors.Is(err, ErrKeywordCriterionNotPositiveKeyword) {
+		t.Fatalf("negative criterion must stay a permanent input fault: %v", err)
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a refused-before-mutating batch must not be UNCONFIRMED: %v", err)
 	}
 }

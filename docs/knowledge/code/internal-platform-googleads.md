@@ -970,6 +970,22 @@ dropping the row, following this package's existing reading — a caller must be
 its criterion or ad-group id is a hard error rather than a returned row, because the
 keyword-actions endpoint needs BOTH ids to address a criterion.
 
+**Only POSITIVE keywords are published, and POLARITY is not TYPE.** `keyword_view` being
+type-scoped is what makes a criterion-type predicate unnecessary, and that was mistaken for
+"everything the view returns is actionable". It is not: the view carries BOTH polarities, so
+NEGATIVE keywords come back through the same read. The read now selects
+`ad_group_criterion.negative`, restricts the query with `negative = FALSE`, AND re-checks the
+field before publishing a row — the same requested/ENFORCED split `assertCampaignInScope` draws,
+because a WHERE clause is what was asked for, not what was honoured. **Absence means POSITIVE**:
+`negative` is a proto bool, protobuf JSON omits it when false, so the ordinary keyword arrives
+with the key missing; reading absence as "unknown" would empty the endpoint, the same defect
+that shipped once on the mutate path. A negative row is DROPPED rather than failing the whole
+response — unlike a foreign campaign, which proves the campaign filter was not honoured and
+invalidates every row. It matters because each row is published as the `criterion_id` +
+`ad_group_id` handle `keyword-actions` takes, and that endpoint REFUSES a negative criterion:
+publishing one offers a handle whose only advertised use cannot succeed, and it consumes a
+capped slot, making `Truncated` describe a set containing unactionable rows.
+
 **Audience is three queries, and partial success is not an outcome.** Age and gender are
 criterion views (`age_range_view`, `gender_view`); device is a SEGMENT of the `campaign`
 resource, which is why it selects `segments.device FROM campaign` while the others select a
@@ -1015,9 +1031,11 @@ ad group also holds the userList criteria GA-4 creates, and NEGATIVE keywords sh
 through this endpoint would PAUSE or REMOVE an EXCLUSION, which WIDENS delivery and spend —
 the opposite of the endpoint's guarantee, and irreversible for `REMOVE`. The type is established
 with the same mechanism the READ path uses rather than a second one: a `keyword_view` query,
-Google's type-scoped resource, which is exactly why `GetKeywordPerformance` needs no type
-predicate. `ad_group_criterion.negative` is selected on top of it because `keyword_view` carries
-both polarities. **An UNRESOLVABLE id FAILS CLOSED; an OMITTED `negative` field does not** —
+Google's type-scoped resource, which is why neither path needs a criterion-TYPE predicate —
+the view holds keywords and nothing else. `ad_group_criterion.negative` is selected on top of it
+because `keyword_view` carries both POLARITIES, and type alone does not separate them.
+**Both paths select it.** The read originally did not, and returned exclusions as ordinary rows
+— see the polarity note under the keyword reads above. **An UNRESOLVABLE id FAILS CLOSED; an OMITTED `negative` field does not** —
 these are different facts and conflating them broke the happy path. `negative` is a proto bool,
 so protobuf JSON omits it whenever it is false: the omission IS the positive answer, and every
 ordinary positive keyword arrives that way. Absence already means "false" in this wire format, so
@@ -1068,9 +1086,17 @@ reads as transient — and **a proxy for a constraint is not the constraint: if 
 rule is "names a positive int64", check that, because a digit count only approximates it
 and the gap is where the invalid ids live.**
 
-**Ambiguous outcomes are marked STRUCTURALLY, not just in prose.** `unconfirmedKeywordError`
-implements `Unconfirmed() bool`, the behavioural interface `IsOutcomeUnconfirmed` and the
-service's `classifyKeywordActionError` match with `errors.As`. This matters because the two 2xx
+**Ambiguous outcomes are marked STRUCTURALLY, not just in prose, and so is the ABSENCE of
+ambiguity.** `unconfirmedKeywordError` implements `Unconfirmed() bool`, the behavioural
+interface `IsOutcomeUnconfirmed` and the service's `classifyKeywordActionError` match with
+`errors.As`. Its counterpart `notAttemptedError` implements `NotAttempted() bool` and is checked
+FIRST, because ambiguity is otherwise INFERRED from an error's shape: `createOutcomeAmbiguous`
+reads any `transportError`, 5xx or exhausted 429 as "the mutation may have committed", which is
+the right default for a MUTATE and the wrong answer for the pre-mutation `resolveKeywordCriteria`
+read, which fails with those same shapes before `adGroupCriteria:mutate` is ever built. Marking
+the read arm keeps a failed type-resolution reported as a definite, safely retryable failure
+instead of sending the caller to verify a batch that was never sent. It changes only the
+CONFIRMED/UNCONFIRMED axis, not retryability — a failed read is still a 503. This matters because the two 2xx
 arms (malformed/short response, mismatched resource name) carry NO underlying error for
 `createOutcomeAmbiguous` to classify — labelling them "UNCONFIRMED" in the message alone left
 them falling through to the DEFINITE-failure 503 ("could not be applied"), telling a caller to

@@ -137,7 +137,13 @@ type gaqlKeywordRow struct {
 	AdGroupCriterion struct {
 		CriterionID string `json:"criterionId"`
 		Status      string `json:"status"`
-		Keyword     struct {
+		// Negative is the criterion's POLARITY. `keyword_view` carries both polarities, so
+		// this is what separates a keyword from an exclusion — see the filter in
+		// GetKeywordPerformance. It is a proto bool: protobuf JSON omits it when false, so an
+		// ordinary positive keyword arrives with the key ABSENT and this decodes to false.
+		// Absence therefore already means POSITIVE and must not be read as "unknown".
+		Negative bool `json:"negative"`
+		Keyword  struct {
 			Text      string `json:"text"`
 			MatchType string `json:"matchType"`
 		} `json:"keyword"`
@@ -379,11 +385,13 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 	// vector the way the window and any id would be.
 	query := fmt.Sprintf(
 		"SELECT ad_group_criterion.criterion_id, ad_group_criterion.status, "+
+			"ad_group_criterion.negative, "+
 			"ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, "+
 			"ad_group.id, campaign.id, "+
 			"metrics.impressions, metrics.clicks, metrics.cost_micros "+
 			"FROM keyword_view "+
 			"WHERE segments.date DURING %s AND ad_group_criterion.status IN ('ENABLED', 'PAUSED') "+
+			"AND ad_group_criterion.negative = FALSE "+
 			"AND %s "+
 			"ORDER BY metrics.impressions DESC "+
 			"LIMIT %d",
@@ -432,6 +440,35 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		// subsumed rather than dropped.
 		if sErr := assertCampaignInScope(row.Campaign.ID, inScope, fmt.Sprintf("get keyword performance: row %d", i)); sErr != nil {
 			return nil, sErr
+		}
+		// POLARITY is ENFORCED here, not merely requested in the WHERE clause — the same
+		// separation assertCampaignInScope draws just above. `keyword_view` carries BOTH
+		// polarities (see resolveKeywordCriteria), so without this a negative keyword is
+		// indistinguishable from a positive one in this struct and would be returned as an
+		// ordinary row.
+		//
+		// That matters because of what these rows ARE. Every row is published as the
+		// criterion_id + ad_group_id handle that `keyword-actions` takes, and that endpoint
+		// REFUSES a negative criterion (ErrKeywordCriterionNotPositiveKeyword) precisely
+		// because pausing or removing an exclusion WIDENS delivery and spend. Returning one
+		// here hands the caller a handle whose only advertised use is guaranteed to fail, and
+		// it also consumes one of the maxKeywordRows slots — making `truncated` describe a set
+		// that included rows the caller can do nothing with.
+		//
+		// A negative row is DROPPED, not an error, and that is the one place this read departs
+		// from the fail-whole-response rule above. The two cases are different facts: a foreign
+		// campaign proves the campaign FILTER WAS NOT HONOURED, which invalidates every row on
+		// offer, whereas a negative row is keyword_view answering honestly about a criterion
+		// this endpoint simply does not publish. Erroring would let one exclusion in an ad group
+		// take down the whole keyword report.
+		//
+		// Absence of `negative` means FALSE — POSITIVE — and is KEPT. In protobuf JSON a field
+		// at its default value is not serialised, so an ordinary positive keyword arrives with
+		// no `negative` key at all and decodes to false here; that is the SHAPE OF THE HAPPY
+		// PATH. A guard reading absence as "unknown polarity" would drop every ordinary
+		// keyword and empty this endpoint. This mirrors resolveKeywordCriteria exactly.
+		if row.AdGroupCriterion.Negative {
+			continue
 		}
 		// Validated above, appended only up to the cap: the probe row has now cleared the
 		// same checks as every other row and its job — proving there is more — is done.
@@ -767,6 +804,36 @@ func ValidateKeywordActions(actions []KeywordAction) ([]KeywordAction, error) {
 	return out, nil
 }
 
+// notAttemptedError marks a failure that happened BEFORE the mutate request was built or
+// sent, so the outcome is not ambiguous at all: nothing can have been applied upstream.
+//
+// It exists because ambiguity is otherwise INFERRED from the error's shape.
+// createOutcomeAmbiguous reads any transportError, 5xx or exhausted 429 as "the mutation may
+// have committed", which is the correct default for an error returned by a MUTATE — but
+// resolveKeywordCriteria's GAQL read fails with exactly those shapes too, and it runs before
+// any mutate exists. Without a marker a timeout while merely resolving criterion TYPES is
+// reported as "the changes may have been applied", telling the caller to go and verify a batch
+// Google was never asked to run, and discouraging the retry that is in fact perfectly safe.
+//
+// The marker is STRUCTURAL for the same reason unconfirmedKeywordError is: the classification
+// is stated at the point that KNOWS it — the call site that has not yet sent anything — rather
+// than re-derived downstream from an error shape that cannot distinguish the two cases.
+// IsOutcomeUnconfirmed checks this first, so an explicit "not attempted" beats the inference.
+//
+// It deliberately does NOT change the retryability of the error it wraps: a failed read is
+// still a retryable upstream failure (a 503), and it stays one. What it changes is only the
+// CONFIRMED/UNCONFIRMED axis — whether the caller is told a mutation may already have landed.
+type notAttemptedError struct {
+	err error
+}
+
+func (e *notAttemptedError) Error() string { return e.err.Error() }
+
+func (e *notAttemptedError) Unwrap() error { return e.err }
+
+// NotAttempted marks the outcome as definitively-not-applied for IsOutcomeUnconfirmed.
+func (e *notAttemptedError) NotAttempted() bool { return true }
+
 // unconfirmedKeywordError marks a keyword mutate whose outcome is AMBIGUOUS — Google returned
 // 2xx but a response this client cannot reconcile with what it sent, so the batch may already
 // have been applied.
@@ -963,8 +1030,15 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, actions []KeywordActio
 	// it changes nothing when it refuses — and refusing here is the difference between an
 	// endpoint that only reduces spend and one that can silently remove an exclusion and widen
 	// it. See resolveKeywordCriteria for why an unresolvable id fails closed.
+	// Marked NOT ATTEMPTED, not merely returned. Everything above this line runs BEFORE the
+	// mutate exists, so however the read failed — timeout, 5xx, exhausted 429 — no criterion
+	// was changed. Returning the bare error would leave the CONFIRMED/UNCONFIRMED verdict to
+	// be inferred from its shape by createOutcomeAmbiguous, which reads those very shapes as
+	// "the mutation may have committed" and would tell the caller to verify a batch that was
+	// never sent. The wrapper preserves the error (and its retryability) and adds only the one
+	// fact the inference cannot recover.
 	if rErr := c.resolveKeywordCriteria(ctx, validated); rErr != nil {
-		return nil, rErr
+		return nil, &notAttemptedError{err: rErr}
 	}
 
 	ops := make([]keywordMutateOperation, 0, len(validated))

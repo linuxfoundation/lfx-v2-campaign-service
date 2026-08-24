@@ -1268,7 +1268,7 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 	// "unknown, proceed" case (see credsSource.resolveExisting), which resolves the ordinary
 	// project-then-system account — the behaviour the comment above already describes. The
 	// per-campaign account identity is then enforced downstream by googleAdsScopeForCustomer,
-	// which drops or refuses entries whose recorded customer is not the resolved one.
+	// which REFUSES THE WHOLE READ when any entry's recorded customer is not the resolved one.
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, nil)
 	if err != nil {
 		return nil, err
@@ -1319,7 +1319,7 @@ func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectI
 	// "unknown, proceed" case (see credsSource.resolveExisting), which resolves the ordinary
 	// project-then-system account — the behaviour the comment above already describes. The
 	// per-campaign account identity is then enforced downstream by googleAdsScopeForCustomer,
-	// which drops or refuses entries whose recorded customer is not the resolved one.
+	// which REFUSES THE WHOLE READ when any entry's recorded customer is not the resolved one.
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, nil)
 	if err != nil {
 		return nil, err
