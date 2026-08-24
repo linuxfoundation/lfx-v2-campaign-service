@@ -903,6 +903,7 @@ func (c *Client) ListGoogleAdsAccounts(ctx context.Context, p *ListGoogleAdsAcco
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -922,6 +923,7 @@ func (c *Client) GetGoogleAdsKeywords(ctx context.Context, p *GetGoogleAdsKeywor
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable

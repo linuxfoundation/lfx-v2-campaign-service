@@ -8607,6 +8607,7 @@ func EncodeGetGoogleAdsKeywordsRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetGoogleAdsKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8709,6 +8710,20 @@ func DecodeGetGoogleAdsKeywordsResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
 			}
 			return nil, NewGetGoogleAdsKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetGoogleAdsKeywordsUnauthorizedResponseBody
@@ -8802,6 +8817,7 @@ func EncodeGetGoogleAdsAudienceRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8904,6 +8920,20 @@ func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
 			}
 			return nil, NewGetGoogleAdsAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudiencePayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetGoogleAdsAudienceUnauthorizedResponseBody

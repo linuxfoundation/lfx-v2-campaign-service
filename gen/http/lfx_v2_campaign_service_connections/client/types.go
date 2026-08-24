@@ -3587,6 +3587,16 @@ type GetGoogleAdsKeywordsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetGoogleAdsKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetGoogleAdsKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetGoogleAdsKeywordsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -3644,6 +3654,16 @@ type GetGoogleAdsAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
 // endpoint HTTP response body for the "NotFound" error.
 type GetGoogleAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetGoogleAdsAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -8194,6 +8214,18 @@ func NewGetGoogleAdsKeywordsNotFound(body *GetGoogleAdsKeywordsNotFoundResponseB
 	return v
 }
 
+// NewGetGoogleAdsKeywordsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-google-ads-keywords endpoint
+// PayloadTooLarge error.
+func NewGetGoogleAdsKeywordsPayloadTooLarge(body *GetGoogleAdsKeywordsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetGoogleAdsKeywordsUnauthorized builds a
 // lfx-v2-campaign-service-connections service get-google-ads-keywords endpoint
 // Unauthorized error.
@@ -8279,6 +8311,18 @@ func NewGetGoogleAdsAudienceInternalServerError(body *GetGoogleAdsAudienceIntern
 // service get-google-ads-audience endpoint NotFound error.
 func NewGetGoogleAdsAudienceNotFound(body *GetGoogleAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
 	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-google-ads-audience endpoint
+// PayloadTooLarge error.
+func NewGetGoogleAdsAudiencePayloadTooLarge(body *GetGoogleAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -12853,6 +12897,18 @@ func ValidateGetGoogleAdsKeywordsNotFoundResponseBody(body *GetGoogleAdsKeywords
 	return
 }
 
+// ValidateGetGoogleAdsKeywordsPayloadTooLargeResponseBody runs the validations
+// defined on get-google-ads-keywords_PayloadTooLarge_response_body
+func ValidateGetGoogleAdsKeywordsPayloadTooLargeResponseBody(body *GetGoogleAdsKeywordsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetGoogleAdsKeywordsUnauthorizedResponseBody runs the validations
 // defined on get-google-ads-keywords_Unauthorized_response_body
 func ValidateGetGoogleAdsKeywordsUnauthorizedResponseBody(body *GetGoogleAdsKeywordsUnauthorizedResponseBody) (err error) {
@@ -12923,6 +12979,18 @@ func ValidateGetGoogleAdsAudienceInternalServerErrorResponseBody(body *GetGoogle
 // ValidateGetGoogleAdsAudienceNotFoundResponseBody runs the validations
 // defined on get-google-ads-audience_NotFound_response_body
 func ValidateGetGoogleAdsAudienceNotFoundResponseBody(body *GetGoogleAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudiencePayloadTooLargeResponseBody runs the validations
+// defined on get-google-ads-audience_PayloadTooLarge_response_body
+func ValidateGetGoogleAdsAudiencePayloadTooLargeResponseBody(body *GetGoogleAdsAudiencePayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

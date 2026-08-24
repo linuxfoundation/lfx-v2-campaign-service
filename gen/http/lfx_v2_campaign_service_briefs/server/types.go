@@ -1822,6 +1822,16 @@ type ApplyKeywordActionsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ApplyKeywordActionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ApplyKeywordActionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ApplyKeywordActionsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -3949,6 +3959,17 @@ func NewApplyKeywordActionsInternalServerErrorResponseBody(res *lfxv2campaignser
 // "lfx-v2-campaign-service-briefs" service.
 func NewApplyKeywordActionsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ApplyKeywordActionsNotFoundResponseBody {
 	body := &ApplyKeywordActionsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ApplyKeywordActionsPayloadTooLargeResponseBody {
+	body := &ApplyKeywordActionsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

@@ -1822,6 +1822,16 @@ type ApplyKeywordActionsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApplyKeywordActionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ApplyKeywordActionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ApplyKeywordActionsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -4068,6 +4078,18 @@ func NewApplyKeywordActionsInternalServerError(body *ApplyKeywordActionsInternal
 // service apply-keyword-actions endpoint NotFound error.
 func NewApplyKeywordActionsNotFound(body *ApplyKeywordActionsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service apply-keyword-actions endpoint
+// PayloadTooLarge error.
+func NewApplyKeywordActionsPayloadTooLarge(body *ApplyKeywordActionsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -6419,6 +6441,18 @@ func ValidateApplyKeywordActionsInternalServerErrorResponseBody(body *ApplyKeywo
 // ValidateApplyKeywordActionsNotFoundResponseBody runs the validations defined
 // on apply-keyword-actions_NotFound_response_body
 func ValidateApplyKeywordActionsNotFoundResponseBody(body *ApplyKeywordActionsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsPayloadTooLargeResponseBody runs the validations
+// defined on apply-keyword-actions_PayloadTooLarge_response_body
+func ValidateApplyKeywordActionsPayloadTooLargeResponseBody(body *ApplyKeywordActionsPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

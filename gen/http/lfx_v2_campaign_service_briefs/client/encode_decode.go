@@ -3632,6 +3632,7 @@ func EncodeApplyKeywordActionsRequest(encoder func(*http.Request) goahttp.Encode
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3734,6 +3735,20 @@ func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Deco
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
 			}
 			return nil, NewApplyKeywordActionsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ApplyKeywordActionsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ApplyKeywordActionsUnauthorizedResponseBody

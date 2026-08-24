@@ -3587,6 +3587,16 @@ type GetGoogleAdsKeywordsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetGoogleAdsKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetGoogleAdsKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetGoogleAdsKeywordsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
 // endpoint HTTP response body for the "Unauthorized" error.
@@ -3644,6 +3654,16 @@ type GetGoogleAdsAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
 // endpoint HTTP response body for the "NotFound" error.
 type GetGoogleAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetGoogleAdsAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -7802,6 +7822,17 @@ func NewGetGoogleAdsKeywordsNotFoundResponseBody(res *lfxv2campaignserviceconnec
 	return body
 }
 
+// NewGetGoogleAdsKeywordsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-google-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetGoogleAdsKeywordsPayloadTooLargeResponseBody {
+	body := &GetGoogleAdsKeywordsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetGoogleAdsKeywordsUnauthorizedResponseBody builds the HTTP response
 // body from the result of the "get-google-ads-keywords" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -7863,6 +7894,17 @@ func NewGetGoogleAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewGetGoogleAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetGoogleAdsAudienceNotFoundResponseBody {
 	body := &GetGoogleAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-google-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetGoogleAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetGoogleAdsAudiencePayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
