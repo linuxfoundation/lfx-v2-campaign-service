@@ -746,3 +746,126 @@ func TestClientCache_MicrosoftAccountIsReceiverStateNotPerCall(t *testing.T) {
 		}
 	}
 }
+
+// TestClientCache_MicrosoftConcurrentDispatchSharesOneGeoCache pins the invariant this PR's
+// clientCache actually introduced, at the layer that introduced it.
+//
+// The claim on MicrosoftDispatcher.clients is that c.geo.mu was PROMOTED from defensive to
+// load-bearing: before the cache, Dispatch built a client per call, so the geo snapshot was
+// per-create and never shared; with the cache, concurrent Dispatch calls on one connection reach
+// ONE client and therefore one geo cache. Every other geo test in the tree drives the client
+// directly (internal/platform/microsoft.TestGeoLocations_CachedAcrossCallsAndCoalesced), and the
+// only dispatch-level concurrency test drives GetCampaignMetrics, which never touches geo. So the
+// sharing this PR creates was documented at the dispatch layer and pinned only below it.
+//
+// What binds it: cfg.GeoTargets is the ONLY route into geoLocationsSnapshot from Dispatch, and the
+// locations file is multi-MiB — so the download COUNT across N concurrent creates is the
+// observable. One download means the callers shared a client and coalesced; N means each create
+// built its own.
+func TestClientCache_MicrosoftConcurrentDispatchSharesOneGeoCache(t *testing.T) {
+	const callers = 8
+
+	var (
+		tokenHits atomic.Int64
+		downloads atomic.Int64
+	)
+
+	// The locations file is served from a path on the SAME stub, and its URL is handed back by
+	// GeoLocationsFileUrl/Query. Counting downloads (not Query hits) is deliberate: the Query step
+	// is a cheap read that is legitimately repeated, while the FILE is the multi-MiB object whose
+	// duplication the shared cache exists to prevent.
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/token"):
+			tokenHits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+		case strings.HasSuffix(p, "/geofile"):
+			downloads.Add(1)
+			w.Header().Set("Content-Type", "text/csv")
+			// The vendor's literal header, spelled out rather than derived from the parser's own
+			// column constants: a fixture generated from the parser cannot falsify the parser.
+			_, _ = io.WriteString(w, "Location Id,Bing Display Name,Location Type,Replaces,Status,AdWords Location Id\n"+
+				"190,United States,Country,,Active,2840\n")
+		case strings.HasSuffix(p, "/GeoLocationsFileUrl/Query"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, fmt.Sprintf(
+				`{"FileUrl":%q,"FileUrlExpiryTimeUtc":"2030-01-01T00:00:00Z","LastModifiedTimeUtc":"2026-06-05T18:43:00Z"}`,
+				srv.URL+"/geofile"))
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+		case strings.HasSuffix(p, "/Ads/QueryByAdGroupId"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"Ads":[]}`)
+		case strings.HasSuffix(p, "/CampaignCriterions/QueryByIds"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"CampaignCriterions":[],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/CampaignCriterions"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"CampaignCriterionIds":[9001],"NestedPartialErrors":[]}`)
+		case strings.HasSuffix(p, "/Campaigns"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/AdGroups"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/Ads"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"AdIds":[987],"PartialErrors":[]}`)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// The barrier holds every caller inside Get until all of them have arrived, so the burst hits a
+	// COLD cache key together — which is the only arrangement under which the geo cache is raced
+	// rather than trivially warm.
+	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, "111111", 1), barrier: callers}
+	d := newMicrosoftCacheDispatcher(repo, srv)
+
+	// GeoTargets is what makes this a geo test: without it CreateCampaign never calls
+	// resolveGeoTargets and the locations file is never fetched at all.
+	cfg := json.RawMessage(`{"microsoftConfig":{"budget":50,"geoTargets":["US"]}}`)
+
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, cfg); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		t.Errorf("Dispatch: %v", err)
+	}
+
+	// The load-bearing assertion. One download across N concurrent creates is only possible if all
+	// N reached the same client (the clientCache) AND coalesced on its geo single-flight (c.geo.mu
+	// + c.geo.inflight). Wiring Dispatch back to a direct microsoft.NewClient makes this N.
+	if n := downloads.Load(); n != 1 {
+		t.Errorf("locations file downloaded %d times across %d concurrent dispatches of one "+
+			"unchanged connection, want 1 — concurrent creates are not sharing one cached client's "+
+			"geo snapshot, so each create re-downloads the multi-MiB locations file", n, callers)
+	}
+	if n := tokenHits.Load(); n != 1 {
+		t.Errorf("token endpoint hit %d times across %d concurrent dispatches, want 1", n, callers)
+	}
+}

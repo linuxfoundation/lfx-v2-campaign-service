@@ -267,7 +267,11 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 	// so a connection that has gone inactive or lost its account id is refused here exactly as
 	// before rather than being served a live client from the cache.
 	key, connID, version := res.cacheIdentity(projectID, platform)
-	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+	// ONE construction, called from both the cache closure and the fallback below, matching
+	// cachedMicrosoftClient's shape. Written twice, the two copies can drift: a later
+	// AccountConfig change (a new field, a different pixel source) has to be made in both, and
+	// the compiler cannot notice if it is not.
+	build := func() *reddit.Client {
 		return reddit.NewClient(
 			reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
 			// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
@@ -280,7 +284,10 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 				ConversionPixelID: res.providerConfig["conversion_pixel_id"],
 			},
 			d.opts...,
-		), nil
+		)
+	}
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return build(), nil
 	})
 	if err != nil {
 		return nil, err
@@ -289,15 +296,7 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 	if !isClient {
 		// Unreachable: this cache is written only by the closure above. Rebuild rather than
 		// assert, so a future second writer cannot turn a type confusion into a panic.
-		return reddit.NewClient(
-			reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-			reddit.AccountConfig{
-				AccountID:         res.accountID,
-				Label:             res.label,
-				ConversionPixelID: res.providerConfig["conversion_pixel_id"],
-			},
-			d.opts...,
-		), nil
+		return build(), nil
 	}
 	return client, nil
 }
