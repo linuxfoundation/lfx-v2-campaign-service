@@ -663,11 +663,14 @@ so its fields can be missing while the campaign's own fields are present.
 
 **Two budget guards, not one.** A row is refused when it carries BOTH amounts, and
 separately when the amount it carries CONTRADICTS the period: `DAILY` beside a
-`total_amount_micros`, or `CUSTOM_PERIOD` beside an `amount_micros`. The second is needed
-because `googleAdsUpstreamBudgetAmount` reads whichever amount is present without ever
-consulting the period, so an inconsistent pair would have a whole-flight cap compared
-against a daily recorded budget and be reported as a BUDGET DIVERGENCE that is really a
-field-selection bug — the false finding this readback exists to prevent.
+`total_amount_micros`, or `CUSTOM_PERIOD` beside an `amount_micros`. The second is a
+RESPONSE-INTEGRITY check about the row contradicting ITSELF — the two identity halves of the
+budget disagree, so no reading of it can be trusted, and there is no way to tell which half is
+the wrong one. It is not a stand-in for careful field selection downstream: since LFXV2-3067
+`googleAdsUpstreamBudgetAmount` selects the amount THROUGH `googleAdsBudgetTypeFromPeriod`
+rather than by presence, so the two are independent. A malformed row is still refused here
+rather than passed on, because reporting a budget from it — by either field — would attribute
+to the campaign a number the platform's own invariant says cannot describe it.
 
 The period is `strings.TrimSpace`d for THIS COMPARISON ONLY (LFXV2-3067). `blankToNil` keeps
 a non-blank value VERBATIM, so a padded `" DAILY "` matched neither arm of the exact-equality
@@ -680,14 +683,18 @@ onto `settings` and never populates a compared field. `blankToNil`'s warning is 
 opposite case, where trimming an opaque IDENTIFIER or a strictly-parsed date INVENTS a
 well-formed value the platform never sent, manufacturing agreement instead of detecting
 contradiction. That is also why `googleAdsBudgetTypeFromPeriod` still does NOT trim: it
-produces a COMPARED value, so a padded period must keep yielding an `unknown` verdict.
+produces a COMPARED value and now also SELECTS the budget amount, so a padded period must keep
+yielding an `unknown` verdict on both.
 
 An ABSENT period PASSES both guards, and so do `UNKNOWN`/`UNSPECIFIED`. Absence already
 means "Google did not report this field" on every `CampaignSettings` pointer — a partial
 read is the ordinary case — so it cannot also start meaning "inconsistent pair" without
-breaking that meaning. It is harmless downstream too: the dispatcher consults the period
-only when non-nil, so an absent one yields an `unknown` verdict rather than a fabricated
-divergence. A value Google explicitly declined to name contradicts nothing.
+breaking that meaning. It is SAFE downstream too, and that half is ENFORCED rather than
+assumed: `googleAdsUpstreamBudgetAmount` selects the amount through
+`googleAdsBudgetTypeFromPeriod`, so a period naming neither real value selects no amount and
+the field reads `unknown` rather than comparing a quantity of unestablished meaning. A value
+Google explicitly declined to name contradicts nothing, and selects nothing either. See
+`docs/knowledge/log/2026-08-24-LFXV2-3067-the-period-decides-which-amount.md`.
 
 `campaign_budget` is an ATTRIBUTED resource of `campaign`, which is what allows its fields
 in a `FROM campaign` query. Attribution does not segment, so the at-most-one-row guard

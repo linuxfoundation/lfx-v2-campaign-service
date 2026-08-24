@@ -665,12 +665,15 @@ func TestGetCampaignSettings_BothBudgetFieldsRefused(t *testing.T) {
 // row carrying BOTH amounts; a row carrying exactly one, paired with the OTHER period, decoded
 // cleanly and was just as self-contradictory.
 //
-// It matters because googleAdsUpstreamBudgetAmount reads whichever amount is present without
-// ever consulting the period. A DAILY row carrying only total_amount_micros therefore had a
-// whole-flight spend cap compared against a daily recorded budget, and the readback reported a
-// BUDGET DIVERGENCE that was really a field-selection bug — sending an operator to investigate a
-// spend discrepancy that does not exist. That false finding is the one thing this readback exists
-// to make impossible.
+// It matters as a RESPONSE-INTEGRITY check: the row's two budget identity halves disagree, so no
+// reading of its budget can be trusted and there is no way to tell which half is wrong. Reporting
+// a budget from such a row — by either field — would attribute to the campaign a number the
+// platform's own invariant says cannot describe it.
+//
+// This is independent of how the dispatcher selects between the two fields. Since LFXV2-3067
+// googleAdsUpstreamBudgetAmount selects via googleAdsBudgetTypeFromPeriod rather than by presence,
+// so a consistent pair is required for a comparison to happen at all; this guard is what stops a
+// self-contradictory row being passed on as though it were coherent.
 func TestGetCampaignSettings_DailyPeriodWithTotalAmountRefused(t *testing.T) {
 	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555","name":"n","status":"ENABLED"},` +
 		`"campaignBudget":{"totalAmountMicros":"9000000000","period":"DAILY"}}`)
@@ -717,10 +720,11 @@ func TestGetCampaignSettings_CustomPeriodWithDailyAmountRefused(t *testing.T) {
 //
 // The absent-period and UNKNOWN cases are pinned here too, and they are the subtle ones. Absence
 // already means "Google did not report this field" on every CampaignSettings pointer, so it
-// cannot also start meaning "inconsistent pair" — and an absent period is harmless downstream,
-// where the dispatcher consults the period only when non-nil and an absent one yields an
-// `unknown` verdict rather than a fabricated divergence. UNKNOWN is a value Google explicitly
-// declined to name, which contradicts nothing.
+// cannot also start meaning "inconsistent pair" — and an absent period is SAFE downstream, where
+// googleAdsUpstreamBudgetAmount selects the amount through googleAdsBudgetTypeFromPeriod, so a
+// period naming neither real value selects no amount and the field reads `unknown` rather than
+// comparing a quantity of unestablished meaning. UNKNOWN is a value Google explicitly declined to
+// name, which contradicts nothing and selects nothing either.
 func TestGetCampaignSettings_ConsistentPeriodAmountPairsAccepted(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -809,9 +813,10 @@ func fmtInt64Ptr(v *int64) string {
 // The refusal above compares the period with exact equality against DAILY/CUSTOM_PERIOD,
 // while blankToNil carries a non-blank value through VERBATIM — padding and all. So a row
 // reporting " DAILY " alongside total_amount_micros matched NEITHER arm and decoded cleanly,
-// which is precisely the pair the cross-check exists to refuse: googleAdsUpstreamBudgetAmount
-// then reads the total without consulting the period and compares a whole-flight cap against
-// a daily recorded budget, sending an operator after a phantom budget divergence.
+// which is precisely the pair the cross-check exists to refuse — a row malformed at the source
+// passing as coherent. Downstream the padded value is unnameable and selects no amount, so today
+// the visible result would be a needlessly `unknown` field rather than a phantom divergence; the
+// ROW is still self-contradictory, and this check is what names it.
 //
 // The period is normalised for the COMPARISON ONLY. It is an ENUM from a closed set, so
 // recognising " DAILY " as DAILY discovers what the value already is; it does not invent a

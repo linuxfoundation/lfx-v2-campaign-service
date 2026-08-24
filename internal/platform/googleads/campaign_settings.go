@@ -352,20 +352,27 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	// The amount field must also AGREE WITH THE PERIOD, not merely be unaccompanied. The two
 	// fields are selected by period upstream — amount_micros for DAILY, total_amount_micros for
 	// CUSTOM_PERIOD — so a row pairing one with the other period is as self-contradictory as a
-	// row carrying both, and fails for the same reason: googleAdsUpstreamBudgetAmount reads
-	// whichever amount is present WITHOUT consulting the period, so a DAILY row carrying only a
-	// total would have a whole-flight cap compared against a daily recorded budget and reported
-	// as a BUDGET DIVERGENCE that is really a field-selection bug. That is the exact false
-	// finding this readback exists to prevent, so the pair is refused rather than reconciled.
+	// row carrying both, and is refused for the same reason: the two identity halves of the
+	// budget disagree, and no reading of it can be trusted.
+	//
+	// This is an INDEPENDENT RESPONSE-INTEGRITY check, not a guard standing in for the
+	// dispatcher. It is about this ROW contradicting itself, and it stays meaningful however
+	// carefully a consumer later selects between the two fields: a DAILY row carrying only a
+	// total is malformed at the source, and reporting a budget from it — by either field —
+	// would attribute to the campaign a number the platform's own invariant says cannot
+	// describe it. Refusing beats reconciling, because there is no way to tell WHICH of the
+	// period and the amount is the wrong half.
 	//
 	// Only a period that NAMES one of the two real values can contradict an amount. An ABSENT
 	// period passes: absence already means "Google did not report this field" everywhere on
 	// CampaignSettings — a partial read is the ordinary case, pinned by
 	// TestGetCampaignSettings_UnreadableFieldIsAbsentNotZero — and it cannot start signalling
-	// "inconsistent pair" without breaking that meaning. It is also harmless downstream, because
-	// the dispatcher consults the period only when it is non-nil and an absent one yields an
-	// `unknown` verdict rather than a fabricated divergence. UNKNOWN/UNSPECIFIED pass for the
-	// same reason: a value Google explicitly declined to name contradicts nothing.
+	// "inconsistent pair" without breaking that meaning. It is also SAFE downstream, and that
+	// half is enforced rather than assumed: googleAdsUpstreamBudgetAmount selects the amount
+	// THROUGH googleAdsBudgetTypeFromPeriod, so a period that names neither real value selects
+	// no amount at all and the field reads `unknown`. UNKNOWN/UNSPECIFIED pass for the same
+	// reason: a value Google explicitly declined to name contradicts nothing, and it selects
+	// nothing either.
 	//
 	// settings.BudgetPeriod is used rather than the raw row field because blankToNil has
 	// already applied this file's normalisation: a whitespace-only period collapses to nil and
@@ -373,10 +380,11 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	//
 	// The period is TrimSpace'd for this COMPARISON ONLY — the value blankToNil carries through
 	// stays verbatim for the caller. Without this, a padded " DAILY " matched neither arm of the
-	// switch below and slipped past BOTH refusals, which is precisely the pair this check exists
-	// to catch: googleAdsUpstreamBudgetAmount then reads whichever amount is present without
-	// consulting the period, comparing a whole-flight cap against a daily recorded budget and
-	// sending an operator after a budget divergence that does not exist.
+	// switch below and slipped past BOTH refusals, leaving a self-contradictory row to be
+	// reported as though it were coherent. The downstream consumer treats that padded value as
+	// unnameable and reads no amount from it, so the visible result today is a needlessly
+	// `unknown` field rather than a false divergence — but the ROW is still malformed, and this
+	// check is what names it as such instead of passing it on.
 	//
 	// Trimming is safe HERE and wrong elsewhere, and the distinction is the value's KIND rather
 	// than the operation. This is a closed-set ENUM: recognising " DAILY " as DAILY discovers
