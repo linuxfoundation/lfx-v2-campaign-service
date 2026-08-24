@@ -99,3 +99,35 @@ checkable against `testing.go` in a minute, and checking it changed the fix: had
 claim been taken at face value, the repair would have been "drop `t.Parallel()` from the
 subtests", which leaves the real hazard — global env mutation racing this file's parallel
 readers — untouched.
+
+**Fix** — a second review round found the redaction was correct and the CALL SITES were not.
+`migrate_down_live_test.go` connects with `pgx.Connect(ctx, DSN())` in four places and printed
+the failure with `%v`. pgx returns `*pgconn.ConnectError`, whose `Error()` formats
+``failed to connect to `user=%s database=%s` `` out of the Config it parsed from that DSN — so
+the configured username and database went to the CI log from the very file whose subject is
+keeping them out of it. Fixing `SafeDSNErr` says nothing about who calls it.
+
+Also corrected a doc/implementation mismatch the same round caught: the helper's comment said
+an "unparseable **or absent**" DSN withholds, but absent returns false. The CODE is right and
+the comment was wrong — the two cases are genuinely different. Unparseable means a credential
+was configured and cannot be extracted, so nothing can be proven safe: withhold. Absent means
+no credential exists to reproduce, so withholding would suppress every diagnostic while
+protecting nothing. Absence is "nothing to protect", not "protect everything".
+
+**Verification** — the call-site fixes needed a different instrument, and saying so matters.
+Those sites fire only when a live database becomes unreachable mid-run, which no unit test can
+arrange: reverting one to `%v` left every behavioural test in the package green. A rendered-
+output assertion — this file's stated principle everywhere else — cannot reach them. So they
+are pinned at the SOURCE instead, by a test that reads the file and requires every
+DSN-taking connect to render through the redaction. That is a weaker guarantee, it is not a
+substitute for a rendered assertion anywhere the output can be produced, and it is used only
+where that option does not exist.
+
+The source guard itself then failed a mutation, which is the part worth recording. Its first
+form scanned a fixed five-line window after the connect call; one site carried a four-line
+explanatory comment above its `Fatalf`, so the handler fell outside the window and reverting
+that site SURVIVED. A guard with a lookahead is a guard with a blind spot proportional to how
+much prose sits in the block. It now scans to the end of the `if err != nil` block by
+indentation. All four sites are killed, and one earlier "killed" result was discarded as
+meaningless when the revert regex turned out to be a no-op against a multi-line call — a
+mutation that did not apply proves nothing, however green the run looks.

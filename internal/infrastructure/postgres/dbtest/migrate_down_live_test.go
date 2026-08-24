@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5" // registers the pgx5 driver
@@ -74,7 +76,11 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 
 	admin, err := pgx.Connect(ctx, dbtest.DSN())
 	if err != nil {
-		t.Fatalf("connect to create a scratch database: %v", err)
+		// SafeDSNErr, not %v. pgx returns *pgconn.ConnectError, whose Error() formats
+		// "failed to connect to `user=%s database=%s`" straight from the Config it
+		// parsed out of the DSN -- the configured username and database, verbatim, in
+		// a message this line prints to the CI log.
+		t.Fatalf("connect to create a scratch database: %s", dbtest.SafeDSNErr(err))
 	}
 	defer func() { _ = admin.Close(ctx) }()
 
@@ -118,8 +124,9 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 		// behind, so failing to drop is a test failure, not a note.
 		conn, err := pgx.Connect(cleanupCtx, dbtest.DSN())
 		if err != nil {
-			t.Errorf("cleanup: reconnect to drop %s: %v; the scratch database is still "+
-				"present and this run did not leave the server as it found it", name, err)
+			t.Errorf("cleanup: reconnect to drop %s: %s; the scratch database is still "+
+				"present and this run did not leave the server as it found it", name,
+				dbtest.SafeDSNErr(err))
 			return
 		}
 		defer func() { _ = conn.Close(cleanupCtx) }()
@@ -351,7 +358,9 @@ func schemaObjects(ctx context.Context, t *testing.T, dsn string) []string {
 
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		t.Fatalf("connect to read the schema: %v", err)
+		// Redacted against the DSN THIS function was handed, which is a scratch DSN
+		// rewritten from TEST_DATABASE_URL and carries the same credential.
+		t.Fatalf("connect to read the schema: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
@@ -685,7 +694,9 @@ func TestWithDatabaseRepointsTheDSN(t *testing.T) {
 
 			cfg, err := pgxpool.ParseConfig(got)
 			if err != nil {
-				t.Fatalf("pgxpool.ParseConfig(rewritten): %v", err)
+				// `got` is the rewritten DSN and carries whatever credential tc.dsn
+				// carried, and pgx's ParseConfigError echoes the connection string.
+				t.Fatalf("pgxpool.ParseConfig(rewritten): %s", dbtest.SafeDSNErrFor(got, err))
 			}
 			if cfg.ConnConfig.Database != scratch {
 				t.Errorf("pgx resolves database %q, want %q — the rewritten DSN still points at "+
@@ -1051,5 +1062,125 @@ func TestSafeDSNErrReadsTheConfiguredDSN(t *testing.T) {
 		t.Errorf("SafeDSNErr = %q, want the identifier withheld; the wrapper must pass the "+
 			"CONFIGURED DSN to SafeDSNErrFor, or the harness's own call path redacts "+
 			"nothing", got)
+	}
+}
+
+// TestScratchDatabaseHelpersRedactConnectErrors pins that this file's own connect sites do
+// not undo the redaction the rest of the PR installs.
+//
+// The helpers here call pgx.Connect with a DSN and, until this test existed, printed the
+// failure with %v. pgx returns *pgconn.ConnectError, whose Error() formats
+// "failed to connect to `user=%s database=%s`" straight from the Config it parsed out of
+// that DSN — so the configured username and database went to the CI log from a test file
+// whose whole subject is keeping them out of it. The redaction being correct in dbtest.go
+// says nothing about the call sites; only rendering a real failure does.
+//
+// It drives a REAL pgx connect against an unreachable port rather than a hand-written
+// error, so the message is whatever pgx actually produces rather than what this test
+// imagines it produces.
+func TestScratchDatabaseHelpersRedactConnectErrors(t *testing.T) {
+	t.Parallel()
+
+	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
+	const username = "scratchuser"
+	const database = "scratchdb"
+
+	// Port 1 refuses immediately, so this needs no database and cannot hang.
+	dsn := "postgres://" + username + ":" + password + "@127.0.0.1:1/" + database + "?sslmode=disable"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := pgx.Connect(ctx, dsn)
+	if err == nil {
+		t.Fatal("precondition failed: the connect succeeded, so this test no longer " +
+			"exercises the connect-failure branch it guards")
+	}
+
+	// The control: the UNREDACTED rendering leaks, so the assertion below is not vacuous.
+	if raw := fmt.Sprintf("%v", err); !strings.Contains(raw, username) {
+		t.Fatalf("precondition failed: pgx's error did not name the user, so this case " +
+			"cannot demonstrate the leak it guards")
+	}
+
+	got := dbtest.SafeDSNErrFor(dsn, err)
+	for _, id := range []string{password, username, database} {
+		if strings.Contains(got, id) {
+			t.Errorf("SafeDSNErrFor = %q, want no identifier from the DSN; it echoed %q — "+
+				"this is what the helpers in this file print on a failed connect", got, id)
+		}
+	}
+}
+
+// TestNoConnectSiteRendersItsErrorRaw is a SOURCE assertion, and it is deliberate.
+//
+// The rest of this file asserts on rendered strings, on the stated principle that a leak is
+// a property of what an error formats to rather than of which verb produced it. That
+// principle still holds — but it can only be applied where a test can REACH the failure.
+// The connect sites in this file fire when a live database becomes unreachable mid-run,
+// which no unit test can arrange, so a rendered-output test cannot cover them: reverting one
+// to %v leaves every behavioural test in the package green.
+//
+// A behaviour that cannot be observed can still be pinned at its source, and that is the
+// honest instrument here. This reads the file and requires every pgx.Connect / ParseConfig
+// error to be rendered through the package's redaction rather than with %v. It is a weaker
+// guarantee than a rendered-output assertion and is not a substitute for one anywhere the
+// output CAN be rendered — it exists exactly where that option does not.
+func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("migrate_down_live_test.go")
+	if err != nil {
+		t.Fatalf("read own source: %v", err)
+	}
+	lines := strings.Split(string(src), "\n")
+
+	// The calls that take a DSN and can therefore fail with an error built out of it.
+	dsnCalls := []string{"pgx.Connect(", "pgxpool.ParseConfig(", "pgxpool.New(", "postgres.NewPool("}
+
+	for i, ln := range lines {
+		hasCall := false
+		for _, c := range dsnCalls {
+			if strings.Contains(ln, c) {
+				hasCall = true
+				break
+			}
+		}
+		if !hasCall {
+			continue
+		}
+		// Scan to the END of the error-handling block rather than a fixed window: a
+		// site with a four-line explanatory comment above its Fatalf pushed the handler
+		// past a 5-line lookahead, and the guard silently stopped covering it. The
+		// block ends at the first line whose indentation returns to the `if`'s own.
+		indent := len(lines[i]) - len(strings.TrimLeft(lines[i], "\t"))
+		end := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			l := lines[j]
+			if strings.TrimSpace(l) == "" {
+				continue
+			}
+			if len(l)-len(strings.TrimLeft(l, "\t")) <= indent && strings.HasPrefix(strings.TrimSpace(l), "}") {
+				end = j
+				break
+			}
+		}
+		for j := i; j < end; j++ {
+			h := lines[j]
+			if !strings.Contains(h, "t.Fatalf") && !strings.Contains(h, "t.Errorf") {
+				continue
+			}
+			if strings.Contains(h, "SafeDSNErr") {
+				break // rendered through the redaction: correct
+			}
+			if strings.Contains(h, "%v\", err") || strings.Contains(h, "%v; ") ||
+				strings.Contains(h, ", err)") {
+				t.Errorf("line %d renders a DSN-bearing connect error raw:\n  %s\n"+
+					"pgx builds *pgconn.ConnectError and *pgconn.ParseConfigError out of the "+
+					"DSN, so this prints the configured user, database and host; use "+
+					"dbtest.SafeDSNErr / SafeDSNErrFor", j+1, strings.TrimSpace(h))
+				break
+			}
+		}
 	}
 }

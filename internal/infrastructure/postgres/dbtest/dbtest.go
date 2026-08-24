@@ -337,9 +337,19 @@ func SafeDSNErrFor(dsn string, err error) string {
 // keyword/value forms and yields the same Config, so the comparison is against what the DSN
 // MEANS rather than against how it was written.
 //
-// An unparseable or absent DSN yields no identifiers to clear a message with, so it reports
-// true -- withhold -- rather than false. Failing open here would restore the leak in exactly
-// the case where the configured value is least well understood.
+// The absent and the unparseable cases are NOT the same, and the difference is deliberate:
+//
+//   - An UNPARSEABLE DSN reports true -- withhold. A value was configured and carries a
+//     credential, but nothing can be extracted to clear a message against, so no message can
+//     be proven safe. Failing open here would restore the leak in exactly the case where the
+//     configured value is least well understood.
+//   - An ABSENT DSN reports false -- keep the text. There is no configured value, so there is
+//     no credential for a message to reproduce; withholding would suppress every diagnostic in
+//     the package while protecting nothing. This is the laptop case, where every live test
+//     skips anyway.
+//
+// So callers must NOT read this as fail-closed on absence: absence means "nothing to protect",
+// not "protect everything".
 //
 // The empty-string guard is not decoration. A DSN with no password (the local peer-auth case)
 // leaves Config.Password empty, and strings.Contains(msg, "") is true for every message, so
