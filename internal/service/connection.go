@@ -542,9 +542,13 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// and implements neither capability, which is the membership distinction below. Stated
 		// as the SHAPE rather than by naming which providers implement AccountLister: that
 		// membership only grows, and an enumerating comment is falsified by the next provider
-		// added without anything failing — which is why no roster is written here. The
-		// compile-time assertions in internal/dispatch/account_discovery_test.go are the
-		// authoritative, self-updating list.
+		// added without anything failing — which is why no roster is written here. For the
+		// current membership see accountListerProviders in
+		// internal/dispatch/accountlister_prose_parity_test.go, which DERIVES the roster by
+		// type-asserting every candidate dispatcher against service.AccountLister, so it moves
+		// with the code. The `var _ service.AccountLister` block in account_discovery_test.go
+		// is NOT that list: it pins only the three providers that test exercises, and today
+		// omits the Google Ads and Meta implementations.
 		if errors.Is(serr, ErrEmailSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}

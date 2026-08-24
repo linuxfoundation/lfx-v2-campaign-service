@@ -413,14 +413,17 @@ type apiResponse struct {
 	// set, the next_cursor value will be null"), and both a null and an absent field
 	// decode to "".
 	//
-	// The difference matters only where a short list is indistinguishable from a
-	// complete one — ListAdAccounts, whose contract is that it returns EVERY account or
-	// an error, so a body that does not carry the field X's contract says it carries
-	// cannot be allowed to terminate the walk. findByName deliberately does NOT consult
-	// it: its cursor loop is bounded by a match it is searching FOR, and it already
-	// treats running out of pages as an error rather than as "not found", so an absent
-	// cursor there costs at most a missed match on a malformed body, which its own page
-	// cap already answers with an error.
+	// It matters wherever ending the walk would otherwise be asserted on a body that
+	// never supplied the field X's contract says it carries. Both current readers are
+	// such a case, for different reasons: ListAdAccounts owes EVERY account or an error,
+	// so a missing cursor must not terminate the enumeration; findByName's "not found" is
+	// a claim the caller acts on with a create POST, so it must not rest on one either.
+	//
+	// The discriminator in findByName is PAGE FULLNESS, not the page cap. X documents a
+	// short page as conclusively last on its own evidence, while a FULL page owes a cursor
+	// — so an absent cursor on a full page is unknowable and must error. The page cap
+	// cannot stand in for that check: it is only reachable while a non-empty cursor keeps
+	// arriving, which is exactly the case an absent cursor is not.
 	NextCursorPresent bool `json:"-"`
 	// NextCursorNull reports whether the `next_cursor` key held a literal JSON `null`, as
 	// distinct from an empty string. NextCursor alone cannot express the difference —
@@ -436,10 +439,14 @@ type apiResponse struct {
 	// pagination door, and invisible to the user because a truncated account picker looks
 	// exactly like a full one.
 	//
-	// Consulted only by ListAdAccounts, for the same reason NextCursorPresent is: its
-	// contract is that it returns EVERY account or an error. findByName is bounded by the
-	// match it is searching for and already errors when it runs out of pages, so an empty
-	// cursor there costs at most a missed match its page cap already answers.
+	// Consulted by ListAdAccounts, for the same reason NextCursorPresent is: its contract
+	// is that it returns EVERY account or an error, so `""` — a value X's documentation
+	// never ascribes a meaning to — must not be read as exhaustion.
+	//
+	// findByName does not need this bit, and that is a statement about WHICH ambiguity each
+	// reader faces, not a claim that findByName trusts the cursor generally: it does consult
+	// NextCursorPresent (see its full-page guard). A short page already terminates it on X's
+	// documented rule, so the empty-vs-null distinction changes nothing there.
 	NextCursorNull bool `json:"-"`
 }
 

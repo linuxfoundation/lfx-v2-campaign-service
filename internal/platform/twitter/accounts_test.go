@@ -608,11 +608,17 @@ func TestListAdAccounts_MalformedDataFieldIsAnError(t *testing.T) {
 	}
 }
 
-// TestNextCursorPresentDoesNotChangeFindByName pins that adding the presence bit to the
-// shared envelope left the other cursor walk's decoded values untouched. apiResponse gained
-// a custom UnmarshalJSON, which is exactly the kind of change that can silently alter every
-// other decode in the package.
-func TestNextCursorPresentDoesNotChangeFindByName(t *testing.T) {
+// TestCursorBitsDecodeWithoutChangingExistingValues pins that adding the presence and null
+// bits to the shared envelope left every previously-decoded value untouched. apiResponse
+// gained a custom UnmarshalJSON, which is exactly the kind of change that can silently alter
+// every other decode in the package.
+//
+// Named for what it checks — DECODE parity. It was previously called
+// TestNextCursorPresentDoesNotChangeFindByName, which had become a false claim: findByName
+// now consults NextCursorPresent in its full-page guard (see
+// TestFindByNameConsultsCursorPresenceOnAFullPage). The body only ever asserted decoded
+// values, so the name, not the coverage, was the thing that was wrong.
+func TestCursorBitsDecodeWithoutChangingExistingValues(t *testing.T) {
 	cases := []struct {
 		body        string
 		wantCursor  string
@@ -648,4 +654,67 @@ func TestNextCursorPresentDoesNotChangeFindByName(t *testing.T) {
 			t.Errorf("body %s: Data non-nil = %v, want %v", tc.body, r.Data != nil, tc.wantData)
 		}
 	}
+}
+
+// TestFindByNameConsultsCursorPresenceOnAFullPage pins the guard the envelope's
+// documentation describes: a FULL page that carries no `next_cursor` key cannot be
+// read as "not found", because X's contract owes a cursor there and the caller acts
+// on not-found with a create POST.
+//
+// The page cap cannot substitute for this check, which is why the guard exists: the
+// cap is only reachable while a non-empty cursor keeps arriving, and this is exactly
+// the case where no cursor arrived at all. A SHORT page with no cursor stays a clean
+// not-found on X's documented rule, and the second case pins that the guard did not
+// over-reach into it.
+func TestFindByNameConsultsCursorPresenceOnAFullPage(t *testing.T) {
+	fullPage := func(n int) string {
+		items := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			items = append(items, `{"id":"id`+strconv.Itoa(i)+`","name":"other`+strconv.Itoa(i)+`"}`)
+		}
+		return `{"data":[` + strings.Join(items, ",") + `]}`
+	}
+
+	t.Run("full page with no cursor key aborts rather than reporting absence", func(t *testing.T) {
+		var pages int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			pages++
+			// A full page (exactly listPageSize) and NO next_cursor key at all.
+			_, _ = w.Write([]byte(fullPage(listPageSize)))
+		}))
+		defer srv.Close()
+
+		c := discoveryClient(t, srv.URL, "18ce54d4x5t")
+		id, err := c.findByName(context.Background(), "/campaigns", "wanted")
+		if err == nil {
+			t.Fatalf("findByName = (%q, nil), want an error: a full page with no next_cursor "+
+				"leaves the name unconfirmed, and reporting absence lets the caller create a duplicate", id)
+		}
+		if !strings.Contains(err.Error(), "no next_cursor") {
+			t.Errorf("error %q should name the missing cursor as the reason", err)
+		}
+		// It must abort on the FIRST such page, not walk to the page cap.
+		if pages != 1 {
+			t.Errorf("requested %d pages, want 1: the guard must fire on the first full page "+
+				"rather than deferring to the page cap, which this body never reaches", pages)
+		}
+	})
+
+	t.Run("short page with no cursor key is a clean not-found", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// A SHORT page and no cursor key: conclusively the last page per X's rule.
+			_, _ = w.Write([]byte(fullPage(2)))
+		}))
+		defer srv.Close()
+
+		c := discoveryClient(t, srv.URL, "18ce54d4x5t")
+		id, err := c.findByName(context.Background(), "/campaigns", "wanted")
+		if err != nil {
+			t.Fatalf("findByName: %v — a short page is conclusively last on its own evidence, "+
+				"so absence there is a genuine not-found", err)
+		}
+		if id != "" {
+			t.Errorf("findByName = %q, want \"\"", id)
+		}
+	})
 }

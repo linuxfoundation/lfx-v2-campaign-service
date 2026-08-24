@@ -1,6 +1,6 @@
 # 2026-08-24 — the cap cited as the safety net is on a path the defect never reaches
 
-**X Ads find-or-create** — `nextCursorRaw`'s doc comment justified `findByName` not consulting
+**Fix** — X Ads find-or-create: `nextCursorRaw`'s doc comment justified `findByName` not consulting
 the cursor presence bits like this: "an absent cursor there costs at most a missed match on a
 malformed body, which its own page cap already answers with an error."
 
