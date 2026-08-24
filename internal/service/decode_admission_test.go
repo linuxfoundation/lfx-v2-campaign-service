@@ -10,7 +10,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -141,53 +140,30 @@ func TestUploadCreativeAsset_CompressedImagesCannotExhaustTheDecodeBudget(t *tes
 	one := decodedBytesFor(cfg.Width, cfg.Height, cfg.ColorModel)
 
 	// A budget that fits exactly ONE of these decodes.
+	d := NewDecodeReserver(one)
 	s := NewBriefService(nil, nil, nil, nil)
-	s.SetCreativeAssetRepo(&blockingCreativeAssetRepo{entered: make(chan struct{}), release: make(chan struct{})})
-	s.SetDecodeReserver(NewDecodeReserver(one))
+	s.SetCreativeAssetRepo(&fakeCreativeAssetRepo{})
+	s.SetDecodeReserver(d)
 
-	repo := s.creativeAssetRepo().(*blockingCreativeAssetRepo)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_, _ = s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
-			ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: img,
-		})
-	}()
-
-	// Wait until the first upload is PAST the decode and holding its reservation.
-	<-repo.entered
-
-	// The second must be shed: its pixel buffer does not fit alongside the first.
+	// Occupy the single slot DIRECTLY rather than by parking a first upload inside the
+	// repository. That indirection no longer expresses the property: the reservation is now
+	// released when image.Decode returns, so a request parked in CreateAsset is holding
+	// nothing, and a test built on it would be asserting against a free budget.
 	//
-	// Run on its own goroutine with a bounded wait rather than called inline. Without the
-	// reservation the second upload does NOT return — it decodes and blocks in the parked
-	// repo — so an inline call would hang the whole package instead of failing this test. A
-	// mutation must die with a message, not with a timeout somebody has to diagnose.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	type res struct {
-		out *briefs.CreativeAsset
-		err error
+	// Holding the slot explicitly is also what makes the failure honest. The second upload
+	// runs on a LIVE, uncancelled context, so the only thing that can shed it is genuine
+	// contention for decode capacity -- not an already-expired context, which would produce
+	// the same 503 whether or not the bound existed.
+	occupied, ok := d.reserve(context.Background(), one)
+	if !ok {
+		t.Fatalf("could not occupy the %d-byte decode budget to set up contention", one)
 	}
-	second := make(chan res, 1)
-	go func() {
-		o, e := s.UploadCreativeAsset(ctx, &briefs.UploadCreativeAssetPayload{
-			ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: img,
-		})
-		second <- res{o, e}
-	}()
-	select {
-	case r := <-second:
-		err = r.err
-	case <-time.After(15 * time.Second):
-		close(repo.release)
-		wg.Wait()
-		t.Fatalf("the second upload neither returned nor was shed: it was admitted past the "+
-			"decode reservation and blocked in the handler, so a %d-byte decode budget did not "+
-			"stop a second %d-byte pixel buffer", one, one)
-	}
+	defer occupied()
+
+	_, err = s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: img,
+	})
+
 	if err == nil {
 		t.Errorf("a second %d-byte upload decoding to %d bytes was admitted against a %d-byte "+
 			"decode budget; wire-priced admission alone cannot stop this, so concurrent "+
@@ -197,31 +173,6 @@ func TestUploadCreativeAsset_CompressedImagesCannotExhaustTheDecodeBudget(t *tes
 	if err != nil && !errors.As(err, &unavailable) {
 		t.Errorf("shed error = %T (%v), want *briefs.ConnServiceUnavailableError (retryable 503)", err, err)
 	}
-
-	close(repo.release)
-	wg.Wait()
-}
-
-// blockingCreativeAssetRepo parks inside CreateAsset, which runs AFTER the decode and while the
-// decode reservation is still held, so a test can observe the reservation as occupied.
-type blockingCreativeAssetRepo struct {
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-	calls   atomic.Int64
-}
-
-func (f *blockingCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
-	f.calls.Add(1)
-	f.once.Do(func() { close(f.entered) })
-	<-f.release
-	out := *a
-	out.ID = "asset-1"
-	return &out, nil
-}
-
-func (f *blockingCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
-	return nil, domain.ErrNotFound
 }
 
 // TestDecodedBytesFor_MatchesTheGateItShares: the reservation and the per-image gate must charge
