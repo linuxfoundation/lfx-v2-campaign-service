@@ -46,6 +46,16 @@ type twitterConfig struct {
 	StartDate    string  `json:"startDate"` // YYYY-MM-DD
 	EndDate      string  `json:"endDate"`   // YYYY-MM-DD
 	TweetID      string  `json:"tweetId"`
+	// TweetText, when TweetID is empty, authors a NEW promoted-only (nullcast) tweet
+	// carrying the UTM'd registration URL, then promotes it — closing the manual-tweet
+	// gap. An explicit TweetID always wins over TweetText; if both are set, TweetText
+	// is ignored (a step records that). The authored tweet is ALWAYS nullcast — it
+	// never posts to the public timeline.
+	TweetText string `json:"tweetText"`
+	// AsUserID pins which of the ad account's promotable users authors the tweet. When
+	// empty, the client auto-resolves it (exactly one candidate) or refuses (zero or
+	// several candidates) rather than guessing which LF handle publishes.
+	AsUserID string `json:"asUserId"`
 }
 
 // TwitterDispatcher creates X (Twitter) campaigns for the orchestrator.
@@ -116,6 +126,8 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,
 		TweetID:         cfg.TweetID,
+		TweetText:       cfg.TweetText,
+		AsUserID:        cfg.AsUserID,
 	}
 
 	client := twitter.NewClient(
@@ -149,8 +161,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	//   1. a non-empty PromotedTweetWarning — the promoted-tweet association was
 	//      attempted but failed or is unconfirmed; OR
 	//   2. an empty PromotedTweetID — no tweet was attached at all (the documented
-	//      manual-tweet workflow when tweetId is omitted, or a silent 2xx-no-id
-	//      association); OR
+	//      manual-tweet workflow when neither tweetId nor tweetText is supplied, a
+	//      requested tweetText that failed/was unconfirmed to author, or a silent
+	//      2xx-no-id association); OR
 	//   3. Reused — the client REUSED an existing campaign and/or line item by name and
 	//      did NOT apply this request's budget/config/flight-dates, so it may be serving
 	//      under a different budget or an already-ENABLED line item with different dates

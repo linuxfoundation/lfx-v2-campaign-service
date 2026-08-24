@@ -87,6 +87,15 @@ const (
 	// guarding against a hostile/oversized reply while comfortably exceeding any
 	// normal X Ads response or error envelope.
 	maxResponseBody = 1 << 20 // 1 MiB
+	// maxTweetWeightedChars is X's per-Tweet character cap.
+	maxTweetWeightedChars = 280
+	// tcoURLWeight is the fixed weight X counts ANY http/https URL as, regardless
+	// of its actual length (every URL is wrapped to a t.co link at post time).
+	// Counting a UTM-decorated registration URL at its raw rune length would
+	// reject copy X would accept — a registration URL alone is easily 120+ runes
+	// once utm_* params are appended — so authored tweet text is weighted using
+	// this constant for any embedded URL rather than counted verbatim.
+	tcoURLWeight = 23
 )
 
 // ---------------------------------------------------------------------------
@@ -1378,13 +1387,79 @@ func twitterUTMParams(in CampaignInput) map[string]string {
 	}
 }
 
+// buildTwitterUTMURL builds the REAL destination URL sent to X as part of an
+// authored tweet's text — the non-display counterpart of displayTwitterUtmURL
+// below. Unlike the display helper (which drops the registration URL's
+// original query/fragment for safe persistence), this is not itself persisted
+// raw: it is embedded in TweetText, and TweetText/Steps use the sanitized
+// display form. validateRegistrationURL must be called before this — it does
+// not re-validate.
+func buildTwitterUTMURL(in CampaignInput) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		return "", fmt.Errorf("registration URL %q is not usable to build a destination URL", redactURLForError(in.RegistrationURL))
+	}
+	q := u.Query()
+	for k, v := range twitterUTMParams(in) {
+		q.Set(k, v)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// weightedTweetLen counts s the way X counts a Tweet's length: every
+// http/https URL substring is counted at the fixed tcoURLWeight rather than
+// its literal rune length (X always wraps a URL to a t.co link of that
+// weight). This is a best-effort approximation (X's own weighted-length
+// rules cover more than URLs), sufficient to reject an obviously-oversized
+// composed tweet before it reaches the API.
+func weightedTweetLen(s string, urls ...string) int {
+	n := utf8.RuneCountInString(s)
+	for _, u := range urls {
+		if u == "" {
+			continue
+		}
+		if idx := strings.Index(s, u); idx >= 0 {
+			n -= utf8.RuneCountInString(u)
+			n += tcoURLWeight
+		}
+	}
+	return n
+}
+
+// composeTweetText builds the FINAL text of an authored tweet from caller
+// copy plus the real destination URL, and validates it before any mutating
+// call. The destination URL is appended (space-separated) unless the caller's
+// copy already embeds it verbatim, so an authored ad always carries a click
+// destination. The composed text must be non-empty and within X's per-Tweet
+// character cap, counting the embedded URL at its fixed t.co weight rather
+// than its raw length (see weightedTweetLen) — a UTM-decorated registration
+// URL is easily 120+ raw runes, and counting it verbatim would reject valid
+// copy X would accept.
+func composeTweetText(callerText, destURL string) (string, error) {
+	trimmed := strings.TrimSpace(callerText)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid tweet text: must not be empty")
+	}
+	full := trimmed
+	if !strings.Contains(full, destURL) {
+		full = trimmed + " " + destURL
+	}
+	if n := weightedTweetLen(full, destURL); n > maxTweetWeightedChars {
+		return "", fmt.Errorf("invalid tweet text: weighted length %d (including the destination URL) exceeds X's %d-character limit", n, maxTweetWeightedChars)
+	}
+	return full, nil
+}
+
 // displayTwitterUtmURL builds a click URL SAFE TO PERSIST in Steps / return to callers:
 // it strips any userinfo, fragment, and PRE-EXISTING query params from the registration
 // URL (which may carry secrets like ?token=...) and keeps ONLY the generated utm_*
-// params. This is the ONLY UTM URL this client emits (in the manual-tweet step); the
-// query-bearing registration URL is NOT sent to X by this client — the ad destination
-// on the promoted-tweet path comes from the tweet itself. Mirrors the reddit client's
-// displayRedditUTMURL.
+// params. When TweetID/TweetText are both empty (the manual-tweet workflow), this is
+// the only UTM URL this client emits, as a template for the operator to compose their
+// own tweet around. When TweetText IS set, the real (non-display) counterpart
+// buildTwitterUTMURL is embedded directly in the authored tweet's text — this display
+// form is still used for the corresponding Steps entry so a query-bearing URL is never
+// persisted. Mirrors the reddit client's displayRedditUTMURL.
 func displayTwitterUtmURL(in CampaignInput) string {
 	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
@@ -1411,6 +1486,17 @@ func displayTwitterUtmURL(in CampaignInput) string {
 
 // CampaignInput carries the fields required to create an X Ads campaign.
 // Mirrors the TS TwitterCampaignCreateRequest.
+//
+// TweetID and TweetText are mutually exclusive inputs for Step 4 (the
+// promoted-tweet association): a non-empty TweetID always wins — it promotes
+// the caller's existing tweet as-is and TweetText, if also set, is ignored (a
+// step records that it was ignored). TweetText, when TweetID is empty, makes
+// CreateCampaign AUTHOR a NEW tweet via the X Ads API's account-scoped
+// "POST accounts/:id/tweet" endpoint and promote it. An authored tweet is
+// ALWAYS created with nullcast=true ("Promoted-Only"): it can be attached to
+// a Promoted Tweets campaign but does not appear on the public timeline or
+// in the poster's followers' feeds. This client never creates an organic
+// (nullcast=false) tweet.
 type CampaignInput struct {
 	EventName       string
 	EventSlug       string
@@ -1419,6 +1505,8 @@ type CampaignInput struct {
 	StartDate       string // YYYY-MM-DD
 	EndDate         string // YYYY-MM-DD
 	TweetID         string
+	TweetText       string
+	AsUserID        string
 	RegistrationURL string
 	HSToken         string
 }
@@ -1438,9 +1526,14 @@ type CampaignResult struct {
 	// There is NO recoverable fallback: TwitterURL is the bare ads-manager constant and
 	// carries no account id, so a row written before this field existed records no
 	// provenance and is waved through as "unknown". Only re-dispatch can give it one.
-	AccountID       string
-	LineItemName    string
-	LineItemID      string
+	AccountID    string
+	LineItemName string
+	LineItemID   string
+	// AuthoredTweetID is the id of a NEW promoted-only tweet this call authored
+	// (via TweetText), as opposed to an existing tweet the caller supplied via
+	// TweetID. Empty when TweetID was used, when no creative input was supplied
+	// at all, or when authoring did not confirm an id (see PromotedTweetWarning).
+	AuthoredTweetID string
 	PromotedTweetID string
 	// PromotedTweetWarning is non-empty when the promoted-tweet association could
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
@@ -1613,6 +1706,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if _, perr := strconv.ParseInt(in.TweetID, 10, 64); perr != nil {
 			return nil, fmt.Errorf("invalid tweet id: %q is out of range for an X Tweet id", in.TweetID)
 		}
+	}
+
+	// TweetText authors a NEW tweet in Step 4 and is only USED when TweetID is
+	// empty (an explicit TweetID always wins — see CampaignInput's doc). Only
+	// validate it when it will actually be used: if both are supplied, the text
+	// is ignored (a step records that), so a malformed-but-unused TweetText must
+	// not fail an otherwise-valid campaign. composedTweetText/composedDestURL are
+	// precomputed here (before any mutating call) so Step 4 need not re-validate.
+	var composedTweetText string
+	if in.TweetID == "" && strings.TrimSpace(in.TweetText) != "" {
+		destURL, err := buildTwitterUTMURL(in)
+		if err != nil {
+			return nil, err
+		}
+		text, err := composeTweetText(in.TweetText, destURL)
+		if err != nil {
+			return nil, err
+		}
+		composedTweetText = text
 	}
 
 	// Validate required account config before any mutating call. account_id and
@@ -1843,14 +1955,68 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
 
-	// Step 4: create promoted tweet if a tweet ID was provided. in.TweetID was
-	// already trimmed AND format-validated (numeric) in the up-front validation
-	// block, so a whitespace-only value ("   ") is treated as absent, a padded
-	// value (" 123 ") is sent as "123", and a non-numeric value never reaches
-	// here — it fails before the campaign + line item are created.
+	// Step 4: promote a tweet — either the caller's existing TweetID, or (when
+	// that is empty) a NEW promoted-only tweet authored from TweetText. in.TweetID
+	// was already trimmed AND format-validated (numeric) in the up-front
+	// validation block, so a whitespace-only value ("   ") is treated as absent,
+	// a padded value (" 123 ") is sent as "123", and a non-numeric value never
+	// reaches here — it fails before the campaign + line item are created.
+	// composedTweetText was similarly precomputed and validated up front.
 	tweetID := in.TweetID
 	var promotedTweetID string
 	var promotedTweetWarning string
+	var authoredTweetID string
+
+	if tweetID != "" && strings.TrimSpace(in.TweetText) != "" {
+		// Explicit TweetID always wins (mirrors the reddit client's
+		// PostURL-beats-ImageURL precedence) — the supplied tweet is promoted
+		// as-is and no new tweet is authored. composedTweetText is only computed
+		// (and validated) when TweetID is empty, so it is intentionally NOT
+		// checked here — an unused, possibly-malformed TweetText must not fail an
+		// otherwise-valid campaign (see the up-front validation block).
+		steps = append(steps, "Both an explicit tweet ID and tweet text were supplied; the explicit tweet ID is promoted and the tweet text is ignored")
+	}
+
+	if tweetID == "" && composedTweetText != "" {
+		if err := c.pace(ctx); err != nil {
+			return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
+		}
+		asUserID, resolveErr := c.resolvePromotableUser(ctx, in.AsUserID)
+		if resolveErr != nil {
+			promotedTweetWarning = fmt.Sprintf("could not author a tweet: %s — post one manually, then add it as a promoted tweet in X Ads Manager", resolveErr.Error())
+			steps = append(steps, fmt.Sprintf("Tweet authoring skipped: %s", resolveErr.Error()))
+		} else {
+			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID)
+			switch {
+			case authorErr != nil && createOutcomeAmbiguous(authorErr):
+				// An AMBIGUOUS failure may follow a committed tweet publish — a blind
+				// retry could publish a SECOND tweet under the LF handle. Surface
+				// UNCONFIRMED so the caller verifies in X Ads Manager (and deletes any
+				// stray tweet not attached to an ad) before retrying, rather than the
+				// "safe to retry" wording used for a definite rejection.
+				promotedTweetWarning = fmt.Sprintf("tweet authoring is UNCONFIRMED: the request may have reached X but its outcome is unknown (%s) — a tweet MAY have been published; verify in X Ads Manager before retrying, and delete any stray tweet not attached to an ad", authorErr.Error())
+				steps = append(steps, fmt.Sprintf("Tweet authoring UNCONFIRMED (%s) — verify in X Ads Manager before retrying", authorErr.Error()))
+			case authorErr != nil:
+				// A DEFINITE failure (4xx rejection or pre-send error): no tweet was
+				// published, so it is safe to retry or compose one manually.
+				promotedTweetWarning = fmt.Sprintf("tweet authoring failed: %s — post one manually, then add it as a promoted tweet in X Ads Manager", authorErr.Error())
+				steps = append(steps, fmt.Sprintf("Tweet authoring failed: %s", authorErr.Error()))
+			default:
+				authoredTweetID = extractID(resp)
+				if authoredTweetID == "" {
+					// A 2xx with no id is a malformed SUCCESS: a tweet may have been
+					// published without a usable id returned. UNCONFIRMED, not a clean
+					// failure — mirrors the promoted-tweet no-id handling below.
+					promotedTweetWarning = "tweet authoring is UNCONFIRMED: X returned a 2xx with no tweet ID (malformed response) — a tweet MAY have been published; verify in X Ads Manager before retrying, and delete any stray tweet not attached to an ad"
+					steps = append(steps, "Tweet authoring UNCONFIRMED (2xx with no ID, malformed response) — verify in X Ads Manager before retrying")
+				} else {
+					tweetID = authoredTweetID
+					steps = append(steps, fmt.Sprintf("Authored promoted-only tweet: %s (nullcast — not visible on the public timeline or to followers)", authoredTweetID))
+				}
+			}
+		}
+	}
+
 	if tweetID != "" {
 		if err := c.pace(ctx); err != nil {
 			// The campaign AND line item are already created (both PAUSED). Returning
@@ -1911,7 +2077,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (2xx with no ID, malformed response) — verify in X Ads Manager before retrying", tweetID))
 			}
 		}
-	} else {
+	} else if composedTweetText == "" {
+		// Neither an explicit TweetID nor TweetText was supplied — the historical
+		// manual workflow. When TweetText WAS supplied but authoring failed, the
+		// authoring branch above already recorded a self-contained warning/step;
+		// this generic "no tweet ID provided" message would be misleading there
+		// (it reads as if nothing was even attempted), so it is gated out.
+		//
 		// Use the SANITIZED display URL for the persisted step — the raw registration
 		// URL can carry secrets in its userinfo/query/fragment, and Steps is written to
 		// the unencrypted campaigns.result column. It is a TEMPLATE (only the generated
@@ -1928,6 +2100,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		CampaignID:           campaignID,
 		LineItemName:         lineItemName,
 		LineItemID:           lineItemID,
+		AuthoredTweetID:      authoredTweetID,
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
@@ -2030,6 +2203,69 @@ func extractPromotedTweetID(resp *apiResponse) string {
 		return ""
 	}
 	return extractID(resp)
+}
+
+// resolvePromotableUser decides which X user id should author a nullcast
+// tweet on this ad account, via GET accounts/:id/promotable_users. It fails
+// closed rather than guessing: if pinned is non-empty, it must appear among
+// the account's promotable users, or the call is refused; if empty and
+// exactly one user is returned, that one is used; if empty and several are
+// returned, the call is refused and the candidates are named so a caller can
+// pin one. Never returns a user id this call didn't itself verify against
+// the account's promotable-user list.
+func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (string, error) {
+	resp, err := c.request(ctx, http.MethodGet, "promotable_users")
+	if err != nil {
+		return "", fmt.Errorf("looking up promotable users: %w", err)
+	}
+	var users []struct {
+		UserID string `json:"user_id"`
+	}
+	if resp != nil && len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &users); err != nil {
+			return "", fmt.Errorf("decoding promotable users: %w", err)
+		}
+	}
+	ids := make([]string, 0, len(users))
+	for _, u := range users {
+		if u.UserID != "" {
+			ids = append(ids, u.UserID)
+		}
+	}
+	if pinned != "" {
+		for _, id := range ids {
+			if id == pinned {
+				return pinned, nil
+			}
+		}
+		return "", fmt.Errorf("configured as_user_id %q is not among this account's promotable users (%v)", pinned, ids)
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("account %s has no promotable users to author a tweet as", c.account.AccountID)
+	case 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("account %s has %d promotable users (%v); set asUserId to pick one", c.account.AccountID, len(ids), ids)
+	}
+}
+
+// createNullcastTweet authors a new promoted-only tweet via the X Ads API's
+// account-scoped tweet-create endpoint. nullcast is ALWAYS sent explicitly as
+// "true" — never relied on as a default — because the failure mode of an
+// omitted/wrong value is a real tweet published to the LF handle's public
+// timeline. It does not classify its own error/response; the caller applies
+// the same ambiguous/definite/duplicate handling used for the promoted_tweets
+// POST.
+func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID string) (*apiResponse, error) {
+	params := map[string]string{
+		"text":     text,
+		"nullcast": "true",
+	}
+	if asUserID != "" {
+		params["as_user_id"] = asUserID
+	}
+	return c.createRequest(ctx, "tweet", params)
 }
 
 // Run states an X campaign/line item can be toggled between. X calls this

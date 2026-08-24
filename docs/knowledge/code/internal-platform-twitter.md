@@ -104,6 +104,89 @@ not applied), distinct from the ambiguous `transportError`.
 UNCONFIRMED so a create that may have committed is not blind-retried into a
 duplicate; a `preSendError` is neither, so it stays a definite "not applied".
 
+## Authoring a promoted tweet (brief -> servable ad)
+
+`CreateCampaign` can author the ad's creative itself — text only — so a caller can
+go from a brief to a servable X ad without first hand-composing a tweet in X Ads
+Manager, closing the gap that used to make X the one platform of the six this
+service dispatches to that always needed a manual step. An explicit `TweetID`
+always wins over `TweetText`: if both are supplied, the given tweet is promoted
+as-is and the text is ignored (recorded as a step). `TweetText` is only consulted
+— and only validated — when `TweetID` is empty; an unused, possibly-malformed
+`TweetText` alongside a valid `TweetID` must not fail an otherwise-good campaign.
+
+The endpoint is `POST accounts/:account_id/tweet` — **on the Ads API host itself**,
+not `api.x.com/2/tweets`. That is the key simplification: it is account-scoped,
+signed by the same OAuth 1.0a header, and takes query parameters like every other
+create call here, so authoring slots into the existing `createRequest` with no new
+host, no new auth mode, and no JSON body support. The client always sends
+`nullcast=true` **explicitly** — it is X's documented default, but the one failure
+mode that matters (a real tweet landing on the Linux Foundation's public timeline)
+is exactly the one an implicit default can't be tested for, so the literal
+parameter plus a test assertion on it stands in for that guarantee. `nullcast` is
+what keeps the tweet *promoted-only*: it is never visible on the public timeline
+or to followers, and a promoted-only tweet needs only `TWEET_COMPOSER`
+permission — only an *organic* (`nullcast=false`) tweet needs the full promotable
+user, and this client never sends `nullcast=false`.
+
+`resolvePromotableUser` decides which handle authors the tweet via
+`GET accounts/:account_id/promotable_users`. It fails closed rather than
+guessing: a pinned `AsUserID` not present in that list is refused (named in the
+error), zero candidates is refused, exactly one candidate is used automatically,
+and several candidates with none pinned is refused with all candidates named so
+the caller can pin one. This mirrors the account/funding-instrument validation's
+"never silently pick" posture elsewhere in this client.
+
+`composeTweetText` builds the actual text sent to X: it appends the destination
+URL (the real, non-display counterpart of the manual workflow's
+`displayTwitterUtmURL`, built by `buildTwitterUTMURL`) if the caller's text
+doesn't already embed it, then validates the composed text against X's
+280-character cap via `weightedTweetLen`. That helper counts embedded URLs at
+X's fixed t.co weight (23 characters) rather than their raw length — X always
+wraps posted URLs to a t.co link, so a raw-rune count would wrongly reject
+perfectly valid copy carrying a 120+ character UTM'd registration URL. This
+validation runs in the up-front pre-create block, before any mutating call, like
+every other CreateCampaign input check.
+
+Authoring happens at **Step 4**, immediately before the `promoted_tweets` POST —
+deliberately NOT alongside the campaign/line-item creation earlier in the flow,
+unlike the reddit client's equivalent (which authors its post *before* the paid
+campaign, at "Step 1.5", to avoid orphaning a paid resource on an authoring
+failure). That trade-off inverts here: X's campaign and line item are created
+`PAUSED` and cost nothing, so there is no paid resource to orphan, while a
+published tweet under the LF handle *is* the expensive artifact — authoring
+right before promoting minimizes the window a stray tweet could sit unattached.
+
+Authoring's outcome is classified with the SAME house rule the `promoted_tweets`
+POST already follows (`createOutcomeAmbiguous` checked BEFORE any status-code
+branch — see commit `88224984`, which fixed a real bug from getting this order
+backwards): an ambiguous failure (mutating 3xx/5xx, or a transport error) means
+the tweet MAY have been published, so the warning says to verify in X Ads
+Manager and delete any stray tweet before retrying, never "safe to retry"; a
+definite 4xx or pre-send failure means nothing was published, so it IS safe to
+compose manually or retry; and a 2xx with no `data.id` (a malformed success) is
+treated the same as the ambiguous case, not as a clean win, for the same reason
+the `promoted_tweets` 2xx-no-id case is: a response X returned successfully but
+whose id this client couldn't read is not proof nothing happened. All of this
+stays non-fatal exactly like the rest of Step 4 — only a `pace(ctx)` cancellation
+returns an error, and cancellation during authoring is itself split on
+`createOutcomeAmbiguous` first, so an ambiguous cancellation still retains the
+orchestrator's claim via a non-nil partial result.
+
+A successfully authored tweet's id flows into the exact same `tweetID` variable
+an explicit `TweetID` would have populated, so it falls through into the
+pre-existing `promoted_tweets` POST and its four-way classification unchanged —
+there is exactly one promote path, regardless of whether the tweet came from the
+caller or was just authored. `CampaignResult.AuthoredTweetID` records the newly
+authored tweet's id distinctly from `PromotedTweetID` (the promoted-tweet
+association's own id), so a caller can tell "we made a new tweet" from "we
+attached tweet X to a line item" even when both succeeded.
+
+Scope is deliberately **text-only**: `media_keys` (images/video) requires a prior
+chunked-upload call to a different host this client does not implement, so image
+tweets are out of scope for this path — the manual workflow remains the only way
+to attach a tweet with media, for now.
+
 ## Status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, lineItemID, status)` toggles an existing
@@ -294,6 +377,13 @@ comes from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in th
 ACCOUNT's currency (no FX). It surfaces a `Reused` reuse/config-drift flag and classifies
 an exhausted mutating 429 as UNCONFIRMED; it validates the destination URL (https/http,
 no embedded userinfo) up front. `validateTwitterConnection` holds the credential rules
+It maps `tweetText`/`asUserId` straight into `CampaignInput` alongside `tweetId` —
+see "Authoring a promoted tweet" above for the client-side precedence and
+classification rules. A fully authored + promoted tweet degrades exactly the
+same way an explicit-`tweetId` run does: the adapter's degrade check is keyed on
+`PromotedTweetID` being empty (regardless of whether the tweet was supplied or
+just authored), so authoring success collapses cleanly into the existing
+`created` vs `created_degraded` decision without a separate trigger. `validateTwitterConnection` holds the credential rules
 shared by `Dispatch` and `ToggleStatus`, with ONE intentional asymmetry:
 `funding_instrument_id` is required only by `Dispatch`. It is a create-time field that
 `UpdateCampaignAndChildrenStatus` never puts on the wire, so requiring it in the shared

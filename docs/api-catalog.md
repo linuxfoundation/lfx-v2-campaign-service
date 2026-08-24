@@ -795,12 +795,33 @@ startDate: string               — YYYY-MM-DD. Must be in the future by at leas
 endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate. (Both date rules
                                   are enforced by the client during dispatch — a violation fails the
                                   platform job pre-create, not a synchronous 4xx.)
-tweetId?: string                — An existing promotable tweet id to promote. Omitted → the
-                                  manual-tweet workflow: the campaign + line item are created and
-                                  the operator attaches the promoted tweet manually (the result
-                                  carries a warning + the sanitized destination URL). A create that
-                                  can't confirm the promoted-tweet association is reported as an
-                                  UNCONFIRMED degraded outcome, not a clean success.
+tweetId?: string                — An existing promotable tweet id to promote. Takes precedence
+                                  over tweetText — if both are set, tweetId is promoted as-is and
+                                  tweetText is ignored (recorded as a step). Omitted (and tweetText
+                                  also omitted) → the manual-tweet workflow: the campaign + line
+                                  item are created and the operator attaches the promoted tweet
+                                  manually (the result carries a warning + the sanitized destination
+                                  URL). A create that can't confirm the promoted-tweet association
+                                  is reported as an UNCONFIRMED degraded outcome, not a clean
+                                  success.
+tweetText?: string               — Used ONLY when tweetId is empty: authors a NEW tweet carrying
+                                  this text (the brief's UTM'd registration URL is appended if not
+                                  already embedded), then promotes it. The authored tweet is ALWAYS
+                                  promoted-only (`nullcast=true`, sent explicitly, never relied on
+                                  as X's default) — it never appears on the public timeline or to
+                                  followers. Rejected pre-create if the composed text (counting any
+                                  embedded URL at X's fixed t.co weight of 23 characters, not its
+                                  raw length) exceeds the 280-character cap. An authoring failure is
+                                  non-fatal — the campaign + line item still return, degraded — with
+                                  three distinct outcomes: a definite rejection (safe to retry/author
+                                  manually), an UNCONFIRMED outcome (may have published — verify in
+                                  X Ads Manager and delete any stray tweet before retrying), or a
+                                  clean id that is then promoted like an explicit tweetId.
+asUserId?: string                — Pins which of the ad account's promotable users authors the
+                                  tweet (only meaningful with tweetText). Omitted → auto-resolved
+                                  via the account's promotable-users list: exactly one candidate is
+                                  used, zero or several are refused (never guessed) — the error
+                                  names the candidates found.
 ```
 
 Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer
