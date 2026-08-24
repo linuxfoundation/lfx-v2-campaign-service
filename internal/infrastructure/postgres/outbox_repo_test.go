@@ -352,18 +352,17 @@ var allowedVersionGaps = map[int]string{
 	// tolerating it — an entry that outlives its gap re-permits, at that exact version, the
 	// silent-skip hazard TestMigrations_NoVersionGaps exists to catch.
 	//
+	// 27 — REMOVED (LFXV2-3295). 000027_campaigns_ran_on_system_account was claimed by PR #164
+	// (LFXV2-3050) while it was unmerged, and this entry excused the gap so this branch could
+	// stay green ahead of it. The obligation it recorded was a merge-ORDER one, and it has been
+	// discharged in the order it demanded: #164 merged to main first, and this base-sync merge
+	// brings 000027 into the tree BELOW this branch's 000028_create_creative_assets. golang-migrate
+	// therefore applies both in order, and the silent-skip hazard is closed.
+	//
 	// The comments above are the record of what has been retired; empty is the map's resting
-	// state, and it should return to empty as the entry below is discharged. A gap is a
-	// legitimate transitional state, so the next sibling PR to need one should add an entry here
-	// rather than re-deriving why the mechanism exists.
-	27: "000027_campaigns_ran_on_system_account is claimed by open PR #164 (LFXV2-3050, " +
-		"feat/LFXV2-3050-system-account-provenance). This branch's 000028_create_creative_assets " +
-		"is numbered above it rather than taking 000027, because two branches holding the same " +
-		"version are green on both PRs and red only on whichever merges second. The obligation " +
-		"this entry records is a MERGE ORDER one: #164 must merge before this branch, or " +
-		"golang-migrate — which records only the highest applied version — will skip 000027 " +
-		"silently and permanently. Delete this entry when #164 lands; " +
-		"TestMigrations_AllowedVersionGapsAreStillOpen fails while it outlives its gap.",
+	// state, and it has now returned to empty. A gap is a legitimate transitional state, so the
+	// next sibling PR to need one should add an entry here rather than re-deriving why the
+	// mechanism exists.
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not

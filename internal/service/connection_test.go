@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -30,6 +31,16 @@ type fakeRepo struct {
 	// (as the real repository's RETURNING does), so a retained pointer would report the
 	// post-call state and the assertion would be about the fake, not the handler.
 	gotUpdateCreds []byte
+	// createCalls and setCredentialCalls count writes that REACHED the repository.
+	//
+	// A rejected payload must not persist, and the error alone cannot show that: every
+	// write method here also fails on its own for an unrelated reason (Create returns
+	// ErrConflict on a duplicate, SetCredential returns ErrNotFound when the row is
+	// absent), so a test that only asserted a 400 would pass identically against a
+	// handler that validated nothing and merely tripped over the fixture. Counting the
+	// call separates "refused before the write" from "attempted the write and lost".
+	createCalls        int
+	setCredentialCalls int
 	// gets counts Get calls. updateConn's current-row read is CONDITIONAL on the
 	// force-system guard applying, and that conditionality is a real behaviour (an extra
 	// database round-trip on every paid-ads update, in every deployment, when the flag is
@@ -62,6 +73,7 @@ func (r *fakeRepo) Get(_ context.Context, projectID string, p model.Provider) (*
 }
 
 func (r *fakeRepo) Create(_ context.Context, c *model.Connection) (*model.Connection, error) {
+	r.createCalls++
 	if r.createErr != nil {
 		return nil, r.createErr
 	}
@@ -96,6 +108,7 @@ func (r *fakeRepo) Update(_ context.Context, c *model.Connection, expectedVersio
 }
 
 func (r *fakeRepo) SetCredential(_ context.Context, projectID string, p model.Provider, ct []byte, _ *model.Actor) (*model.Connection, error) {
+	r.setCredentialCalls++
 	c, ok := r.store[repoKey(projectID, p)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -742,5 +755,368 @@ func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 	}
 	if updated.ConversionPixelID != nil && *updated.ConversionPixelID != "" {
 		t.Errorf("an update omitting conversion_pixel_id must CLEAR it (PUT is a full replace), got %v", *updated.ConversionPixelID)
+	}
+}
+
+// TestLinkedInRefreshCredentialsAreAllOrNone pins the all-or-none rule on the optional
+// refresh trio. LinkedIn's exchange needs refresh_token, client_id AND client_secret
+// together, and CanRefresh() gates on all three — so storing a partial set would
+// SILENTLY degrade the connection to bearer-only while the operator believes renewal is
+// configured, recreating the very 60-day expiry this feature prevents.
+func TestLinkedInRefreshCredentialsAreAllOrNone(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	cases := []struct {
+		name    string
+		creds   *conn.LinkedinAdsCredentials
+		wantErr bool
+	}{
+		{"bearer-only (the common non-MDP case)", &conn.LinkedinAdsCredentials{AccessToken: "at"}, false},
+		{"all three present", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs")}, false},
+		{"refresh token alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt")}, true},
+		{"refresh token without secret", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci")}, true},
+		{"client credentials without refresh token", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientID: s("ci"), ClientSecret: s("cs")}, true},
+		// Whitespace is not presence: a blank field cannot participate in an exchange.
+		{"whitespace-only companions", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("  "), ClientSecret: s("\t")}, true},
+		{"nil payload", nil, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateLinkedInRefreshCredentials(tc.creds)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected a 400 for a partial refresh credential set")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantErr {
+				var bad *conn.BadRequestError
+				if !errors.As(err, &bad) {
+					t.Errorf("err = %T, want *conn.BadRequestError so the caller gets a 400", err)
+				}
+			}
+		})
+	}
+}
+
+// TestLinkedInRefreshCredentialsRejectSuppliedButEmpty pins the state the all-or-none rule
+// silently swallowed: a field SUPPLIED holding no credential.
+//
+// `present` counted only non-blank values, so `{"refresh_token": ""}` scored 0 and matched
+// the `present == 0` arm — the arm that means "all three omitted, a supported bearer-only
+// connection". It was accepted and stored. CanRefresh() then read the blank as absent, so
+// the connection was bearer-only, while the operator had watched the field be accepted and
+// reasonably believed renewal was configured. They meet the same 60-day expiry this feature
+// exists to prevent, with nothing anywhere reporting a fault. That is verbatim the failure
+// validateLinkedInRefreshCredentials's own docstring claims to prevent.
+//
+// `present == 0` was carrying two incompatible meanings — "three nil pointers" (legitimate)
+// and "supplied but empty" (a defect) — so nil and non-nil-but-blank are now distinguished
+// rather than collapsed. The sibling boundary already refused this shape:
+// internal/bootstrap/sysacct.go calls a supplied-but-blank string "a supplied key holding no
+// credential" and faults on it. Two boundaries write the same trio; agreeing is the point.
+func TestLinkedInRefreshCredentialsRejectSuppliedButEmpty(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	cases := []struct {
+		name  string
+		creds *conn.LinkedinAdsCredentials
+	}{
+		// The reported shape: ONE field supplied empty, the other two genuinely absent. It
+		// scored present == 0 and took the bearer-only arm.
+		{"empty refresh token alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("")}},
+		{"whitespace-only refresh token alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("   ")}},
+		{"empty client id alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientID: s("")}},
+		{"empty client secret alone", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientSecret: s("")}},
+		// All three supplied empty also scored 0. It reads as "the operator configured
+		// refresh" far more strongly than one blank field does, and passed just as quietly.
+		{"all three supplied empty", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s(""), ClientID: s(""), ClientSecret: s("")}},
+		{"all three whitespace-only", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s(" "), ClientID: s("\t"), ClientSecret: s("\n")}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateLinkedInRefreshCredentials(tc.creds)
+			if err == nil {
+				t.Fatal("a supplied-but-empty refresh credential was accepted; it stores, reads " +
+					"back as absent through CanRefresh(), and leaves the connection bearer-only " +
+					"while the operator believes renewal is configured")
+			}
+			var bad *conn.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("err = %T, want *conn.BadRequestError so the caller gets a 400", err)
+			}
+			// The message must name the shape, or the operator re-sends the same payload: the
+			// all-or-none text ("supplied together, or all omitted") reads as satisfied to
+			// someone who supplied all three, just emptily.
+			if !strings.Contains(bad.Message, "empty") {
+				t.Errorf("message = %q, want it to name the supplied-but-empty shape", bad.Message)
+			}
+		})
+	}
+
+	// The narrowing half. Absence must stay legitimate — all three nil is the supported
+	// bearer-only case, and a rule that refused it would break every non-MDP connection.
+	for _, ok := range []*conn.LinkedinAdsCredentials{
+		{AccessToken: "at"},
+		{AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs")},
+	} {
+		if err := validateLinkedInRefreshCredentials(ok); err != nil {
+			t.Errorf("a legitimate payload was refused: %v", err)
+		}
+	}
+}
+
+// TestLinkedInRefreshCredentialsRejectPadding pins the API half of the whitespace class.
+// Every validator in the system gates on the TRIMMED value — this one, and
+// Credentials.CanRefresh() in the platform client — while the store keeps the value
+// VERBATIM. So " ci " passed validation, encrypted cleanly, and was later sent raw to
+// LinkedIn's token endpoint, which rejects it as invalid_client on every refresh. No
+// reconnect repairs that, because the row looks correctly configured.
+//
+// Padding is REFUSED rather than trimmed: a credential is opaque to this service, so
+// silently rewriting one would hide a truncated paste, and no provider issues a secret
+// whose surrounding whitespace is significant. This mirrors the bootstrap installer's
+// rule (canonicalCredentials, internal/bootstrap/sysacct.go).
+func TestLinkedInRefreshCredentialsRejectPadding(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	cases := []struct {
+		name  string
+		creds *conn.LinkedinAdsCredentials
+	}{
+		{"padded client id", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s(" ci"), ClientSecret: s("cs")}},
+		{"padded client secret", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs\n")}},
+		{"padded refresh token", &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: s("\trt"), ClientID: s("ci"), ClientSecret: s("cs")}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The padded trio is COMPLETE, so the all-or-none rule is satisfied and cannot
+			// be what rejects it — only the padding check can.
+			err := validateLinkedInRefreshCredentials(tc.creds)
+			if err == nil {
+				t.Fatal("a padded refresh credential was accepted; it stores verbatim, satisfies " +
+					"CanRefresh() because that trims, and then fails at LinkedIn as invalid_client forever")
+			}
+			var bad *conn.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Errorf("err = %T, want *conn.BadRequestError so the caller gets a 400", err)
+			}
+		})
+	}
+
+	// The narrowing half: an unpadded complete trio is still accepted.
+	if err := validateLinkedInRefreshCredentials(&conn.LinkedinAdsCredentials{
+		AccessToken: "at", RefreshToken: s("rt"), ClientID: s("ci"), ClientSecret: s("cs"),
+	}); err != nil {
+		t.Errorf("an unpadded trio must be accepted, got %v", err)
+	}
+}
+
+// ─── The validator is tested; the CALL SITE is not ───
+//
+// The tests above call validateLinkedInRefreshCredentials and validateConnectionProjectSlug
+// directly, so they pin what the rules DECIDE. Nothing pinned that a handler ASKS. Deleting
+// either call from CreateLinkedinAds or SetCredentialLinkedinAds compiled and left this whole
+// package green, while the endpoint went back to persisting a partial refresh trio and
+// silently degrading it to bearer-only — the exact defect the validator exists to prevent.
+//
+// A rule reachable only from a test is not enforced. The tests below drive the real handler
+// and assert BOTH halves: the caller gets a 400, AND nothing reached the repository. The
+// second half is the load-bearing one — a 400 accompanied by a silent partial write is worse
+// than no validation at all, because the operator sees a rejection and the row exists anyway.
+
+// TestCreateLinkedinAds_PartialRefreshTrioIsRejectedBeforeAnyWrite binds the handler call at
+// CreateLinkedinAds. The payload carries a refresh token with no client_id/client_secret: the
+// all-or-none rule refuses it, and no connection row may be created.
+func TestCreateLinkedinAds_PartialRefreshTrioIsRejectedBeforeAnyWrite(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(t, repo)
+
+	_, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+		ProjectID: "tlf",
+		Config:    &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+		Credentials: &conn.LinkedinAdsCredentials{
+			AccessToken: "at", RefreshToken: strPtr("rt"), // client_id and client_secret absent
+		},
+	})
+
+	var bad *conn.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("a partial refresh trio must reach the caller as *conn.BadRequestError (400), got %T (%v)", err, err)
+	}
+	// The half that matters: refused BEFORE persisting. The fake would have accepted this
+	// create (no existing row, so no ErrConflict), so a non-zero count here means the
+	// handler validated nothing and the partial trio was stored and degraded to bearer-only.
+	if repo.createCalls != 0 {
+		t.Errorf("repo.Create was called %d times; a rejected payload must never be persisted — "+
+			"a stored partial trio reads back as bearer-only through CanRefresh() while the "+
+			"operator believes renewal is configured", repo.createCalls)
+	}
+	if len(repo.store) != 0 {
+		t.Errorf("store holds %d connection(s) after a rejected create, want 0", len(repo.store))
+	}
+}
+
+// TestSetCredentialLinkedinAds_PartialRefreshTrioIsRejectedBeforeAnyWrite binds the second
+// call site. The row is seeded first ON PURPOSE: fakeRepo.SetCredential returns ErrNotFound
+// for a missing row, so against an empty store an unvalidated handler would still return an
+// error and a 400-only assertion would pass with the guard deleted. Seeding removes that
+// alternative explanation — with the row present the write would SUCCEED, so the only thing
+// that can produce a 400 and a zero call count is the validator running first.
+func TestSetCredentialLinkedinAds_PartialRefreshTrioIsRejectedBeforeAnyWrite(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("tlf", model.ProviderLinkedInAds)] = &model.Connection{
+		ID: "c1", ProjectID: "tlf", Provider: model.ProviderLinkedInAds, Version: 1,
+	}
+	s := newTestService(t, repo)
+
+	err := s.SetCredentialLinkedinAds(context.Background(), &conn.SetCredentialLinkedinAdsPayload{
+		ProjectID: "tlf",
+		Credentials: &conn.LinkedinAdsCredentials{
+			AccessToken: "at", ClientID: strPtr("ci"), ClientSecret: strPtr("cs"), // refresh_token absent
+		},
+	})
+
+	var bad *conn.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("a partial refresh trio must reach the caller as *conn.BadRequestError (400), got %T (%v)", err, err)
+	}
+	if repo.setCredentialCalls != 0 {
+		t.Errorf("repo.SetCredential was called %d times; a rejected credential set must never "+
+			"be persisted — it would overwrite a working credential with an unusable partial trio",
+			repo.setCredentialCalls)
+	}
+	// The seeded row must be untouched: version unchanged and no ciphertext written.
+	got := repo.store[repoKey("tlf", model.ProviderLinkedInAds)]
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1 — the rejected call must not bump the row", got.Version)
+	}
+	if got.EncryptedCredentials != nil {
+		t.Error("the rejected call wrote ciphertext onto the existing row")
+	}
+}
+
+// TestCreateConnection_UUIDProjectIDRejectedBeforeAnyWrite_AllProviders sweeps the OTHER half
+// of the same class. validateConnectionProjectSlug is called from all seven create handlers,
+// and deleting the call was survivable in five of them (linkedin, meta, twitter, microsoft,
+// hubspot) — only the google and reddit sites were pinned, by the two named tests above.
+//
+// Every provider gets a case, so adding a provider and forgetting the guard fails here rather
+// than shipping an undispatchable UUID-scoped row. Table-driven over the handlers because the
+// payload types differ; each closure adapts one signature to a common shape.
+func TestCreateConnection_UUIDProjectIDRejectedBeforeAnyWrite_AllProviders(t *testing.T) {
+	const uuid = "a09410d0-0ec0-11ea-8e8f-416e2d8da950" // a UUID, not a dispatchable slug
+
+	cases := []struct {
+		provider string
+		create   func(*ConnectionService, string) error
+	}{
+		{"google", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+				ProjectID: pid,
+				Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+				Credentials: &conn.GoogleAdsCredentials{
+					RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt"},
+			})
+			return err
+		}},
+		{"linkedin", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+				ProjectID:   pid,
+				Config:      &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+				Credentials: &conn.LinkedinAdsCredentials{AccessToken: "at"},
+			})
+			return err
+		}},
+		{"meta", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateMetaAds(context.Background(), &conn.CreateMetaAdsPayload{
+				ProjectID:   pid,
+				Config:      &conn.MetaAdsConnectionConfig{AccountID: strPtr("act_123")},
+				Credentials: &conn.MetaAdsCredentials{AccessToken: "at"},
+			})
+			return err
+		}},
+		{"reddit", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateRedditAds(context.Background(), &conn.CreateRedditAdsPayload{
+				ProjectID:   pid,
+				Config:      &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa"},
+				Credentials: &conn.RedditAdsCredentials{ClientID: "c", ClientSecret: "s", RefreshToken: "r"},
+			})
+			return err
+		}},
+		{"twitter", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateTwitterAds(context.Background(), &conn.CreateTwitterAdsPayload{
+				ProjectID:   pid,
+				Config:      &conn.TwitterAdsConnectionConfig{AccountID: "18ce54d4x5t"},
+				Credentials: &conn.TwitterAdsCredentials{AccessToken: "at", AccessTokenSecret: "ats", ConsumerKey: "ck", ConsumerSecret: "cse"},
+			})
+			return err
+		}},
+		{"microsoft", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateMicrosoftAds(context.Background(), &conn.CreateMicrosoftAdsPayload{
+				ProjectID:   pid,
+				Config:      &conn.MicrosoftAdsConnectionConfig{AccountID: "123456789"},
+				Credentials: &conn.MicrosoftAdsCredentials{RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt"},
+			})
+			return err
+		}},
+		{"hubspot", func(s *ConnectionService, pid string) error {
+			_, err := s.CreateHubspot(context.Background(), &conn.CreateHubspotPayload{
+				ProjectID:   pid,
+				Config:      &conn.HubspotConnectionConfig{AccountID: "9876543", PortalID: strPtr("12345")},
+				Credentials: &conn.HubspotCredentials{PrivateAppToken: "pat"},
+			})
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			repo := newFakeRepo()
+			s := newTestService(t, repo)
+
+			err := tc.create(s, uuid)
+
+			var bad *conn.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("a UUID project_id must be refused with *conn.BadRequestError (400), got %T (%v)", err, err)
+			}
+			if repo.createCalls != 0 {
+				t.Errorf("repo.Create was called %d times; a UUID-scoped row must never be "+
+					"persisted — dispatch looks connections up by exact slug, so the row would "+
+					"be invisible to it while appearing configured to the operator", repo.createCalls)
+			}
+			if len(repo.store) != 0 {
+				t.Errorf("store holds %d connection(s) after a rejected create, want 0", len(repo.store))
+			}
+
+			// The narrowing half: the same handler must ACCEPT a canonical slug. Without this
+			// a guard that refused every project_id would satisfy the assertions above.
+			repo2 := newFakeRepo()
+			s2 := newTestService(t, repo2)
+			if err := tc.create(s2, "cncf"); err != nil {
+				t.Fatalf("a canonical slug must be accepted, got %T (%v)", err, err)
+			}
+			if repo2.createCalls != 1 {
+				t.Errorf("repo.Create called %d times for a valid slug, want 1", repo2.createCalls)
+			}
+		})
 	}
 }
