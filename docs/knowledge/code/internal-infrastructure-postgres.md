@@ -1264,8 +1264,11 @@ built around the parent-brief gate and the content-addressed dedupe key.
 `POST .../briefs/{brief_id}/creative-assets` (see [internal/service](internal-service.md)),
 which validates the bytes and derives the checksum before this layer sees them. Both startup
 paths bind the repo through `bindBriefLiveBackends` (see
-[internal/container](internal-container.md)). `GetAsset` still has no caller: the dispatch-time
-asset resolution that reads the stored bytes lands in the follow-on PR.
+[internal/container](internal-container.md)). `GetAsset`'s caller is
+`MetaDispatcher.resolveVariantAssets` (`internal/dispatch/meta.go`), which reads the stored bytes
+at dispatch time to attach a creative by `image_hash`; `registerDispatchers` binds the repo into
+that dispatcher, guarding on the CONCRETE pointer so a nil `*CreativeAssetRepo` cannot become a
+non-nil interface.
 
 `CreateAsset` runs a TRANSACTION: it locks the parent brief with `SELECT status FROM
 campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`, checks the status, then runs
