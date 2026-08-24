@@ -1112,6 +1112,27 @@ projects failing over ONE corrupt system row read as N failing rows, which is th
 conclusion the arm is written not to assert. `ErrSystemConnectionOrigin` is wrapped onto every
 error the fallback produces, at the single site that knows the fallback was taken.
 
+**The fallback is also RECORDED, not only classified** (LFXV2-3050). `fromSystem` used to feed
+error attribution and then be discarded, so once a campaign was created the row said which
+PROJECT it belonged to and never which CREDENTIAL served it — leaving system-account spend
+unattributable and the blast radius of an LF credential revocation uncomputable. Each
+`Dispatch` now applies `resolved.stampProvenance` to the campaign it returns, writing
+`campaigns.ran_on_system_account` (migration `000027`).
+
+It is applied by a `defer` on a NAMED RETURN, not at each `return campaignFromX(...)` site.
+The seven dispatchers have two or three campaign-returning exits each, several of which
+return a campaign ALONGSIDE an error (the UNCONFIRMED and degraded paths) — precisely the
+rows an operator reconciling spend cannot afford to have unstamped. Per-site stamping would
+be seventeen edits that an eighth path silently omits. An unstamped row is not mistakable for
+a project-owned one — that is an explicit `false`, while unstamped is `NULL` — but the
+consequence is quieter and worse: `NULL` means provenance was never recorded, so those
+campaigns fall OUT of system-account attribution and credential blast-radius reporting
+altogether, uncounted rather than miscounted. The helper is nil-safe on both sides, so a
+dispatcher that fails before resolving records "not recorded" rather than a fabricated
+`false`. `resolveRedditClientWithCreds` /
+`resolveHubSpotClientWithCreds` exist only because those two adapters resolve behind a helper
+that returned the client alone; the read-only callers keep the narrower signature.
+
 No create endpoint can plant a row at the reserved scope (`projectSlugProblem` rejects it), and
 `rejectSystemScope` closes get/update/delete/test/set-credential — which stay permissive on
 `project_id` for historical UUID rows — at the shared helpers in `connection_handler.go`,
