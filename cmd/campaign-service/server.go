@@ -219,7 +219,7 @@ func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.Inf
 	handler = middleware.MaxBodyBytes(constants.MaxRequestBodyBytes)(handler)
 	handler = middleware.UploadAdmission(
 		constants.UploadAdmissionBudgetBytes,
-		constants.UploadAdmissionWeightBytes,
+		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
 	)(handler)
 	handler = middleware.RequestIDMiddleware()(handler)

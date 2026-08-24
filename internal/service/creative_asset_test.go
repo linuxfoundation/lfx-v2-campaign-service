@@ -205,6 +205,33 @@ func TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum(t *testin
 			if out == nil || out.ID == "" {
 				t.Fatalf("result = %+v, want a stored asset id", out)
 			}
+			sum2 := sha256.Sum256(tc.bytes)
+			// Assert the RESULT PROJECTION, not just that an id came back. Everything above
+			// this point reads repo.stored — the value handed INTO CreateAsset — so it binds
+			// the handler's mapping of payload to model and says nothing about
+			// creativeAssetResult, which maps the model back to the wire type. Until this
+			// block existed, swapping any pair of those fields changed no test result:
+			// verified by mutating creativeAssetResult to read ProjectID from BriefID,
+			// MimeType from Checksum and back again, which the whole suite passed green.
+			//
+			// Each field is checked against what it INDEPENDENTLY must be — the payload value,
+			// or the server-derived value computed here — rather than against repo.stored,
+			// which would let one wrong mapping agree with another.
+			if out.ProjectID != "cncf" {
+				t.Errorf("result ProjectID = %q, want the payload's %q", out.ProjectID, "cncf")
+			}
+			if out.BriefID != "b1" {
+				t.Errorf("result BriefID = %q, want the payload's %q", out.BriefID, "b1")
+			}
+			if out.MimeType != tc.wantMIME {
+				t.Errorf("result MimeType = %q, want the sniffed %q", out.MimeType, tc.wantMIME)
+			}
+			if want := int64(len(tc.bytes)); out.ByteSize != want {
+				t.Errorf("result ByteSize = %d, want len(bytes) = %d", out.ByteSize, want)
+			}
+			if want := hex.EncodeToString(sum2[:]); out.Checksum != want {
+				t.Errorf("result Checksum = %q, want sha256 of the bytes %q", out.Checksum, want)
+			}
 			if repo.stored.MimeType != tc.wantMIME {
 				t.Errorf("stored MimeType = %q, want the SNIFFED %q", repo.stored.MimeType, tc.wantMIME)
 			}
@@ -604,4 +631,77 @@ func png16HeaderWithDimensions(t *testing.T, width, height uint32) []byte {
 	buf.Write(chunk)
 	_ = binary.Write(&buf, binary.BigEndian, crc32.ChecksumIEEE(chunk))
 	return buf.Bytes()
+}
+
+// TestBriefService_UploadCreativeAsset_MapsRepoError exercises the storage-failure arm.
+//
+// fakeCreativeAssetRepo has always carried an `err` field, but no test set it, so
+// `if err != nil { return nil, mapBriefErr(err) }` was never taken at this layer and a mutation
+// dropping the check survived — verified by replacing it with `stored, _ := repo.CreateAsset(...)`,
+// which the whole suite passed green. That mutation is worse than a lost error: with the check
+// gone, a failed insert returns a nil model to creativeAssetResult and the handler answers with
+// a zero-valued asset, telling the caller their upload was stored when nothing was written.
+//
+// The assertion is on the MAPPED result — the domain error must reach the client as the
+// corresponding Goa error, not as a generic failure — because that mapping is the thing
+// mapBriefErr is called to do.
+func TestBriefService_UploadCreativeAsset_MapsRepoError(t *testing.T) {
+	cases := []struct {
+		name    string
+		repoErr error
+		assert  func(t *testing.T, err error)
+	}{
+		{
+			// The dedupe key (brief_id, checksum) collided: a re-upload of the same image.
+			"a conflict is mapped to 409",
+			domain.ErrConflict,
+			func(t *testing.T, err error) {
+				var want *briefs.ConflictError
+				if !errors.As(err, &want) {
+					t.Fatalf("error = %T (%v), want *briefs.ConflictError", err, err)
+				}
+				if want.Code != "409" {
+					t.Errorf("code = %q, want %q", want.Code, "409")
+				}
+			},
+		},
+		{
+			"a missing parent is mapped to 404",
+			domain.ErrNotFound,
+			func(t *testing.T, err error) {
+				var want *briefs.NotFoundError
+				if !errors.As(err, &want) {
+					t.Fatalf("error = %T (%v), want *briefs.NotFoundError", err, err)
+				}
+				if want.Code != "404" {
+					t.Errorf("code = %q, want %q", want.Code, "404")
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeCreativeAssetRepo{err: tc.repoErr}
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetCreativeAssetRepo(repo)
+
+			out, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+				ProjectID:   "cncf",
+				BriefID:     "b1",
+				ContentType: "image/png",
+				Bytes:       pngBytes(t),
+			})
+			if err == nil {
+				t.Fatalf("UploadCreativeAsset returned no error for a failed insert; "+
+					"result = %+v, so a caller would believe the asset was stored", out)
+			}
+			// A failed store must yield NO result. Returning both would let a caller that
+			// checks the result before the error read a zero-valued asset as a real one.
+			if out != nil {
+				t.Errorf("result = %+v, want nil alongside the error", out)
+			}
+			tc.assert(t, err)
+		})
+	}
 }
