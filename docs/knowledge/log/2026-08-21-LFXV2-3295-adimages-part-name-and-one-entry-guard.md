@@ -1,6 +1,6 @@
 # 2026-08-21 — LFXV2-3295 the /adimages part name is undocumented; the one-entry guard is the real fix
 
-Review of PR #172 raised six findings against the by-stored-bytes creative path.
+**Fix** — review of PR #172 raised six findings against the by-stored-bytes creative path.
 Two concerned the `/adimages` upload, and checking them against Meta's actual
 published surface INVERTED which one was the bug.
 

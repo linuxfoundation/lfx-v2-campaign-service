@@ -1,12 +1,12 @@
 # 2026-08-20 — LFXV2-3295 attach creatives by stored bytes OR by url
 
-**Change** — the Meta client can now attach a variant's image by EITHER route, and
+**Update** — the Meta client can now attach a variant's image by EITHER route, and
 both survive:
 
 - `AdVariant.ImageURL` → `link_data.picture` (main's shipped path, byte-for-byte
   unchanged: no upload, Meta fetches server-side);
 - `AdVariant.ImageAssetID` → resolved to bytes at dispatch, POSTed to
-  `/act_<id>/adimages` as a multipart `bytes` part, and the returned account-scoped
+  `/act_<id>/adimages` as a multipart file part named `source`, and the returned account-scoped
   hash attached as `link_data.image_hash`.
 
 **Meta forbids both on ONE creative, not both in one codebase.** The

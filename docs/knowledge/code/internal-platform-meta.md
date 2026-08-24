@@ -115,9 +115,21 @@ RETURNED image object), so it would have been rejected against a live account
 after the campaign and ad set already existed. That verdict is about the `url`
 PARAMETER and was recorded as if it disqualified the ENDPOINT — the note read
 "nothing in the repo calls `/adimages` any more", which is no longer true and was
-never the necessary conclusion. Sending `bytes` is the only documented way to
-attach an image the service holds as stored bytes rather than as a URL, so
-`/adimages` is called again — with the correct parameter.
+never the necessary conclusion. `/adimages` is the only route that attaches an
+image the service holds as STORED BYTES rather than as a URL, so it is called
+again — this time on the multipart transport the official SDKs use.
+
+Be precise about which transport, because the reference and the code do not
+match and the mismatch reads as a bug: Meta's `/adimages` reference documents
+two create parameters, `bytes` (a Base64 UTF-8 SCALAR) and `copy_from`, and
+documents no multipart file field at all. `uploadImage` does not use the `bytes`
+parameter — it sends a raw multipart file part named `source`. That is not the
+documented parameter and is not claimed to be; the published docs are SILENT on
+the multipart mechanism, and the evidence for it is that Meta's own SDKs ship it
+(Python uploads under `source0`, PHP under a filename param). See
+`docs/knowledge/log/2026-08-21-LFXV2-3295-adimages-part-name-and-one-entry-guard.md`
+for the full derivation — including why "the parameter list says `bytes`, so the
+part must be named `bytes`" does not follow.
 
 The URL is validated up front alongside the copy-limit checks (absolute, https,
 no embedded userinfo) so a malformed URL is rejected BEFORE any paid resource

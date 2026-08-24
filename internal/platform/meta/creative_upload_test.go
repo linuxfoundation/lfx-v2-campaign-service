@@ -120,6 +120,26 @@ func TestUploadImageSendsOneNamedFilePart(t *testing.T) {
 	if strings.TrimSpace(got.fieldName) == "" {
 		t.Errorf("multipart part carries no field name")
 	}
+	// The part must NOT be named `bytes`, and that exclusion is the assertion worth
+	// making even though Meta documents no multipart field name at all.
+	//
+	// `bytes` is the documented SCALAR parameter, typed "Base64 UTF-8 string". Naming a
+	// raw multipart file part after it is the specific wrong move this endpoint invites,
+	// because the reference lists `bytes` and a reader reasonably concludes the part
+	// should carry that name — two reviewers on this PR concluded exactly that. Sending
+	// raw bytes under the base64 scalar's name is not the documented transport and not
+	// the SDK transport; it is neither.
+	//
+	// This deliberately does not assert `source` as the ONLY acceptable name: Meta's own
+	// SDKs disagree (Python uploads under `source0`, PHP under a filename param), so
+	// pinning one literal would encode a choice Meta has not published. Excluding the
+	// name that is known-wrong is the claim the evidence actually supports.
+	if got.fieldName == "bytes" {
+		t.Errorf("multipart file part is named %q — that is the DOCUMENTED SCALAR parameter "+
+			"(Base64 UTF-8 string), not a multipart file field. A raw file part under that "+
+			"name is neither the documented transport nor the one the official SDKs use",
+			got.fieldName)
+	}
 	// A filename must be present. NOTE ON THE EXTENSION: no Meta documentation states
 	// that the filename must carry a real extension, and no authoritative source was
 	// found either way — Meta sniffs image content for format and validation. This
