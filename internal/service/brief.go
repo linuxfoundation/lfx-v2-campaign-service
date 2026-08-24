@@ -1017,6 +1017,9 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		// The adapter's POINTER, passed through unchanged so an unmeasured conversion count
+		// is omitted from the response body rather than serialized as 0.
+		Conversions: m.Conversions,
 		Email:       emailMetricsResult(m.Email),
 	}, nil
 }
@@ -2204,6 +2207,7 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 				Clicks:             r.metrics.Clicks,
 				CostMicros:         r.metrics.CostMicros,
 				Ctr:                r.metrics.Ctr,
+				Conversions:        r.metrics.Conversions,
 				Email:              emailMetricsResult(r.metrics.Email),
 			}
 			out.OKCount++
@@ -2247,7 +2251,12 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			// Ctr is a RATIO on the domain model; the rules take a percentage, and passing the
 			// ratio would make the low-CTR threshold a hundred times too strict.
 			CTRPct: r.metrics.Ctr * 100,
-			Pacing: r.pacing,
+			// Passed through as the POINTER the adapter produced, never dereferenced to a
+			// value here. Flattening a nil to 0 at this boundary would erase the distinction
+			// the whole field exists for and make the no_conversions rule fire on every
+			// campaign running on a platform that cannot report conversions.
+			Conversions: r.metrics.Conversions,
+			Pacing:      r.pacing,
 			// Only a paid-ads channel bills per delivery. HubSpot charges nothing per send and
 			// its adapter always reports CostMicros=0, so "no spend" there is the normal state
 			// rather than a signal. Keyed on Kind() rather than on the provider so a second

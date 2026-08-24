@@ -356,6 +356,21 @@ type GetCampaignMetricsResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Conversions attributed to this campaign over the window. FRACTIONAL: Google
+	// Ads and Microsoft both type their conversion metric as a double and credit
+	// partial conversions under data-driven, position-based and offline
+	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
+	// round it to a whole number, and in particular do not treat a value below 1
+	// as zero. ABSENT when the channel does not report a campaign-level conversion
+	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
+	// Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank — that column is only populated
+	// for accounts wired for Universal Event Tracking, and a partial column summed
+	// as though it were complete would report a campaign's conversions as lower
+	// than they are. Absent means "not measured here", which is NOT the same as a
+	// measured 0, and a consumer must not render it as zero or fold it into a
+	// conversion total.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -1933,6 +1948,21 @@ type CampaignMetricsResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Conversions attributed to this campaign over the window. FRACTIONAL: Google
+	// Ads and Microsoft both type their conversion metric as a double and credit
+	// partial conversions under data-driven, position-based and offline
+	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
+	// round it to a whole number, and in particular do not treat a value below 1
+	// as zero. ABSENT when the channel does not report a campaign-level conversion
+	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
+	// Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank — that column is only populated
+	// for accounts wired for Universal Event Tracking, and a partial column summed
+	// as though it were complete would report a campaign's conversions as lower
+	// than they are. Absent means "not measured here", which is NOT the same as a
+	// measured 0, and a consumer must not render it as zero or fold it into a
+	// conversion total.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -2242,6 +2272,7 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 		Clicks:             res.Clicks,
 		CostMicros:         res.CostMicros,
 		Ctr:                res.Ctr,
+		Conversions:        res.Conversions,
 	}
 	if res.Email != nil {
 		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)
