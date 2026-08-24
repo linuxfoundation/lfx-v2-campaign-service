@@ -94,14 +94,25 @@ func NewHubSpotDispatcher(repo connReader, enc domain.Encryptor, audiences audie
 // forget to re-attribute the error to the LF system row when the credentials came from
 // there; it is a no-op for project-owned connections and idempotent.
 func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, err error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	client, _, err = d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
+	return client, err
+}
+
+// resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built
+// the client from. Dispatch needs it to record WHICH ACCOUNT served the campaign
+// (stampProvenance); the read-only callers (ReadMetrics, SearchEmails) do not and keep the
+// narrower signature. The resolved is returned even alongside an error, for the same reason
+// as the reddit adapter's variant: a defect found after the fallback was taken still came
+// from the system row.
+func (d *HubSpotDispatcher) resolveHubSpotClientWithCreds(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, res *resolved, err error) {
+	res, err = d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
-		return nil, err // already a preCreateError
+		return nil, nil, err // already a preCreateError
 	}
 	defer func() { err = res.systemScoped(err) }()
 
 	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("%w: %w: hubspot connection for project %s is %s, not active",
+		return nil, res, fmt.Errorf("%w: %w: hubspot connection for project %s is %s, not active",
 			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 
@@ -115,7 +126,7 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 		// line for exactly the connection whose credentials are malformed. Nothing
 		// actionable is lost — the remedy is "re-save the credential", not "fix byte 41" —
 		// and the sentinel keeps the condition greppable with no payload attached.
-		return nil, fmt.Errorf("%w: %w: hubspot credentials for project %s are not valid JSON",
+		return nil, res, fmt.Errorf("%w: %w: hubspot credentials for project %s are not valid JSON",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	// Trimmed ONCE, and the trimmed value is what reaches the client. hubspot.NewClient
@@ -126,7 +137,7 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 	// it surface later as a generic missing-token failure from inside the client.
 	token := strings.TrimSpace(creds.PrivateAppToken)
 	if token == "" {
-		return nil, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
+		return nil, res, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 
@@ -134,7 +145,7 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 		hubspot.Credentials{PrivateAppToken: token},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		d.opts...,
-	), nil
+	), res, nil
 }
 
 // ReadMetrics implements service.MetricsReader for the HubSpot email channel (LFXV2-3058):
@@ -258,12 +269,16 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 // Dispatch implements service.PlatformDispatcher for the HubSpot email channel. It clones the
 // caller's template email and sets its send list to the brief's built audience. The returned
 // campaign's PlatformCampaignID is the cloned email's HubSpot id.
-func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	// Resolve creds FIRST (pre-create): a missing/undecryptable connection is a not-created
 	// error → the orchestrator releases the claim. resolve() already returns a preCreateError,
 	// so that one is passed through unwrapped; everything resolveHubSpotClient adds on top is
 	// pre-create too and gets wrapped here.
-	client, err := d.resolveHubSpotClient(ctx, brief.ProjectID, platform)
+	client, res, err := d.resolveHubSpotClientWithCreds(ctx, brief.ProjectID, platform)
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	if err != nil {
 		// Same shape as the reddit adapter: an already-marked error passes through rather
 		// than being double-wrapped, and everything else is marked here.
@@ -350,7 +365,10 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// the clone id) so the orchestrator retains the claim and the email is reconcilable, and
 	// surface the error so the caller verifies rather than reporting a clean success.
 	if _, serr := client.SetSendList(ctx, email.ID, masterListID, suppressionIDs); serr != nil {
-		camp := campaignFromHubSpot(ctx, email, cfg, portalID)
+		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
+		// and a local here would leave the named return nil for any later edit that turns this
+		// into a bare `return` or inserts a statement before it.
+		camp = campaignFromHubSpot(ctx, email, cfg, portalID)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 

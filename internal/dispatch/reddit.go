@@ -106,14 +106,20 @@ func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.O
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
-func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	// Resolve creds + build the client FIRST (pre-create): a missing/undecryptable/
 	// inactive connection is a not-created error → the orchestrator releases the claim.
 	// resolveRedditClient is shared with ToggleStatus so both accept EXACTLY the same
 	// connections; here its (bare) error is wrapped as notCreated for the claim contract.
 	// The credsSource.resolve error is already a preCreateError, so it is passed through
 	// untouched; the post-resolve validation errors are wrapped.
-	client, err := d.resolveRedditClient(ctx, brief.ProjectID, platform, d.creds.resolve)
+	// d.creds.resolve, not an existingResolver: Dispatch CREATES, so it is governed by the
+	// forced-system flag rather than by an account a campaign was previously created under.
+	client, res, err := d.resolveRedditClientWithCreds(ctx, brief.ProjectID, platform, d.creds.resolve)
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	if err != nil {
 		// resolve() already returns a preCreateError (NoUpstreamCreate); the post-resolve
 		// validation errors are bare and must be wrapped so the orchestrator still releases
@@ -207,7 +213,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// `created_degraded` status (the warning text is already carried in Result). A
 	// human/monitor reconciles the ad; the campaign is not silently "succeeded".
 	// Mirrors the twitter adapter's PromotedTweetWarning handling.
-	camp := campaignFromReddit(ctx, result, cfg)
+	camp = campaignFromReddit(ctx, result, cfg)
 	if strings.TrimSpace(result.AdWarning) != "" {
 		camp.Status = campaignStatusCreatedDegraded
 	}
@@ -234,13 +240,30 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 // campaign and resolve the account it was CREATED under (redditCreationAccountID), which is
 // the LF system account for a campaign created while the flag was on.
 func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (c *reddit.Client, err error) {
-	res, err := resolveCreds(ctx, projectID, platform)
+	c, _, err = d.resolveRedditClientWithCreds(ctx, projectID, platform, resolveCreds)
+	return c, err
+}
+
+// resolveRedditClientWithCreds is resolveRedditClient plus the resolved credential it built
+// the client from. Dispatch needs it to record WHICH ACCOUNT served the campaign
+// (stampProvenance); the read-only callers (ToggleStatus, ReadMetrics) do not, and keep the
+// narrower signature so a caller cannot accidentally depend on credential internals it has
+// no use for. The resolved is returned even alongside an error: a defect found after the
+// fallback was taken still came from the system row, and a caller stamping provenance on a
+// partially-built campaign needs to know that.
+//
+// resolveCreds is threaded through unchanged rather than being pinned to d.creds.resolve: the
+// entry point is the CALLER's choice (see credsResolver), and collapsing it here would make
+// every reddit path — including the toggle and metrics paths that must follow the account the
+// campaign was CREATED under — silently authenticate as the creation resolver instead.
+func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (c *reddit.Client, res *resolved, err error) {
+	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("%w: %w: reddit connection for project %s is %s, not active",
+		return nil, res, fmt.Errorf("%w: %w: reddit connection for project %s is %s, not active",
 			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	var creds redditCreds
@@ -248,17 +271,17 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 		// The unmarshal error is DROPPED, not wrapped: it is derived from the DECRYPTED
 		// credential blob and encoding/json quotes its input. Full rationale on
 		// validateGoogleAdsCredentials, which this follows.
-		return nil, fmt.Errorf("%w: %w: reddit credentials for project %s are not valid JSON",
+		return nil, res, fmt.Errorf("%w: %w: reddit credentials for project %s are not valid JSON",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
-		return nil, fmt.Errorf("%w: %w: reddit credentials are incomplete (need clientId, clientSecret, refreshToken)",
+		return nil, res, fmt.Errorf("%w: %w: reddit credentials are incomplete (need clientId, clientSecret, refreshToken)",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	if strings.TrimSpace(res.accountID) == "" {
 		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
 		// names the reason for the log line's fixed vocabulary (unusableConnectionReason).
-		return nil, fmt.Errorf("%w: %w: reddit connection for project %s has no account id",
+		return nil, res, fmt.Errorf("%w: %w: reddit connection for project %s has no account id",
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	// Build through the client cache, so a dispatch burst or a polling dashboard reuses ONE
@@ -290,15 +313,15 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 		return build(), nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
 	client, isClient := built.(*reddit.Client)
 	if !isClient {
 		// Unreachable: this cache is written only by the closure above. Rebuild rather than
 		// assert, so a future second writer cannot turn a type confusion into a panic.
-		return build(), nil
+		return build(), res, nil
 	}
-	return client, nil
+	return client, res, nil
 }
 
 // ToggleStatus pauses or resumes an existing reddit campaign on the platform. It resolves

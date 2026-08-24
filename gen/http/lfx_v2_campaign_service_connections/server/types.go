@@ -3342,8 +3342,17 @@ type LinkedinAdsConnectionConfigRequestBody struct {
 // LinkedinAdsCredentialsRequestBody is used to define fields on request body
 // types.
 type LinkedinAdsCredentialsRequestBody struct {
-	// OAuth access token
+	// OAuth access token (LinkedIn: valid 60 days)
 	AccessToken *string `form:"access_token,omitempty" json:"access_token,omitempty" xml:"access_token,omitempty"`
+	// OAuth refresh token (optional; MDP-approved apps only, valid ~365 days).
+	// Must be supplied together with client_id and client_secret.
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+	// OAuth client id (optional; required together with refresh_token and
+	// client_secret)
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// OAuth client secret (optional; required together with refresh_token and
+	// client_id)
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
 }
 
 // MetaAdsConnectionConfigRequestBody is used to define fields on request body
