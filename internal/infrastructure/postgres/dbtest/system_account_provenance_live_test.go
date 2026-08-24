@@ -22,10 +22,10 @@ import (
 //
 // Nullability and the absent default are not stylistic. They are the three-state contract the
 // column is built on: NULL means "provenance not recorded", false means "known to have run on
-// the project's own account", true means "known to have run on the LF account". NULL is not a
-// statement about the row's AGE — AdoptCampaign omits the column deliberately, so a campaign
-// adopted today reads back NULL too. A NOT NULL or a DEFAULT false would collapse the first
-// state into the second and silently assert, of every unrecorded campaign and every future
+// the project's own connection", true means "known to have run on the LF system account". NULL
+// is not a statement about the row's AGE — AdoptCampaign omits the column deliberately, so a
+// campaign adopted today reads back NULL too. A NOT NULL or a DEFAULT false would collapse the
+// first state into the second and silently assert, of every unrecorded campaign and every future
 // write that forgets the flag, that the project paid for it. That understates LF spend, and
 // nothing downstream could detect it.
 func TestLiveRanOnSystemAccountColumnShape(t *testing.T) {

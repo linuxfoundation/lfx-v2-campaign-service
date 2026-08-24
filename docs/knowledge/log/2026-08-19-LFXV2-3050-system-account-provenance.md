@@ -11,8 +11,8 @@ projects needs, and what computing blast radius on a revoked credential needs.
 Migration `000027` adds `campaigns.ran_on_system_account BOOLEAN`, nullable, **no default**.
 
 **Pre-existing rows stay NULL, deliberately.** The column carries three states: `NULL`
-provenance not recorded, `false` known to have run on the project's own account,
-`true` known to have run on the LF account. Backfilling `false` — or adding `DEFAULT FALSE` —
+provenance not recorded, `false` known to have run on the project's own connection,
+`true` known to have run on the LF system account. Backfilling `false` — or adding `DEFAULT FALSE` —
 would be cheaper to query and would fabricate a fact: it asserts of every historical campaign
 that the project paid, when some took the fallback and nothing recorded which. Because the
 column exists to attribute SPEND, a false `false` moves LF-funded campaigns out of the LF
