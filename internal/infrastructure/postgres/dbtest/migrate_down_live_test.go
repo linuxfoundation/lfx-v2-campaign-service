@@ -707,3 +707,79 @@ func TestWithDatabaseRepointsTheDSN(t *testing.T) {
 		})
 	}
 }
+
+// TestSafeDSNErrKeepsDriverTextForNonURLErrors pins the OTHER half of SafeDSNErr's
+// contract: the sentinel replacement is reserved for *url.Error, and every other cause
+// keeps its own text.
+//
+// The two existing SafeDSNErr tests both drive *url.Error inputs, so they constrain only
+// the redacting arm. That leaves the fallback arm free: replacing
+// `redact.URLUserinfo(err.Error())` with a constant compiles, vets, and keeps both of
+// them green, because neither ever reaches it. A redaction that answers every error with
+// a fixed string leaks nothing and diagnoses nothing — the failure mode the whole helper
+// exists to avoid, arrived at from the opposite direction.
+//
+// A connection refused, an authentication failure and a missing database are the errors
+// an operator actually meets, and none of them is a *url.Error. Their text is what names
+// the problem, and it does not carry the credential: the DSN appears in these causes only
+// when net/url quoted the fragment it choked on, which is precisely the *url.Error case
+// handled above.
+//
+// The assertion is therefore two-sided. It requires the driver's own words to survive AND
+// the credential to stay out, so neither a leak nor a silent constant can pass it.
+//
+// This test needs no database: it calls the pure helper directly.
+func TestSafeDSNErrKeepsDriverTextForNonURLErrors(t *testing.T) {
+	t.Parallel()
+
+	const password = "hunter2-not-a-real-pw" // secretlint-disable-line
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "connection refused",
+			err:  errors.New("failed to connect to `host=localhost user=ciuser database=app`: dial error: connection refused"),
+			want: "connection refused",
+		},
+		{
+			name: "authentication failed",
+			err:  errors.New(`server error (FATAL: password authentication failed for user "ciuser" (SQLSTATE 28P01))`),
+			want: "password authentication failed",
+		},
+		{
+			name: "database does not exist",
+			err:  errors.New(`server error (FATAL: database "app" does not exist (SQLSTATE 3D000))`),
+			want: "does not exist",
+		},
+		{
+			name: "wrapped non-url cause",
+			err:  fmt.Errorf("init migrator: %w", errors.New("connection refused")),
+			want: "connection refused",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := dbtest.SafeDSNErr(tc.err)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("SafeDSNErr = %q, want it to preserve the driver's text %q; a "+
+					"redaction that answers every cause with a fixed string diagnoses "+
+					"nothing", got, tc.want)
+			}
+			// The sentinel is reserved for *url.Error; reaching it here would mean the
+			// helper had stopped distinguishing the two shapes.
+			if strings.Contains(got, "does not parse as a URL") {
+				t.Errorf("SafeDSNErr = %q, want the *url.Error sentinel NOT to be used "+
+					"for a cause that is not a *url.Error", got)
+			}
+			if strings.Contains(got, password) {
+				t.Errorf("SafeDSNErr leaked the password: %q", got)
+			}
+		})
+	}
+}
