@@ -5,6 +5,7 @@ package dbtest_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5" // registers the pgx5 driver
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
@@ -88,6 +90,21 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 	// the template. template0 is guaranteed pristine, so the assertion measures only what
 	// the migrations did.
 	if _, err := admin.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q TEMPLATE template0", name)); err != nil {
+		// SKIP rather than FAIL on a missing privilege, because this test asks for MORE than
+		// the documented harness contract. dbtest's contract is a database the package "may
+		// freely modify", which a database OWNER without the cluster-level CREATEDB role fully
+		// satisfies — and every other live test in this package works in exactly that setup.
+		// Failing here would turn a conforming configuration into a red build over a test that
+		// simply cannot run there, and the error would read as a migration defect.
+		//
+		// Only the privilege case is skipped. Any other CREATE DATABASE failure is still a real
+		// failure and is reported as one.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42501" { // insufficient_privilege
+			t.Skipf("scratch-database provisioning needs the CREATEDB role, which the harness "+
+				"contract does not require (TEST_DATABASE_URL only promises a database this "+
+				"package may modify): %v", err)
+		}
 		t.Fatalf("create scratch database: %v", err)
 	}
 	t.Cleanup(func() {

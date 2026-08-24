@@ -21,6 +21,13 @@
 //
 //	TEST_DATABASE_URL='postgres://postgres@127.0.0.1:5432/campaign_test?sslmode=disable' go test ./...
 //
+// Ownership of that one database is the whole contract — the cluster-level CREATEDB role is
+// deliberately NOT required, so a plain database owner is a conforming setup. One test wants
+// more than that: TestLiveMigrationsGoDownAndUpAgain provisions a scratch database per
+// migration version (it must run every down file against the schema its own up produced, which
+// cannot be done in the shared database). It SKIPS on insufficient_privilege rather than
+// failing, so the extra capability is opt-in and its absence is never a red build.
+//
 // Unset, every helper here calls t.Skip. That keeps `go test ./...` working on a laptop
 // with no database, which is why the variable is opt-in rather than required — but see
 // verdict: on a CI runner, where a database was promised, Pool FAILS instead of skipping.
