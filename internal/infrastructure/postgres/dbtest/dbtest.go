@@ -217,11 +217,25 @@ func UniqueID(t *testing.T, suffix string) string {
 // that same `*url.Error` as "failed to open database: parse %q: ...". Both were verified
 // against a password-bearing DSN, and both leaked it in full.
 //
-// So the cause is UNWRAPPED rather than formatted: `ue.Err` is the diagnosis ("invalid URL
-// escape %q", "missing ']' in host") with the URL left behind, which is the part worth
-// printing. redact.URLUserinfo then covers anything else in the chain that embedded the
-// value, because it is string-based and needs no parse to succeed -- see its package doc,
-// which names this exact path. Callers pass the error, never the DSN.
+// For a *url.Error the cause is DISCARDED, not unwrapped. Unwrapping to `ue.Err` removes
+// the URL and is most of the fix, but net/url's causes QUOTE THE FRAGMENT they choked on,
+// and that fragment can be part of the credential: `postgres://u:%zz@h/db` yields
+// `invalid URL escape "%zz"`, which is the entire password, and a longer password
+// containing "%zz" leaks that slice of itself. A message that reproduces any part of an
+// unvalidated value cannot honour the no-echo rule, so nothing derived from the input is
+// carried. This is the same reasoning, and the same conclusion, as internal/platform/llm's
+// proxy-URL constructor.
+//
+// Nothing a caller could use is lost: net/url's causes are unexported types or plain
+// strings, so errors.Is/As reach nothing through them. The operator learns that the DSN
+// does not parse and which variable to go and look at, which is the actionable part; the
+// specific malformation is not worth a credential.
+//
+// Errors that are NOT a *url.Error keep their text, since they are driver and connection
+// failures whose messages are diagnostic rather than echoes of the input, with
+// redact.URLUserinfo as the backstop for any that embedded the value anyway. It is
+// string-based and needs no parse to succeed -- see its package doc, which names this
+// exact path. Callers pass the error, never the DSN.
 //
 // It is exported so the harness in this package and the live tests in dbtest_test share ONE
 // implementation. Two formatting sites disagreeing about what "redacted" means is the bug
@@ -231,8 +245,9 @@ func SafeDSNErr(err error) string {
 		return "<nil>"
 	}
 	var ue *url.Error
-	if errors.As(err, &ue) && ue.Err != nil {
-		return redact.URLUserinfo(ue.Err.Error())
+	if errors.As(err, &ue) {
+		return "the DSN does not parse as a URL (the value and the parser's message are " +
+			"withheld: both can carry the credential)"
 	}
 	return redact.URLUserinfo(err.Error())
 }

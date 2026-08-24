@@ -28,7 +28,32 @@ rendered it. That last one is the widest: `Pool` reports it with `t.Fatalf`, so
 a CI runner with a malformed `TEST_DATABASE_URL` writes the credential to the
 build log on every live test in the package.
 
-The fix unwraps rather than redacts:
+The fix DISCARDS the cause rather than unwrapping it, and the reason is the
+third finding, which arrived on review of the fix itself. Unwrapping removes the
+URL and is most of the fix — but net/url's causes QUOTE THE FRAGMENT they choked
+on, and that fragment can be part of the credential. `postgres://u:%zz@h/db`
+yields `invalid URL escape "%zz"`: no URL, and still the entire password. A
+longer password containing `%zz` leaks that slice of itself. So:
+
+    var ue *url.Error
+    if errors.As(err, &ue) {
+        return "the DSN does not parse as a URL (the value and the parser's " +
+            "message are withheld: both can carry the credential)"
+    }
+    return redact.URLUserinfo(err.Error())
+
+That is the same conclusion `internal/platform/llm`'s proxy-URL constructor
+already reached, in the same words: a message that reproduces any part of an
+unvalidated value cannot honour a no-echo rule, so nothing derived from the
+input is carried. Nothing a caller could use is lost — net/url's causes are
+unexported types or plain strings, so `errors.Is/As` reach nothing through them.
+The operator learns that the DSN does not parse and which variable to look at,
+which is the actionable part; the specific malformation is not worth a
+credential. Errors that are NOT `*url.Error` keep their text, since driver and
+connection failures are diagnostic rather than echoes of the input.
+
+The intermediate version, kept here because the reasoning is the lesson, unwrapped
+instead:
 
     var ue *url.Error
     if errors.As(err, &ue) && ue.Err != nil {
@@ -49,9 +74,13 @@ rendered message yields
 — a dangling quote, a severed host, no leading `parse`. A mutation that dropped
 the `errors.As` arm and kept only `redact.URLUserinfo` SURVIVED the first
 version of the test, because a credential assertion cannot tell those apart:
-neither leaks. The test now also asserts the host fragment is absent, which
-pins the cause being unwrapped OUT of the message rather than the message being
-redacted in place, and that mutation now fails.
+neither leaks.
+
+Three mutations in a row survived-then-failed on this one function, and each
+survivor marked a real gap rather than a weak test: redact-only was unreadable,
+unwrap-only echoed the parser's fragment. The assertions are now "no fragment of
+the input appears" plus "it still says the DSN does not parse" — a pair that
+pins both directions, where each single assertion alone admits a broken fix.
 
 The assertions are on the RENDERED STRING, not on the source of the call sites.
 The leak is a property of what an error FORMATS TO, not of which verb the

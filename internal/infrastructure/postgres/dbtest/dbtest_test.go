@@ -92,17 +92,22 @@ func TestConnectAndMigrateDoesNotEchoTheDSN(t *testing.T) {
 	if !strings.Contains(got, EnvDatabaseURL) {
 		t.Errorf("connectAndMigrate = %q, want it to still name %s", got, EnvDatabaseURL)
 	}
-	// And the CAUSE must survive, so a redactor that returns a constant cannot pass.
-	if !strings.Contains(got, "missing ']' in host") {
-		t.Errorf("connectAndMigrate = %q, want it to still name the parse cause", got)
+	// It must still say WHAT failed, so a redactor that returns an empty string or a
+	// bare "error" cannot pass.
+	if !strings.Contains(got, "does not parse") {
+		t.Errorf("connectAndMigrate = %q, want it to still report that the DSN does not "+
+			"parse", got)
 	}
-	// The unwrapped cause, not a redacted ruin of the whole message. Redacting the
-	// rendering alone is credential-SAFE -- so neither assertion above can see it --
-	// and leaves `***@[::1:5432/campaign_test": missing ']' in host`: a severed host and
-	// a dangling quote. This is the widest print path in the package (Pool reports it
-	// with t.Fatalf), so it gets the same unwrap as every other site, and this pins it.
-	if strings.Contains(got, "***") || strings.Contains(got, "campaign_test") {
-		t.Errorf("connectAndMigrate = %q, want the unwrapped cause rather than a redacted "+
-			"remnant of the full message", got)
+	// And nothing derived from the input, including the parser's own message: it quotes
+	// the fragment it choked on, which can be a slice of the credential. Redacting the
+	// rendering alone is credential-SAFE -- so the assertions above cannot see it -- and
+	// leaves `***@[::1:5432/campaign_test": missing ']' in host`. This is the widest
+	// print path in the package (Pool reports it with t.Fatalf), so it gets the same
+	// treatment as every other site.
+	for _, frag := range []string{"***", "campaign_test", "[::1", "missing"} {
+		if strings.Contains(got, frag) {
+			t.Errorf("connectAndMigrate = %q, want no fragment of the input; it echoed %q",
+				got, frag)
+		}
 	}
 }

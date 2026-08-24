@@ -519,37 +519,45 @@ func TestSafeDSNErrKeepsCredentialsOutOfOutput(t *testing.T) {
 		name string
 		// how the DSN is made unparseable; each is a distinct net/url failure mode
 		dsn string
-		// a fragment of the underlying cause that MUST survive, so the fix cannot
-		// be trivially satisfied by returning a constant
-		wantCause string
-		// a fragment of the DSN's HOST that must NOT survive. It carries no secret, so
-		// its presence is not a leak -- it is the tell that the whole message was
-		// redacted in place rather than the cause being unwrapped out of it.
-		hostFragment string
+		// every fragment of the DSN that must NOT appear in the output. net/url's
+		// causes quote the fragment they choked on, so these cover the parser's own
+		// message as well as the raw URL.
+		mustNotContain []string
+		// the secret this case's DSN carries. Empty means the shared password; the
+		// malformed-userinfo case overrides it because its password is what is
+		// malformed. The precondition below asserts THIS value leaks unfixed, so a
+		// case cannot silently stop demonstrating the leak it guards.
+		secret string
 	}{
 		{
-			name:         "invalid percent escape",
-			dsn:          "postgres://" + username + ":" + password + "@db.%zz:5432/app",
-			wantCause:    "invalid URL escape",
-			hostFragment: "db.%zz",
+			name:           "invalid percent escape",
+			dsn:            "postgres://" + username + ":" + password + "@db.%zz:5432/app",
+			mustNotContain: []string{"%zz", "db.%zz"},
 		},
 		{
-			name:         "invalid port",
-			dsn:          "postgres://" + username + ":" + password + "@db.internal:no-port/app",
-			wantCause:    "invalid port",
-			hostFragment: "db.internal",
+			name:           "invalid port",
+			dsn:            "postgres://" + username + ":" + password + "@db.internal:no-port/app",
+			mustNotContain: []string{"no-port", "db.internal"},
 		},
 		{
-			name:         "unclosed IPv6 bracket",
-			dsn:          "postgres://" + username + ":" + password + "@[::1:5432/app",
-			wantCause:    "missing ']' in host",
-			hostFragment: "[::1",
+			name:           "unclosed IPv6 bracket",
+			dsn:            "postgres://" + username + ":" + password + "@[::1:5432/app",
+			mustNotContain: []string{"[::1", "missing"},
 		},
 		{
-			name:         "control character",
-			dsn:          "postgres://" + username + ":" + password + "@db.internal:5432/app\x7f",
-			wantCause:    "invalid control character",
-			hostFragment: "db.internal",
+			// The case that unwrapping alone does NOT cover: the malformed bytes are
+			// inside the PASSWORD, so the parser's own cause quotes a slice of the
+			// credential. Here the password contains "%zz" and the cause is
+			// `invalid URL escape "%zz"` -- no URL, and still a leak.
+			name:           "malformed escape inside the password",
+			dsn:            "postgres://" + username + ":s3cr3t%zzpw@db.internal:5432/app",
+			mustNotContain: []string{"%zz", "s3cr3t"},
+			secret:         "s3cr3t%zzpw",
+		},
+		{
+			name:           "control character",
+			dsn:            "postgres://" + username + ":" + password + "@db.internal:5432/app\x7f",
+			mustNotContain: []string{"db.internal"},
 		},
 	}
 
@@ -565,9 +573,13 @@ func TestSafeDSNErrKeepsCredentialsOutOfOutput(t *testing.T) {
 
 			// The control: the UNFIXED rendering leaks. If this stops holding, the
 			// premise of the fix is gone and the assertions below prove nothing.
-			if raw := fmt.Sprintf("%v", err); !strings.Contains(raw, password) {
-				t.Fatalf("precondition failed: formatting the raw error with %%v did not embed the " +
-					"password, so this case cannot demonstrate the leak it guards")
+			secret := tc.secret
+			if secret == "" {
+				secret = password
+			}
+			if raw := fmt.Sprintf("%v", err); !strings.Contains(raw, secret) {
+				t.Fatalf("precondition failed: formatting the raw error with %%v did not embed "+
+					"%q, so this case cannot demonstrate the leak it guards", secret)
 			}
 
 			got := dbtest.SafeDSNErr(err)
@@ -577,21 +589,24 @@ func TestSafeDSNErrKeepsCredentialsOutOfOutput(t *testing.T) {
 			if strings.Contains(got, username) {
 				t.Errorf("SafeDSNErr leaked the user half of the credential into its output: %q", got)
 			}
-			if !strings.Contains(got, tc.wantCause) {
-				t.Errorf("SafeDSNErr = %q, want it to still name the cause %q — a redactor that "+
-					"drops the diagnosis makes the failure unactionable", got, tc.wantCause)
+			// Nothing derived from the input may appear -- including the PARSER'S
+			// message, which quotes the fragment it choked on. That fragment can be
+			// part of the credential: a password of "%zz" yields `invalid URL escape
+			// "%zz"`, which is the whole secret, and a longer password containing
+			// "%zz" leaks that slice of itself. Unwrapping alone does not fix this,
+			// which is why the cause is discarded rather than unwrapped.
+			for _, frag := range tc.mustNotContain {
+				if strings.Contains(got, frag) {
+					t.Errorf("SafeDSNErr = %q, want no fragment of the input; it echoed %q",
+						got, frag)
+				}
 			}
 
-			// The output must be the CAUSE ALONE, not a redacted ruin of the whole
-			// message. This is what the errors.As arm buys over redacting the rendered
-			// string: redaction alone leaves `***@db.%zz:5432/app": invalid URL escape`
-			// -- a dangling quote, a severed host, and no leading `parse`. It does not
-			// leak, so a credential assertion cannot see the difference; it is simply
-			// unreadable, and unwrapping is what makes the message a sentence again.
-			if strings.HasPrefix(got, "***") || strings.Contains(got, tc.hostFragment) {
-				t.Errorf("SafeDSNErr = %q, want the unwrapped cause rather than a redacted "+
-					"remnant of the full message — unwrap the *url.Error instead of "+
-					"redacting its rendering", got)
+			// It must still be actionable: the operator has to learn that the DSN is
+			// what failed to parse, or the message says nothing usable at all.
+			if !strings.Contains(got, "does not parse") {
+				t.Errorf("SafeDSNErr = %q, want it to still report that the DSN does not "+
+					"parse — a redactor that says nothing is not actionable", got)
 			}
 		})
 	}
@@ -624,8 +639,14 @@ func TestSafeDSNErrRedactsAWrappedMigratorError(t *testing.T) {
 	if strings.Contains(got, password) {
 		t.Errorf("SafeDSNErr leaked the password from a wrapped migrator error: %q", got)
 	}
-	if !strings.Contains(got, "invalid URL escape") {
-		t.Errorf("SafeDSNErr = %q, want it to still name the parse cause", got)
+	// The parser's message goes too, not just the URL: it quotes the fragment it choked
+	// on, which can be a slice of the credential.
+	if strings.Contains(got, "%zz") {
+		t.Errorf("SafeDSNErr = %q, want no fragment of the input; it echoed the parser's "+
+			"quoted fragment", got)
+	}
+	if !strings.Contains(got, "does not parse") {
+		t.Errorf("SafeDSNErr = %q, want it to still report that the DSN does not parse", got)
 	}
 }
 
