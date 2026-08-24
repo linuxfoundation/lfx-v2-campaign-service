@@ -2564,6 +2564,56 @@ func TestBriefService_GetCampaignMetrics_HappyPath(t *testing.T) {
 	}
 }
 
+// The campaign-scoped endpoint must keep the absent/measured distinction its own, rather than
+// relying on the brief-wide path's wiring test.
+//
+// These are two separate mappings in brief.go, and only the brief-wide one was covered. A
+// future dereference or zero-default here would break the public campaign-scoped route while
+// the brief-wide test stayed green — so nil and pointer-to-zero are asserted to remain
+// distinguishable on THIS route, along with the fractional value neither integer rounding nor
+// a zero default can represent.
+func TestBriefService_GetCampaignMetrics_ConversionsAbsentZeroAndFractionAreDistinct(t *testing.T) {
+	row := func(t *testing.T, conv *float64) *briefs.CampaignMetrics {
+		t.Helper()
+		camp := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+		}
+		disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+			CampaignID: "ga-1", Window: model.MetricsWindowLast30Days,
+			Impressions: 100, Clicks: 10, CostMicros: 5000000, Ctr: 0.1, Conversions: conv,
+		}}
+		res, err := newMetricsService(camp, disp).GetCampaignMetrics(context.Background(),
+			&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+		if err != nil {
+			t.Fatalf("GetCampaignMetrics: %v", err)
+		}
+		return res
+	}
+
+	// A platform that cannot measure conversions: the field must be ABSENT on the wire.
+	if got := row(t, nil); got.Conversions != nil {
+		t.Errorf("conversions = %v for a platform that reports none; an unmeasured count "+
+			"became a measurement on the campaign-scoped route", *got.Conversions)
+	}
+
+	// A measured zero: present, and NOT collapsed into absence.
+	zero := 0.0
+	if got := row(t, &zero); got.Conversions == nil {
+		t.Error("conversions is nil for a MEASURED zero; the campaign-scoped route erased a " +
+			"real measurement, and no_conversions can never be justified from this response")
+	} else if *got.Conversions != 0 {
+		t.Errorf("conversions = %v, want a measured 0", *got.Conversions)
+	}
+
+	// A fractional credit: neither rounded away nor treated as zero.
+	frac := 0.4
+	if got := row(t, &frac); got.Conversions == nil || *got.Conversions != 0.4 {
+		t.Errorf("conversions = %v, want 0.4: a partial conversion was rounded away on the "+
+			"campaign-scoped route", got.Conversions)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_DefaultWindowIsLast30Days(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,

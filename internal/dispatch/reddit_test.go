@@ -799,6 +799,45 @@ func TestReddit_ReadMetrics_DisabledByDefault(t *testing.T) {
 	}
 }
 
+// Reddit's v3 reporting contract has NO public documentation (see the banner on
+// reddit.GetCampaignMetrics), so this adapter cannot name a conversions field without
+// guessing. A guessed field that decodes to zero is indistinguishable from a campaign that
+// converted nothing, so the count stays absent until the real contract is available.
+//
+// The fixture carries a plausible-looking `conversions` key precisely to prove the adapter
+// does NOT opportunistically read one: inventing a field name and reporting whatever it
+// decodes to is the failure this test exists to prevent.
+func TestReddit_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"metrics":[{"campaign_id":"t3_c","impressions":1000,"clicks":10,"spend":5000000,"conversions":9}]}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowToday,
+	)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if metrics.Conversions != nil {
+		t.Errorf("Conversions = %v read from an UNDOCUMENTED Reddit reporting contract; a "+
+			"guessed field name reported as a measurement is exactly what the unverified-"+
+			"contract banner forbids", *metrics.Conversions)
+	}
+}
+
 // TestReddit_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
 // guard on the TOGGLE path. Reddit campaign ids are unique only WITHIN an ad account, so once
 // a project's connection is re-pointed the stored id addressed against the new account can

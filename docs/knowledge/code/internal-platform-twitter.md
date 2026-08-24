@@ -261,9 +261,13 @@ it silently would exempt the one malformation that happens to be easy to repair.
 cursor is left untrimmed for the same reason. `Name` and `Timezone` ARE trimmed — they are
 display labels, not identifiers, and nothing binds to them.
 
-**Unusable accounts are RETURNED, labelled, never filtered.** Accounts under review, rejected,
-or flagged deleted all come back carrying their reason; dropping them would answer "your
-credential reaches no ad accounts" about an account sitting right there. `approvalStatusLabels`
+**Unusable accounts are RETURNED, labelled, never filtered.** Accounts under review or
+rejected come back carrying their reason; dropping them would answer "your credential reaches
+no ad accounts" about an account sitting right there. Deleted rows are the one case NOT
+promised: `with_deleted` is unsent, so X's documented default of `false` normally excludes
+them upstream — the per-row `deleted` flag is honoured defensively so a row that arrives
+flagged anyway is labelled rather than passing as live, but the walk cannot make a deleted
+account discoverable. `approvalStatusLabels`
 is an ALLOW-LIST of KNOWN-BAD values, because **X publishes no complete `approval_status`
 enum** — its reference shows only `ACCEPTED`. An unrecognized or absent status therefore yields
 `""` from `ApprovalLabel()`, which is not a claim the account is fine, only that this package

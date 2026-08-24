@@ -58,6 +58,23 @@ type Input struct {
 	// anything. False before the flight starts and during its first day, mirroring the floor
 	// the pacing rules use.
 	DeliveryExpected bool
+	// Conversions is the campaign's conversion count over the measured window, and is nil
+	// when the platform does not report one.
+	//
+	// A POINTER, because the clicks-without-conversions rule turns entirely on the
+	// difference between the two zeros. A campaign that earned 500 clicks and 0 measured
+	// conversions is the finding the rule exists for; a campaign that earned 500 clicks on a
+	// platform with no conversions concept — Meta, X, Reddit, HubSpot — has no conversion
+	// figure at all, and firing on it would report the ABSENCE OF MEASUREMENT as a campaign
+	// defect. A plain number cannot hold those apart: both arrive as 0.
+	//
+	// FLOAT64, not an integer count: Google Ads and Microsoft both type their conversion
+	// metric as a double and credit fractional conversions, so rounding to a whole number
+	// would report a campaign holding 0.4 conversions as having produced none — and this
+	// rule would then fire on it. The fraction has to survive all the way to the comparison.
+	//
+	// See model.CampaignMetrics.Conversions for which platforms populate this and why.
+	Conversions *float64
 	// BillsPerDelivery records whether this channel charges for delivery at all.
 	//
 	// False for the email channel: HubSpot charges nothing per send and its adapter always
@@ -167,8 +184,68 @@ func Evaluate(in Input) []ActionItem {
 		})
 	}
 
+	// Clicks without conversions. A campaign that is buying real traffic and converting none
+	// of it is spending on the wrong audience or sending them to a page that does not deliver
+	// what the ad promised — a different defect from low CTR, which is about whether anyone
+	// clicks at all.
+	//
+	// THREE gates, and each one exists because without it the rule fires on missing data
+	// rather than on a finding:
+	//
+	//   - in.Conversions != nil gates the whole rule on the READ having produced a complete
+	//     conversion measurement — which is what nil means per model.CampaignMetrics.
+	//     Conversions, and it covers two cases that must both be excluded here. Four of the
+	//     seven adapters (Meta, X, Reddit, HubSpot) cannot report a campaign-level count at
+	//     all, for reasons that are properties of those APIs rather than gaps here; on those
+	//     platforms every campaign would otherwise present as 0 conversions and every one
+	//     would be flagged, forever. But a conversion-CAPABLE channel also reaches nil when
+	//     its response was incomplete — LinkedIn when a returned element omitted the metric,
+	//     Microsoft on a blank ConversionsQualified cell — and firing there would raise
+	//     no_conversions against a campaign that may well have converted. Both are the same
+	//     "fires because data is missing" failure that trains operators to ignore an alert.
+	//     This is the same shape of gate BillsPerDelivery gives zero_delivery: a rule that
+	//     cannot be evaluated on the data in hand does not fire.
+	//   - minClicksForConversions is the delivery floor, the direct analogue of
+	//     minImpressionsForCTR on the rule above. A campaign with four clicks and no
+	//     conversions has not yet earned enough traffic for zero to mean anything.
+	//   - isActive keeps it consistent with every other rule per docs/api-catalog.md:
+	//     "Every rule is gated on the campaign's status ... a `paused` campaign raises
+	//     nothing."
+	//
+	// Note the rule does NOT require Impressions: clicks are the denominator that matters for
+	// conversion, and the CTR rule already owns the impressions-to-clicks step of the funnel.
+	// == 0 on the float is exact and deliberate: only an upstream value of EXACTLY zero may
+	// fire this rule. A campaign credited 0.4 of a conversion under data-driven attribution
+	// has converted, and an earlier revision that rounded the platform value to an int64
+	// turned that 0.4 into a 0 and raised no_conversions against a converting campaign —
+	// fabricating the finding the rule exists to report. Any threshold above zero here would
+	// reintroduce that defect.
+	if isActive(in.Status) && in.Conversions != nil &&
+		in.Clicks >= minClicksForConversions && *in.Conversions == 0 {
+		items = append(items, ActionItem{
+			Rule: "no_conversions", Priority: PriorityHigh,
+			CampaignID: in.CampaignID, Platform: in.Platform,
+			Issue:  fmt.Sprintf("No conversions from %d clicks", in.Clicks),
+			Action: "Check the landing page matches what the ad promises and that conversion tracking is firing on it",
+		})
+	}
+
 	return items
 }
+
+// minClicksForConversions is the click volume below which "no conversions" is not yet a
+// signal.
+//
+// The counterpart to minImpressionsForCTR, and set for the same reason: a campaign with a
+// handful of clicks and no conversions is describing normal variance, not a broken funnel,
+// and flagging it teaches operators to dismiss the rule. It is lower than the CTR floor
+// because clicks are one funnel step further down and arrive one to two orders of magnitude
+// less often than impressions — reusing 1000 here would mean the rule effectively never
+// fired on the mid-sized campaigns this service actually runs.
+//
+// A judgement, not a platform limit, stated as a named constant so the next person changing
+// it knows that.
+const minClicksForConversions = 50
 
 // minImpressionsForCTR is the delivery below which a CTR figure is not yet meaningful.
 //

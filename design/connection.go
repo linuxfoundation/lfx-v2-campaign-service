@@ -1023,9 +1023,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	Method("list-twitter-ads-accounts", func() {
 		Description("Enumerate the X/Twitter Ads accounts accessible via the stored connection " +
 			"credential. Returns account ids as the alphanumeric handle X uses, ready to store as " +
-			"the connection's account_id. Accounts that are under review, rejected or deleted are " +
-			"RETURNED with the reason in the label rather than hidden, so a caller whose only " +
-			"account is unusable sees it and why.")
+			"the connection's account_id. Accounts that are under review or rejected are RETURNED " +
+			"with the reason in the label rather than hidden, so a caller whose only account is " +
+			"unusable sees it and why. DELETED accounts are a different case and are not promised: " +
+			"the walk does not send `with_deleted`, so it takes X's documented default of false " +
+			"and deleted accounts are normally excluded upstream — a deleted account is not a " +
+			"choice. The per-row deleted flag is still honoured defensively, so a row X flags " +
+			"anyway is labelled rather than passing as live.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

@@ -123,8 +123,10 @@ type accountElement struct {
 // false — a deleted account is not a choice — but the `deleted` flag is still carried
 // per row rather than assumed, so a flagged row cannot pass as live.
 //
-// Accounts that are under review, rejected, or flagged deleted are all RETURNED, each
-// carrying the reason it is unusable. This is a picker: a user whose only account is
+// Accounts that are under review or rejected are RETURNED, each carrying the reason it is
+// unusable. A row X flags DELETED is returned too if one arrives, but that is defensive
+// rather than a promise: with `with_deleted` unsent the default excludes deleted rows
+// upstream, so this walk normally never sees one. This is a picker: a user whose only account is
 // under review needs to see it and see why, and dropping it would answer "your credential
 // reaches no ad accounts" about an account sitting right there — sending them to look for
 // a permissions problem that does not exist.

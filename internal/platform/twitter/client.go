@@ -746,6 +746,15 @@ func isMutatingMethod(method string) bool {
 // treated as inconclusive (an error), never as "not found".
 const maxListPages = 25
 
+// listPageSize is the `count` both name lookups request, and X Ads v12's maximum list page
+// size. It is a named constant because findByName compares the returned element count
+// against it: X documents a page shorter than `count` as the last one, which is what lets a
+// short page terminate the walk without a cursor while a FULL page without one is treated as
+// inconclusive. A literal in the query strings and a second literal in that comparison could
+// drift apart silently, and the walk would then either error on every page or trust a
+// truncated one.
+const listPageSize = 1000
+
 func (c *Client) accountURL() string {
 	return fmt.Sprintf("%s/%s/accounts/%s", c.baseURL, c.apiVersion, c.account.AccountID)
 }
@@ -1083,7 +1092,7 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	// name-based idempotency). q does substring/prefix matching, so findByName
 	// still enforces the EXACT-name comparison locally. count=1000 (max page size,
 	// independent of cursor) keeps any residual paging cheap.
-	return c.findByName(ctx, "campaigns?with_deleted=false&count=1000&q="+url.QueryEscape(name), name)
+	return c.findByName(ctx, "campaigns?with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name)
 }
 
 // findLineItemByName returns the id of a line item matching name within a
@@ -1097,7 +1106,7 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 	// q=<name> is the server-side name filter (see findCampaignByName); it makes
 	// the lookup O(matches), not O(account), while findByName still enforces the
 	// exact-name match locally. count=1000 is the max page size.
-	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count=1000&q="+url.QueryEscape(name), name)
+	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name)
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /
@@ -1143,6 +1152,20 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 				}
 				return it.ID, nil
 			}
+		}
+		// Terminating the walk as "not found" is a CLAIM the caller acts on with a create
+		// POST, so it must not rest on a body that never supplied a cursor at all.
+		//
+		// X's documented rule is what discriminates: "If less than count entities are
+		// returned in the current page of the result set, the next_cursor value will be
+		// null." A SHORT page is therefore conclusively the last one on its own evidence,
+		// whatever the cursor field does — that is the ordinary terminating page and it
+		// stays a clean not-found. A FULL page (exactly listPageSize) is the ambiguous
+		// one: X owes a cursor there, and a body that omits the key leaves it unknowable
+		// whether another page holds the name. The page cap below does not cover this,
+		// being reachable only while a non-empty cursor keeps arriving.
+		if len(items) >= listPageSize && !resp.NextCursorPresent {
+			return "", fmt.Errorf("lookup %q: a full page of %d returned no next_cursor, so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name, listPageSize)
 		}
 		if resp.NextCursor == "" {
 			return "", nil
