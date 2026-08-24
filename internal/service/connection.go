@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -163,6 +164,17 @@ func unusableConnectionReason(err error) string {
 		return "credential_blob_malformed"
 	case errors.Is(err, domain.ErrCredentialsAbsent):
 		return "credentials_absent"
+	case errors.Is(err, domain.ErrTokenRequestRejected):
+		// Before BOTH credential arms. This one means neither credential was evaluated, so
+		// reporting either of theirs would name a remedy nobody outside this codebase can
+		// apply. It is the only reason token in this vocabulary that points at us.
+		return "token_request_rejected"
+	case errors.Is(err, domain.ErrApplicationCredentialsInvalid):
+		// Before the expired arm: an error carrying both must report the OPERATOR-actionable
+		// reason, since "re-authorize the member" cannot repair an application credential.
+		return "application_credentials_invalid"
+	case errors.Is(err, domain.ErrCredentialsExpired):
+		return "credentials_expired"
 	case errors.Is(err, domain.ErrAccountNotSelected):
 		return "account_not_selected"
 	default:
@@ -345,6 +357,23 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
 			"project_id", credentialProject, "requested_by_project_id", projectID,
 			"provider", string(d.provider), "error", aerr)
+		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
+	case errors.Is(aerr, domain.ErrServiceDefect):
+		// ABOVE both connection arms below. The 400 below completes "the stored <provider>
+		// connection cannot be used as configured" with a remedy naming the fields to go and
+		// check — and here every one of those fields is correct. LinkedIn refused the SHAPE of
+		// a request this service built, evaluating no stored credential, so an operator sent
+		// to audit their client_id audits something that was never at fault. That is the exact
+		// outcome the reason sentinel behind this one was split out to prevent.
+		//
+		// A 500 and an ERROR log, like the decryption arm above: the only actor who can repair
+		// this reads the log. The response body names no remedy because the caller has none.
+		//
+		// The reason token is logged, never the error — one condition reachable behind this
+		// classification decodes a DECRYPTED credential blob (see unusableConnectionReason).
+		slog.ErrorContext(ctx, "a defect in this service is blocking "+d.label()+"; the stored connection is NOT at fault and needs no repair",
+			"project_id", projectID, "provider", string(d.provider),
+			"reason", unusableConnectionReason(aerr))
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
 	case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
 		// The project has no connection of its own and the LF system row it fell back
@@ -588,8 +617,110 @@ func (s *ConnectionService) buildLinkedinAdsResult(c *model.Connection) *conn.Li
 	return r
 }
 
+// validateLinkedInRefreshCredentials enforces all-or-none on the optional refresh
+// trio. LinkedIn's exchange requires refresh_token, client_id AND client_secret
+// together, so a payload carrying some-but-not-all is unusable for refresh — and
+// because Credentials.CanRefresh() gates on all three, storing it would SILENTLY
+// degrade the connection to bearer-only. The operator would see a saved refresh token
+// and reasonably believe renewal was configured, then meet the same 60-day expiry this
+// feature exists to prevent. Reject it at the door instead, where the caller can act.
+//
+// All three absent is the normal, supported case: LinkedIn issues programmatic refresh
+// tokens only to approved Marketing Developer Platform partners.
+func validateLinkedInRefreshCredentials(c *conn.LinkedinAdsCredentials) error {
+	if c == nil {
+		return nil
+	}
+	// Two distinct states, deliberately not collapsed. A nil pointer is the key ABSENT from
+	// the payload; a non-nil pointer whose value trims to "" is the key SUPPLIED holding no
+	// credential. Counting only the second as "not present" made them indistinguishable, and
+	// the all-or-none guard below reads `present == 0` as "all three omitted" — so
+	// `{"refresh_token": ""}` scored 0, passed, and was stored. CanRefresh() then read it as
+	// absent and the connection was silently bearer-only, while the operator had watched the
+	// field be accepted and reasonably believed renewal was configured. That is verbatim the
+	// failure the paragraph above says this function prevents.
+	//
+	// The sibling boundary already refuses it: internal/bootstrap/sysacct.go treats a
+	// supplied-but-blank string as "a supplied key holding no credential" and faults. Two
+	// boundaries write the same trio, and one canonicalizing to absence while the other
+	// refuses is a difference no operator can see until renewal silently never happens.
+	present, blank := 0, []string(nil)
+	for _, f := range []struct {
+		name string
+		val  *string
+	}{
+		{"refresh_token", c.RefreshToken},
+		{"client_id", c.ClientID},
+		{"client_secret", c.ClientSecret},
+	} {
+		switch {
+		case f.val == nil:
+			// Absent. The supported bearer-only case is all three like this.
+		case strings.TrimSpace(*f.val) == "":
+			blank = append(blank, f.name)
+		default:
+			present++
+		}
+	}
+	// Checked BEFORE the all-or-none verdict, like the padding rule below, and for the same
+	// reason: a blank field must not be able to reach a verdict that reads it as omitted.
+	if len(blank) > 0 {
+		return &conn.BadRequestError{
+			Code: "400",
+			Message: "linkedin refresh credentials must not be supplied empty: " +
+				strings.Join(blank, ", ") +
+				" carries no credential; omit the field entirely for a bearer-only connection, " +
+				"or supply a real value — an empty one would be stored and silently disable renewal",
+		}
+	}
+	// Surrounding whitespace is REFUSED, not trimmed away, and it is checked BEFORE the
+	// all-or-none verdict so a padded-but-complete trio cannot pass. Every validator in
+	// this package gates on the TRIMMED value while the store keeps the value VERBATIM,
+	// so " id " satisfies CanRefresh() and is then sent raw to LinkedIn's token endpoint
+	// (internal/platform/linkedin/token.go form.Set), which rejects it as invalid_client
+	// forever. That is an unrecoverable state a validator claimed to prevent: the row
+	// looks correctly configured and no reconnect changes it.
+	//
+	// Refused rather than canonicalized because a credential is opaque to this service:
+	// silently rewriting one would hide a truncated paste, and no provider issues a
+	// secret whose surrounding whitespace is significant. This mirrors the bootstrap
+	// installer's identical rule (canonicalCredentials, internal/bootstrap/sysacct.go).
+	var padded []string
+	for _, f := range []struct {
+		name string
+		val  *string
+	}{
+		{"refresh_token", c.RefreshToken},
+		{"client_id", c.ClientID},
+		{"client_secret", c.ClientSecret},
+	} {
+		if f.val != nil && *f.val != strings.TrimSpace(*f.val) {
+			padded = append(padded, f.name)
+		}
+	}
+	if len(padded) > 0 {
+		return &conn.BadRequestError{
+			Code: "400",
+			Message: "linkedin refresh credentials must not have leading or trailing whitespace in " +
+				strings.Join(padded, ", ") +
+				"; a secret is stored verbatim, so the padding would be sent to LinkedIn and rejected",
+		}
+	}
+	if present == 0 || present == 3 {
+		return nil
+	}
+	return &conn.BadRequestError{
+		Code: "400",
+		Message: "linkedin refresh credentials are all-or-none: refresh_token, client_id and " +
+			"client_secret must be supplied together, or all omitted for a bearer-only connection",
+	}
+}
+
 func (s *ConnectionService) CreateLinkedinAds(ctx context.Context, p *conn.CreateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
 	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
+	if err := validateLinkedInRefreshCredentials(p.Credentials); err != nil {
 		return nil, err
 	}
 	cfg := p.Config
@@ -646,6 +777,9 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 }
 
 func (s *ConnectionService) SetCredentialLinkedinAds(ctx context.Context, p *conn.SetCredentialLinkedinAdsPayload) error {
+	if err := validateLinkedInRefreshCredentials(p.Credentials); err != nil {
+		return err
+	}
 	return s.setCredential(ctx, p.ProjectID, model.ProviderLinkedInAds, p.Credentials, actorFromCtx(ctx))
 }
 

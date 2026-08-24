@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1455,6 +1456,124 @@ func TestGetCampaignMetrics_OverCapResponseKeepsConnectionReusable(t *testing.T)
 	defer mu.Unlock()
 	if len(conns) != 1 {
 		t.Errorf("two over-cap reads used %d connections, want 1 — the unread remainder is preventing keep-alive reuse", len(conns))
+	}
+}
+
+// The exact production case: a bearer-only connection whose AccessTokenExpiresAt is zero, so
+// nothing predicts the expiry, the token is sent, and LinkedIn answers 401. This is the path
+// that produced the observed monitor 500. It must surface ErrCredentialsExpired so the
+// dispatcher's re-tag can name the connection, not a bare apiError.
+func TestGetCampaignMetrics_ExpiredBearerWithUnknownExpiryIsCredentialsExpired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"serviceErrorCode":65602,"message":"The token used in the request has expired","status":401}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		// Bearer only, and NO expiry — exactly what the stored credentials carry today.
+		Credentials{AccessToken: "expired-token", ConnectionName: "the LinkedIn connection"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	_, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("an expired bearer token must not read as a successful metrics call")
+	}
+	if !errors.Is(err, ErrCredentialsExpired) {
+		t.Fatalf("err = %v, want ErrCredentialsExpired: a bare apiError here is exactly the opaque upstream 500 this change exists to remove — the dispatcher re-tag can never match it", err)
+	}
+	if !strings.Contains(err.Error(), "the LinkedIn connection") {
+		t.Errorf("err = %v, want the connection label named so the operator knows what to reconnect", err)
+	}
+}
+
+// A 401 that arrives with no serviceErrorCode (revocation publishes no subcode) must classify
+// the same way: every documented 401 cause on an authenticated call is resolved by reconnecting.
+func TestGetCampaignMetrics_RevokedTokenWithoutSubcodeIsCredentialsExpired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"message":"the token has been revoked","status":401}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "revoked-token", ConnectionName: "the LinkedIn connection"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	_, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if !errors.Is(err, ErrCredentialsExpired) {
+		t.Fatalf("err = %v, want ErrCredentialsExpired for a revoked token (LinkedIn publishes no subcode for revocation)", err)
+	}
+}
+
+// A non-401 failure must NOT be reclassified as an expiry: telling an operator to reconnect a
+// working connection because LinkedIn returned a 500 sends them to fix the wrong thing.
+func TestGetCampaignMetrics_ServerErrorIsNotCredentialsExpired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{"message":"internal error"}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "good-token", ConnectionName: "the LinkedIn connection"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	_, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("a 500 must still be an error")
+	}
+	if errors.Is(err, ErrCredentialsExpired) {
+		t.Fatalf("err = %v, must NOT be ErrCredentialsExpired: a 500 is an upstream fault, and reporting it as an expired credential sends the operator to reconnect a working connection", err)
+	}
+}
+
+// The 401 must also invalidate the cached access token, so a later read re-exchanges rather
+// than replaying a token LinkedIn has already rejected.
+func TestGetCampaignMetrics_401InvalidatesCachedToken(t *testing.T) {
+	var exchanges int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&exchanges, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"minted","expires_in":3600}`)
+	}))
+	defer tokenSrv.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"serviceErrorCode":65602,"status":401}`)
+	}))
+	defer apiSrv.Close()
+
+	client := NewClient(
+		Credentials{
+			RefreshToken: "rt", ClientID: "cid", ClientSecret: "sec",
+			ConnectionName: "the LinkedIn connection",
+		},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(apiSrv.URL),
+		withTokenURL(tokenSrv.URL),
+	)
+
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if _, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday); !errors.Is(err, ErrCredentialsExpired) {
+			t.Fatalf("call %d: err = %v, want ErrCredentialsExpired", i, err)
+		}
+	}
+	// Without invalidation the second read would replay the cached token and never
+	// re-exchange, so the count would stay at 1.
+	if got := atomic.LoadInt32(&exchanges); got != 2 {
+		t.Errorf("token exchanges = %d, want 2: a rejected token must be evicted from the cache so the next read re-exchanges instead of replaying it", got)
 	}
 }
 

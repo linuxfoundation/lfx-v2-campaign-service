@@ -39,8 +39,58 @@ enforced on the system row:
   while LinkedIn's preflight (`internal/platform/linkedin/client.go`) refuses a padded token, so
   the row every unconnected project falls back to was one every dispatch rejects. Refused rather
   than canonicalized: a credential is opaque here, and silently rewriting one would hide a
-  truncated paste. Padding INSIDE a value, and padding on a key the provider does not require, are
-  left alone — a secret's interior is not this command's business.
+  truncated paste. Padding INSIDE a value is left alone — a secret's interior is not this
+  command's business. Padding on an OPTIONAL key is NOT left alone: `validateConditionalGroups`
+  refuses it for every member of a conditional group, and LinkedIn's refresh trio
+  (`refresh_token`/`client_id`/`client_secret`) is exactly such a group — optional as a set,
+  mandatory as a set. `requiredCredentialKeys[linkedin-ads]` is `{"access_token"}` only, so the
+  required-key loop never sees the trio, which is why the rule had to be restated there. A
+  supplied-but-blank member of that group is refused on the same loop, as a supplied key holding
+  no credential.
+- **Unknown credential keys are REFUSED** (`requireKnownCredentialKeys`, checked on the folded
+  document before any value rule). An unsupported key is not inert here. `canonicalCredentials`
+  folds EVERY supplied key and re-marshals the whole map, so the key survives into the encrypted
+  blob under its folded spelling — and the dispatch structs are untagged, so `encoding/json`
+  matches them case-insensitively. A key that folds onto a real struct field is therefore
+  silently ADOPTED by the reader. The reachable instance: `access_token_expires_at` folds to
+  `accesstokenexpiresat` and decodes into `internal/dispatch/linkedin.go`'s
+  `linkedinCreds.AccessTokenExpiresAt`, a field NO supported write can set —
+  `design/connection.go`'s `linkedin-ads-credentials` declares no expiry attribute. The refresh
+  path's injected-token branch (`internal/platform/linkedin/token.go`) is written on the premise
+  that this field is always the zero time; a non-zero value makes that branch live, and since
+  `invalidateAccessToken` clears only the CACHE, every newly constructed client re-serves the
+  same 401-rejected token from `c.creds` until the operator's timestamp passes. On the system
+  row that disables LinkedIn for every project without a connection of its own. The allowlist is
+  built through `credentialKey`, so it is a contract check and not a spelling blocklist —
+  `accessTokenExpiresAt` and `access-token-expires-at` fold onto the same key and are refused
+  alike, while `refreshToken` remains an accepted spelling of a supported key. It is per-provider
+  and covers required plus `optionalCredentialKeys` (today only LinkedIn's refresh trio), the
+  same shape as `requireKnownConfigKeys`. Refused rather than filtered out of the blob: a key an
+  operator deliberately typed and this command silently dropped is the same exit-0-and-fail-later
+  failure the whole validation exists to prevent.
+- **All-or-none credential groups** (`conditionalCredentialGroups`, checked by
+  `validateConditionalGroups`) cover a set whose members are each individually optional but which
+  is invalid when only SOME are supplied — a shape `requiredCredentialKeys` cannot express. Today
+  the one group is LinkedIn's refresh trio (`refresh_token`, `client_id`, `client_secret`),
+  mirroring `validateLinkedInRefreshCredentials` in `internal/service/connection.go`, which this
+  installer bypasses by writing past the API straight to the repository. Bearer-only stays valid,
+  because LinkedIn issues refresh tokens only to MDP-approved partners. It matters most on this
+  path: the system row is the fallback for every project that has connected nothing, so a partial
+  paste installs at exit 0, silently fails `CanRefresh()`, and resurfaces ~60 days later as the
+  expired-token outage refresh exists to prevent. **The loop distinguishes THREE outcomes, not
+  two, and the third exists because of a boundary the guard cannot see.** The all-or-none guard
+  is `len(present) == 0 || len(absent) == 0 → nil`, so a member folded into `absent` is
+  indistinguishable from one never supplied. That was fine for one bad member out of three, but
+  when EVERY member is present and none is a usable string the absence is UNANIMOUS: `present`
+  is empty, the guard returns nil, and the malformed blob is persisted for dispatch to fail on,
+  decoding into an all-zero `linkedinCreds`. A guard misses that combination precisely because
+  the fault is uniform. So a member that is present but not a non-empty JSON string is now
+  collected separately as a TYPE fault and refused on its own terms — not folded into `present`
+  either, which would report `"client_id": 123` as an all-or-none violation and send an operator
+  hunting for a field they did supply. Genuine omission still means "absent", so a bearer-only
+  row installs unchanged. The required-key loop was swept for the same shape: it cannot leak,
+  because every outcome there is fatal with no escape hatch, but it reported a mistyped key as
+  "missing", so it now separates the two for the message alone.
 - **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live:
   `design/connection.go` `Pattern()` for LinkedIn, Meta and X, and the runtime validators for
   Google Ads, Microsoft and Reddit, whose designs check presence alone. Mirroring only the design

@@ -37,6 +37,59 @@ var requiredCredentialKeys = map[model.Provider][]string{
 	model.ProviderHubSpot:      {"private_app_token"},
 }
 
+// optionalCredentialKeys are the keys a provider accepts BEYOND its required set, mirroring
+// the non-Required Attribute()s in design/connection.go. Only LinkedIn has any: the
+// all-or-none refresh trio, which validateConditionalGroups then checks as a group.
+var optionalCredentialKeys = map[model.Provider][]string{
+	model.ProviderLinkedInAds: {"refresh_token", "client_id", "client_secret"},
+}
+
+// requireKnownCredentialKeys refuses a credential key the provider's contract does not define.
+//
+// It exists because an unknown key is NOT inert. canonicalCredentials folds every supplied key
+// (credentialKey) and re-marshals the whole map, so the key survives into the encrypted blob
+// under its folded spelling — and the dispatch structs are untagged, so encoding/json matches
+// them case-insensitively. A key that folds onto a real struct field is therefore SILENTLY
+// ADOPTED by the reader.
+//
+// The reachable instance that motivated this check: `access_token_expires_at` folds to
+// `accesstokenexpiresat`, which decodes into internal/dispatch/linkedin.go's
+// linkedinCreds.AccessTokenExpiresAt. Nothing in the service ever WRITES that value —
+// design/connection.go's linkedin-ads-credentials declares no expiry attribute — so the
+// refresh path's injected-token branch is written on the premise that it is always the zero
+// time. An operator-supplied expiry makes that branch live: after LinkedIn 401s a revoked
+// token, invalidateAccessToken clears only the CACHE, so every newly constructed client
+// re-serves the same rejected token straight from c.creds until the operator's timestamp
+// passes, and the system connection — the fallback for every project without one of its own —
+// stays broken with no refresh attempted.
+//
+// Refused at the door rather than filtered out of the blob: a key an operator deliberately
+// typed and this command silently dropped is the same exit-0-and-fail-later shape that
+// requireKnownConfigKeys exists to prevent. Naming it tells them the field is not supported.
+func requireKnownCredentialKeys(provider model.Provider, folded map[string]json.RawMessage) error {
+	known := make(map[string]bool, 8)
+	for _, k := range requiredCredentialKeys[provider] {
+		known[credentialKey(k)] = true
+	}
+	for _, k := range optionalCredentialKeys[provider] {
+		known[credentialKey(k)] = true
+	}
+	unknown := make([]string, 0, len(folded))
+	for k := range folded {
+		if !known[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	allowed := append(append([]string{}, requiredCredentialKeys[provider]...), optionalCredentialKeys[provider]...)
+	sort.Strings(allowed)
+	return fmt.Errorf("bootstrap: %s does not accept credential %s; it accepts %s",
+		provider, strings.Join(unknown, ", "), strings.Join(allowed, ", "))
+}
+
 // credentialKey folds a field name to the form the READERS match on. Stored blobs and dispatch
 // structs are both untagged, so encoding/json falls back to a case-insensitive match: `clientId`
 // works, `client_id` cannot — and snake_case is what the API documents, so such a body encrypted
@@ -64,17 +117,31 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 		}
 		folded[credentialKey(k)] = v
 	}
-	var missing, padded []string
+	// Before any value check: an unsupported key is refused on its NAME, because the fault is
+	// that the reader adopts it at all, independent of what it holds.
+	if err := requireKnownCredentialKeys(provider, folded); err != nil {
+		return nil, err
+	}
+	var missing, mistyped, padded []string
 	for _, want := range requiredCredentialKeys[provider] {
 		// Decoded as a STRING, not merely checked for presence: every dispatcher
 		// unmarshals these fields into string struct members, so `"client_id": 123`
 		// or `"  "` installs cleanly, exits 0, and fails at dispatch — the exact
 		// deferred failure this validation exists to prevent.
+		//
+		// Omitted and present-but-not-a-string are reported SEPARATELY, matching
+		// validateConditionalGroups below. Here the distinction is only about the
+		// MESSAGE — every outcome in this loop is fatal, so there is no all-or-none
+		// escape hatch for a uniform type fault to slip through — but "credentials are
+		// missing client_id" for `"client_id": 123` sends an operator hunting for a
+		// field they did supply, and the two faults are corrected differently.
 		var v string
 		raw, ok := folded[credentialKey(want)]
 		switch {
-		case !ok || json.Unmarshal(raw, &v) != nil || strings.TrimSpace(v) == "":
+		case !ok:
 			missing = append(missing, want)
+		case json.Unmarshal(raw, &v) != nil, strings.TrimSpace(v) == "":
+			mistyped = append(mistyped, want)
 		case v != strings.TrimSpace(v):
 			// Surrounding whitespace is REFUSED, not trimmed away. Testing only the
 			// trimmed value while encrypting the original was the same deferred failure
@@ -92,12 +159,112 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 		sort.Strings(missing)
 		return nil, fmt.Errorf("bootstrap: %s credentials are missing %s", provider, strings.Join(missing, ", "))
 	}
+	if len(mistyped) > 0 {
+		sort.Strings(mistyped)
+		return nil, fmt.Errorf("bootstrap: %s credentials supply %s but not as a non-empty string; every dispatcher decodes these into string fields, so the row would install cleanly and fail at dispatch",
+			provider, strings.Join(mistyped, ", "))
+	}
 	if len(padded) > 0 {
 		sort.Strings(padded)
 		return nil, fmt.Errorf("bootstrap: %s credentials have surrounding whitespace in %s; a secret is stored verbatim, so the padding would be sent to the provider",
 			provider, strings.Join(padded, ", "))
 	}
+	if err := validateConditionalGroups(provider, folded); err != nil {
+		return nil, err
+	}
 	return json.Marshal(folded)
+}
+
+// conditionalCredentialGroups are all-or-none field sets: supply every member or none. They
+// are NOT in requiredCredentialKeys because each member is individually optional — it is the
+// PARTIAL set that is invalid, which a required-key list cannot express.
+var conditionalCredentialGroups = map[model.Provider][]string{
+	// LinkedIn refresh material. LinkedIn issues refresh tokens only to approved Marketing
+	// Developer Platform partners, so a bearer-only system row is legitimate and common;
+	// what is never legitimate is one or two of the three.
+	model.ProviderLinkedInAds: {"refresh_token", "client_id", "client_secret"},
+}
+
+// validateConditionalGroups enforces the all-or-none rule the API applies at
+// validateLinkedInRefreshCredentials (internal/service/connection.go), which this installer
+// bypasses entirely by writing past the API straight to the repository.
+//
+// It matters most precisely here. The system row is the fallback for every project that has
+// connected no account of its own, so a partial paste degrades the highest-blast-radius row
+// in the deployment: CanRefresh() returns false, the install exits 0, and the row silently
+// behaves as bearer-only until the access token ages out ~60 days later — reappearing as the
+// outage the refresh support was built to prevent, far from the operator who typed it.
+func validateConditionalGroups(provider model.Provider, folded map[string]json.RawMessage) error {
+	group, ok := conditionalCredentialGroups[provider]
+	if !ok {
+		return nil
+	}
+	var present, absent, padded, mistyped []string
+	for _, want := range group {
+		// Three outcomes, not two. A key that is genuinely OMITTED is absent, and absence
+		// is legitimate here — a bearer-only LinkedIn row supplies none of the trio. A key
+		// that is PRESENT but is not a non-empty JSON string is a TYPE FAULT, and folding
+		// it into `absent` was the defect: when every member of the group is malformed the
+		// absence is UNANIMOUS, `present` is empty, the all-or-none guard returns nil, and
+		// the malformed blob is persisted for dispatch to fail on decoding into
+		// linkedinCreds. The guard cannot see a uniform fault by construction, so the type
+		// fault is collected separately and refused on its own terms.
+		//
+		// It is NOT folded into `present` either: that would report an all-or-none
+		// violation ("supplied refresh_token but missing client_id") for what is actually
+		// `"client_id": 123`, sending the operator to look for a field they did supply.
+		var v string
+		raw, found := folded[credentialKey(want)]
+		if !found {
+			absent = append(absent, want)
+			continue
+		}
+		if json.Unmarshal(raw, &v) != nil {
+			// Present and not a JSON string at all: a number, object, array or null.
+			// Every dispatcher unmarshals these into string struct members, so this
+			// blob decodes to an all-zero struct at dispatch, far from the operator.
+			mistyped = append(mistyped, want)
+			continue
+		}
+		if strings.TrimSpace(v) != "" {
+			// Surrounding whitespace is REFUSED here for the same reason the required-key
+			// loop refuses it, and this loop is where the refresh trio is reached at all:
+			// requiredCredentialKeys[linkedin-ads] is {"access_token"} ONLY, so the padding
+			// check above never sees refresh_token, client_id or client_secret. Without
+			// this, `"client_id":" 123 "` installs cleanly on the SYSTEM row — the fallback
+			// for every project with no connection of its own, the highest blast radius in
+			// the deployment — satisfies CanRefresh() because that gates on the TRIMMED
+			// value, and is then sent verbatim to LinkedIn's token endpoint, which rejects
+			// it as invalid_client on every refresh until a human re-pastes it.
+			if v != strings.TrimSpace(v) {
+				padded = append(padded, want)
+			}
+			present = append(present, want)
+			continue
+		}
+		// A supplied-but-blank string ("" or "   ") is a supplied key holding no
+		// credential. It is the same type as the field it should be, so it is a value
+		// fault rather than a type fault, but it is equally unusable: refusing it here
+		// keeps a whitespace-only client_secret from satisfying the group.
+		mistyped = append(mistyped, want)
+	}
+	if len(mistyped) > 0 {
+		sort.Strings(mistyped)
+		return fmt.Errorf("bootstrap: %s credentials supply %s but not as a non-empty string; every dispatcher decodes these into string fields, so the row would install cleanly and fail at dispatch",
+			provider, strings.Join(mistyped, ", "))
+	}
+	if len(padded) > 0 {
+		sort.Strings(padded)
+		return fmt.Errorf("bootstrap: %s credentials have surrounding whitespace in %s; a secret is stored verbatim, so the padding would be sent to the provider",
+			provider, strings.Join(padded, ", "))
+	}
+	if len(present) == 0 || len(absent) == 0 {
+		return nil
+	}
+	sort.Strings(present)
+	sort.Strings(absent)
+	return fmt.Errorf("bootstrap: %s credentials are all-or-none for %s: supplied %s but missing %s; supply all of them, or none for a bearer-only connection",
+		provider, strings.Join(group, ", "), strings.Join(present, ", "), strings.Join(absent, ", "))
 }
 
 var (

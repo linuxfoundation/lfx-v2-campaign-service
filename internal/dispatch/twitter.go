@@ -60,12 +60,16 @@ func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter
 }
 
 // Dispatch implements service.PlatformDispatcher for X (Twitter).
-func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
 	// The resolve step's error is already a preCreateError, so it passes through verbatim.
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
 		return nil, err // preCreateError
 	}
+	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
+	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
+	// See stampProvenance for why this is a defer on the named return, not a per-return call.
+	defer func() { res.stampProvenance(camp) }()
 	// validateTwitterConnection is shared with ToggleStatus so a create and a toggle accept
 	// EXACTLY the same connections. Its failures are wrapped with notCreated HERE (create-only
 	// claim semantics the toggle path must not apply).
@@ -155,7 +159,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// `created`, so we make them VISIBLE for reconciliation. We do NOT return an error:
 	// the campaign IS created, so failing the job would mislead and be unrecoverable by
 	// retry anyway (idempotency short-circuits a re-dispatch). Details are in Result/Steps.
-	camp := campaignFromTwitter(ctx, result, cfg)
+	camp = campaignFromTwitter(ctx, result, cfg)
 	if strings.TrimSpace(result.PromotedTweetWarning) != "" || strings.TrimSpace(result.PromotedTweetID) == "" || result.Reused {
 		camp.Status = campaignStatusCreatedDegraded
 	}
