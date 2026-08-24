@@ -235,25 +235,31 @@ func TestAttempt_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
 	}
 }
 
-// TestInvalidate_DoesNotLeakThroughAPublishedFlight closes the publication-order gap between
-// the cache write and the flight teardown.
+// TestInvalidate_DoesNotLeakThroughAPublishedFlight pins the flight-poison arm of
+// invalidateAccessToken: a PUBLISHED flight whose token a 401 named must not hand that token
+// back through the waiter path.
 //
-// fetchToken stores accessToken and UNLOCKS. Only afterwards, under a SECOND lock
-// acquisition, does the leader goroutine in accessTokenValue set inflight.token, retract
-// c.inflight and close done. In that window the cache already holds tok_1 while c.inflight
-// still points at the flight that is about to publish tok_1 again. So:
+// Read what this test does and does not prove, because the seeded state is CONSTRUCTED, not
+// reproduced.
 //
-//	leader: accessToken = tok_1, unlock
-//	A:      fast path takes tok_1 -> 401 -> invalidateAccessToken("tok_1") clears the CACHE
-//	B:      cache empty, c.inflight still non-nil -> joins the flight
-//	leader: inflight.token = tok_1, close(done)
-//	B:      receives tok_1 -- the token the platform just rejected
+// The state it seeds -- c.inflight non-nil while inflight.token is already "tok_1" -- is not
+// a state the current leader path can produce. The leader sets inflight.token, retracts
+// c.inflight and closes done inside ONE unbroken critical section, so a published flight is
+// never observable carrying a non-empty token. A racing probe over ~7M observations of a
+// published flight saw this state zero times; it appeared ~74k times only once that critical
+// section was split in two. So this test does NOT reproduce a production interleaving, and it
+// does NOT cover the residual pre-publication window tracked by #180 (a 401 landing before
+// inflight.token is set matches nothing and the leader publishes the rejected token anyway).
 //
-// Compare-and-clear on the cache alone therefore does NOT establish "the rejected token is
-// gone": an in-flight refresh can be the very source of the token the 401 rejected.
+// What it DOES prove is still worth having: it is the executable specification of the poison
+// arm's contract. Neutering that arm in a provider fails this test in that provider and only
+// that provider, so the arm is enforced behaviour rather than dead weight. Its value is
+// defence-in-depth -- the arm's unreachability is a property of today's lock discipline, and
+// the single Unlock/Lock split that makes it reachable is exactly the shape an attempted #180
+// fix would introduce. This test is what would catch such a fix regressing the guard.
 //
-// The window is reconstructed directly rather than raced for, so the test is deterministic
-// and cannot pass by scheduling luck. The assertion goes through accessTokenValue -- the real
+// The state is reconstructed directly rather than raced for, so the test is deterministic and
+// cannot pass by scheduling luck. The assertion goes through accessTokenValue -- the real
 // waiter path a joining caller takes -- not the field, so it fails if the value leaks by any
 // route.
 func TestInvalidate_DoesNotLeakThroughAPublishedFlight(t *testing.T) {
@@ -265,8 +271,10 @@ func TestInvalidate_DoesNotLeakThroughAPublishedFlight(t *testing.T) {
 	c := NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithClock(fixedClock()))
 
-	// A flight that has ALREADY completed with tok_1 and is still published, exactly the
-	// state fetchToken leaves behind between its cache write and the leader's teardown.
+	// A flight that has ALREADY completed with tok_1 and is still published. This state is
+	// CONSTRUCTED to exercise the poison arm's contract -- it is not a state the leader path
+	// can leave behind, since publication and teardown share one critical section (see the
+	// doc comment above). Seeding it directly is what makes the test deterministic.
 	done := make(chan struct{})
 	close(done)
 	c.tokenMu.Lock()

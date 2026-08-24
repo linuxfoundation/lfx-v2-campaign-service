@@ -366,12 +366,30 @@ type tokenResponse struct {
 // It clears the EXPIRY as well as the token, so the cache is empty by either half of the fast
 // path's condition and a future edit to that test cannot silently resurrect the token.
 //
-// An in-flight single-flight refresh is NOT left alone, because its result can be the very
-// token this 401 rejected. fetchToken stores the token and UNLOCKS; only under a LATER lock
-// acquisition does the leader publish it on the flight and retract c.inflight. In that window
-// the cache already holds the new token while the flight is still joinable, so a caller that
-// missed the cache would be handed the rejected value even after the cache was cleared. A
-// flight whose token MATCHES is therefore blanked and unpublished as well.
+// A published in-flight refresh carrying a MATCHING token is blanked and unpublished as well
+// as the cache being cleared. Be precise about what that arm does and does not buy today.
+//
+// It is NOT reachable on the current leader path. The leader sets inflight.token, retracts
+// c.inflight and closes done inside ONE unbroken critical section (see refreshToken), so a
+// published flight is never observable holding a non-empty token: by the time the token is
+// set, the flight is already unpublished in the same lock hold. A 3s racing probe over ~7M
+// observations of a published flight saw the (c.inflight != nil && token != "") state ZERO
+// times; splitting that critical section in two made the same probe see it ~74k times, which
+// is what shows the zero is a property of the lock discipline and not of the probe.
+//
+// It therefore does NOT close the residual window tracked by #180: a 401 arriving BEFORE the
+// leader sets inflight.token finds "" on the flight, matches nothing, and the leader then
+// publishes the already-rejected token. Closing that needs publication and teardown to be
+// atomic across all three token caches -- a concurrency redesign, not a guard tweak. Do not
+// read this arm as covering #180.
+//
+// It is kept deliberately, as defence-in-depth rather than as live coverage: its
+// unreachability is a property of TODAY's lock discipline, not an invariant of the type. The
+// single Unlock/Lock split above is the whole distance between here and a reachable poisoned
+// publication, and that shape is exactly what an attempted #180 fix would introduce. The
+// per-provider tests bind this arm (neutering it fails that provider's test and only that
+// one), so it is enforced behaviour, not dead weight -- and it is the landing site a future
+// #180 fix builds on.
 func (c *Client) invalidateAccessToken(presented string) {
 	c.tokenMu.Lock()
 	defer c.tokenMu.Unlock()
@@ -389,13 +407,13 @@ func (c *Client) invalidateAccessToken(presented string) {
 		return
 	}
 
-	// A live single-flight refresh that has ALREADY produced this token must be poisoned
-	// too, not just the cache. fetchToken stores the token and UNLOCKS; only under a LATER
-	// lock acquisition does the leader set inflight.token, clear c.inflight and close done.
-	// In that window a fast-path caller can take the new token, be rejected, and clear the
-	// cache here — while a caller that missed the cache joins the still-published flight
-	// and is handed the very same rejected token. Clearing the cache alone would let the
-	// rejection leak straight back out.
+	// A published single-flight refresh carrying this exact token is poisoned too, not just
+	// the cache. On the CURRENT leader path this arm does not fire: the leader sets
+	// inflight.token, retracts c.inflight and closes done in one unbroken critical section,
+	// so a flight is never observable published AND holding a token (see the doc comment
+	// above for the probe that measured this). It is retained as defence-in-depth against
+	// that critical section being split — the shape any #180 fix would introduce — not
+	// because it fires today, and it does NOT close the pre-publication window of #180.
 	//
 	// This check is deliberately INDEPENDENT of the cache comparison below: once the cache
 	// has been cleared, gating it behind a cache match would skip exactly the case it
