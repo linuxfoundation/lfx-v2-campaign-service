@@ -341,10 +341,11 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	// The two budget amounts are MUTUALLY EXCLUSIVE upstream — amount_micros for a DAILY
 	// budget, total_amount_micros for a CUSTOM_PERIOD one — so a row carrying both has
 	// contradicted the API's own invariant and cannot be read as an answer about this
-	// campaign's budget. Refused rather than resolved by preference: googleAdsUpstreamBudgetAmount
-	// would silently take amount_micros, and comparing a daily amount against a lifetime
-	// recorded budget reports a divergence that is really a field-selection bug. Fail closed,
-	// exactly as the >1-row and unparseable-budget cases do.
+	// campaign's budget. Refused rather than resolved by preference, and independently of how
+	// any consumer later chooses between the two fields: this is a RESPONSE-INTEGRITY check
+	// about a row contradicting the API's own invariant, so it stays correct even though
+	// googleAdsUpstreamBudgetAmount now selects by BudgetPeriod rather than taking
+	// amount_micros. Fail closed, exactly as the >1-row and unparseable-budget cases do.
 	if row.CampaignBudget.AmountMicros != nil && row.CampaignBudget.TotalAmountMicros != nil {
 		return nil, fmt.Errorf("google-ads campaign settings: campaign id %s was returned with both campaign_budget.amount_micros and campaign_budget.total_amount_micros, which are mutually exclusive; the row contradicts itself and no reading of its budget can be trusted", campaignID)
 	}

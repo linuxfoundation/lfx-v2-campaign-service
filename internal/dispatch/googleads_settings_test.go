@@ -1139,9 +1139,10 @@ func TestGoogleAdsCreationCustomerIDContractIsSplitByCaller(t *testing.T) {
 // only once the period has established its semantics.
 //
 // The two upstream budget fields mean different things — amount_micros is a DAILY rate,
-// total_amount_micros a WHOLE-FLIGHT cap — and googleAdsUpstreamBudgetAmount reads whichever
-// one is present without consulting the period. So a campaign recorded as a daily 500 against
-// an upstream row carrying only total_amount_micros=500000000 and NO period reported
+// total_amount_micros a WHOLE-FLIGHT cap. The regression this pins was that
+// googleAdsUpstreamBudgetAmount USED TO read whichever one was present without consulting the
+// period; it now selects through BudgetPeriod. Before that fix, a campaign recorded as a daily 500 against
+// an upstream row carrying only total_amount_micros=500000000 and NO period would report
 // `budget_amount: match`, when the two numbers describe different quantities: a 500/day rate
 // and a 500 lifetime cap are not the same budget, and the equal digits are a coincidence of
 // the units rather than an agreement.
