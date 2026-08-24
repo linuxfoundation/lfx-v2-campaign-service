@@ -587,3 +587,93 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 		}
 	})
 }
+
+// TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival pins the ordering between an upload
+// and a concurrent archival of its parent brief.
+//
+// This is the one property `INSERT ... WHERE EXISTS` cannot provide on its own, and it is worth a
+// deterministic test rather than a comment because the failure is SILENT and PERMANENT. Under
+// READ COMMITTED each statement takes a fresh snapshot, so an unlocked EXISTS gate can observe the
+// brief as active while `ArchiveBrief` commits, and the insert then lands under a parent that is
+// archived by the time it commits. `creative_assets` has no prune and briefs are never hard
+// deleted, so the blob is unreachable storage retained forever — nothing later reconciles it away.
+//
+// The interleaving is FORCED, not raced. An archival is opened in its own transaction and left
+// uncommitted, which takes the row lock; the upload then runs on another connection and must
+// block on that lock rather than reading past it. Racing two goroutines and hoping for the window
+// would make this test pass for timing reasons on a fast machine, which is precisely the kind of
+// green that let this defect survive several review rounds.
+//
+// The assertion is on the OUTCOME, not on the mechanism: whichever order the two take, the
+// database must not end up holding an asset whose parent is archived. That bound is independent
+// of how the repository chooses to serialize.
+func TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival(t *testing.T) {
+	ctx := context.Background()
+	pool := creativeAssetTestPool(t)
+	repo := NewCreativeAssetRepo(pool)
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "draft")
+	asset := newTestAsset(t, projectID, briefID)
+
+	// Hold the archival open so the upload cannot slip past it on timing.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin archival tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err = tx.Exec(ctx,
+		`UPDATE campaign_briefs SET status = 'archived' WHERE id = $1`, briefID); err != nil {
+		t.Fatalf("archive brief inside tx: %v", err)
+	}
+
+	type result struct {
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, cerr := repo.CreateAsset(ctx, asset)
+		done <- result{err: cerr}
+	}()
+
+	// A correctly serialized CreateAsset takes the same brief row lock and therefore BLOCKS here.
+	// An unlocked EXISTS gate reads the pre-archival committed state and returns immediately.
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("CreateAsset returned a stored asset while an uncommitted archival held the " +
+				"parent brief row: the parent gate read past the concurrent archival instead of " +
+				"serializing against it, so this blob can be committed under an archived brief. " +
+				"creative_assets has no prune, so that row is unreachable storage retained forever")
+		}
+		t.Fatalf("CreateAsset returned %v without waiting for the archival to resolve: it did not "+
+			"take the parent row lock", res.err)
+	case <-time.After(750 * time.Millisecond):
+		// Blocked on the lock, which is the correct behaviour.
+	}
+
+	// Let the archival win. CreateAsset must now observe the archived parent and refuse.
+	if cerr := tx.Commit(ctx); cerr != nil {
+		t.Fatalf("commit archival: %v", cerr)
+	}
+
+	select {
+	case res := <-done:
+		if !errors.Is(res.err, domain.ErrNotFound) {
+			t.Fatalf("after the archival committed, CreateAsset returned %v, want ErrNotFound: an "+
+				"archived brief may not accrue an asset", res.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CreateAsset never returned after the archival committed")
+	}
+
+	// Independent of the call's return value, the database must not hold the row.
+	var n int
+	if serr := pool.QueryRow(ctx,
+		`SELECT count(*) FROM creative_assets WHERE brief_id = $1`, briefID).Scan(&n); serr != nil {
+		t.Fatalf("count assets: %v", serr)
+	}
+	if n != 0 {
+		t.Fatalf("found %d creative_assets rows under an archived brief, want 0", n)
+	}
+}
