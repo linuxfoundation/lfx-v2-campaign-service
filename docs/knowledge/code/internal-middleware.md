@@ -116,17 +116,33 @@ The weight is PRICED per request, not charged flat, by `constants.UploadAdmissio
 flat charge equal to the budget made effective concurrency exactly 1 — a 200 KiB logo held the
 same permit as a 30 MiB image. Declared sizes are charged proportionally
 (`UploadAdmissionAmplification`) between a floor (`UploadAdmissionMinWeightBytes`, 8 MiB) and the
-worst-case ceiling, so ordinary uploads run ~16 at a time against the 128 MiB budget.
+worst-case ceiling, so ordinary uploads that DECLARE a length run up to ~16 at a time against the
+128 MiB budget. The floor applies to declared lengths only — see below for the undeclared case,
+which is charged the ceiling and therefore serializes.
 
-Unknown length (chunked or absent, `ContentLength < 0`) is charged the FLOOR, not the ceiling.
-The ceiling equals the whole budget, so pricing the unknown case there re-created concurrency 1 —
-and not hypothetically: goa's generated `RequestEncoder` never sets `ContentLength`, so the
-shipped briefs client streams this upload chunked and hit exactly that path. Charging the floor
-does not make an omitted header the cheapest permit, because the permit is not what bounds
-spending: the body is bounded by `MaxBodyBytes`' `MaxBytesReader` and the pixel buffer by the
-separate `DecodeReserver` budget, and neither consults the declared length. Making the generated
-client declare an encoded length so it is priced by its true size is the complementary
-client-side fix, tracked as issue #183.
+Unknown length (chunked or absent, `ContentLength < 0`) is charged the worst-case CEILING. That
+ceiling equals the whole budget, so undeclared uploads run strictly ONE AT A TIME and a concurrent
+one is shed with 503.
+
+The floor was tried here and reverted, and the reason is worth keeping because both positions were
+defensible. Charging the floor bought concurrency for the only client that exists — goa's generated
+`RequestEncoder` never sets `ContentLength`, so the shipped briefs client streams this upload
+chunked and lands on this branch by default. But the permit is taken BEFORE the body is read, so a
+floor charge assumes "small" about a request that may be worst-case, and the aggregate that follows
+is not survivable: 16 admitted uploads each hold a base64-decoded slice of up to ~31.5 MiB live in
+`asset.Bytes` through `sha256Hex` and the whole `CreateAsset` insert — roughly 480 MiB on a 512 MiB
+pod, reachable pre-auth because this middleware sits outside the mux by design.
+
+Neither other control bounds that sum: `MaxBodyBytes` caps ONE body rather than the total, and the
+`DecodeReserver` budget covers only the PIXEL buffer and releases the moment `image.Decode`
+returns. The permit weight is the only thing that bounds the aggregate, which is why it must not
+under-price the case it cannot measure.
+
+So the memory bound wins over throughput here: it is the property this middleware exists to
+provide, and a retryable 503 under concurrent uploads fails safe where an OOM takes the pod down
+for every route. Uploads are low-frequency, so the cost is throughput, not correctness. The honest
+fix is upstream — make the generated client DECLARE its encoded length so ordinary uploads are
+priced by size and this branch becomes rare rather than the default. That is issue #183.
 
 Under saturation a request waits a bounded `UploadAdmissionWait` (250 ms, absorbing ordinary
 jitter) and is then shed with an explicit `503` plus `Retry-After` in the service's

@@ -110,13 +110,18 @@ const UploadAdmissionAmplification int64 = 4
 
 // UploadAdmissionMinWeightBytes floors what any single upload is charged.
 //
-// Without a floor, size-proportional pricing degenerates: a request declaring Content-Length 0,
-// or a chunked request declaring nothing at all, would be charged nothing and the budget would
-// admit unboundedly many of them. Each still costs the process a goroutine, a connection and a
-// decoder, so the floor is what keeps "many tiny uploads" bounded rather than free.
+// Without a floor, size-proportional pricing degenerates: a request DECLARING Content-Length 0
+// (or a few bytes) would be charged nothing and the budget would admit unboundedly many of them.
+// Each still costs the process a goroutine, a connection and a decoder, so the floor is what
+// keeps "many tiny uploads" bounded rather than free.
 //
-// 8 MiB admits 16 concurrent small uploads against the 128 MiB budget — enough that ordinary
-// traffic never sheds, few enough that the aggregate stays a minority of the pod.
+// It applies only to DECLARED lengths. A chunked request declaring nothing at all is NOT floored
+// — UploadAdmissionWeightFor charges it the worst-case ceiling, because an undeclared body's
+// cost is unknown until it has been read and the permit is taken before the read. See that
+// function for why the floor was tried for the undeclared case and reverted.
+//
+// 8 MiB admits 16 concurrent small DECLARED uploads against the 128 MiB budget — enough that
+// ordinary traffic never sheds, few enough that the aggregate stays a minority of the pod.
 const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 
 // UploadAdmissionWeightFor prices ONE upload against the budget from its DECLARED body size.
@@ -133,43 +138,46 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 //     A liar therefore buys a cheap permit and still cannot spend more than the ceiling this
 //     function would have charged it.
 //
-// Absent or chunked (ContentLength < 0) is charged the FLOOR, the same as the smallest declared
-// upload. Pricing the unknown case at the worst-case ceiling is the intuitive choice and it was
-// the wrong one, because the ceiling EQUALS UploadAdmissionBudgetBytes: one undeclared request
-// took the entire budget, so undeclared uploads ran strictly one at a time. That is not a
-// theoretical branch — goa's generated RequestEncoder never sets ContentLength, so the shipped
-// briefs client streams this upload chunked and lands here. The pricing model's whole benefit
-// was therefore defeated for the only generated client that exists, as an artifact of encoder
-// behaviour rather than as a decision anyone made.
+// Absent or chunked (ContentLength < 0) is charged the WORST-CASE CEILING. Because that ceiling
+// equals UploadAdmissionBudgetBytes, one undeclared request takes the entire budget and
+// undeclared uploads run strictly ONE AT A TIME.
 //
-// Charging the floor does NOT make an omitted Content-Length the cheapest way to buy a permit,
-// which is the objection that kept the ceiling here. The permit does not bound what the request
-// may spend; two other controls do, and neither one reads the declared length:
+// That cost is real and was accepted deliberately, so do not "fix" it by lowering the charge
+// without re-reading this block. goa's generated RequestEncoder never sets ContentLength, so the
+// shipped briefs client streams this upload chunked and lands here: serialization is the DEFAULT
+// path for the only generated client that exists, not a rare branch.
 //
-//   - The BODY is bounded by MaxBodyBytes, which wraps every request in http.MaxBytesReader at
-//     MaxRequestBodyBytes (see buildHandler: MaxBodyBytes wraps the mux, immediately INSIDE this
-//     middleware, so it is on this route's chain). An undeclared body cannot be read past that
-//     cap whatever it claims or omits, so omitting the header buys no additional bytes.
-//   - The PIXEL BUFFER — the larger and less predictable cost, which compression severs from the
-//     wire size entirely — is bounded by the separate aggregate DecodeAdmissionBudgetBytes
-//     reservation taken around image.Decode. That budget is charged from the DECODED size read
-//     out of the image header, so it is unaffected by what the request declared on the wire.
+// The floor was tried here and reverted. Charging the floor (8 MiB) admits 16 concurrent
+// undeclared uploads, and the aggregate that produces is not survivable:
 //
-// Under-declaring therefore buys a cheaper permit and still cannot spend more than a declaring
-// caller, which is the same asymmetry the UNDER-declaring bullet above already relies on. The
-// undeclared case is not a new hole; it is that same closed one reached by omitting the header
-// instead of understating it.
+//   - internal/service's UploadCreativeAsset holds the base64-DECODED slice (p.Bytes, up to
+//     ~31.5 MiB) live in asset.Bytes through sha256Hex AND the whole CreateAsset insert. So 16
+//     admitted uploads coexist holding ~480 MiB of decoded slices alone, on a 512 MiB pod,
+//     before any wire buffer.
+//   - Neither other control bounds that aggregate. MaxBodyBytes caps ONE body, not the sum.
+//     DecodeAdmissionBudgetBytes reserves only the PIXEL buffer and releases the instant
+//     image.Decode returns — it never covers p.Bytes.
+//   - The decode happens before authJWTFn, because this middleware sits outside the mux by
+//     design, so the whole thing is reachable PRE-AUTH.
 //
-// This is the SERVER-SIDE half. Making the generated client declare a length so it is priced by
-// its actual size — rather than at the floor like every other unknown — is the separate,
-// complementary fix tracked as issue #183; both are wanted, and this one does not depend on it.
+// Both positions were defensible, which is why this comment records the trade rather than just
+// the outcome: the floor bought concurrency for the real client and cost the memory bound; the
+// ceiling keeps the memory bound and costs concurrency. The memory bound wins because it is the
+// property this middleware exists to provide, and because failing safe (a retryable 503 under
+// concurrent uploads) beats an OOM that takes the pod down for every route.
+//
+// The server cannot price what it has not read, so the honest fix is upstream: make the
+// generated client DECLARE its length, and undeclared bodies become the rare case rather than
+// the default. That is issue #183, and it is what restores concurrency for ordinary uploads.
+// Uploads are low-frequency, so serialized undeclared uploads are a throughput cost in the
+// meantime, not a correctness one.
 func UploadAdmissionWeightFor(contentLength int64) int64 {
 	if contentLength < 0 {
-		// Unknown length is charged the same as the smallest declared upload, not the
-		// worst-case ceiling. See the doc comment: the ceiling equals the whole budget, so it
-		// serialized the shipped chunked client, and the body and pixel-buffer bounds that
-		// actually cap spending do not consult the declared length at all.
-		return UploadAdmissionMinWeightBytes
+		// Unknown length is charged the WORST CASE, which equals the whole budget, so
+		// undeclared uploads run strictly one at a time. See the doc comment: the server
+		// cannot know what a chunked body will spend until it has read it, and the permit is
+		// the only bound that runs BEFORE the read.
+		return UploadAdmissionWeightBytes
 	}
 	// Overflow-safe: contentLength is bounded by MaxRequestBodyBytes downstream, but this
 	// function must not depend on a bound applied by a different middleware, so the compare

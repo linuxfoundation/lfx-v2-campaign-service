@@ -429,22 +429,29 @@ func TestUploadAdmissionWeightFor_PricesWithoutUnderCharging(t *testing.T) {
 	ceiling := constants.UploadAdmissionWeightBytes
 	floor := constants.UploadAdmissionMinWeightBytes
 
-	t.Run("unknown length is charged the floor, not the whole budget", func(t *testing.T) {
-		// Chunked or absent. The ceiling was the intuitive charge and it equalled the entire
-		// budget, which made undeclared uploads serialize -- and the shipped goa client sends
-		// this route chunked, so that was the only client's actual behaviour. It is priced at
-		// the floor instead: omitting the header cannot buy more bytes, because MaxBodyBytes'
-		// http.MaxBytesReader bounds the body and the decode reservation bounds the pixel
-		// buffer, and neither reads the declared length.
-		if got := constants.UploadAdmissionWeightFor(-1); got != floor {
-			t.Errorf("weight for unknown length = %d, want the floor %d", got, floor)
+	t.Run("unknown length is charged the worst-case ceiling, not the floor", func(t *testing.T) {
+		// Chunked or absent. The floor was tried here and REVERTED: the permit is taken before
+		// the body is read, so the server cannot know what an undeclared body will spend, and
+		// floor-pricing admitted 16 concurrent uploads each holding a ~31.5 MiB decoded slice
+		// live through the whole insert -- ~480 MiB on a 512 MiB pod, pre-auth. Serializing
+		// undeclared uploads is the accepted cost; issue #183 (client declares its length) is
+		// what restores concurrency, by making this branch rare instead of the default.
+		if got := constants.UploadAdmissionWeightFor(-1); got != ceiling {
+			t.Errorf("weight for unknown length = %d, want the worst-case ceiling %d", got, ceiling)
 		}
 		// The claim that actually matters, stated independently of the constant above: an
-		// undeclared upload must not consume the whole budget, or the shipped chunked client
-		// is back to concurrency 1.
-		if got := constants.UploadAdmissionWeightFor(-1); got >= constants.UploadAdmissionBudgetBytes {
-			t.Errorf("weight for unknown length = %d, which is the whole %d budget: undeclared "+
-				"uploads serialize", got, constants.UploadAdmissionBudgetBytes)
+		// undeclared upload must be charged at least what a MAXIMUM-SIZE body would cost, or
+		// N of them can be admitted together and the aggregate is unbounded.
+		if got := constants.UploadAdmissionWeightFor(-1); got < constants.UploadAdmissionWeightFor(constants.MaxRequestBodyBytes) {
+			t.Errorf("weight for unknown length = %d, less than a maximum-size declared body "+
+				"costs (%d): an undeclared body can be exactly that large, so this under-charges",
+				got, constants.UploadAdmissionWeightFor(constants.MaxRequestBodyBytes))
+		}
+		// And the consequence, asserted directly rather than left implicit: the budget admits
+		// exactly ONE undeclared upload at a time.
+		if admits := constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(-1); admits != 1 {
+			t.Errorf("budget admits %d concurrent undeclared uploads, want exactly 1: the "+
+				"aggregate of concurrent undeclared bodies is what this pricing bounds", admits)
 		}
 	})
 
@@ -496,37 +503,39 @@ func TestUploadAdmissionWeightFor_PricesWithoutUnderCharging(t *testing.T) {
 	})
 }
 
-// TestUploadAdmission_UndeclaredLengthUploadsRunConcurrently is the regression guard for the
-// second form of the concurrency-1 defect. The first form was flat pricing (fixed by pricing
-// from Content-Length); this one is the UNDECLARED case, which the pricing rule sent to the
-// worst-case ceiling and so re-created concurrency 1 for the only generated client that exists.
+// TestUploadAdmission_UndeclaredLengthUploadsSerialize pins the memory bound for the case the
+// server cannot price: a body whose length is not declared.
 //
-// It matters because it is not a hypothetical branch: goa's generated RequestEncoder never sets
-// ContentLength, so the shipped briefs client streams this upload chunked and lands on exactly
-// this path. Pricing it at the ceiling meant two real clients serialized and the second was shed.
+// This test previously asserted the OPPOSITE -- that undeclared uploads run concurrently -- when
+// unknown length was charged the 8 MiB floor. That pricing was reverted because the permit is
+// taken BEFORE the body is read, so a floor charge assumes "small" about a request that may be
+// worst-case: 16 admitted uploads each hold a ~31.5 MiB decoded slice live through the whole
+// insert (internal/service keeps p.Bytes in asset.Bytes past sha256Hex and CreateAsset), which
+// is ~480 MiB on a 512 MiB pod, reachable pre-auth. Neither other control bounds that sum --
+// MaxBodyBytes caps ONE body, and the decode reservation covers only the pixel buffer and
+// releases when image.Decode returns.
 //
-// The proof is the same RENDEZVOUS used for the declared-length case, and for the same reason:
-// each admitted handler announces arrival and then blocks until every other admitted handler has
-// arrived, so the barrier can only be satisfied by that many handlers being inside the middleware
-// AT THE SAME MOMENT. If admission still priced unknown length at the ceiling, one request would
-// consume the whole budget, the barrier would never complete, and this fails by timeout. There is
-// no sleep and no elapsed-time threshold in the assertion.
-func TestUploadAdmission_UndeclaredLengthUploadsRunConcurrently(t *testing.T) {
+// So the property under test is now: ONE undeclared upload at a time, and the next is SHED with
+// 503 rather than queued or admitted. Issue #183 (make the generated client declare its length)
+// is what restores concurrency for ordinary uploads, by moving them off this branch entirely.
+//
+// The proof does not use sleeps or elapsed time. The first handler blocks until the test
+// releases it, so while it is parked the budget is provably exhausted; a second request sent in
+// that window must come back 503. The release channel is what makes the window deterministic.
+func TestUploadAdmission_UndeclaredLengthUploadsSerialize(t *testing.T) {
 	// ContentLength -1 is what net/http reports for a chunked or otherwise undeclared body --
 	// the exact value the generated client produces.
 	const undeclared int64 = -1
 
-	wantConcurrent := int(constants.UploadAdmissionBudgetBytes /
-		constants.UploadAdmissionWeightFor(undeclared))
-	if wantConcurrent < 2 {
-		t.Fatalf("production constants price an undeclared-length upload at %d against a %d "+
-			"budget, admitting %d at a time: the shipped chunked client cannot upload "+
-			"concurrently", constants.UploadAdmissionWeightFor(undeclared),
-			constants.UploadAdmissionBudgetBytes, wantConcurrent)
+	// Stated as an independent claim rather than derived from the constant under test: an
+	// undeclared upload must take the WHOLE budget, so exactly one fits.
+	if admits := constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(undeclared); admits != 1 {
+		t.Fatalf("production constants admit %d concurrent undeclared uploads, want exactly 1: "+
+			"the aggregate of concurrent undeclared bodies would be unbounded", admits)
 	}
 
-	var arrived sync.WaitGroup
-	arrived.Add(wantConcurrent)
+	parked := make(chan struct{})
+	release := make(chan struct{})
 	var admitted atomic.Int64
 
 	h := UploadAdmission(
@@ -535,45 +544,51 @@ func TestUploadAdmission_UndeclaredLengthUploadsRunConcurrently(t *testing.T) {
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
 	)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		admitted.Add(1)
-		arrived.Done()
-		arrived.Wait()
+		if admitted.Add(1) == 1 {
+			close(parked)
+			<-release
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	done := make(chan int, wantConcurrent)
-	for range wantConcurrent {
-		go func() {
-			req := httptest.NewRequest(http.MethodPost, testUploadPath, strings.NewReader(`{}`))
-			// httptest.NewRequest infers a Content-Length from the reader, so it must be
-			// cleared explicitly: the subject under test is the branch that runs when the
-			// length is UNKNOWN, and leaving the inferred value would silently exercise the
-			// declared-size path instead and pass for the wrong reason.
-			req.ContentLength = undeclared
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			done <- rec.Code
-		}()
+	first := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, testUploadPath, strings.NewReader(`{}`))
+		// httptest.NewRequest infers a Content-Length from the reader, so it must be cleared
+		// explicitly: the subject under test is the branch that runs when the length is
+		// UNKNOWN, and leaving the inferred value would exercise the declared-size path.
+		req.ContentLength = undeclared
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		first <- rec.Code
+	}()
+
+	// Wait for the first request to be INSIDE the handler holding its permit. Until this
+	// fires, a 503 from the second request would prove nothing about contention.
+	select {
+	case <-parked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first undeclared upload was never admitted")
 	}
 
-	for i := range wantConcurrent {
-		select {
-		case code := <-done:
-			if code != http.StatusOK {
-				t.Errorf("request %d: status = %d, want %d; an undeclared-length upload was "+
-					"shed rather than admitted alongside the others", i, code, http.StatusOK)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatalf("only %d of %d undeclared-length uploads were admitted concurrently: the "+
-				"rendezvous never completed, so unknown-length requests still serialize",
-				admitted.Load(), wantConcurrent)
-		}
+	// The budget is now provably exhausted by one request. A second must be shed.
+	req := httptest.NewRequest(http.MethodPost, testUploadPath, strings.NewReader(`{}`))
+	req.ContentLength = undeclared
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("second undeclared upload: status = %d, want %d -- one undeclared request must "+
+			"take the whole budget, so a concurrent one is shed rather than admitted",
+			rec.Code, http.StatusServiceUnavailable)
+	}
+	if got := admitted.Load(); got != 1 {
+		t.Errorf("%d undeclared uploads entered the handler concurrently, want 1: the aggregate "+
+			"wire+decoded memory of concurrent undeclared bodies is not bounded", got)
 	}
 
-	if got := admitted.Load(); got != int64(wantConcurrent) {
-		t.Errorf("admitted %d undeclared-length uploads, want %d", got, wantConcurrent)
+	close(release)
+	if code := <-first; code != http.StatusOK {
+		t.Errorf("first undeclared upload: status = %d, want %d", code, http.StatusOK)
 	}
-	t.Logf("production constants admitted %d concurrent undeclared-length uploads "+
-		"(weight %d each, budget %d)", wantConcurrent,
-		constants.UploadAdmissionWeightFor(undeclared), constants.UploadAdmissionBudgetBytes)
 }

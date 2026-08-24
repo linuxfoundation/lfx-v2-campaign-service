@@ -456,10 +456,11 @@ func TestDeferredBufferWriter_HijackWithoutSupportReturnsErrNotSupported(t *test
 // one: consumption must NOT scale with the payload. A middleware that had actually been bypassed
 // would read the trailing bytes, and reading them is what costs memory.
 //
-// This also settles the question for the pricing rule in constants.UploadAdmissionWeightFor,
-// whose floor for undeclared bodies rests on "MaxBodyBytes bounds the real body regardless".
-// That premise survives: an undeclared request still cannot get MORE bytes into this process by
-// appending trailing junk, because the trailing junk is not read. The companion case — oversize
+// This also bears on the pricing rule in constants.UploadAdmissionWeightFor. Undeclared bodies
+// are no longer floored — they are charged the worst-case ceiling, so this is not what keeps them
+// safe — but the property still matters for the DECLARED floor and for the general claim that a
+// caller cannot get MORE bytes into this process by appending trailing junk, because the trailing
+// junk is not read. The companion case — oversize
 // bytes INSIDE the JSON value, which the decoder must read and which is the only shape that
 // could actually store an over-cap asset — is covered by
 // TestMaxBodyBytes_OversizeInsideTheValueStillTrips413 below, and there the cap DOES fire.
