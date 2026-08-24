@@ -1054,6 +1054,22 @@ mask a genuine bounded echo later in the same message.
 DSN — the driver's real message shapes must be withheld, the protocol prose must survive.
 Only asserting the first would be satisfied by a helper that withholds everything.
 
+### Every host in the DSN counts, not just the first
+
+`pgconn.ParseConfig` puts only the FIRST host in `Config.Host`; a comma-separated multi-host
+DSN parses its remaining hosts into `Config.Fallbacks`. pgx dials each in turn and names the
+one that failed, using `originalHostname` — the host as written in the DSN. Comparing against
+`Config.Host` alone therefore cleared any error naming only a secondary host, and it printed
+verbatim.
+
+`dsnIdentifiersPresent` appends every `fb.Host` to the compared set. The fallbacks also carry
+per-host user/password/database, but pgx copies those from the top-level config for each
+entry, so the host is the only field that adds anything.
+
+`TestSafeDSNErrWithholdsFallbackHosts` asserts the primary AND both fallbacks are withheld —
+asserting only the fallbacks would be satisfied by a fix that replaced `Config.Host` instead
+of adding to it — and that a message naming no host in the DSN still keeps its text.
+
 ### A regression test must not pass for the wrong reason
 
 `TestConnectAndMigrateWithholdsTheExplicitDSN` renders a real failure and asserts the probe's

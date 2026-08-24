@@ -71,3 +71,23 @@ than a rendered-output assertion and is not a substitute for one.
 No test was removed — `grep "^func "` across both touched test files shows one addition and
 no deletions. `gofmt -s`, `go vet`, `go build`, `go test -race ./...` (34 packages) and
 `golangci-lint` (0 issues) are all clean.
+
+**Follow-up — a fourth finding on the fix itself.** Widening the comparison to word
+boundaries drew review attention to WHICH identifiers are compared, and one was missing.
+`pgconn.ParseConfig` puts only the first host in `Config.Host`; a comma-separated multi-host
+DSN parses the rest into `Config.Fallbacks`, and pgx names the host that failed using
+`originalHostname`. Verified before fixing: against
+`postgres://multiuser:multipw@primary.invalid:5432,secondary.invalid:5433,third.invalid:5434/multidb`,
+the message `failed to connect to host "secondary.invalid": connection refused` returned
+**verbatim** — `dsnIdentifiersPresent` reported false.
+
+`dsnIdentifiersPresent` now appends every `fb.Host`. The fallbacks also carry per-host
+user/password/database, but pgx copies those from the top-level config for each entry, so the
+host is the only field that adds anything; it is still read per fallback rather than assumed,
+since the assumption is pgx's to change.
+
+`TestSafeDSNErrWithholdsFallbackHosts` asserts the primary and both fallbacks, because a fix
+that REPLACED `Config.Host` with the fallbacks would pass a fallback-only test. Both mutations
+fail it: dropping the fallback loop leaks `secondary`/`third`, and dropping `cfg.Host` from
+the set leaks `primary`. A message naming no host in the DSN still keeps its text, so the
+wider comparison did not buy safety with diagnosability.

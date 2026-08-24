@@ -1186,6 +1186,52 @@ func TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers(t *testing.T) {
 	}
 }
 
+// TestSafeDSNErrWithholdsFallbackHosts pins the multi-host DSN case.
+//
+// pgconn.ParseConfig puts only the FIRST host in Config.Host; a comma-separated DSN parses
+// its remaining hosts into Config.Fallbacks. pgx dials each in turn and names the one that
+// failed, using originalHostname -- the host as written in the DSN. So a comparison against
+// Config.Host alone cleared every error that named only a secondary host, and it printed in
+// full.
+//
+// The primary case is asserted alongside the fallbacks, because a fix that swapped the
+// comparison to the fallbacks instead of adding them would pass a fallback-only test.
+func TestSafeDSNErrWithholdsFallbackHosts(t *testing.T) {
+	t.Parallel()
+
+	// Three hosts: one primary, two fallbacks. .invalid keeps them unresolvable, so this
+	// DSN cannot collide with any harness value. //nolint:gosec // synthetic fixture
+	const dsn = "postgres://multiuser:multipw@primary.invalid:5432," + //nolint:gosec // synthetic fixture
+		"secondary.invalid:5433,third.invalid:5434/multidb?sslmode=disable"
+
+	// Every host in the DSN must be withheld, not just the first.
+	for _, host := range []string{"primary.invalid", "secondary.invalid", "third.invalid"} {
+		msg := `failed to connect to host "` + host + `": connection refused`
+		got := dbtest.SafeDSNErrFor(dsn, errors.New(msg))
+		if strings.Contains(got, host) {
+			t.Errorf("SafeDSNErrFor = %q, want the host %q withheld; ParseConfig keeps "+
+				"secondary hosts in Config.Fallbacks and pgx names the host that failed, "+
+				"so comparing against Config.Host alone leaks every fallback", got, host)
+		}
+	}
+
+	// The other identifiers still hold on a multi-host DSN: the fallback loop must ADD to
+	// the comparison, not replace it.
+	for _, id := range []string{"multiuser", "multipw", "multidb"} {
+		msg := `failed to connect to ` + "`user=" + id + "`"
+		if got := dbtest.SafeDSNErrFor(dsn, errors.New(msg)); strings.Contains(got, id) {
+			t.Errorf("SafeDSNErrFor = %q, want %q withheld on a multi-host DSN", got, id)
+		}
+	}
+
+	// Still diagnosable: a message naming no host in the DSN keeps its text.
+	const clean = "connection refused"
+	if got := dbtest.SafeDSNErrFor(dsn, errors.New(clean)); got != clean {
+		t.Errorf("SafeDSNErrFor = %q, want %q preserved; adding fallback hosts to the "+
+			"comparison must not withhold messages that name none of them", got, clean)
+	}
+}
+
 // TestNoConnectSiteRendersItsErrorRaw is a SOURCE assertion, and it is deliberate.
 //
 // The rest of this file asserts on rendered strings, on the stated principle that a leak is

@@ -412,7 +412,22 @@ func dsnIdentifiersPresent(dsn, msg string) bool {
 	if err != nil {
 		return true
 	}
-	for _, id := range []string{cfg.Password, cfg.User, cfg.Database, cfg.Host} {
+	ids := []string{cfg.Password, cfg.User, cfg.Database, cfg.Host}
+	// A multi-host DSN parses its SECONDARY hosts into Fallbacks, and cfg.Host holds only
+	// the first. pgx dials each in turn and names the one that failed -- with
+	// originalHostname, so the message carries the host as WRITTEN in the DSN. Comparing
+	// against cfg.Host alone therefore cleared any error naming only a fallback, and it
+	// printed in full: verified, a DSN of primary/secondary/third against
+	// `failed to connect to host "secondary.invalid"` returned that text verbatim.
+	//
+	// Fallbacks also carry the per-host User/Password/Database, but those are copied from
+	// the top-level config for every entry, so the host is the only field that adds
+	// anything. It is included per fallback anyway rather than assumed: the cost is a
+	// string compare and the assumption is pgx's to change.
+	for _, fb := range cfg.Fallbacks {
+		ids = append(ids, fb.Host)
+	}
+	for _, id := range ids {
 		if id != "" && namesIdentifier(msg, id) {
 			return true
 		}
