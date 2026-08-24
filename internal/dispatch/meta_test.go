@@ -22,6 +22,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+
+	"github.com/google/uuid"
 )
 
 const goodMetaCreds = `{"AccessToken":"tok"}`
@@ -2588,4 +2590,65 @@ func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
 			t.Errorf("a well-formed uuid was rejected as malformed: %v", err)
 		}
 	})
+}
+
+// TestMeta_AssetIDAliasesResolveAsOneAsset covers the identity the dedupe cache keys on.
+//
+// uuid.Parse accepts FOUR spellings of the same uuid — canonical, braced, URN and
+// unhyphenated — so the caller's raw spelling is not a stable identity. Keying the cache
+// on it lets a config name ONE asset through several valid aliases and defeat the dedupe:
+// each alias misses the map, reads the row again, retains another buffer, and is charged
+// against the aggregate budget again. That is the unbounded case the dedupe exists to
+// prevent, and it needs no extra stored data to trigger.
+//
+// Asserted through the OBSERVED read count and the bytes each variant received, so it
+// fails if canonicalization is dropped and equally if canonicalization broke resolution.
+func TestMeta_AssetIDAliasesResolveAsOneAsset(t *testing.T) {
+	const canonical = "11111111-2222-3333-4444-555555555555"
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		canonical: {Bytes: []byte("IMAGE_BYTES"), MimeType: "image/png"},
+	}}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(assets)
+
+	// Four spellings of ONE uuid. Pin the premise: every one of these must actually parse,
+	// otherwise this test would be asserting dedupe over values that are simply rejected.
+	aliases := []string{
+		canonical,
+		"{11111111-2222-3333-4444-555555555555}",
+		"urn:uuid:11111111-2222-3333-4444-555555555555",
+		"11111111222233334444555555555555",
+	}
+	for _, a := range aliases {
+		if _, err := uuid.Parse(a); err != nil {
+			t.Fatalf("fixture alias %q does not parse, so this test would not exercise dedupe: %v", a, err)
+		}
+	}
+
+	in := make([]meta.AdVariant, 0, len(aliases))
+	for _, a := range aliases {
+		in = append(in, meta.AdVariant{ImageAssetID: a})
+	}
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets error: %v", err)
+	}
+	if n := assets.callCount(); n != 1 {
+		t.Errorf("GetAsset called %d times for 4 ALIASES of one asset id, want 1 — "+
+			"alias spellings must not defeat the dedupe", n)
+	}
+	for i := range out {
+		if string(out[i].ImageBytes) != "IMAGE_BYTES" {
+			t.Errorf("variant %d (alias %q) bytes = %q, want the resolved asset's bytes",
+				i+1, aliases[i], out[i].ImageBytes)
+		}
+	}
+	// All four must alias the ONE resolved buffer, which is the allocation saving.
+	for i := 1; i < len(out); i++ {
+		if &out[0].ImageBytes[0] != &out[i].ImageBytes[0] {
+			t.Errorf("variant %d (alias %q) holds a distinct buffer; aliases must share the single resolved copy",
+				i+1, aliases[i])
+		}
+	}
 }

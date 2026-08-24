@@ -247,9 +247,26 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		if assetID == "" {
 			continue
 		}
-		if _, perr := uuid.Parse(assetID); perr != nil {
+		parsed, perr := uuid.Parse(assetID)
+		if perr != nil {
 			return nil, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
 		}
+		// CANONICALIZE before the id is used as a cache key or a lookup value.
+		//
+		// uuid.Parse accepts four spellings of the SAME uuid — canonical, braced
+		// ({...}), URN (urn:uuid:...) and unhyphenated — so the caller's raw spelling is
+		// not a stable identity. Keying the cache on it would let a config reference one
+		// asset through several valid aliases and defeat the dedupe entirely: each alias
+		// would miss the map, read the row again, retain another buffer, and be charged
+		// against the aggregate budget again. That is the exact unbounded case the dedupe
+		// exists to prevent, reachable with no extra stored data — and it would eventually
+		// refuse a legitimate config with a false "distinct creative assets" rejection
+		// naming assets that are not distinct.
+		//
+		// The canonical form is also what the lookup should carry: the stored primary key
+		// is a uuid column, so a braced or URN spelling is this service's spelling
+		// problem, not a different asset.
+		assetID = parsed.String()
 		if b, seen := byID[assetID]; seen {
 			// Already resolved for an earlier variant: no second read, no second buffer,
 			// and no second charge against the aggregate budget.
