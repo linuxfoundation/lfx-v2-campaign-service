@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1078,5 +1079,53 @@ func TestGoogleAds_ReadSettings_AbsentProvenanceOutranksAnUnusableConnection(t *
 	// assertion that fails when the guard sits after the resolve.
 	if errors.Is(err, connErr) {
 		t.Fatalf("err = %v, but the transient connection failure outranked the absent-provenance guard; the operator is sent to retry a read that can never succeed", err)
+	}
+}
+
+// TestGoogleAdsCreationCustomerIDContractIsSplitByCaller pins the contract
+// googleAdsCreationCustomerID's documentation describes: an empty return means
+// UNKNOWN, and what unknown PERMITS is decided per caller, not by the helper.
+//
+// The doc previously said an empty result meant callers "must treat that as
+// permission to proceed". The settings readback then began failing closed on
+// exactly that input, so the single stated rule became false for one of its own
+// callers. This test makes the split executable, so a future caller that changes
+// side cannot leave the prose behind.
+//
+// It derives each caller's rule from the SOURCE of the guard rather than
+// restating it, so it tracks the code instead of agreeing with a copy of it.
+func TestGoogleAdsCreationCustomerIDContractIsSplitByCaller(t *testing.T) {
+	src, err := os.ReadFile("googleads.go")
+	if err != nil {
+		t.Fatalf("read googleads.go: %v", err)
+	}
+	text := string(src)
+
+	// The PERMISSIVE callers guard with `created != ""`, which lets an unknown
+	// provenance through untouched. Both the toggle and metrics paths must keep
+	// that shape: they only ever COMPARE, so a legacy row cannot prove a mismatch.
+	permissive := strings.Count(text, `if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID()`)
+	if permissive < 2 {
+		t.Errorf("found %d permissive `created != \"\"` guards, want at least 2 (toggle and metrics): "+
+			"if a caller stopped permitting absence, googleAdsCreationCustomerID's documented "+
+			"split is no longer accurate", permissive)
+	}
+
+	// The FAIL-CLOSED caller rejects the same input, joining ErrCampaignProvenanceUnknown.
+	if !strings.Contains(text, `created := googleAdsCreationCustomerID(campaign)`) ||
+		!strings.Contains(text, "domain.ErrCampaignProvenanceUnknown") {
+		t.Error("no fail-closed caller joins domain.ErrCampaignProvenanceUnknown on absent provenance: " +
+			"googleAdsCreationCustomerID's documented split claims one exists")
+	}
+
+	// The helper's own doc must NOT state a single universal rule for absence, which
+	// is what made it inaccurate. It must describe unknown as unknown.
+	doc := text[strings.Index(text, "// googleAdsCreationCustomerID recovers"):strings.Index(text, "func googleAdsCreationCustomerID")]
+	if strings.Contains(doc, "the caller must treat that as permission to proceed") {
+		t.Error("googleAdsCreationCustomerID's doc still states absence is universally permission to " +
+			"proceed, but the settings readback fails closed on it")
+	}
+	if !strings.Contains(doc, "UNKNOWN") {
+		t.Error("googleAdsCreationCustomerID's doc no longer describes an empty return as unknown")
 	}
 }

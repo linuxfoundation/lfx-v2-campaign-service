@@ -1222,10 +1222,23 @@ func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign)
 //
 // Rows written before CampaignResult carried customerId have no such field, so it falls back
 // to the ocid query parameter of the stored googleAdsUrl — the create path builds that URL as
-// ".../aw/campaigns?ocid=" + customerID, making it a faithful record of the same value. An
-// empty return means "unknown", and the caller must treat that as permission to proceed: a
-// legacy row cannot prove a mismatch, and refusing every one of them would break reads that
-// work today.
+// ".../aw/campaigns?ocid=" + customerID, making it a faithful record of the same value.
+//
+// An empty return means UNKNOWN — provenance was not recorded — and NOT "no mismatch". It is
+// deliberately NOT this helper's job to decide what unknown provenance permits: that is a
+// per-operation judgement about what an unverifiable account would cost, so each caller states
+// its own rule and the two answers legitimately differ.
+//
+// The dividing line is whether the operation can survive being pointed at the wrong account.
+// Callers that only ever COMPARE a recorded id treat absence as permission to proceed, because
+// a legacy row cannot prove a mismatch and refusing every one of them would break operations
+// that work today. Callers whose entire answer is meaningless without provenance instead fail
+// closed, joining domain.ErrCampaignProvenanceUnknown so the remedy — re-dispatch the row to
+// write its provenance — is distinguishable from a reconnect.
+//
+// Deliberately described as a shape rather than a caller list: this helper has several callers
+// and gains more, so an enumeration here would be falsified by the next one added. Follow the
+// call sites for the current split.
 func googleAdsCreationCustomerID(campaign *model.Campaign) string {
 	if campaign == nil || len(campaign.Result) == 0 {
 		return ""

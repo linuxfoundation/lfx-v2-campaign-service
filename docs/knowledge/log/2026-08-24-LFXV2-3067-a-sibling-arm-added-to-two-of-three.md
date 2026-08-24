@@ -1,6 +1,6 @@
 # 2026-08-24 — the same sentinel arm added to two handlers out of three
 
-**Settings readback** — `GetCampaignMetrics` and `ToggleCampaignStatus` both gained an
+**Fix** — settings readback: `GetCampaignMetrics` and `ToggleCampaignStatus` both gained an
 `ErrSystemConnectionMissing` arm above their `ErrNotFound` arm. `GetCampaignSettings`, which
 resolves its connection through the same `resolveExisting` and carries a switch with the same
 shape, did not: it jumped from `ErrSystemConnectionNotUsable` straight to `ErrNotFound`.

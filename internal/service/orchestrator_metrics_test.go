@@ -7,6 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -211,10 +218,15 @@ func TestOrchestratorDefaultsToNoopMetrics(t *testing.T) {
 }
 
 // upstreamCapableDispatcher implements every OPTIONAL capability the orchestrator
-// instruments (StatusToggler, MetricsReader, AccountLister, EmailSearcher and
-// CampaignAdopter) so one fake can drive all five instrumented call sites. err is
-// returned by whichever capability is exercised, letting a table flip a case from
-// the success arm to the error arm without a second type.
+// instruments (StatusToggler, MetricsReader, SettingsReader, AccountLister,
+// EmailSearcher and CampaignAdopter) so one fake can drive every instrumented call
+// site. err is returned by whichever capability is exercised, letting a table flip a
+// case from the success arm to the error arm without a second type.
+//
+// It must implement EVERY instrumented capability: a capability it does not satisfy
+// fails the orchestrator's type assertion and returns "unsupported" BEFORE any
+// upstream call is recorded, which would turn that path's coverage case into a test
+// of the pre-platform guard instead.
 type upstreamCapableDispatcher struct{ err error }
 
 func (d upstreamCapableDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -230,6 +242,13 @@ func (d upstreamCapableDispatcher) ReadMetrics(context.Context, string, model.Pr
 		return nil, d.err
 	}
 	return &model.CampaignMetrics{}, nil
+}
+
+func (d upstreamCapableDispatcher) ReadSettings(context.Context, string, model.Provider, *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.CampaignSettingsReadback{}, nil
 }
 
 func (d upstreamCapableDispatcher) ListAccounts(context.Context, string, model.Provider) ([]model.AccessibleAccount, error) {
@@ -253,14 +272,20 @@ func (d upstreamCapableDispatcher) LookupCampaign(context.Context, string, model
 	return &model.PlatformCampaignRef{ID: "pc-1", Name: "n"}, nil
 }
 
-// TestUpstreamCallsAreInstrumented drives each of the five instrumented capability
-// paths and asserts the upstream call was actually recorded with the right bounded
-// operation token and outcome.
+// TestUpstreamCallsAreInstrumented drives each instrumented capability path and
+// asserts the upstream call was actually recorded with the right bounded operation
+// token and outcome.
 //
 // Without this the instrumentation is vacuous scaffolding: recordUpstream could stop
 // being called, pass the wrong constant, or invert the error->outcome mapping, and
 // every other test in the suite would stay green — the failure mode a metric has when
 // nothing asserts it is that it silently stops recording.
+//
+// The table's COMPLETENESS is derived, not asserted against a hand-written number:
+// recordUpstreamOperations parses the orchestrator source for the operation tokens
+// actually passed to recordUpstream, so a newly instrumented path fails this test in
+// the very commit that adds it. A literal count could not do that — both the count and
+// the table are hand-maintained, so adding a path moves neither.
 func TestUpstreamCallsAreInstrumented(t *testing.T) {
 	const platform = model.ProviderRedditAds
 	campaign := &model.Campaign{PlatformCampaignID: "pc-1", CampaignName: "n"}
@@ -288,6 +313,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			name: "read settings",
+			op:   opReadSettings,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadCampaignSettings(ctx, "p1", platform, campaign)
+				return err
+			},
+		},
+		{
 			name: "list accounts",
 			op:   opListAccounts,
 			call: func(ctx context.Context, o *Orchestrator) error {
@@ -311,6 +344,21 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				return err
 			},
 		},
+	}
+
+	// Completeness gate: every operation token recordUpstream is called with in the
+	// orchestrator source must have a case above. Derived from source so it tracks the
+	// instrumentation itself rather than an edit to this file.
+	covered := make(map[string]bool, len(cases))
+	for _, tc := range cases {
+		covered[tc.op] = true
+	}
+	for _, op := range recordUpstreamOperations(t) {
+		if !covered[op] {
+			t.Errorf("recordUpstream is called with operation %q in the orchestrator, but no case "+
+				"below drives it: the instrumentation on that path is unguarded, so removing the "+
+				"call, using the wrong token, or inverting its outcome would pass", op)
+		}
 	}
 
 	for _, tc := range cases {
@@ -615,4 +663,109 @@ func countJobStates(m *recordingMetrics, s model.JobStatus) int {
 		}
 	}
 	return n
+}
+
+// recordUpstreamOperations returns the operation tokens actually passed to
+// o.recordUpstream in this package's non-test sources, resolving each argument
+// identifier (opReadSettings, ...) to its declared string constant.
+//
+// Derived from source rather than hand-listed for the reason the cs#164 provenance
+// guard was rewritten: a hand-maintained roster and a hand-maintained table move
+// together only by luck, so the assertion detects edits to the table instead of
+// changes to the thing the table tracks.
+//
+// It fails on an empty result rather than returning one: a broken scan would make the
+// completeness gate silently vacuous, which is the exact failure mode being fixed.
+func recordUpstreamOperations(t *testing.T) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	// Constant name -> declared value, so an identifier argument can be resolved to
+	// the token that actually reaches the metrics recorder.
+	consts := map[string]string{}
+	var files []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, perr := parser.ParseFile(fset, name, nil, 0)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", name, perr)
+		}
+		files = append(files, file)
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					v, uerr := strconv.Unquote(lit.Value)
+					if uerr != nil {
+						continue
+					}
+					consts[ident.Name] = v
+				}
+			}
+		}
+	}
+
+	seen := map[string]bool{}
+	var ops []string
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "recordUpstream" {
+				return true
+			}
+			// recordUpstream(ctx, platform, operation, start, err) — operation is 3rd.
+			if len(call.Args) < 3 {
+				t.Fatalf("recordUpstream call with %d args: the operation argument position "+
+					"this scan relies on has changed", len(call.Args))
+			}
+			ident, ok := call.Args[2].(*ast.Ident)
+			if !ok {
+				t.Fatalf("recordUpstream operation argument is not a plain identifier (%T); "+
+					"this scan can no longer resolve the token", call.Args[2])
+			}
+			v, ok := consts[ident.Name]
+			if !ok {
+				t.Fatalf("recordUpstream is passed %s, which is not a string constant declared "+
+					"in this package", ident.Name)
+			}
+			if !seen[v] {
+				seen[v] = true
+				ops = append(ops, v)
+			}
+			return true
+		})
+	}
+
+	if len(ops) == 0 {
+		t.Fatal("found no recordUpstream call sites in this package; the source scan is broken, " +
+			"and an empty roster would make the completeness gate vacuous")
+	}
+	sort.Strings(ops)
+	return ops
 }
