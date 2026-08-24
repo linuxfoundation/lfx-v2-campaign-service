@@ -124,6 +124,25 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		return nil, &briefs.BadRequestError{Code: "400", Message: "image dimensions exceed the maximum accepted for a creative asset"}
 	}
 
+	// Stage 2b — RESERVE the pixel buffer against the aggregate decode budget before stage 3
+	// allocates it.
+	//
+	// Stage 2 bounds ONE image; it says nothing about how many decode at once, and the upstream
+	// admission middleware cannot cover this because it prices permits from Content-Length.
+	// Compression severs that relationship: a flat 4000x4000 PNG is ~68 KiB on the wire and
+	// 61 MiB decoded, so wire-priced admission charges it the minimum and would let enough of
+	// them through to exhaust the pod at the decode. The declared cost is knowable here — the
+	// header has been read, nothing has been allocated — which is the earliest point an
+	// aggregate bound can be applied at all.
+	//
+	// Shed rather than queue indefinitely: the caller gets the same retryable 503 the admission
+	// middleware uses, for the same reason.
+	release, ok := s.decodeReserver().reserve(ctx, decodedBytesFor(cfg.Width, cfg.Height, cfg.ColorModel))
+	if !ok {
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the service is at upload capacity; retry shortly"}
+	}
+	defer release()
+
 	// Stage 3 — decode in full. Stage 1 proved only that a HEADER parses: image.DecodeConfig
 	// stops once it has the format and dimensions, so a PNG truncated immediately after its
 	// IHDR chunk passes it while being unrecoverable image data. Storing that yields a corrupt
@@ -234,9 +253,24 @@ func dimensionsWithinLimits(width, height int, m color.Model) bool {
 	if width > maxCreativeDimension || height > maxCreativeDimension {
 		return false
 	}
-	// Safe from overflow: both sides are bounded by maxCreativeDimension above, so the product
-	// cannot exceed 1e8 and the byte figure cannot exceed 8e8 — both well inside int64.
-	return int64(width)*int64(height)*bytesPerPixelFor(m) <= maxCreativeDecodedBytes
+	return decodedBytesFor(width, height, m) <= maxCreativeDecodedBytes
+}
+
+// decodedBytesFor is the pixel-buffer cost image.Decode will pay for a header-declared image.
+//
+// Extracted so the per-image gate above and the AGGREGATE decode reservation charge the same
+// arithmetic. Two copies of this sum could drift, and the direction that matters is the
+// reservation under-charging what the gate admits — the bound would then read as protection
+// while permitting more than it accounts.
+//
+// Callers must have bounded width and height first (dimensionsWithinLimits does, via
+// maxCreativeDimension). With both sides bounded the product cannot exceed 1e8 and the byte
+// figure cannot exceed 8e8 — both well inside int64.
+func decodedBytesFor(width, height int, m color.Model) int64 {
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	return int64(width) * int64(height) * bytesPerPixelFor(m)
 }
 
 // mimeForImageFormat maps an image.DecodeConfig format name to this endpoint's verified MIME

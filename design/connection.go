@@ -632,7 +632,21 @@ var MarketingEmail = Type("marketing-email", func() {
 
 var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
 	Description("LinkedIn Ads credential. Write-only; never returned.")
-	Attribute("access_token", String, "OAuth access token")
+	Attribute("access_token", String, "OAuth access token (LinkedIn: valid 60 days)")
+	// Refresh is OPTIONAL, unlike Microsoft's, where refresh_token is Required.
+	// LinkedIn issues programmatic refresh tokens only to approved Marketing Developer
+	// Platform partners, so a connection may legitimately carry an access token alone —
+	// making these Required would reject every non-MDP connection. When all three are
+	// present the service renews the access token before expiry instead of failing at
+	// dispatch 60 days later; when they are absent it stays bearer-only.
+	// The trio is ALL-OR-NONE, enforced in the service layer
+	// (validateLinkedInRefreshCredentials) rather than by Goa's Required, which cannot
+	// express a conditional group. A partial set would pass CanRefresh()'s gate as
+	// false and silently degrade the connection to bearer-only while the operator
+	// believed renewal was configured — so it is rejected with a 400 instead.
+	Attribute("refresh_token", String, "OAuth refresh token (optional; MDP-approved apps only, valid ~365 days). Must be supplied together with client_id and client_secret.")
+	Attribute("client_id", String, "OAuth client id (optional; required together with refresh_token and client_secret)")
+	Attribute("client_secret", String, "OAuth client secret (optional; required together with refresh_token and client_id)")
 	Required("access_token")
 })
 

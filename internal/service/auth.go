@@ -71,15 +71,11 @@ func (g *authGuard) HasTokenVerifier() bool {
 // check (no verifier wired, Heimdall's JWKS unreachable), false when the token itself was
 // refused. Callers map the first to 503 and the second to 401. The SECOND was 400 before,
 // which classified an absent or refused credential as a MALFORMED REQUEST, and told the
-// caller not to retry a token a refresh would fix. The first has always answered 503 and
-// is untouched here. The verdict is not derivable from the message — "invalid bearer
-// token" is deliberately the same string for every token-side refusal — so it is returned
-// separately rather than sniffed.
-//
-// The token-side refusal is 401 rather than 400 because the request is WELL-FORMED and the
-// credential is what must be replaced: 400 conflated an expired token with an invalid
-// payload, which want opposite client handling (refresh and retry vs. do not retry), and
-// made auth failures indistinguishable from payload errors in status-based alerting.
+// caller not to retry a token a refresh would fix. The first has always answered 503 and is
+// untouched here: during a JWKS outage no token is checked at all, so that is the only
+// branch that can involve a credential which is genuinely valid. The verdict is not
+// derivable from the message — "invalid bearer token" is deliberately the same string for
+// every token-side refusal — so it is returned separately rather than sniffed.
 //
 // A nil verifier REJECTS rather than bypasses: before
 // this, a request reaching the pod without passing Heimdall had its claims believed, so

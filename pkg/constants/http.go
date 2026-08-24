@@ -152,6 +152,28 @@ func UploadAdmissionWeightFor(contentLength int64) int64 {
 	return w
 }
 
+// DecodeAdmissionBudgetBytes is the total PIXEL-BUFFER memory concurrent creative-asset decodes
+// may allocate at once.
+//
+// It is a second, independent bound, and it exists because UploadAdmissionBudgetBytes cannot
+// cover this. That budget is spent against a weight priced from Content-Length, which bounds
+// what arrives on the socket; image compression severs the link between wire bytes and decoded
+// bytes. A flat 4000x4000 PNG is ~68 KiB on the wire and 61 MiB decoded — over 900x — and it is
+// legal, admitted deliberately by the dimension gate. Wire-priced admission charges it the
+// floor, so without this bound enough of them decode concurrently to exhaust the pod while the
+// upload budget still reads as unspent.
+//
+// Sized like the upload budget and for the same reason: a quarter of the pod, because the
+// runtime, the pool and every non-upload request share the limit. The two budgets are additive
+// in the worst case — a request can hold an upload permit and a decode reservation at once — so
+// together they cap uploads at half the pod, which is the same ceiling
+// TestUploadAdmissionBudgetLeavesHeadroom asserts for uploads alone.
+//
+// At maxCreativeDecodedBytes (80 MiB) per worst-case image this admits one of them at a time and
+// many ordinary ones, which is the same shape as the upload bound: priced for the worst legal
+// input, shared by everything smaller.
+const DecodeAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
+
 // UploadAdmissionWait is how long a request will wait for a permit before it is shed with 503.
 //
 // Short and bounded. Long enough to absorb ordinary arrival jitter so two near-simultaneous
