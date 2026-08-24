@@ -2893,3 +2893,55 @@ func TestGoogleAds_DispatchRefusesUnknownChannel(t *testing.T) {
 		t.Errorf("error should name the problem, got %v", err)
 	}
 }
+
+// The dispatcher must carry the adapter's POINTER through unflattened. This is the boundary
+// where a `Conversions: m.Conversions` could most easily become a dereference, and a
+// dereference here would hand the rules a measured zero for a campaign Google never measured.
+func TestGoogleAds_ReadMetrics_ConversionsPointerSurvivesTheDispatcher(t *testing.T) {
+	newDispatcher := func(t *testing.T, metricsJSON string) *GoogleAdsDispatcher {
+		t.Helper()
+		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+		}))
+		t.Cleanup(tokenSrv.Close)
+		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"777"},"metrics":{`+metricsJSON+`}}]}`)
+		}))
+		t.Cleanup(apiSrv.Close)
+		return NewGoogleAdsDispatcher(
+			fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+			googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+		)
+	}
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+
+	measured := newDispatcher(t, `"impressions":"1000","clicks":"40","conversions":5`)
+	m, err := measured.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if m.Conversions == nil {
+		t.Fatal("Conversions is nil after the dispatcher, for a response carrying conversions:5")
+	}
+	if *m.Conversions != 5 {
+		t.Errorf("Conversions = %v, want 5", *m.Conversions)
+	}
+
+	// An omitted conversions member on a Google row is proto3 JSON's encoding of a measured
+	// 0, since the field is always selected — so the dispatcher must carry a non-nil zero
+	// through. nil is reserved for the platforms that cannot measure conversions at all,
+	// which is asserted for Meta/X/Reddit in their own dispatcher tests.
+	absent := newDispatcher(t, `"impressions":"1000","clicks":"40"`)
+	m2, err := absent.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if m2.Conversions == nil {
+		t.Fatal("Conversions is nil after the dispatcher for a selected-but-omitted field; " +
+			"a measured zero was turned into \"not measured\", so no_conversions can never fire")
+	}
+	if *m2.Conversions != 0 {
+		t.Errorf("Conversions = %v after the dispatcher, want 0", *m2.Conversions)
+	}
+}

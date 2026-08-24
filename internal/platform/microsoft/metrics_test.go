@@ -1366,3 +1366,275 @@ func TestPollBudgetCoversTheSubmitPhase(t *testing.T) {
 			"a non-zero count means the budget was computed AFTER the submit and bounds polling only", polls)
 	}
 }
+
+// Microsoft's CampaignPerformanceReportColumn reference marks `Conversions` DEPRECATED as of
+// 2022, points callers at ConversionsQualified, and warns the legacy column's values "may be
+// inaccurate" because it cannot carry the decimal conversion values Microsoft now supports.
+// Requesting the obvious-looking column would produce a WRONG number, not an older one.
+func TestGetCampaignMetrics_RequestsConversionsQualifiedNotDeprecatedConversions(t *testing.T) {
+	m := newMSMetricsServer(t, buildReportZip(t, realisticCSV), 0)
+	c := newMetricsClient(t, m)
+	if _, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday); err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	req, _ := m.submitBody["ReportRequest"].(map[string]any)
+	if req == nil {
+		t.Fatalf("submit body has no ReportRequest: %+v", m.submitBody)
+	}
+	cols, _ := req["Columns"].([]any)
+	var names []string
+	for _, c := range cols {
+		if s, ok := c.(string); ok {
+			names = append(names, s)
+		}
+	}
+	var hasQualified bool
+	for _, n := range names {
+		if n == "ConversionsQualified" {
+			hasQualified = true
+		}
+		if n == "Conversions" {
+			t.Errorf("request asks for the DEPRECATED `Conversions` column, whose values "+
+				"Microsoft documents as possibly inaccurate; columns = %v", names)
+		}
+	}
+	if !hasQualified {
+		t.Errorf("request does not ask for ConversionsQualified, so no campaign can report "+
+			"a conversion; columns = %v", names)
+	}
+}
+
+// ConversionsQualified is documented as a DOUBLE — Microsoft credits fractional conversions
+// for partially externally-attributed offline conversions — so it is parsed as a float and
+// its fraction is KEPT. A CSV cell of "2.6" is the published shape.
+func TestGetCampaignMetrics_ConversionsQualifiedIsAFractionalDouble(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00","2.6"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got.Conversions == nil {
+		t.Fatal("Conversions is nil for a report carrying ConversionsQualified 2.6")
+	}
+	if *got.Conversions != 2.6 {
+		t.Errorf("Conversions = %v, want 2.6: the fraction must survive, or a campaign "+
+			"credited a partial conversion is misreported", *got.Conversions)
+	}
+}
+
+// Rounding per ROW and then summing compounds the error across a multi-row report: the whole
+// point of keeping the float is that twenty rows of 0.4 are eight conversions, not zero.
+func TestGetCampaignMetrics_FractionalConversionsSumWithoutPerRowRounding(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+"1234567","100","5","10.00","0.4"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got.Conversions == nil {
+		t.Fatal("Conversions is nil for a report carrying five fractional rows")
+	}
+	if math.Abs(*got.Conversions-2.0) > 1e-9 {
+		t.Errorf("Conversions = %v, want 2: rounding each row to a whole number before "+
+			"summing reports five real conversions as zero", *got.Conversions)
+	}
+}
+
+// The binding absent/zero case. ConversionsQualified is only populated for accounts using
+// Universal Event Tracking, and Microsoft notes the qualified column is not yet available to
+// every advertiser — so a report WITHOUT the column must leave the count absent rather than
+// zero, while a report carrying "0" is a measurement.
+func TestGetCampaignMetrics_AbsentConversionsColumnIsNilNotZero(t *testing.T) {
+	const noConvCol = `"CampaignId","Impressions","Clicks","Spend"
+"1234567","1000","25","50.00"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, noConvCol), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("a report without ConversionsQualified must still read: %v", err)
+	}
+	if got.Conversions != nil {
+		t.Errorf("Conversions = %v for a report whose header lacks the column entirely; "+
+			"an unreported count became a measurement", *got.Conversions)
+	}
+
+	const zeroConv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00","0"
+`
+	m2 := newMSMetricsServer(t, buildReportZip(t, zeroConv), 0)
+	c2 := newMetricsClient(t, m2)
+	got2, err := c2.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got2.Conversions == nil {
+		t.Fatal("Conversions is nil for an explicit ConversionsQualified of 0, erasing a real measurement")
+	}
+	if *got2.Conversions != 0 {
+		t.Errorf("Conversions = %v, want 0", *got2.Conversions)
+	}
+}
+
+// A missing conversions column must NOT break the read the way a missing impressions column
+// does. The asymmetry is deliberate: absent conversions are representable as "not reported",
+// while an absent impressions column would make a zero indistinguishable from a measurement.
+func TestGetCampaignMetrics_ConversionsColumnIsNotRequired(t *testing.T) {
+	const noConvCol = `"CampaignId","Impressions","Clicks","Spend"
+"1234567","1000","25","50.00"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, noConvCol), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("an account without conversion tracking must still get impressions/clicks/spend: %v", err)
+	}
+	if got.Impressions != 1000 || got.Clicks != 25 || got.CostMicros != 50_000_000 {
+		t.Errorf("the other metrics were lost along with the absent conversions column: %+v", got)
+	}
+}
+
+// A negative conversion count is malformed upstream data. The sibling metrics reject it and
+// this must too, or it becomes a figure the dashboard renders as a measurement.
+func TestGetCampaignMetrics_NegativeConversionsQualifiedIsAnError(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00","-2"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	if _, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday); err == nil {
+		t.Error("a negative ConversionsQualified was accepted as a measurement")
+	}
+}
+
+// A BLANK ConversionsQualified cell must not become a measured zero.
+//
+// The column is only populated for accounts wired to Universal Event Tracking, so a present
+// column can still carry empty cells. Folding those in as 0 makes an unreported count
+// indistinguishable from a campaign that genuinely converted nobody — and no_conversions reads
+// exactly this total, so the fabricated zero would raise a High-priority finding on data
+// Microsoft never supplied.
+func TestGetCampaignMetrics_BlankConversionCellIsNotAMeasuredZero(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","50.00",""
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("a blank conversions cell must not break the read: %v", err)
+	}
+	if got.Conversions != nil {
+		t.Errorf("Conversions = %v for a row whose ConversionsQualified cell is BLANK; "+
+			"an unreported count became a measurement the no_conversions rule will act on",
+			*got.Conversions)
+	}
+	// The rest of the row is still a real measurement and must survive intact.
+	if got.Impressions != 1000 || got.Clicks != 25 || got.CostMicros != 50_000_000 {
+		t.Errorf("the other metrics were lost along with the blank conversions cell: %+v", got)
+	}
+}
+
+// The mixed case, and the reason the whole total is withdrawn rather than partially summed.
+//
+// Four blank rows and one reading "0" would sum, under a skip-the-blanks policy, to exactly 0 —
+// firing no_conversions High against a campaign whose real count is unknown. An incomplete
+// column is reported as nil ("Microsoft did not tell us"), never as a partial total dressed up
+// as a complete one.
+func TestGetCampaignMetrics_PartiallyBlankConversionsColumnIsNilNotAPartialSum(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","200","5","10.00",""
+"1234567","200","5","10.00",""
+"1234567","200","5","10.00",""
+"1234567","200","5","10.00",""
+"1234567","200","5","10.00","0"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("a partially blank conversions column must not break the read: %v", err)
+	}
+	if got.Conversions != nil {
+		t.Errorf("Conversions = %v for a column where four of five cells are BLANK; a partial "+
+			"count was published as a complete measurement", *got.Conversions)
+	}
+	if got.Impressions != 1000 || got.Clicks != 25 {
+		t.Errorf("the other metrics were lost: %+v", got)
+	}
+}
+
+// A blank cell reached AFTER rows that carried real values must withdraw the total, not leave
+// the partial sum from the earlier rows standing.
+func TestGetCampaignMetrics_BlankConversionCellAfterRealValuesWithdrawsTheTotal(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","500","10","20.00","3"
+"1234567","500","15","30.00",""
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got.Conversions != nil {
+		t.Errorf("Conversions = %v: the 3 from the first row was published even though a later "+
+			"row's cell was blank, reporting an incomplete column as a complete count",
+			*got.Conversions)
+	}
+}
+
+// The complement, guarding against over-correcting: a column with NO blank cells still reports
+// a real total, including a genuine zero. Withdrawing on blanks must not swallow measurements.
+func TestGetCampaignMetrics_FullyPopulatedConversionsColumnStillReportsATotal(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","500","10","20.00","1.5"
+"1234567","500","15","30.00","0"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if got.Conversions == nil {
+		t.Fatal("Conversions is nil for a fully populated column, erasing a real measurement")
+	}
+	if math.Abs(*got.Conversions-1.5) > 1e-9 {
+		t.Errorf("Conversions = %v, want 1.5", *got.Conversions)
+	}
+}
+
+// A blank SPEND cell legitimately means zero spend and must keep its existing behaviour. The
+// blank-is-absent rule is scoped to the conversions column alone; widening it to spend would
+// turn an ordinary no-cost row into a failed read.
+func TestGetCampaignMetrics_BlankSpendCellIsStillZeroSpend(t *testing.T) {
+	const csv = `"CampaignId","Impressions","Clicks","Spend","ConversionsQualified"
+"1234567","1000","25","","2"
+`
+	m := newMSMetricsServer(t, buildReportZip(t, csv), 0)
+	c := newMetricsClient(t, m)
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("a blank spend cell must still read as zero spend: %v", err)
+	}
+	if got.CostMicros != 0 {
+		t.Errorf("CostMicros = %d, want 0 for a blank spend cell", got.CostMicros)
+	}
+	if got.Conversions == nil || *got.Conversions != 2 {
+		t.Errorf("Conversions = %v, want 2: the conversions change leaked into the spend path", got.Conversions)
+	}
+}
