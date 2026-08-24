@@ -6168,8 +6168,11 @@ func TestCreateCampaignAdSetLookupConflictIsCleanFailure(t *testing.T) {
 // been attempted, so nothing exists to verify in Ads Manager. The generic UNCONFIRMED wording
 // sends an operator to look for an object that certainly does not exist AND tells them not to
 // recreate it — which on this path is the one instruction that guarantees the variant never
-// runs. The upload itself is content-addressed, so a re-dispatch re-derives the same hash;
-// only the library image may or may not have landed, and that is harmless.
+// runs. The upload itself is content-addressed, so REPEATING THE UPLOAD re-derives the same
+// hash; only the library image may or may not have landed, and that is harmless. That is a
+// property of repeating the upload, not a recovery promise: a normal re-dispatch reuses the
+// terminal created_degraded campaign and never reaches /adimages again, which
+// TestAmbiguousUploadStepDoesNotPromiseRedispatchRecovery pins directly.
 func TestCreateCampaignUploadStageFailureDoesNotClaimTheAdMayExist(t *testing.T) {
 	var uploadHits, creativeHits, adHits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

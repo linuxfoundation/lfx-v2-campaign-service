@@ -958,7 +958,10 @@ func isPreSendDialError(err error) bool {
 // The distinction is about which object the ambiguity applies to. createOutcomeAmbiguous asks
 // "may this request have been applied?", and for the upload the honest answer is yes — but the
 // object it may have applied to is a library IMAGE, not an ad. The upload is content-addressed
-// and idempotent, so a re-dispatch re-derives the same hash and a landed image costs nothing.
+// and idempotent, so REPEATING THE UPLOAD re-derives the same hash and a landed image costs
+// nothing. Stated as a property of repeating the upload, not as a promise about re-dispatch:
+// an upload shortfall persists as a terminal created_degraded campaign, which the orchestrator
+// reuses as-is, so a normal re-dispatch never reaches this call again.
 // The ad and creative, by contrast, are definitely absent at this point.
 //
 // It deliberately does NOT implement the ambiguity interface: the caller checks for this type
@@ -3904,8 +3907,11 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, encoded []
 //     itself as link_data.picture.
 //
 // The upload runs BEFORE the creative so a rejected image fails the variant before a
-// creative or ad exists. It is idempotent (content-addressed), so a re-dispatch that
-// reaches here again re-derives the same hash rather than duplicating the image.
+// creative or ad exists. It is idempotent (content-addressed), so ANY repeat of the upload
+// re-derives the same hash rather than duplicating the image — which is what makes the
+// per-campaign uploadCache and the throttle retry safe. It is NOT a claim that a re-dispatch
+// re-runs it: an upload shortfall persists as a terminal created_degraded campaign that the
+// orchestrator reuses as-is, so this call is not reached again.
 func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int, uploads *uploadCache) (adID, creativeID, imageHash string, err error) {
 	if len(variant.ImageBytes) > 0 {
 		if imageHash, err = uploads.upload(ctx, c, variant.ImageBytes, variant.ImageMIME); err != nil {
