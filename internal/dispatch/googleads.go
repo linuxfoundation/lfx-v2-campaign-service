@@ -463,9 +463,15 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	// surfaced for an operator to act on, on demand; nothing polls, and no status is
 	// stored.
 	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
-	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
-	// later read/toggle against a DIFFERENT customer, and treats an absent one as
-	// "unknown, proceed" — so omitting it would silently disable that check.
+	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it as this row's
+	// provenance, and what an ABSENT one costs is per-operation, not one rule (see that
+	// helper's comment). Comparison-only callers — the account-mismatch check on read and
+	// toggle — treat absence as "unknown, proceed", so omitting it silently disables that
+	// check. ReadSettings (LFXV2-3067) instead fails CLOSED on absence, joining
+	// domain.ErrCampaignProvenanceUnknown, because a settings readback whose account
+	// cannot be verified has no meaning to report. So omitting CustomerID here does not
+	// merely weaken mismatch detection, it makes settings readback impossible for this
+	// row until it is re-dispatched.
 	adoptionResult := &googleads.CampaignResult{
 		Platform:     "google-ads",
 		AccountLabel: accountLabel,
