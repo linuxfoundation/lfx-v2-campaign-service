@@ -62,9 +62,17 @@ import (
 // WHAT THE WEIGHT ACCOUNTS, precisely — because a bound that silently under-counts reads as
 // protection while providing less than it appears to.
 //
-// It accounts the INBOUND request: the buffered body, the base64-decoded slice and the pixel
-// buffer image.Decode may allocate for ONE upload on this HTTP path. That is the entire memory
-// cost of the route this middleware gates.
+// It accounts the WIRE side of the inbound request: the buffered body and the base64-decoded
+// slice for ONE upload on this HTTP path.
+//
+// It does NOT account the decoded PIXEL buffer, and that is a split, not a gap. The weight is
+// priced from Content-Length, and compression severs the link between wire bytes and decoded
+// bytes: a flat 4000x4000 PNG is ~68 KiB on the wire and 61 MiB decoded, so it takes the
+// minimum permit here while allocating a buffer this permit never paid for. Pixels are admitted
+// against their own budget by service.DecodeReserver, at the only point their cost is knowable
+// — after the header is read and before image.Decode allocates. The two bound different
+// quantities with different worst cases; treating this middleware as covering both would make
+// that reservation read as redundant.
 //
 // It does NOT account memory that an unrelated code path later allocates from bytes that were
 // stored earlier. Outbound dispatch reads assets back out of the database, but that happens in a
@@ -75,12 +83,33 @@ import (
 // request. Dispatch-side memory is bounded by its own control on that path — the Meta dispatcher
 // resolves each distinct asset once per dispatch and caps the total distinct bytes one dispatch
 // may hold — so this middleware neither provides nor needs to claim that bound.
-func UploadAdmission(budgetBytes int64, weightFor func(contentLength int64) int64, wait time.Duration) func(http.Handler) http.Handler {
+func UploadAdmission(budgetBytes int64, maxBodyBytes int64, weightFor func(contentLength int64) int64, wait time.Duration) func(http.Handler) http.Handler {
 	sem := semaphore.NewWeighted(budgetBytes)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !isUploadRequest(r) {
 				next.ServeHTTP(w, r)
+				return
+			}
+
+			// A body that is ALREADY too large by its own declaration is refused here, before
+			// any permit is sought, and the reason is which of two answers the caller gets.
+			//
+			// 413 is permanent and client-fixable; the 503 this middleware sheds with is
+			// transient and carries Retry-After. Seeking the permit first inverted them
+			// whenever the budget was busy: weightFor prices anything above the amplification
+			// threshold at the full worst-case weight, which equals the whole budget, so an
+			// over-cap request waited the full shed timeout and was told to retry a request
+			// that could never succeed at any size of budget.
+			//
+			// This does not weaken the pre-auth placement that the rest of this middleware
+			// exists for. The check reads Content-Length only — a header already parsed before
+			// this handler ran — so it consumes no body and admits nothing unadmitted. An
+			// UNDECLARED or chunked body is not covered here and must not be: its size is
+			// unknowable without reading it, so it still goes through admission and meets
+			// MaxBodyBytes' MaxBytesReader arm downstream, which is where that case belongs.
+			if maxBodyBytes > 0 && r.ContentLength > maxBodyBytes {
+				writeRequestTooLarge(w)
 				return
 			}
 

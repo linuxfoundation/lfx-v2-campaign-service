@@ -165,7 +165,30 @@ that stage 3's allocation is bounded by the DECODED-BYTE budget rather than by w
 header claims — a byte budget, not a pixel count, because a 16-bit image decodes at 8 bytes per
 pixel against an 8-bit image's 4, so a pixel-only cap silently admits twice the memory for a
 16-bit upload;
-running the decode first would make the gate worthless, since the allocation IS the attack. The set of registered decoders (`image/png`,
+running the decode first would make the gate worthless, since the allocation IS the attack.
+
+**Stage 2b** sits between them and bounds the AGGREGATE. Stage 2 bounds ONE image and says
+nothing about how many decode at once, and the upstream `middleware.UploadAdmission` cannot
+cover it: that permit is priced from `Content-Length`, and compression severs the link between
+wire bytes and decoded bytes (a flat 4000x4000 PNG is ~68 KiB on the wire and 61 MiB decoded, an
+amplification over 900x, admitted deliberately by the dimension gate). Wire-priced admission
+charges such an image the floor, so without a second bound enough of them decode concurrently to
+exhaust the pod while the upload budget still reads as unspent. `DecodeReserver` therefore
+reserves the DECLARED pixel cost — the same figure stage 2 computes from the header — against
+`constants.DecodeAdmissionBudgetBytes` (128 MiB, a quarter of the pod, sized like the upload
+budget and for the same reason). The two budgets are additive in the worst case and together cap
+uploads at half the pod. The wait is bounded by `DecodeAdmissionWait` rather than by the caller's
+context, because net/http gives a handler's `r.Context()` no deadline — `ReadTimeout`/
+`WriteTimeout` are SOCKET deadlines — so an unbounded acquisition would hold the request's outer
+upload permit until the client disconnected, converting a memory guard into permit exhaustion.
+Capacity that cannot be reserved answers the same retryable `503` the admission middleware sheds
+with. The reservation is released the moment `image.Decode` returns, on BOTH the success and the
+400 arm, and NOT deferred to the method's return: the decoded image is discarded there, so
+holding it across the checksum and the insert would shed concurrent uploads for memory already
+free. Stage 2b is not redundant with the wire admission — they bound different quantities with
+different worst cases, and neither subsumes the other.
+
+The set of registered decoders (`image/png`,
 `image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
 allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.
 That authority is TESTED rather than merely asserted: the service test package imports

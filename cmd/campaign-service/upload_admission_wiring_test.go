@@ -195,3 +195,59 @@ func TestServerTimeoutsReserveHandlerHeadroom(t *testing.T) {
 		t.Error("UploadHandlerHeadroom must be positive to reserve any response budget")
 	}
 }
+
+// TestDeclaredOversizeUploadGets413NotShed pins which of two refusals a client receives when its
+// declared body already exceeds the cap AND the upload budget is occupied.
+//
+// The two controls answer different questions and the ORDER between them decides the status. An
+// oversized body is a permanent, client-fixable error (413, documented in docs/api-catalog.md);
+// a full budget is a transient capacity condition (503 + Retry-After). With admission outermost,
+// a request whose Content-Length is already over the cap still had to buy an admission permit
+// first — and because UploadAdmissionWeightFor prices anything above the amplification threshold
+// at the full worst-case weight, that permit equals the ENTIRE budget. So whenever any other
+// upload holds a permit, a plainly-too-large request waits its 250ms and is shed with 503,
+// telling the caller to retry a request that can never succeed however long it waits.
+//
+// The size is known from the headers alone, without reading a byte, so the 413 costs nothing and
+// belongs first.
+func TestDeclaredOversizeUploadGets413NotShed(t *testing.T) {
+	handlerReached := make(chan struct{})
+	blockUntil := make(chan struct{})
+	chain := buildHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.Header.Get("X-Park") == "1" {
+			close(handlerReached)
+			<-blockUntil
+		}
+		w.WriteHeader(http.StatusOK)
+	}), &config.Config{}, middleware.NewInflightTracker())
+
+	// Park a legitimate upload inside the chain so it holds an admission permit.
+	var parked sync.WaitGroup
+	parked.Add(1)
+	go func() {
+		defer parked.Done()
+		req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader("x"))
+		req.Header.Set("X-Park", "1")
+		req.ContentLength = 1
+		chain.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	<-handlerReached
+
+	// Now a request that is plainly too large by its DECLARED size alone.
+	over := constants.MaxRequestBodyBytes + 1
+	req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader("y"))
+	req.ContentLength = over
+	rec := httptest.NewRecorder()
+	chain.ServeHTTP(rec, req)
+
+	close(blockUntil)
+	parked.Wait()
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want %d for a body whose DECLARED size (%d) already exceeds the "+
+			"cap (%d): its size is known from the headers, so it must be refused as too large "+
+			"rather than shed as a capacity problem it can never retry past",
+			rec.Code, http.StatusRequestEntityTooLarge, over, constants.MaxRequestBodyBytes)
+	}
+}

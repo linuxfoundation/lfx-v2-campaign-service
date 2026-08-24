@@ -7,6 +7,8 @@ import (
 	"context"
 
 	"golang.org/x/sync/semaphore"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // DecodeReserver bounds the PIXEL BUFFERS that concurrent image decodes may allocate.
@@ -65,7 +67,7 @@ func NewDecodeReserver(budgetBytes int64) *DecodeReserver {
 	return &DecodeReserver{sem: semaphore.NewWeighted(budgetBytes), budget: budgetBytes}
 }
 
-// reserve blocks until want bytes of decode budget are available, or ctx ends.
+// reserve waits — BOUNDEDLY — for want bytes of decode budget, and reports whether it got them.
 //
 // It returns a release func rather than requiring the caller to remember the weight, so the
 // amount released cannot drift from the amount acquired — releasing a different weight than was
@@ -74,6 +76,18 @@ func NewDecodeReserver(budgetBytes int64) *DecodeReserver {
 // A nil reserver is a no-op with a no-op release, and a request priced above the entire budget
 // is refused immediately rather than blocking until its context expires: it could never be
 // admitted, so waiting only delays the same answer.
+//
+// THE WAIT IS BOUNDED HERE, not by the caller's context, and that is load-bearing rather than
+// defensive. The upload handler passes the HTTP request context, and net/http gives a handler's
+// r.Context() NO deadline: http.Server's ReadTimeout and WriteTimeout install deadlines on the
+// SOCKET and never cancel that context. Acquiring against the caller's context alone therefore
+// blocks until the client disconnects — and the waiter is still holding its outer
+// UploadAdmission permit the whole time, so an unbounded wait here does not bound memory, it
+// converts the guard into permit and goroutine exhaustion. The timeout derives from ctx so a
+// cancelled request still aborts promptly; it only ever makes the wait shorter.
+//
+// A refusal is returned as `false`, never as a success and never as a silent empty result: the
+// caller answers 503, the same retryable status the upload admission middleware sheds with.
 func (d *DecodeReserver) reserve(ctx context.Context, want int64) (func(), bool) {
 	if d == nil {
 		return func() {}, true
@@ -81,6 +95,8 @@ func (d *DecodeReserver) reserve(ctx context.Context, want int64) (func(), bool)
 	if want <= 0 || want > d.budget {
 		return func() {}, false
 	}
+	ctx, cancel := context.WithTimeout(ctx, constants.DecodeAdmissionWait)
+	defer cancel()
 	if err := d.sem.Acquire(ctx, want); err != nil {
 		return func() {}, false
 	}

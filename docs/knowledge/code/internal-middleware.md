@@ -76,11 +76,19 @@ prevent an unauthenticated body from being read — auth-before-body-read belong
 It ensures such a read cannot happen without first taking a permit from a budget tied to the
 pod's real limit.
 
-What the weight accounts, precisely: the INBOUND request — buffered body, base64-decoded slice,
-and the pixel buffer `image.Decode` may allocate for one upload. It does NOT account memory an
-unrelated path later allocates from bytes stored earlier. Outbound dispatch reads assets back out
-of Postgres, but that runs in a dispatch worker long after the HTTP request returned and released
-its permit — a different lifetime and code path, not an undercount of this one. Dispatch-side
+What the weight accounts, precisely: the WIRE side of the inbound request — the buffered body
+and the base64-decoded slice for one upload. It does NOT account the decoded PIXEL buffer, and
+the two must not be treated as one bound. The weight is priced from `Content-Length`, and image
+compression severs the link between wire bytes and decoded bytes: a flat 4000x4000 PNG is ~68 KiB
+on the wire and 61 MiB decoded, so it takes the minimum wire permit while allocating a pixel
+buffer that permit never paid for. Decoded pixels are admitted separately, against their own
+budget, by `service.DecodeReserver` (`DecodeAdmissionBudgetBytes`) — see
+`docs/knowledge/code/internal-service.md`. Reading this middleware as covering pixels would make
+that second reservation look redundant and invite its removal.
+
+It also does NOT account memory an unrelated path later allocates from bytes stored
+earlier. Outbound dispatch reads assets back out of Postgres, but that runs in a dispatch
+worker long after the HTTP request returned and released its permit — a different lifetime and code path, not an undercount of this one. Dispatch-side
 memory is bounded by its own control on that path: the Meta dispatcher resolves each distinct
 asset once per dispatch and caps the total distinct bytes one dispatch may hold, so repeating a
 single asset across variants does not multiply what is resident.

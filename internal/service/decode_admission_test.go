@@ -249,3 +249,159 @@ func TestDecodedBytesFor_MatchesTheGateItShares(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeReserver_WaitIsBoundedWhenCallerContextHasNoDeadline pins the property a review
+// round found missing: reserve must not queue forever.
+//
+// The upload handler passes the HTTP request context straight through, and net/http gives a
+// handler's r.Context() NO deadline — http.Server's ReadTimeout/WriteTimeout install SOCKET
+// deadlines and never cancel that context. So a full decode budget meant Acquire blocked with
+// nothing to expire it, holding the request's outer upload-admission permit for as long as the
+// client kept the connection open: a memory guard turned into goroutine and permit exhaustion.
+//
+// The wait is asserted as BOUNDEDNESS, not as a duration: the test supplies a context with no
+// deadline (exactly what the handler passes) and requires reserve to RETURN. No sleep and no
+// elapsed-time threshold decides the outcome — a still-blocking implementation fails by never
+// arriving, which the harness reports as a timeout.
+func TestDecodeReserver_WaitIsBoundedWhenCallerContextHasNoDeadline(t *testing.T) {
+	d := NewDecodeReserver(constants.DecodeAdmissionBudgetBytes)
+
+	// Occupy the entire budget so the next reservation cannot be satisfied.
+	releaseAll, ok := d.reserve(context.Background(), constants.DecodeAdmissionBudgetBytes)
+	if !ok {
+		t.Fatal("could not reserve the whole budget to set up the contention case")
+	}
+	defer releaseAll()
+
+	returned := make(chan bool, 1)
+	go func() {
+		// context.Background() has no deadline and is never cancelled — the same shape as the
+		// handler's r.Context(). If reserve relies on the caller's context to bound the wait,
+		// this call never returns.
+		release, ok := d.reserve(context.Background(), 1<<20)
+		if ok {
+			release()
+		}
+		returned <- ok
+	}()
+
+	select {
+	case ok := <-returned:
+		if ok {
+			t.Error("reserve succeeded against a fully occupied budget; it must refuse, " +
+				"not hand out capacity that is not there")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("reserve never returned against a full budget with a deadline-free context: " +
+			"the acquisition is unbounded, so a stuck holder turns the decode guard into " +
+			"goroutine and upload-permit exhaustion")
+	}
+}
+
+// TestUploadCreativeAsset_DecodeReservationIsReleasedBeforeThePersist pins DecodeReserver's
+// stated contract: the pixel reservation is held around the DECODE, not around the database
+// write that follows it.
+//
+// Deferring the release to method return held it through checksum generation and the entire
+// insert. The decoded image is discarded the moment image.Decode returns, so every byte of that
+// reservation is already free while the transaction runs — and a slow database therefore
+// monopolised decode capacity it was not using, shedding concurrent uploads with 503 for memory
+// nobody held.
+//
+// The proof is structural rather than timed: the repository is the observer. Inside CreateAsset
+// — that is, after the decode and during the persist — the whole decode budget must be
+// reservable by someone else. No sleep and no elapsed-time threshold is involved.
+func TestUploadCreativeAsset_DecodeReservationIsReleasedBeforeThePersist(t *testing.T) {
+	d := NewDecodeReserver(constants.DecodeAdmissionBudgetBytes)
+
+	var freeDuringPersist atomic.Bool
+	repo := &observingCreativeAssetRepo{
+		during: func() {
+			// If the upload still holds its reservation here, the budget is short by the
+			// decoded size of the image and this full-budget reservation must fail.
+			release, ok := d.reserve(context.Background(), constants.DecodeAdmissionBudgetBytes)
+			if ok {
+				release()
+			}
+			freeDuringPersist.Store(ok)
+		},
+	}
+
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+	s.SetDecodeReserver(d)
+
+	if _, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+		ProjectID:   "cncf",
+		BriefID:     "b1",
+		ContentType: "image/png",
+		Bytes:       compressiblePNG(t, 1000),
+	}); err != nil {
+		t.Fatalf("UploadCreativeAsset: %v", err)
+	}
+
+	if !freeDuringPersist.Load() {
+		t.Error("the decode reservation was still held while CreateAsset ran: the decoded " +
+			"image is discarded when image.Decode returns, so holding pixel budget across " +
+			"the transaction sheds concurrent uploads for memory that is already free")
+	}
+}
+
+// observingCreativeAssetRepo runs a hook INSIDE CreateAsset, which is the only place from which
+// "what is reserved during the persist" can be observed at all.
+type observingCreativeAssetRepo struct {
+	during func()
+}
+
+func (r *observingCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
+	if r.during != nil {
+		r.during()
+	}
+	out := *a
+	out.ID = "asset-1"
+	return &out, nil
+}
+
+// GetAsset satisfies the port; this test only exercises the upload path.
+func (r *observingCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+// TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails covers the arm a
+// happy-path fix is most likely to skip.
+//
+// Scoping the release around the decode has two exits, and only one of them is the success. A
+// truncated image returns 400 from inside that scope; if the release rode only the success path
+// the reservation would leak for the rest of the request, and repeated corrupt uploads — which
+// cost the process nothing — would drain the decode budget until every legitimate upload shed.
+//
+// Proven by exhaustion rather than by inspection: after the failed upload, the WHOLE budget must
+// still be reservable.
+func TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails(t *testing.T) {
+	d := NewDecodeReserver(constants.DecodeAdmissionBudgetBytes)
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(&fakeCreativeAssetRepo{})
+	s.SetDecodeReserver(d)
+
+	// A PNG whose header parses but whose pixel data is cut off: it clears DecodeConfig and the
+	// dimension gate, reserves budget, and then fails inside image.Decode.
+	full := compressiblePNG(t, 1000)
+	truncated := full[:len(full)/2]
+
+	if _, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+		ProjectID:   "cncf",
+		BriefID:     "b1",
+		ContentType: "image/png",
+		Bytes:       truncated,
+	}); err == nil {
+		t.Fatal("a truncated PNG was accepted; this test needs the decode-failure arm")
+	}
+
+	release, ok := d.reserve(context.Background(), constants.DecodeAdmissionBudgetBytes)
+	if !ok {
+		t.Fatal("the whole decode budget could not be reserved after a FAILED decode: the " +
+			"reservation leaked on the 400 arm, so repeated corrupt uploads drain the budget " +
+			"and shed legitimate ones")
+	}
+	release()
+}

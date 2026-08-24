@@ -141,7 +141,6 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	if !ok {
 		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the service is at upload capacity; retry shortly"}
 	}
-	defer release()
 
 	// Stage 3 — decode in full. Stage 1 proved only that a HEADER parses: image.DecodeConfig
 	// stops once it has the format and dimensions, so a PNG truncated immediately after its
@@ -153,7 +152,21 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// matters is bytes allocated, and a 16-bit image costs 8 bytes per pixel where an 8-bit one
 	// costs 4, so a pixel-only cap admits twice the memory it appears to for 16-bit uploads.
 	// The decoded image itself is discarded — only the verdict matters.
-	if _, _, err := image.Decode(bytes.NewReader(p.Bytes)); err != nil {
+	//
+	// The reservation is released the moment this returns, on BOTH arms, and deliberately not
+	// deferred to the method's return. What it reserves is the pixel buffer, which stops
+	// existing here — the decoded image is discarded and only the verdict is kept. Holding it
+	// across the checksum and the insert would keep decode capacity that nothing is occupying
+	// for as long as the database takes, so a slow transaction would shed concurrent uploads
+	// with 503 for memory already free. The failure arm releases too: an undecodable image
+	// costs no pixel buffer either, and returning 400 while still holding its reservation
+	// would leak the budget for the rest of the request.
+	decodeErr := func() error {
+		defer release()
+		_, _, err := image.Decode(bytes.NewReader(p.Bytes))
+		return err
+	}()
+	if decodeErr != nil {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image data is incomplete or corrupt"}
 	}
 
