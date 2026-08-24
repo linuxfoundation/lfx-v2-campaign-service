@@ -174,6 +174,23 @@ func UploadAdmissionWeightFor(contentLength int64) int64 {
 // input, shared by everything smaller.
 const DecodeAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
 
+// DecodeAdmissionWait is how long a request will wait for DECODE budget before it is shed
+// with 503.
+//
+// It exists because the wait cannot be left to the caller's context. The upload handler passes
+// the HTTP request context, and net/http gives a handler's r.Context() no deadline at all:
+// http.Server's ReadTimeout and WriteTimeout install deadlines on the SOCKET and never cancel
+// that context. An acquisition governed only by it therefore blocks until the client hangs up —
+// and because the request is still holding its outer UploadAdmission permit while it waits, an
+// unbounded wait here converts a memory bound into permit and goroutine exhaustion. That is a
+// hang, not a bound.
+//
+// Matched to UploadAdmissionWait, and for the same reason: long enough to absorb ordinary
+// jitter between two uploads decoding at once, far short of the write deadline so a shed
+// request is answered honestly rather than killed with no response. The two admission stages
+// are the same control at different points in the request, so they shed on the same clock.
+const DecodeAdmissionWait = 250 * time.Millisecond
+
 // UploadAdmissionWait is how long a request will wait for a permit before it is shed with 503.
 //
 // Short and bounded. Long enough to absorb ordinary arrival jitter so two near-simultaneous

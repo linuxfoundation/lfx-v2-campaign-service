@@ -207,6 +207,12 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 //     has to run before the body is read at all, because Goa's generated handler decodes the
 //     request before the endpoint authenticates it — so the permit must be taken while the
 //     pre-auth allocation is still ahead of us, not after the decoder has already made it.
+//     Being outermost would otherwise invert the two refusals a caller can get, so admission
+//     is handed MaxRequestBodyBytes and answers 413 for an already-over-cap DECLARED size
+//     before seeking a permit: that verdict is permanent and knowable from the headers, and
+//     shedding it with a retryable 503 because the budget was busy told the caller to retry
+//     something that can never succeed. Undeclared/chunked bodies are unaffected and still
+//     reach MaxBodyBytes' reader arm, which is the only place their size becomes known.
 //   - RequestID and, when enabled, debug/OTel sit OUTSIDE it, so a request refused with
 //     413 still carries a request id and is still traced — an operator investigating a
 //     rejection needs it correlated like any other response.
@@ -219,6 +225,7 @@ func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.Inf
 	handler = middleware.MaxBodyBytes(constants.MaxRequestBodyBytes)(handler)
 	handler = middleware.UploadAdmission(
 		constants.UploadAdmissionBudgetBytes,
+		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
 	)(handler)

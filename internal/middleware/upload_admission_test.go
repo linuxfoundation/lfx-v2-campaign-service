@@ -38,6 +38,13 @@ func flat(weight int64) func(int64) int64 {
 // than serialised by chance of scheduling. The expectation (2) is derived from budget/weight,
 // which are the middleware's INPUTS here, not from any production constant: the test supplies
 // its own budget and weight so it cannot silently agree with a mutated constant.
+// noBodyCap disables the declared-oversize arm for tests that are about the SEMAPHORE rather
+// than the body cap. Those cases use small synthetic budgets whose weights bear no relation to
+// MaxRequestBodyBytes, so applying a real cap to them would refuse requests for a reason the
+// test is not making a claim about. The 413 arm has its own coverage against the real chain in
+// cmd/campaign-service.
+const noBodyCap int64 = 0
+
 func TestUploadAdmission_BoundsConcurrentUploads(t *testing.T) {
 	const (
 		budget   = 100
@@ -49,7 +56,7 @@ func TestUploadAdmission_BoundsConcurrentUploads(t *testing.T) {
 	release := make(chan struct{})
 	var inFlight, peak int64
 
-	h := UploadAdmission(budget, flat(weight), 50*time.Millisecond)(
+	h := UploadAdmission(budget, noBodyCap, flat(weight), 50*time.Millisecond)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			cur := atomic.AddInt64(&inFlight, 1)
 			for {
@@ -122,7 +129,7 @@ func TestUploadAdmission_ShedRequestIsNotASuccess(t *testing.T) {
 	release := make(chan struct{})
 	var handlerCalls int64
 
-	h := UploadAdmission(budget, flat(weight), 20*time.Millisecond)(
+	h := UploadAdmission(budget, noBodyCap, flat(weight), 20*time.Millisecond)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			atomic.AddInt64(&handlerCalls, 1)
 			select {
@@ -175,7 +182,7 @@ func TestUploadAdmission_ShedRequestIsNotASuccess(t *testing.T) {
 // rather than permanent. Without release, the first N uploads would brick the endpoint forever.
 func TestUploadAdmission_PermitIsReleased(t *testing.T) {
 	const budget, weight = 10, 10
-	h := UploadAdmission(budget, flat(weight), 20*time.Millisecond)(
+	h := UploadAdmission(budget, noBodyCap, flat(weight), 20*time.Millisecond)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i := range 5 {
@@ -195,7 +202,7 @@ func TestUploadAdmission_NonUploadRoutesAreNotGated(t *testing.T) {
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	h := UploadAdmission(budget, flat(weight), 20*time.Millisecond)(
+	h := UploadAdmission(budget, noBodyCap, flat(weight), 20*time.Millisecond)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only the ONE permit-holding POST parks here. Matching on the path alone would
 			// also park the GET probe below, which shares the path — deadlocking the test on
@@ -245,7 +252,7 @@ func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	h := UploadAdmission(budget, flat(weight), 2*time.Second)(
+	h := UploadAdmission(budget, noBodyCap, flat(weight), 2*time.Second)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			select {
 			case entered <- struct{}{}:
@@ -304,6 +311,7 @@ func TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads(t *testing.T)
 
 	h := UploadAdmission(
 		constants.UploadAdmissionBudgetBytes,
+		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
 	)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -368,6 +376,7 @@ func TestUploadAdmission_SlowBodyDoesNotPinTheWholeBudget(t *testing.T) {
 	var slow atomic.Bool
 	h := UploadAdmission(
 		constants.UploadAdmissionBudgetBytes,
+		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
 	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
