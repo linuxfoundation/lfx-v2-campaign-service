@@ -770,6 +770,45 @@ func TestTwitter_ReadMetrics_ZeroCampaignActivity(t *testing.T) {
 	}
 }
 
+// X has no single conversions metric to read. Its analytics endpoint splits conversions
+// across per-event-type metrics (conversion_purchases, conversion_sign_ups, …), each a JSON
+// OBJECT carrying counts and sale amounts rather than a scalar, and only under the
+// WEB_CONVERSION / MOBILE_CONVERSION metric groups this client does not request.
+//
+// The fixture includes one of those per-event objects in X's published shape, so the test
+// fails if a future change starts folding them into a single count — which would require
+// picking which event types count as conversions, a policy this service was never given.
+func TestTwitter_ReadMetrics_ConversionsAbsentNotZero(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"cmp1","id_data":[{"metrics":{` +
+			`"impressions":[1000],"clicks":[50],"billed_charge_local_micro":[100000000],` +
+			`"conversion_purchases":{"metric":[4],"order_quantity":[4],"sale_amount":[null]}}}]}]}`))
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowLast7Days,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics.Conversions != nil {
+		t.Errorf("Conversions = %v for X, which reports conversions only as per-event-type "+
+			"objects; a single count here would be invented rather than measured", *metrics.Conversions)
+	}
+	if metrics.Impressions != 1000 || metrics.Clicks != 50 {
+		t.Errorf("the rest of the read was disturbed: %+v", metrics)
+	}
+}
+
 // TestTwitter_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
 // guard on the TOGGLE path. The mutating endpoints this test covers are nested under
 // /accounts/{account_id}/ (the metrics read is account-scoped too, but as the trailing-segment
