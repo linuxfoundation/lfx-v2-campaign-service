@@ -27,9 +27,14 @@ under `tokenMu`, and the parsed geo-locations snapshot plus its in-flight fetch 
 `geo.inflight`) under the separate `geo.mu` — deliberately separate because a token refresh is a
 small JSON round trip while a locations refresh is a multi-MiB download, and one lock would let a
 slow file fetch stall every token read. Microsoft was the one worth checking rather than assuming: it is the client with
-multi-customer discovery, and a `CustomerID` mutated per call would have made a shared instance
-serve one caller's request against another caller's customer. It does not — the customer id is a
-per-call argument to `doCustomerRequest`/`accountsInfoForCustomer`. Microsoft's `ListAccounts`
+multi-customer discovery, and a `CustomerID` that VARIED per caller would have made a shared
+instance serve one caller's request against another caller's customer. It does not — but not
+because the id is request-local. The configured customer is held ON the receiver in
+`c.account.CustomerID`, and `doCustomerRequest` reads that field rather than taking a customer
+argument. Sharing is safe because `c.account` is an immutable `AccountConfig` fixed at
+construction and the cache key pins the connection row id and version, so every caller of a given
+cached client is a caller for that same customer. The genuinely per-customer path is
+`accountsInfoForCustomer`. Microsoft's `ListAccounts`
 discovery client is deliberately left UNCACHED for a different reason: it is built with a zero
 `AccountConfig`, so caching it under the connection's identity would let discovery and dispatch
 serve each other's client.

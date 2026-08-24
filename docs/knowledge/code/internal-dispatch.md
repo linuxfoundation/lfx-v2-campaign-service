@@ -1047,8 +1047,8 @@ rotation OR a reconnect cannot be served the other's plaintext — so
 N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
 receives its own clone and builds its own client, and the access token is cached on the client
 INSTANCE, so collapsing the token exchange is the separate job of the client cache above (wired
-into Google Ads, Reddit and Microsoft; LinkedIn, Meta and X/Twitter still rebuild per resolve and
-still re-mint).
+into Google Ads, Reddit and Microsoft; LinkedIn, Meta and X/Twitter still rebuild a client per
+resolve, though rebuilding is not re-minting for those three — see the roster above).
 The version in that
 key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
 pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of
