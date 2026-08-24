@@ -37,10 +37,16 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 //
 // The parent-brief gate is INSIDE the write (INSERT ... SELECT ... WHERE EXISTS), not a
 // preceding read, for the same reason CreateAudience gates its insert this way: a bare brief_id
-// FK check would accept an archived brief and would let a caller scoped to project A attach an
-// asset to a brief owned by project B (the FK only proves the brief exists, not that it is this
-// tenant's or still active). When the active, same-project parent is absent the SELECT yields no
-// candidate row, nothing is inserted, and RETURNING comes back empty — mapped to ErrNotFound.
+// FK check would accept an archived brief and would prove only that the brief exists, not that
+// it is this tenant's or still active. When the active, same-project parent is absent the SELECT
+// yields no candidate row, nothing is inserted, and RETURNING comes back empty — mapped to
+// ErrNotFound.
+//
+// Since CreateAsset began locking the parent, the tenant boundary and the status rule are
+// enforced by the lock query and its status check, which run first and refuse before this
+// statement executes. This gate re-states the same predicate under the held lock, so it is
+// defense-in-depth that keeps the statement self-contained rather than the clause a
+// cross-project attach has to get past.
 //
 // The gate alone does NOT serialize against archival, which is why CreateAsset wraps it in a
 // transaction that LOCKS the parent brief first. A bare guarded insert takes no lock on the

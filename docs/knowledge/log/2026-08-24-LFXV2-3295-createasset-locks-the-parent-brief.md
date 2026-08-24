@@ -46,9 +46,13 @@ flip), so such a row is retained FOREVER with nothing able to read or clean it. 
 grows and is unreachable by every code path is a different category from a row a later operation
 would refuse.
 
-The `WHERE EXISTS` gate is retained on top of the lock: it carries the TENANT boundary as well as
-the status rule, and dropping it would let a caller scoped to project A attach an asset to
-project B's brief.
+The `WHERE EXISTS` gate is retained on top of the lock, but the lock is what now carries the
+TENANT boundary. The lock query matches the parent on both `id` and `project_id`, and the
+explicit status check rejects an archived brief, so every refusal — absent, archived, or owned
+by another project — returns `ErrNotFound` before the insert runs. The gate re-states the same
+predicate under the held lock as defense-in-depth, keeping the insert self-contained if it is
+ever reused outside this transaction; it is no longer the clause that stops a cross-project
+attach.
 
 The `CreativeAssetRepository` port in `internal/domain/creative_asset_port.go` was updated to
 match. Serialization is now a REQUIREMENT of the port rather than something an implementation

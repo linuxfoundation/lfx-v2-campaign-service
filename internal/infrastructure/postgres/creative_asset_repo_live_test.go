@@ -460,8 +460,8 @@ func TestCreativeAssets_ByteSizeChecksBindSizeToPayload(t *testing.T) {
 // composite (brief_id, project_id) FK rather than the brief_id-only form.
 //
 // The write here deliberately BYPASSES the repository and inserts directly, because going
-// through CreateAsset would be stopped by the WHERE EXISTS gate and would prove only that the
-// gate works. Only a direct insert can reach the constraint.
+// through CreateAsset would be refused by its parent-brief guards before reaching the table and
+// would prove only that those guards work. Only a direct insert can reach the constraint.
 func TestCreativeAssets_CompositeTenantFKRejectsMismatchedProject(t *testing.T) {
 	pool := creativeAssetTestPool(t)
 	ctx := context.Background()
@@ -547,16 +547,7 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 		// documents. The asset is created while the brief is active, then the brief is archived
 		// underneath it, which is the only ordering that can produce this state.
 		//
-		// This subtest ALSO carries createCreativeAssetQuery's locking decision, which is not
-		// obvious from here and is the reason it must not be weakened casually. That insert
-		// gates its parent with an unlocked WHERE EXISTS and does NOT serialize against
-		// archival, so a concurrent ArchiveBrief can strand an asset under a brief that is
-		// archived by the time the row lands. The comment there justifies leaving it unlocked
-		// SOLELY by the consequence — "the consequence here is only a stored blob nothing can
-		// reach" — and names the change that would invalidate it: "a path that reads assets
-		// without re-checking the parent [means] this insert needs the locking treatment".
-		//
-		// This subtest independently pins LIFECYCLE VISIBILITY: an archived brief must refuse
+		// This subtest pins LIFECYCLE VISIBILITY only: an archived brief must refuse
 		// its children on every operation, so dropping the EXISTS from getCreativeAssetQuery
 		// fails here. It is no longer load-bearing for the INSERT: CreateAsset takes
 		// SELECT ... FOR UPDATE on the parent, and
