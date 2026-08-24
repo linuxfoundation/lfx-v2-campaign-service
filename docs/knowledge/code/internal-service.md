@@ -136,10 +136,17 @@ validates and stores an uploaded image so a Meta ad creative can later reference
 touches NO ad platform — the bytes are held until dispatch, where Meta's per-ad-account
 `image_hash` is resolved (see [internal/platform/meta](internal-platform-meta.md)).
 
-The generated validator enforces what the CONTRACT can express — `content_type` is one of the
-allowed MIME strings, and the base64 string is within `[1, 41,943,040]` CHARACTERS — so what this
-handler ADDS is the DECODED-size ceiling and the proof that the BYTES are actually a decodable
-image of the DECLARED type.
+The generated validator enforces what the CONTRACT can express: `content_type` is one of the
+allowed MIME strings, and `bytes` is within `[1, 41,943,040]`. Note the unit carefully, because
+the two ends of that number differ and this is the whole point of the section below. The
+PUBLISHED schema states 41,943,040 as a `maxLength` on a JSON string, where it counts base64
+CHARACTERS. The generated SERVER validator runs after JSON decoding, against a `[]byte`
+(`gen/http/.../server/types.go`: `if len(body.Bytes) > 41943040`), so it compares DECODED bytes
+against that same figure — an effective ~40 MiB decoded bound, not the 30 MiB one.
+
+So the validator does not enforce the real stored-file ceiling at all. What this handler ADDS is
+the true DECODED-size ceiling (30 MiB, `maxCreativeStoredBytes`) and the proof that the BYTES are
+actually a decodable image of the DECLARED type.
 
 The `MaxLength` figure is the ENCODED ceiling on purpose, and the reason is a representation
 mismatch worth stating. Goa publishes that attribute as `type: string` and emits `MaxLength` as
