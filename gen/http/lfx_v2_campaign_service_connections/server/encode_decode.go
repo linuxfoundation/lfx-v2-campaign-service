@@ -6831,7 +6831,10 @@ func unmarshalLinkedinAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnec
 // *LinkedinAdsCredentialsRequestBody.
 func unmarshalLinkedinAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsCredentials(v *LinkedinAdsCredentialsRequestBody) *lfxv2campaignserviceconnections.LinkedinAdsCredentials {
 	res := &lfxv2campaignserviceconnections.LinkedinAdsCredentials{
-		AccessToken: *v.AccessToken,
+		AccessToken:  *v.AccessToken,
+		RefreshToken: v.RefreshToken,
+		ClientID:     v.ClientID,
+		ClientSecret: v.ClientSecret,
 	}
 
 	return res
