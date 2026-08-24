@@ -64,6 +64,14 @@ type ToggleCampaignStatusRequestBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 }
 
+// ApplyKeywordActionsRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP request body.
+type ApplyKeywordActionsRequestBody struct {
+	// The keyword mutations to apply, all-or-nothing.
+	Actions []*KeywordActionInputRequestBody `form:"actions" json:"actions" xml:"actions"`
+}
+
 // CreateBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP response body.
 type CreateBriefResponseBody struct {
@@ -425,6 +433,20 @@ type ToggleCampaignStatusResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+}
+
+// ApplyKeywordActionsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body.
+type ApplyKeywordActionsResponseBody struct {
+	// The campaign whose keywords were acted on
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// One entry per requested action, in request order. All applied, or the
+	// request failed and none were.
+	Results []*KeywordActionResultResponseBody `form:"results,omitempty" json:"results,omitempty" xml:"results,omitempty"`
+	// How many actions were applied. Always equal to the number requested — a
+	// partial application is not a possible outcome.
+	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
 }
 
 // GetJobResponseBody is the type of the "lfx-v2-campaign-service-briefs"
@@ -1465,6 +1487,69 @@ type ToggleCampaignStatusUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApplyKeywordActionsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "BadRequest" error.
+type ApplyKeywordActionsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ApplyKeywordActionsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "Conflict" error.
+type ApplyKeywordActionsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ApplyKeywordActionsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ApplyKeywordActionsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ApplyKeywordActionsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ApplyKeywordActionsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ApplyKeywordActionsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "NotFound" error.
+type ApplyKeywordActionsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ApplyKeywordActionsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ApplyKeywordActionsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1763,6 +1848,32 @@ type CampaignUpdateInputRequestBody struct {
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 }
 
+// KeywordActionInputRequestBody is used to define fields on request body types.
+type KeywordActionInputRequestBody struct {
+	// The ad group the criterion belongs to. Digits only, and the canonical
+	// base-10 spelling of a positive int64.
+	AdGroupID string `form:"ad_group_id" json:"ad_group_id" xml:"ad_group_id"`
+	// The keyword's ad-group criterion id, as returned by the keywords read.
+	// Digits only, and the canonical base-10 spelling of a positive int64.
+	CriterionID string `form:"criterion_id" json:"criterion_id" xml:"criterion_id"`
+	// What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion
+	// cannot be re-enabled, only re-created with a new id.
+	Action string `form:"action" json:"action" xml:"action"`
+}
+
+// KeywordActionResultResponseBody is used to define fields on response body
+// types.
+type KeywordActionResultResponseBody struct {
+	// The ad group that was addressed
+	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
+	// The criterion that was addressed
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+	// The action that was applied
+	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
+	// The criterion resource name Google returned for the applied mutation
+	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -1846,6 +1957,26 @@ func NewUpdateCampaignRequestBody(p *lfxv2campaignservicebriefs.UpdateCampaignPa
 func NewToggleCampaignStatusRequestBody(p *lfxv2campaignservicebriefs.ToggleCampaignStatusPayload) *ToggleCampaignStatusRequestBody {
 	body := &ToggleCampaignStatusRequestBody{
 		Status: p.Status,
+	}
+	return body
+}
+
+// NewApplyKeywordActionsRequestBody builds the HTTP request body from the
+// payload of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsRequestBody(p *lfxv2campaignservicebriefs.ApplyKeywordActionsPayload) *ApplyKeywordActionsRequestBody {
+	body := &ApplyKeywordActionsRequestBody{}
+	if p.Actions != nil {
+		body.Actions = make([]*KeywordActionInputRequestBody, len(p.Actions))
+		for i, val := range p.Actions {
+			if val == nil {
+				body.Actions[i] = nil
+				continue
+			}
+			body.Actions[i] = marshalLfxv2campaignservicebriefsKeywordActionInputToKeywordActionInputRequestBody(val)
+		}
+	} else {
+		body.Actions = []*KeywordActionInputRequestBody{}
 	}
 	return body
 }
@@ -3271,6 +3402,96 @@ func NewToggleCampaignStatusUnauthorized(body *ToggleCampaignStatusUnauthorizedR
 	return v
 }
 
+// NewApplyKeywordActionsKeywordActionsOK builds a
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// result from a HTTP "OK" response.
+func NewApplyKeywordActionsKeywordActionsOK(body *ApplyKeywordActionsResponseBody) *lfxv2campaignservicebriefs.KeywordActions {
+	v := &lfxv2campaignservicebriefs.KeywordActions{
+		CampaignID:   *body.CampaignID,
+		AppliedCount: *body.AppliedCount,
+	}
+	v.Results = make([]*lfxv2campaignservicebriefs.KeywordActionResult, len(body.Results))
+	for i, val := range body.Results {
+		if val == nil {
+			v.Results[i] = nil
+			continue
+		}
+		v.Results[i] = unmarshalKeywordActionResultResponseBodyToLfxv2campaignservicebriefsKeywordActionResult(val)
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsBadRequest builds a lfx-v2-campaign-service-briefs
+// service apply-keyword-actions endpoint BadRequest error.
+func NewApplyKeywordActionsBadRequest(body *ApplyKeywordActionsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsConflict builds a lfx-v2-campaign-service-briefs
+// service apply-keyword-actions endpoint Conflict error.
+func NewApplyKeywordActionsConflict(body *ApplyKeywordActionsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service apply-keyword-actions endpoint
+// ServiceUnavailable error.
+func NewApplyKeywordActionsServiceUnavailable(body *ApplyKeywordActionsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsInternalServerError builds a
+// lfx-v2-campaign-service-briefs service apply-keyword-actions endpoint
+// InternalServerError error.
+func NewApplyKeywordActionsInternalServerError(body *ApplyKeywordActionsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsNotFound builds a lfx-v2-campaign-service-briefs
+// service apply-keyword-actions endpoint NotFound error.
+func NewApplyKeywordActionsNotFound(body *ApplyKeywordActionsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApplyKeywordActionsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service apply-keyword-actions endpoint Unauthorized error.
+func NewApplyKeywordActionsUnauthorized(body *ApplyKeywordActionsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
 // delete-campaign endpoint BadRequest error.
 func NewDeleteCampaignBadRequest(body *DeleteCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
@@ -3875,6 +4096,28 @@ func ValidateToggleCampaignStatusResponseBody(body *ToggleCampaignStatusResponse
 	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsResponseBody runs the validations defined on
+// Apply-Keyword-ActionsResponseBody
+func ValidateApplyKeywordActionsResponseBody(body *ApplyKeywordActionsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Results == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("results", "body"))
+	}
+	if body.AppliedCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("applied_count", "body"))
+	}
+	for _, e := range body.Results {
+		if e != nil {
+			if err2 := ValidateKeywordActionResultResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 	}
 	return
 }
@@ -5158,6 +5401,84 @@ func ValidateToggleCampaignStatusUnauthorizedResponseBody(body *ToggleCampaignSt
 	return
 }
 
+// ValidateApplyKeywordActionsBadRequestResponseBody runs the validations
+// defined on apply-keyword-actions_BadRequest_response_body
+func ValidateApplyKeywordActionsBadRequestResponseBody(body *ApplyKeywordActionsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsConflictResponseBody runs the validations defined
+// on apply-keyword-actions_Conflict_response_body
+func ValidateApplyKeywordActionsConflictResponseBody(body *ApplyKeywordActionsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsServiceUnavailableResponseBody runs the
+// validations defined on apply-keyword-actions_ServiceUnavailable_response_body
+func ValidateApplyKeywordActionsServiceUnavailableResponseBody(body *ApplyKeywordActionsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsInternalServerErrorResponseBody runs the
+// validations defined on
+// apply-keyword-actions_InternalServerError_response_body
+func ValidateApplyKeywordActionsInternalServerErrorResponseBody(body *ApplyKeywordActionsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsNotFoundResponseBody runs the validations defined
+// on apply-keyword-actions_NotFound_response_body
+func ValidateApplyKeywordActionsNotFoundResponseBody(body *ApplyKeywordActionsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApplyKeywordActionsUnauthorizedResponseBody runs the validations
+// defined on apply-keyword-actions_Unauthorized_response_body
+func ValidateApplyKeywordActionsUnauthorizedResponseBody(body *ApplyKeywordActionsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteCampaignBadRequestResponseBody runs the validations defined on
 // delete-campaign_BadRequest_response_body
 func ValidateDeleteCampaignBadRequestResponseBody(body *DeleteCampaignBadRequestResponseBody) (err error) {
@@ -5499,6 +5820,46 @@ func ValidateCampaignActionItemResponseBody(body *CampaignActionItemResponseBody
 	if body.Priority != nil {
 		if !(*body.Priority == "HIGH" || *body.Priority == "MED") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.priority", *body.Priority, []any{"HIGH", "MED"}))
+		}
+	}
+	return
+}
+
+// ValidateKeywordActionInputRequestBody runs the validations defined on
+// keyword-action-inputRequestBody
+func ValidateKeywordActionInputRequestBody(body *KeywordActionInputRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.ad_group_id", body.AdGroupID, "^[0-9]+$"))
+	if utf8.RuneCountInString(body.AdGroupID) > 19 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.ad_group_id", body.AdGroupID, utf8.RuneCountInString(body.AdGroupID), 19, false))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.criterion_id", body.CriterionID, "^[0-9]+$"))
+	if utf8.RuneCountInString(body.CriterionID) > 19 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.criterion_id", body.CriterionID, utf8.RuneCountInString(body.CriterionID), 19, false))
+	}
+	if !(body.Action == "PAUSE" || body.Action == "REMOVE") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.action", body.Action, []any{"PAUSE", "REMOVE"}))
+	}
+	return
+}
+
+// ValidateKeywordActionResultResponseBody runs the validations defined on
+// keyword-action-resultResponseBody
+func ValidateKeywordActionResultResponseBody(body *KeywordActionResultResponseBody) (err error) {
+	if body.AdGroupID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_group_id", "body"))
+	}
+	if body.CriterionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criterion_id", "body"))
+	}
+	if body.Action == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action", "body"))
+	}
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "body"))
+	}
+	if body.Action != nil {
+		if !(*body.Action == "PAUSE" || *body.Action == "REMOVE") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.action", *body.Action, []any{"PAUSE", "REMOVE"}))
 		}
 	}
 	return

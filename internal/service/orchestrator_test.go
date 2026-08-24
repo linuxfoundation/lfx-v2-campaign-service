@@ -164,6 +164,16 @@ type fakeCampaignRepo struct {
 	// indexPayloads records the co-committed index messages, so a test can assert a campaign is
 	// indexed rather than only persisted.
 	indexPayloads [][]byte
+	// scopeIDs pins the project's campaign scope directly, for tests that need a specific
+	// scope (or an EMPTY one) without dispatching campaigns to produce it. nil means "derive
+	// it from the campaigns this fake holds".
+	scopeIDs []string
+	// scopeResults pins the provenance blob for a scopeIDs entry, so a test can exercise the
+	// adapter's creation-customer filter without dispatching a real campaign.
+	scopeResults map[string]json.RawMessage
+	// scopeErr makes the scope lookup fail, so a test can assert the read does not fall back
+	// to an unscoped platform call when the scope cannot be established.
+	scopeErr error
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
@@ -194,6 +204,41 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 		return &cp, nil
 	}
 	return nil, errors.New("unused")
+}
+
+// ListProjectPlatformCampaignIDs mirrors the SQL: the project's own live campaigns on one
+// platform, across every brief, excluding rows with no upstream id yet. scopeIDs lets a test
+// pin the scope directly; otherwise it is derived from the campaigns the fake holds, so a test
+// that dispatches a campaign automatically has it in scope.
+//
+// The row's Result travels with each id, as the real query now selects it: it carries the
+// creating customer, which the adapter matches against the connection's current one.
+func (r *fakeCampaignRepo) ListProjectPlatformCampaignIDs(_ context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.scopeErr != nil {
+		return nil, r.scopeErr
+	}
+	if r.scopeIDs != nil {
+		out := make([]model.ProjectCampaignScope, 0, len(r.scopeIDs))
+		for _, id := range r.scopeIDs {
+			out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: r.scopeResults[id]})
+		}
+		return out, nil
+	}
+	out := make([]model.ProjectCampaignScope, 0)
+	seen := map[string]bool{}
+	for _, c := range append(append([]*model.Campaign{}, r.upserted...), r.adopted...) {
+		if c == nil || c.ProjectID != projectID || c.Platform != platform || c.Status == "deleted" {
+			continue
+		}
+		if c.PlatformCampaignID == "" || seen[c.PlatformCampaignID] {
+			continue
+		}
+		seen[c.PlatformCampaignID] = true
+		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: c.PlatformCampaignID, Result: c.Result})
+	}
+	return out, nil
 }
 
 // ListCampaignsForBrief mirrors the real query's semantics rather than merely satisfying the
