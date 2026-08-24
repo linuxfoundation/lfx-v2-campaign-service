@@ -135,17 +135,24 @@ func verdict(dsn, ci string) (reason string, fatal bool) {
 func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 	if err := postgres.Migrate(dsn); err != nil {
 		// The DSN is named, never printed -- and the ERROR has to be redacted for that
-		// discipline to hold. postgres.Migrate reaches golang-migrate's database.Open,
-		// which parses the URL and returns a *url.Error embedding it in full, so a plain
-		// %w here would put TEST_DATABASE_URL (with its CI `user:password@`) into the
-		// build log via Pool's t.Fatalf.
+		// discipline to hold. A plain %w here would put TEST_DATABASE_URL (with its CI
+		// `user:password@`) into the build log via Pool's t.Fatalf.
 		//
-		// On THIS path SafeDSNErr takes its *url.Error arm and discards the rendering
-		// outright: net/url's causes quote the fragment they choked on, which can be a
-		// slice of the credential, so nothing derived from the input is carried. The
-		// string redactor is the fallback for causes that are NOT a *url.Error and does
-		// not run here.
-		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, SafeDSNErr(err))
+		// SafeDSNErrFor(dsn, ...), not SafeDSNErr. Two things make the difference matter,
+		// and an earlier version of this call got both wrong while still LOOKING redacted:
+		//
+		//   - SafeDSNErr compares against the ENVIRONMENT's DSN(), and this function is
+		//     handed an EXPLICIT dsn. On the scratch path they differ, because the scratch
+		//     DSN is rewritten from TEST_DATABASE_URL, so the comparison was against the
+		//     wrong string and withheld nothing.
+		//   - Which arm of the redactor runs is not what it appears. golang-migrate wraps
+		//     pgx's *pgconn.ConnectError, which is NOT a *url.Error, so the wholesale
+		//     *url.Error arm does not apply here; control reaches the string arm, and the
+		//     string arm is precisely the one whose correctness depends on the DSN it is
+		//     given. Together those printed `user=... database=...` in full.
+		//
+		// TestConnectAndMigrateWithholdsTheExplicitDSN pins this behaviourally.
+		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, SafeDSNErrFor(dsn, err))
 	}
 	// 30s covers a cold container that has just passed its health check but is still
 	// warming, which is the slow case on a CI runner. It bounds the POOL open only;
@@ -157,7 +164,18 @@ func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 
 	p, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open pool: %w", err)
+		// Redacted for the same reason as the migrate arm above, and it is a SEPARATE
+		// arm: NewPool's ping failure wraps pgx's *pgconn.ConnectError, whose Error()
+		// renders "failed to connect to `user=%s database=%s`" straight from the parsed
+		// Config. A %w here put the configured user and database into the build log via
+		// Pool's t.Fatalf, verified by rendering a failing NewPool against a throwaway
+		// DSN. SafeDSNErrFor, not SafeDSNErr, for the same reason as the migrate arm.
+		//
+		// NOT pinned by a test, and it should be read that way. Reaching this arm needs a
+		// DSN that migrates successfully and THEN fails its ping, but postgres.Migrate
+		// connects first, so any unreachable DSN fails above. Reverting this line leaves
+		// the suite green.
+		return nil, fmt.Errorf("open pool %s: %s", EnvDatabaseURL, SafeDSNErrFor(dsn, err))
 	}
 	// postgres.Pool EMBEDS *pgxpool.Pool; handing back the embedded value keeps this
 	// package from re-exporting the instrumented wrapper's surface to tests.

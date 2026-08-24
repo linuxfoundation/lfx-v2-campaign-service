@@ -1209,35 +1209,6 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		return found
 	}
 
-	// redactedArgs collects every identifier that a redactor call consumes, at any
-	// depth -- so SafeDSNErr(err) and fmt.Sprintf("%s", SafeDSNErrFor(dsn, err)) both
-	// count as rendering err safely, wherever in the argument list they appear.
-	redactedArgs := func(call *ast.CallExpr) map[string]bool {
-		safe := map[string]bool{}
-		for _, a := range call.Args {
-			ast.Inspect(a, func(n ast.Node) bool {
-				c, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				name := selName(c.Fun)
-				if i := strings.LastIndex(name, "."); i >= 0 {
-					name = name[i+1:]
-				}
-				if !redactors[name] {
-					return true
-				}
-				for _, ra := range c.Args {
-					if id, ok := ra.(*ast.Ident); ok {
-						safe[id.Name] = true
-					}
-				}
-				return true
-			})
-		}
-		return safe
-	}
-
 	// bareErrArgs collects identifiers passed DIRECTLY as an argument to the format
 	// call -- the leak shape. An identifier nested inside a redactor is not direct.
 	// bareErrArgs collects error identifiers that reach the format call WITHOUT passing
@@ -1245,9 +1216,14 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	// top-level arguments, because fmt.Sprintf("%v", err) leaks exactly as much as err
 	// does — wrapping an error in a non-redactor call renders it just the same. Descent
 	// stops at a redactor: everything below SafeDSNErr/SafeDSNErrFor is already safe.
-	bareErrArgs := func(call *ast.CallExpr, safe map[string]bool) []string {
+	//
+	// Safety is a property of each OCCURRENCE, not of the identifier. An earlier version
+	// kept a set of names seen inside any redactor and treated every later occurrence of
+	// that name as safe, so t.Fatalf("%s: %v", SafeDSNErr(err), err) passed while its
+	// second argument printed the DSN-bearing error raw. Deciding per position is what
+	// makes the mixed safe/raw call a finding.
+	bareErrArgs := func(call *ast.CallExpr) []string {
 		var bare []string
-		seen := map[string]bool{}
 		isErrName := func(n string) bool {
 			return n == "err" || strings.HasSuffix(n, "Err") || strings.HasSuffix(n, "Error")
 		}
@@ -1267,10 +1243,9 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if safe[id.Name] || seen[id.Name] || !isErrName(id.Name) {
+				if !isErrName(id.Name) {
 					return true
 				}
-				seen[id.Name] = true
 				bare = append(bare, id.Name)
 				return true
 			})
@@ -1312,8 +1287,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 						return true
 					}
 					checked++
-					safe := redactedArgs(call)
-					for _, bare := range bareErrArgs(call, safe) {
+					for _, bare := range bareErrArgs(call) {
 						pos := fset.Position(call.Pos())
 						t.Errorf("line %d renders a DSN-bearing connect error raw (%s passed "+
 							"directly to %s):\n  %s\npgx builds *pgconn.ConnectError and "+
