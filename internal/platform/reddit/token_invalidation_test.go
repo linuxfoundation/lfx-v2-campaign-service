@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestRequest_401InvalidatesTheCachedToken pins that an auth rejection does not leave the
@@ -101,5 +102,53 @@ func TestABA_LateUnauthorizedDoesNotEvictANewerToken(t *testing.T) {
 	c.invalidateAccessToken("tok_current")
 	if got := c.cachedToken; got != "" {
 		t.Errorf("cached token = %q, want it cleared: the token the 401 named must be dropped", got)
+	}
+}
+
+// TestRequest_401InvalidatesBeforeTheBodyIsRead pins the ORDERING, not the outcome.
+//
+// readResponseBody can block until the per-attempt deadline on a slow or truncated 401, and
+// for that whole window every concurrent caller on this shared client keeps taking the
+// rejected token from refreshToken's fast path — so a guard placed after the read makes the
+// "next operation re-mints" guarantee false exactly under the load that makes it matter.
+//
+// The fixture flushes the 401 status and then stalls before writing the body, and asserts the
+// cache is ALREADY empty at that instant. The outcome-only tests cannot see this: they pass
+// with the guard in either position.
+func TestRequest_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
+	bodyGate := make(chan struct{})
+	observed := make(chan string, 1)
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok_1", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-bodyGate
+		_, _ = w.Write([]byte(`{"error":"invalid_token"}`))
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL),
+		WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		c.mu.Lock()
+		observed <- c.cachedToken
+		c.mu.Unlock()
+		close(bodyGate)
+	}()
+
+	_, _ = c.request(context.Background(), http.MethodGet, "/thing", nil)
+
+	if got := <-observed; got != "" {
+		t.Errorf("cached token = %q while the 401 body was still in flight, want it already "+
+			"cleared: invalidation must happen on the status line, not after readResponseBody", got)
 	}
 }

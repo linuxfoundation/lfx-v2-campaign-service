@@ -985,6 +985,17 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			return nil, &transportError{Method: method, Path: path, Err: err}
 		}
 
+		if resp.StatusCode == http.StatusUnauthorized {
+			// Invalidated on the STATUS LINE, before the body is read. readResponseBody can
+			// block until the per-attempt deadline on a slow or truncated 401, and for that
+			// whole window every concurrent caller on this shared client keeps taking the
+			// rejected token from refreshToken's fast path -- so the "next operation
+			// re-mints" guarantee would be false exactly under the load that makes it
+			// matter. Nothing below can change the verdict: a 401 is a 401 whether or not
+			// its body arrives. Mirrors the google-ads and microsoft clients.
+			c.invalidateAccessToken(token)
+		}
+
 		// A 429 with retries remaining: compute the wait and back off. The body is
 		// drained (to EOF, up to maxResponseBody) and then closed before sleeping
 		// so Go's transport can reuse the underlying TCP/TLS connection for the
@@ -1028,16 +1039,6 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		_ = resp.Body.Close()
 		cancel() // body fully read; release the per-attempt deadline
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			if resp.StatusCode == http.StatusUnauthorized {
-				// The platform rejected this token. Drop it so the next operation re-mints
-				// instead of re-presenting it until its advertised expiry.
-				//
-				// Placed on the STATUS, before the body is considered: an unreadable or
-				// unparseable 401 body is still a 401, and making invalidation depend on
-				// reading the body would leave the ambiguous case — the one likeliest to
-				// accompany a broken auth response — serving the rejected token.
-				c.invalidateAccessToken(token)
-			}
 			body := truncate(string(raw), redditErrBodyMaxRunes)
 			if readErr != nil {
 				body = fmt.Sprintf("%s (body read error: %v)", body, readErr)

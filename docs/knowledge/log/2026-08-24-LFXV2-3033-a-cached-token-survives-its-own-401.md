@@ -76,7 +76,15 @@ its body arrives.
 Hoisting the guard to immediately after `Do` fixed it and SIMPLIFIED the change: the unreadable
 and oversized arms are now covered upstream, so `statusAwareReadError` no longer needs the token
 threaded into it at all and reverts to its original signature. google-ads already had this
-shape; reddit's single non-2xx exit is unaffected.
+shape.
+
+Reddit had the SAME defect and I missed it on the first pass, because I fixed the site the
+review named instead of the class it described. `readResponseBody` runs before the non-2xx arm
+there too, and it can block until the per-attempt deadline. The next review round found it, and
+the lesson is the cheaper one to write down than to relearn: when a finding is about WHERE a
+guard sits, the sweep is every client with that guard, not the file in the comment. All three
+now read `Do` -> invalidate-on-status -> body read, and reddit's late guard was deleted rather
+than left as a harmless duplicate.
 
 `TestAttempt_401InvalidatesBeforeTheBodyIsRead` pins the ORDERING rather than the outcome: the
 fixture flushes a 401 status and stalls before the body, and asserts the cache is already empty
