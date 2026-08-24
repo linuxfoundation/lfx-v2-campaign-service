@@ -1141,7 +1141,7 @@ func TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers(t *testing.T) {
 
 	// user and password are both "postgres" -- the CI default, and the case that makes
 	// the embedding question real.
-	const dsn = "postgres://postgres:postgres@127.0.0.1:5432/campaign_test?sslmode=disable"
+	const dsn = "postgres://postgres:postgres@127.0.0.1:5432/campaign_test?sslmode=disable" // secretlint-disable-line -- CI-default fixture; identical user and password is the case under test
 
 	// WITHHELD: each of these names a configured identifier as a value.
 	withheld := []string{

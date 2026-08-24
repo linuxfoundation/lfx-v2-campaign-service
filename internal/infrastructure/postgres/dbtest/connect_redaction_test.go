@@ -120,7 +120,7 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	// unrelated pinned DSN must PRESERVE it -- if an unrelated DSN withheld it too, then
 	// withholding says nothing about the argument, and the wrong-DSN seam this test
 	// exists to pin would still be invisible.
-	const unrelatedDSN = "postgres://otheruser:otherpw@other.invalid:5432/otherdb?sslmode=disable"
+	const unrelatedDSN = "postgres://otheruser:otherpw@other.invalid:5432/otherdb?sslmode=disable" // secretlint-disable-line -- synthetic unrelated DSN; the wrong-DSN seam is invisible without it
 	if kept := SafeDSNErrFor(unrelatedDSN, rawErr); !strings.Contains(kept, user) {
 		t.Errorf("SafeDSNErrFor(unrelated dsn) = %q, want the probe's text preserved; an "+
 			"unrelated DSN must not withhold this error, or the assertions above cannot "+
