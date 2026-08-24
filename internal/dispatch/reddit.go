@@ -83,13 +83,26 @@ type briefFields struct {
 // the brief + config onto reddit.CampaignInput, and returns the created campaign.
 type RedditDispatcher struct {
 	creds *credsSource
+	// clients caches the built *reddit.Client per connection, exactly as GoogleAdsDispatcher
+	// does. The credential cache alone does not remove the OAuth exchange: the access token is
+	// cached ON the client instance (reddit.Client's cachedToken/tokenExpireAt), so a client
+	// rebuilt per call re-mints it however cheap the credential lookup became. Entries are
+	// validated against the same row id and version as the credential, so a rotated credential
+	// cannot be served through a stale client.
+	//
+	// Sharing one instance across concurrent callers is safe for this client specifically: the
+	// only fields written after construction are the token cache and the in-flight refresh
+	// handle, both exclusively under c.mu (client.go refreshToken/fetchToken), and no method
+	// stores per-call state on the receiver — the account config is written once at construction
+	// and thereafter read-only.
+	clients *clientCache
 	// opts are extra reddit.Client options (e.g. WithBaseURL/WithTokenURL in tests).
 	opts []reddit.Option
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
-	return &RedditDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
@@ -271,19 +284,44 @@ func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, pro
 		return nil, res, fmt.Errorf("%w: %w: reddit connection for project %s has no account id",
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
-	return reddit.NewClient(
-		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-		// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
-		// yields "", which CreateCampaign refuses with a message naming the connection --
-		// the empty case is a connection saved before the column existed, and guessing a
-		// value would attribute conversions to a pixel that is not this advertiser's.
-		reddit.AccountConfig{
-			AccountID:         res.accountID,
-			Label:             res.label,
-			ConversionPixelID: res.providerConfig["conversion_pixel_id"],
-		},
-		d.opts...,
-	), res, nil
+	// Build through the client cache, so a dispatch burst or a polling dashboard reuses ONE
+	// client — and therefore ONE OAuth token — instead of re-minting per call. Every check
+	// above still runs on every call against the FRESH row: only the construction is cached,
+	// so a connection that has gone inactive or lost its account id is refused here exactly as
+	// before rather than being served a live client from the cache.
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	// ONE construction, called from both the cache closure and the fallback below, matching
+	// cachedMicrosoftClient's shape. Written twice, the two copies can drift: a later
+	// AccountConfig change (a new field, a different pixel source) has to be made in both, and
+	// the compiler cannot notice if it is not.
+	build := func() *reddit.Client {
+		return reddit.NewClient(
+			reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
+			// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
+			// yields "", which CreateCampaign refuses with a message naming the connection --
+			// the empty case is a connection saved before the column existed, and guessing a
+			// value would attribute conversions to a pixel that is not this advertiser's.
+			reddit.AccountConfig{
+				AccountID:         res.accountID,
+				Label:             res.label,
+				ConversionPixelID: res.providerConfig["conversion_pixel_id"],
+			},
+			d.opts...,
+		)
+	}
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return build(), nil
+	})
+	if err != nil {
+		return nil, res, err
+	}
+	client, isClient := built.(*reddit.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return build(), res, nil
+	}
+	return client, res, nil
 }
 
 // ToggleStatus pauses or resumes an existing reddit campaign on the platform. It resolves

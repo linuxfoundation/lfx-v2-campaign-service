@@ -50,6 +50,38 @@ and the refresh runs on a `WithoutCancel`-detached context so one caller's
 cancellation can't tear down a shared refresh). The OAuth response body is never
 echoed into errors (it can carry the `client_secret`/`refresh_token` back).
 
+A resource-server **401 invalidates the cached access token**, on the STATUS LINE and before
+the response body is read. Expiry alone is not enough: a revoked or rotated token keeps its
+advertised `expires_in`, so the fast path would go on serving it long after the platform
+started rejecting it. That only became reachable once the dispatcher began caching CLIENTS
+across operations — a client rebuilt per operation started with an empty cache, so one
+rejection cost one failure. Reading the body first would buy no accuracy (a 401 is a 401
+whether or not its body arrives) and would hold the rejected token available to every
+concurrent caller for the rest of the attempt timeout, so the unreadable and oversized arms
+need no guard of their own.
+
+Invalidation is **compare-and-clear**, not an unconditional clear: it takes the token the
+rejected request actually presented and drops the cache only if it still holds that token.
+With a shared client, request A can leave carrying `tok_1`, request B can refresh and cache
+`tok_2`, and A's late 401 then names `tok_1` — clearing blindly would evict a token nothing
+rejected and let a burst of late responses drive serial re-exchanges, defeating the
+single-flight coalescing above. Matching makes it idempotent: the rejected token is dropped
+exactly once, and every later 401 naming it is a no-op.
+
+The cache is not the only place the rejected value lives, so a flight whose token MATCHES
+the rejected one is blanked and unpublished as well — as selective as the cache clear, so a
+flight carrying any other token still survives. Be precise about what that arm buys today:
+on the CURRENT leader path it is NOT reachable. `accessTokenValue` sets `inflight.token`, retracts
+`inflight` and closes `done` inside ONE unbroken critical section, so a published flight is
+never observable holding a non-empty token — by the time the token is set, the flight is
+already unpublished under the same lock hold. It is kept as defence-in-depth against that
+critical section being split, not as live coverage, and it does NOT close the residual
+pre-publication window tracked by #180: a 401 arriving BEFORE the leader sets `inflight.token`
+matches nothing, and the leader then publishes the already-rejected token. Blanking without
+unpublishing would recurse without bound (a waiter re-leads, finds the same poisoned flight,
+and reads the blank again), and because invalidation can retract a flight early, the leader's
+own teardown compares identity before clearing so a stale leader cannot erase a newer flight.
+
 ## Request layer
 
 `doRequest` applies the repo's standard discipline: no-follow redirects (on a shallow
@@ -381,10 +413,12 @@ the one delegated to the file.
 "set to expire 15 minutes… however, you should not depend on a fixed duration"), so it is
 re-fetched on every refresh and never cached — only the PARSED map is, under `geoCacheTTL`
 (24h) with a leader/follower single-flight that mirrors the token refresh, so concurrent callers
-sharing a client trigger ONE multi-MiB download. Note the SCOPE: `MicrosoftDispatcher` builds a
-new client per `Dispatch`, so this coalesces within a create rather than across jobs — a
-cross-job cache needs a longer-lived owner injected into the dispatcher, and claiming one here
-would be false. The download is a plain GET that deliberately carries
+sharing a client trigger ONE multi-MiB download. Note the SCOPE: the cache lives on the Client, so
+its reach is the lifetime of the client that owns it. As of LFXV2-3033 `MicrosoftDispatcher`
+caches its clients, so one parsed map is reused ACROSS creates for the same connection until the
+credential rotates or the entry is evicted — previously the dispatcher built a new client per
+`Dispatch` and this coalesced only within a create. It is still not process-wide: separate
+connections, and the same connection after a rotation, each re-fetch. The download is a plain GET that deliberately carries
 **no** developer token or bearer: the URL is pre-signed storage on another host, and the size
 cap is applied to the DECOMPRESSED stream so a compressed file cannot expand without bound.
 
