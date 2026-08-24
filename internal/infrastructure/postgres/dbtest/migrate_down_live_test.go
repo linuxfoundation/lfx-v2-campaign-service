@@ -139,9 +139,17 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 // to discover it. Down-to-zero is the strong form: it forces EVERY down file to run, and
 // to run against the schema its own up file produced.
 //
-// The final Up is not decoration. A down file that drops more than its up created leaves
-// a schema that looks empty but is not, and the re-Up is what catches it: the migration
-// would fail on an object that should no longer exist.
+// The final Up is not decoration, but be precise about WHICH failure it catches, because the
+// intuitive reading is backwards. It does NOT detect over-removal: after a down-to-zero the
+// up set replays from scratch, so an object a down file dropped too early is simply recreated
+// by its own up file and the re-Up passes. Over-removal is caught by the PER-VERSION snapshot
+// comparison above, which checks each intermediate state against the schema its own up
+// produced.
+//
+// What the re-Up catches is the opposite: RESIDUE. An object a down file failed to drop, whose
+// KIND schemaObjects does not enumerate — so the emptiness check above cannot see it — and
+// which a later create then collides with. That is a real gap the snapshots miss, because they
+// can only compare the object kinds they know to look for.
 func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 	// Pool is called for its skip/fatal verdict on TEST_DATABASE_URL, which is the same
 	// gate every other live test in this package sits behind. The pool itself is not
@@ -212,9 +220,11 @@ func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 			"recorded its version without undoing its up", remaining)
 	}
 
-	// And the set applies cleanly a second time. This is what catches a down file that
-	// dropped an object a LATER up migration does not recreate, or that dropped more than
-	// its own up added.
+	// And the set applies cleanly a second time. This catches RESIDUE, not over-removal: a
+	// replay from zero recreates anything a down file dropped too eagerly, so over-removal is
+	// the per-version snapshots' job. What fails here is an object left BEHIND whose kind
+	// schemaObjects does not enumerate — invisible to the emptiness check above — that a
+	// later CREATE then collides with.
 	if err := m.Up(); err != nil {
 		t.Fatalf("Up after a full Down: %v — the down set left the database in a state "+
 			"the up set cannot be re-applied to, so a rollback would be one-way", err)
