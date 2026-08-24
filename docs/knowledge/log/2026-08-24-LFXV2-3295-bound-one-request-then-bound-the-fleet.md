@@ -67,6 +67,44 @@ control in the dispatch path; this middleware neither provides nor claims one.
 The general form: when documenting a resource bound, state the quantity it accounts AND name the
 adjacent quantity it does not, or a reader will assume the larger scope.
 
+## The weight I first chose under-counted, and my own comment said why
+
+The first revision charged 64 MiB per upload, reasoning that the 42 MiB body buffer is released
+before the decode peaks so the sum was pessimistic. A reviewer pointed at the line the reasoning
+had to survive:
+
+```go
+image.Decode(bytes.NewReader(p.Bytes))
+```
+
+`p.Bytes` is the decode's own INPUT. It cannot be collected while the decode runs, so the ~30 MiB
+slice and the up-to-80 MiB pixel buffer **necessarily coexist** — ~110 MiB, before counting the
+body buffer Go has not yet reclaimed. Two permits at 64 MiB would admit ~220 MiB against a
+128 MiB budget: the bound under-counted precisely where it was supposed to bind.
+
+The argument I had made was true of the body buffer and simply did not apply to the decoded
+slice. Corrected to 128 MiB, which at the current budget admits one maximum-size upload at a time
+— the honest answer for a 512Mi pod.
+
+The test that now pins it derives its expectation from the SERVICE's limits (the design's 30 MiB
+`MaxLength` plus `maxCreativeDecodedBytes`), never from the weight under test: an assertion
+derived from the constant it guards proves only that a value equals itself, and that is exactly
+how the 64 MiB figure passed its first review.
+
+## A deadline I introduced outlived the one that answers
+
+Adding `ReadTimeout = 120s` against an unchanged `WriteTimeout = 60s` created a window I had not
+considered: `net/http` installs the WRITE deadline when the request HEADERS are read, and it keeps
+expiring while the handler reads the body. An upload taking 60-120s could satisfy the new read
+deadline and then have no budget left to send anything — the caller sees a dropped connection
+rather than a response or an error.
+
+Fixed by holding `ReadTimeout` at `WriteTimeout` and reducing `ReadHeaderTimeout` to 15s so the
+body still has room inside the total. The relationship is asserted on the real server object.
+
+The general shape: **a new timeout is not independent of the existing ones.** Before adding one,
+find which deadlines share a clock and in what order the runtime installs them.
+
 ## The rule
 
 A bound on one request is not a bound on the service. When a per-request limit is added, ask what

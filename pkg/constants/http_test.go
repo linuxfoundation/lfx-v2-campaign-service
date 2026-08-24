@@ -93,6 +93,43 @@ func TestUploadAdmissionBudgetLeavesHeadroom(t *testing.T) {
 	}
 }
 
+// TestUploadAdmissionWeightCoversTheCoexistingPeak pins the weight to memory that PROVABLY
+// coexists during one upload, derived from the service's own limits rather than from the weight
+// under test.
+//
+// The independent bound: UploadCreativeAsset calls image.Decode(bytes.NewReader(p.Bytes)), so the
+// decoded slice is the decode's INPUT and is necessarily live for the decode's whole duration.
+// The pixel buffer is allocated on top of it. Any weight below their sum lets two permits admit
+// more bytes than the budget names — a bound that under-counts exactly when it matters.
+//
+// A previous revision charged 64 MiB on the reasoning that the body buffer is released before the
+// decode peaks; that argument does not apply to the decoded slice, and this test is what would
+// have caught it.
+func TestUploadAdmissionWeightCoversTheCoexistingPeak(t *testing.T) {
+	// Both figures come from the service's declared limits, NOT from UploadAdmissionWeightBytes:
+	//   - the design's MaxLength on the upload's `bytes` attribute (30 MiB decoded);
+	//   - maxCreativeDecodedBytes, the decode budget in internal/service (80 MiB).
+	const maxDecodedPayload int64 = 30 << 20
+	const maxDecodedPixels int64 = 80 << 20
+	mustCoexist := maxDecodedPayload + maxDecodedPixels // ~110 MiB
+
+	if UploadAdmissionWeightBytes < mustCoexist {
+		t.Errorf("weight %d MiB is below the %d MiB that provably coexists during one upload "+
+			"(%d MiB decoded payload held live as image.Decode's input + %d MiB pixel buffer): "+
+			"two permits would admit ~%d MiB against a %d MiB budget",
+			UploadAdmissionWeightBytes>>20, mustCoexist>>20,
+			maxDecodedPayload>>20, maxDecodedPixels>>20,
+			(2*mustCoexist)>>20, UploadAdmissionBudgetBytes>>20)
+	}
+
+	// The budget must still admit at least one upload at that honest weight, or the endpoint
+	// sheds unconditionally.
+	if UploadAdmissionBudgetBytes < UploadAdmissionWeightBytes {
+		t.Errorf("budget %d MiB cannot admit a single %d MiB upload",
+			UploadAdmissionBudgetBytes>>20, UploadAdmissionWeightBytes>>20)
+	}
+}
+
 // TestReadTimeoutExceedsHeaderTimeout guards the relationship between the two read deadlines.
 // ReadTimeout covers headers AND body, so a value at or below ReadHeaderTimeout would cut off
 // legitimate uploads before the body could arrive.

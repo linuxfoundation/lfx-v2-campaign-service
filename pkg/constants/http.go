@@ -9,7 +9,7 @@ const (
 	RequestIDHeader = "X-Request-ID"
 
 	DefaultShutdownTimeout   = 25 * time.Second
-	DefaultReadHeaderTimeout = 60 * time.Second
+	DefaultReadHeaderTimeout = 15 * time.Second
 	DefaultWriteTimeout      = 60 * time.Second
 	DefaultIdleTimeout       = 90 * time.Second
 )
@@ -68,18 +68,26 @@ const UploadAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
 
 // UploadAdmissionWeightBytes is the weight ONE upload takes from the budget.
 //
-// Priced at the transient peak a single maximum-size upload really reaches, not at any one of
-// its parts: MaxRequestBodyBytes (42 MiB) buffered by the decoder, plus the ~30 MiB
-// base64-decoded byte slice, plus the up-to-80 MiB pixel buffer image.Decode may allocate. That
-// is ~152 MiB at the instant all three coexist, but the body buffer is released before the
-// decode peaks, so 64 MiB is the honest steady-state weight — deliberately NOT the theoretical
-// sum, which would admit only one upload at a time and make the endpoint serially slow for no
-// memory benefit.
+// Priced at the peak that PROVABLY coexists, not at a steady state. An earlier revision charged
+// 64 MiB on the reasoning that the body buffer is released before the decode peaks. That was
+// wrong in a way the code contradicts directly: UploadCreativeAsset calls
+// image.Decode(bytes.NewReader(p.Bytes)), so the ~30 MiB decoded slice is live FOR THE WHOLE
+// decode — it is the decode's own input and cannot be collected while it runs. The 80 MiB pixel
+// buffer is allocated on top of it, so at least ~110 MiB necessarily coexists per upload.
 //
-// With the budget above this admits two concurrent maximum-size uploads and sheds the third,
-// which is the intended behaviour: two worst-case uploads sit inside the pod's share, three do
-// not.
-const UploadAdmissionWeightBytes int64 = 64 << 20 // 64 MiB
+// 110 MiB is therefore the floor, and the Goa decoder's ~42 MiB body buffer may still be
+// unreclaimed on top of that (Go frees on GC, not on last use), so the honest figure is 128 MiB.
+// Charging less would let two permits admit ~220 MiB against a 128 MiB budget — a bound that
+// under-counts precisely when it matters, which is worse than no bound because it reads as
+// protection.
+//
+// The consequence is deliberate and worth stating: at the current budget this admits ONE
+// maximum-size upload at a time and sheds concurrent ones with 503 + Retry-After. That is the
+// correct answer for a 512Mi pod — two worst-case uploads genuinely do not fit — and it is why
+// the shed path returns a retryable status rather than an error. Smaller images still decode
+// well within the same permit; the weight is priced for the worst legal upload, not the typical
+// one.
+const UploadAdmissionWeightBytes int64 = 128 << 20 // 128 MiB
 
 // UploadAdmissionWait is how long a request will wait for a permit before it is shed with 503.
 //
@@ -96,6 +104,17 @@ const UploadAdmissionWait = 250 * time.Millisecond
 // never send a complete request at all, which would turn the memory bound into a cheaper denial
 // of service than the one it was added to prevent.
 //
-// It must exceed the time a legitimate maximum-size upload needs: 42 MiB over a slow but real
-// connection. 120s is generous against that while still finite.
-const DefaultReadTimeout = 120 * time.Second
+// Three deadlines have to agree here, and the binding constraint is net/http's ordering:
+// the WRITE deadline is installed when the request HEADERS are read, and it keeps expiring while
+// the handler reads the body. So any time spent reading the body is time subtracted from the
+// budget available to write the response.
+//
+// A ReadTimeout longer than WriteTimeout would therefore let an upload satisfy the read deadline
+// and then have no budget left to answer at all — the caller sees a dropped connection rather
+// than a result or an error. ReadTimeout is consequently held at or below WriteTimeout.
+//
+// It must still leave room for the body after the headers, so ReadHeaderTimeout is reduced to
+// 15s (headers are small; 60s to send them was never a real requirement and it left no room
+// under a 60s total). That leaves 45s of the read budget for a 42 MiB body, and the whole 60s
+// write budget is never outlived by the read.
+const DefaultReadTimeout = DefaultWriteTimeout

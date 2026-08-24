@@ -148,4 +148,20 @@ func TestReadTimeoutIsSetOnTheServer(t *testing.T) {
 	if srv.WriteTimeout == 0 || srv.IdleTimeout == 0 {
 		t.Error("buildServer dropped WriteTimeout or IdleTimeout")
 	}
+
+	// The binding constraint: net/http installs the WRITE deadline when the request headers
+	// are read, and it keeps expiring while the handler reads the body. A read budget longer
+	// than the write budget lets a slow upload satisfy the read deadline and then have nothing
+	// left to answer with, so the caller sees a dropped connection instead of a response.
+	if srv.ReadTimeout > srv.WriteTimeout {
+		t.Errorf("ReadTimeout %v exceeds WriteTimeout %v: an upload can finish reading with no "+
+			"write budget left and fail to send any response",
+			srv.ReadTimeout, srv.WriteTimeout)
+	}
+
+	// The header deadline must leave room for the body inside the total read budget.
+	if srv.ReadHeaderTimeout >= srv.ReadTimeout {
+		t.Errorf("ReadHeaderTimeout %v leaves no room for the body within ReadTimeout %v",
+			srv.ReadHeaderTimeout, srv.ReadTimeout)
+	}
 }
