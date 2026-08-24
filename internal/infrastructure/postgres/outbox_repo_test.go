@@ -352,9 +352,17 @@ var allowedVersionGaps = map[int]string{
 	// tolerating it — an entry that outlives its gap re-permits, at that exact version, the
 	// silent-skip hazard TestMigrations_NoVersionGaps exists to catch.
 	//
-	// The map is left declared and empty on purpose: a gap is a legitimate transitional state
-	// and the next sibling PR to need one should add an entry here rather than re-deriving why
-	// the mechanism exists. The comments in this body are the record of what has been retired.
+	// 27 — REMOVED (LFXV2-3295). 000027_campaigns_ran_on_system_account was claimed by PR #164
+	// (LFXV2-3050) while it was unmerged, and this entry excused the gap so this branch could
+	// stay green ahead of it. The obligation it recorded was a merge-ORDER one, and it has been
+	// discharged in the order it demanded: #164 merged to main first, and this base-sync merge
+	// brings 000027 into the tree BELOW this branch's 000028_create_creative_assets. golang-migrate
+	// therefore applies both in order, and the silent-skip hazard is closed.
+	//
+	// The comments above are the record of what has been retired; empty is the map's resting
+	// state, and it has now returned to empty. A gap is a legitimate transitional state, so the
+	// next sibling PR to need one should add an entry here rather than re-deriving why the
+	// mechanism exists.
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
