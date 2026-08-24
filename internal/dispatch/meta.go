@@ -209,7 +209,10 @@ func safeAssetIDForError(id string) string {
 // Every failure here is a caller/wiring error that MUST fail the dispatch BEFORE any
 // upstream create — the sole call site wraps the returned error in notCreated so the
 // (brief, platform) claim is RELEASED rather than stranded, and the resolution runs before
-// the client is constructed so no credential is used and no Meta call is made:
+// meta.NewClient, so no Meta call is made. It is NOT a pre-credential boundary: Dispatch
+// calls resolveMetaCredentials as its first statement, which loads, decrypts and decodes
+// the stored token before this ever runs. The guarantee is pre-spend, not
+// credential-avoidance:
 //   - a malformed imageAssetId cannot reference a real asset, so it is rejected up front
 //     rather than handed to the UUID primary-key lookup (which would raise an opaque
 //     driver error);
@@ -457,8 +460,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// bad reference (malformed id, unknown/foreign asset, an asset with no bytes) fails
 	// the dispatch HERE — notCreated marks it NoUpstreamCreate so the orchestrator
 	// RELEASES the pending (brief, platform) claim instead of stranding it, and because
-	// this runs before meta.NewClient below, no credential is used and no Meta call is
-	// made. A variant that carries an image URL instead resolves to nothing here and is
+	// this runs before meta.NewClient below, no Meta call is made. The credential is
+	// already resolved and decrypted by this point (resolveMetaCredentials runs first),
+	// so this is a pre-spend boundary, not a pre-credential one.
+	// A variant that carries an image URL instead resolves to nothing here and is
 	// attached by the client as link_data.picture; the two are mutually exclusive per
 	// variant and the client refuses a variant supplying both.
 	variants, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
