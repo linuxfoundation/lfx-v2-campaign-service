@@ -497,6 +497,32 @@ type tokenResponse struct {
 // context error instead of blocking on — or tearing down — the shared refresh. A
 // failed refresh fails all current waiters at once rather than each re-leading a
 // serial refresh (which would amplify rate-limit pressure).
+// invalidateAccessToken drops the cached token so the NEXT accessTokenValue mints a fresh one.
+//
+// It exists because a token's ADVERTISED expiry is not the only way it stops working. A
+// revoked, rotated, or server-side-invalidated token keeps its expires_in, so the fast path in
+// accessTokenValue goes on serving it long after the platform started rejecting it. Nothing
+// else ever clears the cache, so without this the client is stuck for the remainder of that
+// advertised lifetime.
+//
+// This became reachable when the dispatcher started CACHING clients across operations
+// (internal/dispatch/microsoft.go). A client rebuilt per operation began with an empty cache,
+// so one rejection cost one failure; a cached client re-presents the same rejected token to
+// every later call. On a dispatch path that spends money, that is a stuck campaign rather than
+// a transient error.
+//
+// It clears the EXPIRY as well as the token, so the cache is empty by either half of the fast
+// path's condition and a future edit to that test cannot silently resurrect the token.
+//
+// Any in-flight single-flight refresh is deliberately left alone: it is already fetching a NEW
+// token and its result is not the rejected one.
+func (c *Client) invalidateAccessToken() {
+	c.tokenMu.Lock()
+	c.accessToken = ""
+	c.tokenExpiry = time.Time{}
+	c.tokenMu.Unlock()
+}
+
 func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 	// A caller whose context is already done never triggers or joins a refresh.
 	if err := ctx.Err(); err != nil {
@@ -894,6 +920,15 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 		return buf.Bytes(), 0, false, nil
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The platform rejected this token. Drop it so the next operation re-mints instead
+		// of re-presenting it until its advertised expiry. Placed on the STATUS, before the
+		// body is parsed: an unreadable or unparseable 401 body is still a 401, and making
+		// invalidation depend on the body would leave the ambiguous case serving the
+		// rejected token.
+		c.invalidateAccessToken()
+	}
+
 	// Non-2xx: build a classified apiError. Parse error codes from the FULL body; the
 	// raw body itself is NOT retained (untrusted; would be a reflection/JSON leak
 	// channel — see apiError). Classification uses only the parsed codes.
@@ -923,6 +958,14 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 func (c *Client) statusAwareReadError(status int, method, path string, cause error) error {
 	if status >= 200 && status < 300 {
 		return &transportError{Method: method, Path: path, err: cause}
+	}
+	if status == http.StatusUnauthorized {
+		// An UNREADABLE 401 is still a 401. This arm is reached when the body could not be
+		// read or exceeded the cap, which is precisely the case a body-dependent guard would
+		// miss — and the two read-failure exits above return from attempt() before the
+		// status check further down, so invalidating only there would leave both of them
+		// re-presenting the rejected token.
+		c.invalidateAccessToken()
 	}
 	return &apiError{StatusCode: status, Method: method, Path: path}
 }

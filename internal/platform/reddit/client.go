@@ -560,6 +560,33 @@ type tokenResponse struct {
 // under a brief lock, and every waiter (leader included) selects on ctx.Done()
 // so it can still return promptly with its own context error instead of blocking
 // on the shared request indefinitely.
+// invalidateAccessToken drops the cached token so the NEXT refreshToken mints a fresh one.
+//
+// It exists because a token's ADVERTISED expiry is not the only way it stops working. A
+// revoked, rotated, or server-side-invalidated token keeps its expires_in, so the fast path
+// in refreshToken goes on serving it long after the platform started rejecting it. Nothing
+// else ever clears the cache, so without this the client is stuck for the remainder of that
+// advertised lifetime.
+//
+// This became reachable when the dispatcher started CACHING clients across operations
+// (internal/dispatch/reddit.go). A client rebuilt per operation began with an empty cache, so
+// one rejection cost one failure; a cached client re-presents the same rejected token to every
+// later call. On a dispatch path that spends money, that is a stuck campaign rather than a
+// transient error.
+//
+// It clears the EXPIRY as well as the token. Zeroing only cachedToken would leave the fast
+// path's `c.cachedToken != ""` test doing the work alone; clearing both makes the cache empty
+// by either condition, so a future edit to that test cannot silently resurrect the token.
+//
+// Any in-flight single-flight refresh is deliberately left alone: it is already fetching a NEW
+// token from the token endpoint and its result is not the rejected one.
+func (c *Client) invalidateAccessToken() {
+	c.mu.Lock()
+	c.cachedToken = ""
+	c.tokenExpireAt = time.Time{}
+	c.mu.Unlock()
+}
+
 func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	// Bail out early if the caller's context is already done, so a cancelled
 	// caller never triggers or joins a refresh.
@@ -988,6 +1015,16 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		_ = resp.Body.Close()
 		cancel() // body fully read; release the per-attempt deadline
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if resp.StatusCode == http.StatusUnauthorized {
+				// The platform rejected this token. Drop it so the next operation re-mints
+				// instead of re-presenting it until its advertised expiry.
+				//
+				// Placed on the STATUS, before the body is considered: an unreadable or
+				// unparseable 401 body is still a 401, and making invalidation depend on
+				// reading the body would leave the ambiguous case — the one likeliest to
+				// accompany a broken auth response — serving the rejected token.
+				c.invalidateAccessToken()
+			}
 			body := truncate(string(raw), redditErrBodyMaxRunes)
 			if readErr != nil {
 				body = fmt.Sprintf("%s (body read error: %v)", body, readErr)
