@@ -43,3 +43,20 @@ deliberately out of scope here.
 Two of the round's findings were already fixed and were verified STALE by mutation rather than by
 reading: transposing `ProjectID`/`BriefID` in `creativeAssetResult`, and dropping the repo-error
 check so a nil `stored` mapped to a result — both are now caught.
+
+A follow-up round found the same class of defect one layer out, in the wiring rather than the
+guard. `bindBriefLiveBackends` published `SetCreativeAssetRepo` before `SetDecodeReserver`, and on
+the cold-start retry path it mutates a `BriefService` that is ALREADY MOUNTED. The two setters take
+the service lock independently, so a concurrent upload could observe the first without the second —
+and the two have asymmetric failure modes: a nil repo is the handler's availability GATE (503),
+while a nil reserver is a deliberate silent no-op. Publishing the gate first therefore opened
+uploads for the width of that window with the aggregate pixel bound unenforced: they succeeded, and
+they were unbounded, which is worse than being refused because nothing fails. Binding the BOUND
+first makes the window harmless — while the repo is nil every upload is refused, so no request can
+observe a live repo without a reserver. The order is now pinned by a test asserting the relative
+positions, so a future dependency can be added without falsely failing it while a reordering still
+does.
+
+The general shape worth keeping: when two independently locked setters publish a GATE and a BOUND,
+the bound must be published first, or the gap between them is a window in which the bound does not
+exist.
