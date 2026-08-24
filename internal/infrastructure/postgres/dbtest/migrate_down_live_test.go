@@ -7,8 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1129,58 +1132,217 @@ func TestScratchDatabaseHelpersRedactConnectErrors(t *testing.T) {
 func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	t.Parallel()
 
-	src, err := os.ReadFile("migrate_down_live_test.go")
+	// Parsed, not scanned. Two successive line-window versions of this guard missed a
+	// site each: the first used a fixed 5-line lookahead and a four-line comment pushed
+	// a Fatalf out of range; the second scanned the whole `if` block but still only
+	// inspected the single line holding t.Fatalf/t.Errorf, so a call whose argument sat
+	// on a continuation line was never checked. Both failures share one cause -- line
+	// proximity only approximates the question. The AST asks it directly: for every
+	// t.Fatalf/t.Errorf reachable from a DSN-bearing call's error handling, is the error
+	// value passed through a redactor, or handed over bare?
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "migrate_down_live_test.go", nil, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("read own source: %v", err)
+		t.Fatalf("parse own source: %v", err)
 	}
-	lines := strings.Split(string(src), "\n")
 
-	// The calls that take a DSN and can therefore fail with an error built out of it.
-	dsnCalls := []string{"pgx.Connect(", "pgxpool.ParseConfig(", "pgxpool.New(", "postgres.NewPool("}
+	// Every call that receives a DSN (or a value rewritten from one) and can therefore
+	// fail with an error built out of it. migrate.NewWithSourceInstance and withDatabase
+	// are here because they are handed migrateURL(t, dsn) / dbtest.DSN(): the AST walk
+	// found both when a mutation at one of them survived a list that named only the pgx
+	// entry points, so the call set, not just the matching, was too narrow.
+	dsnCalls := map[string]bool{
+		"pgx.Connect":                   true,
+		"pgxpool.ParseConfig":           true,
+		"pgxpool.New":                   true,
+		"postgres.NewPool":              true,
+		"migrate.NewWithSourceInstance": true,
+	}
+	// The only renderings that count as safe passage for an error value.
+	redactors := map[string]bool{"SafeDSNErr": true, "SafeDSNErrFor": true}
 
-	for i, ln := range lines {
-		hasCall := false
-		for _, c := range dsnCalls {
-			if strings.Contains(ln, c) {
-				hasCall = true
-				break
+	// selName renders a call's function as "pkg.Func" (or "Func") for matching.
+	selName := func(e ast.Expr) string {
+		switch f := e.(type) {
+		case *ast.SelectorExpr:
+			if x, ok := f.X.(*ast.Ident); ok {
+				return x.Name + "." + f.Sel.Name
+			}
+			return f.Sel.Name
+		case *ast.Ident:
+			return f.Name
+		}
+		return ""
+	}
+
+	// withDatabase is DSN-bearing only when it is handed the CONFIGURED DSN. The
+	// table-driven test at TestWithDatabase feeds it hardcoded literals ("u:p@h"), whose
+	// echo leaks nothing, and flagging those would train the reader to ignore this guard.
+	// So it qualifies by argument, not by name.
+	liveDSNArg := func(call *ast.CallExpr) bool {
+		for _, a := range call.Args {
+			if c, ok := a.(*ast.CallExpr); ok && strings.HasSuffix(selName(c.Fun), ".DSN") {
+				return true
+			}
+			if id, ok := a.(*ast.Ident); ok && id.Name == "dsn" {
+				return true
 			}
 		}
-		if !hasCall {
-			continue
+		return false
+	}
+
+	// isDSNCall reports whether an expression contains a call that takes a DSN.
+	isDSNCall := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				name := selName(c.Fun)
+				if dsnCalls[name] {
+					found = true
+				}
+				if name == "withDatabase" && liveDSNArg(c) {
+					found = true
+				}
+			}
+			return !found
+		})
+		return found
+	}
+
+	// redactedArgs collects every identifier that a redactor call consumes, at any
+	// depth -- so SafeDSNErr(err) and fmt.Sprintf("%s", SafeDSNErrFor(dsn, err)) both
+	// count as rendering err safely, wherever in the argument list they appear.
+	redactedArgs := func(call *ast.CallExpr) map[string]bool {
+		safe := map[string]bool{}
+		for _, a := range call.Args {
+			ast.Inspect(a, func(n ast.Node) bool {
+				c, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := selName(c.Fun)
+				if i := strings.LastIndex(name, "."); i >= 0 {
+					name = name[i+1:]
+				}
+				if !redactors[name] {
+					return true
+				}
+				for _, ra := range c.Args {
+					if id, ok := ra.(*ast.Ident); ok {
+						safe[id.Name] = true
+					}
+				}
+				return true
+			})
 		}
-		// Scan to the END of the error-handling block rather than a fixed window: a
-		// site with a four-line explanatory comment above its Fatalf pushed the handler
-		// past a 5-line lookahead, and the guard silently stopped covering it. The
-		// block ends at the first line whose indentation returns to the `if`'s own.
-		indent := len(lines[i]) - len(strings.TrimLeft(lines[i], "\t"))
-		end := len(lines)
-		for j := i + 1; j < len(lines); j++ {
-			l := lines[j]
-			if strings.TrimSpace(l) == "" {
+		return safe
+	}
+
+	// bareErrArgs collects identifiers passed DIRECTLY as an argument to the format
+	// call -- the leak shape. An identifier nested inside a redactor is not direct.
+	// bareErrArgs collects error identifiers that reach the format call WITHOUT passing
+	// through a redactor. It descends into nested calls rather than looking only at
+	// top-level arguments, because fmt.Sprintf("%v", err) leaks exactly as much as err
+	// does — wrapping an error in a non-redactor call renders it just the same. Descent
+	// stops at a redactor: everything below SafeDSNErr/SafeDSNErrFor is already safe.
+	bareErrArgs := func(call *ast.CallExpr, safe map[string]bool) []string {
+		var bare []string
+		seen := map[string]bool{}
+		isErrName := func(n string) bool {
+			return n == "err" || strings.HasSuffix(n, "Err") || strings.HasSuffix(n, "Error")
+		}
+		for _, a := range call.Args {
+			ast.Inspect(a, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					name := selName(c.Fun)
+					if i := strings.LastIndex(name, "."); i >= 0 {
+						name = name[i+1:]
+					}
+					if redactors[name] {
+						return false // redacted below this point
+					}
+					return true
+				}
+				id, ok := n.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				if safe[id.Name] || seen[id.Name] || !isErrName(id.Name) {
+					return true
+				}
+				seen[id.Name] = true
+				bare = append(bare, id.Name)
+				return true
+			})
+		}
+		return bare
+	}
+
+	checked := 0
+	// Walk every statement that performs a DSN-bearing call, then inspect the error
+	// handling that follows it in the same block.
+	ast.Inspect(file, func(n ast.Node) bool {
+		block, ok := n.(*ast.BlockStmt)
+		if !ok {
+			return true
+		}
+		for i, stmt := range block.List {
+			if !isDSNCall(stmt) {
 				continue
 			}
-			if len(l)-len(strings.TrimLeft(l, "\t")) <= indent && strings.HasPrefix(strings.TrimSpace(l), "}") {
-				end = j
-				break
+			// The handler is the `if err != nil { ... }` (or `if err == nil`) that
+			// follows, plus the call statement itself if it is inline.
+			var handlers []ast.Node
+			if ifs, ok := stmt.(*ast.IfStmt); ok {
+				handlers = append(handlers, ifs.Body)
+			}
+			if i+1 < len(block.List) {
+				if ifs, ok := block.List[i+1].(*ast.IfStmt); ok {
+					handlers = append(handlers, ifs.Body)
+				}
+			}
+			for _, h := range handlers {
+				ast.Inspect(h, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					name := selName(call.Fun)
+					if name != "t.Fatalf" && name != "t.Errorf" && name != "t.Logf" {
+						return true
+					}
+					checked++
+					safe := redactedArgs(call)
+					for _, bare := range bareErrArgs(call, safe) {
+						pos := fset.Position(call.Pos())
+						t.Errorf("line %d renders a DSN-bearing connect error raw (%s passed "+
+							"directly to %s):\n  %s\npgx builds *pgconn.ConnectError and "+
+							"*pgconn.ParseConfigError out of the DSN, so this prints the "+
+							"configured user, database and host; use dbtest.SafeDSNErr / "+
+							"SafeDSNErrFor", pos.Line, bare, name, exprText(fset, call))
+					}
+					return true
+				})
 			}
 		}
-		for j := i; j < end; j++ {
-			h := lines[j]
-			if !strings.Contains(h, "t.Fatalf") && !strings.Contains(h, "t.Errorf") {
-				continue
-			}
-			if strings.Contains(h, "SafeDSNErr") {
-				break // rendered through the redaction: correct
-			}
-			if strings.Contains(h, "%v\", err") || strings.Contains(h, "%v; ") ||
-				strings.Contains(h, ", err)") {
-				t.Errorf("line %d renders a DSN-bearing connect error raw:\n  %s\n"+
-					"pgx builds *pgconn.ConnectError and *pgconn.ParseConfigError out of the "+
-					"DSN, so this prints the configured user, database and host; use "+
-					"dbtest.SafeDSNErr / SafeDSNErrFor", j+1, strings.TrimSpace(h))
-				break
-			}
-		}
+		return true
+	})
+
+	// The guard is only evidence if it actually inspected something. A refactor that
+	// renames a helper or restructures a handler could silently empty this walk, and a
+	// guard that checks nothing passes for the same reason a correct one does.
+	if checked == 0 {
+		t.Fatal("guard inspected no t.Fatalf/t.Errorf in any connect-error handler; " +
+			"the walk no longer matches this file's shape and is not pinning anything")
 	}
+	t.Logf("inspected %d formatting calls in connect-error handlers", checked)
+}
+
+// exprText renders an AST node back to source for a failure message.
+func exprText(fset *token.FileSet, n ast.Node) string {
+	var b strings.Builder
+	if err := printer.Fprint(&b, fset, n); err != nil {
+		return "<unprintable>"
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
