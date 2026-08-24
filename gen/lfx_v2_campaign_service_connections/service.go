@@ -133,6 +133,27 @@ type Service interface {
 	// Enumerate the Google Ads ad accounts accessible via the stored connection
 	// credential.
 	ListGoogleAdsAccounts(context.Context, *ListGoogleAdsAccountsPayload) (res *ListGoogleAdsAccountsResult, err error)
+	// Read Google Ads keyword performance for this project's own campaigns, live
+	// from the platform. Scoped to the campaigns this service holds for the
+	// project, NOT to the connected ad account: the Google Ads customer is shared
+	// across foundations, so an account-wide read would return other projects'
+	// keywords. A pure read-through — nothing is persisted, and this service
+	// stores no keyword of its own. Rows are the TOP keywords by impressions over
+	// the window, capped; `truncated` reports whether the project's campaigns hold
+	// more. The returned criterion_id/ad_group_id pairs are the handles the
+	// keyword-actions endpoint takes.
+	GetGoogleAdsKeywords(context.Context, *GetGoogleAdsKeywordsPayload) (res *GoogleAdsKeywords, err error)
+	// Read Google Ads audience demographics — age, gender and device — for this
+	// project's own campaigns, live from the platform. Scoped to the campaigns
+	// this service holds for the project, NOT to the connected ad account, which
+	// is a Google Ads customer shared across foundations. A pure read-through;
+	// nothing is persisted. The three breakdowns are returned in one array
+	// discriminated by `dimension`. Each breakdown covers the SAME traffic
+	// independently, so impressions must be totalled within a dimension, never
+	// across them. Google's UNDETERMINED/UNKNOWN buckets are returned as-is rather
+	// than dropped: they are real unattributed traffic, and hiding them would make
+	// the buckets silently under-sum.
+	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the
 	// connection's account_id. Accounts Meta reports as disabled, unsettled or
@@ -178,7 +199,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [47]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-hubspot-emails"}
+var MethodNames = [49]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-hubspot-emails"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's own namespace, ready to store as the
@@ -338,6 +359,28 @@ type DeleteTwitterAdsPayload struct {
 	ProjectID string
 }
 
+// GetGoogleAdsAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-google-ads-audience method.
+type GetGoogleAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Platform-agnostic reporting window; defaults to last_30_days when omitted
+	Window *string
+}
+
+// GetGoogleAdsKeywordsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-google-ads-keywords method.
+type GetGoogleAdsKeywordsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Platform-agnostic reporting window; defaults to last_30_days when omitted
+	Window *string
+}
+
 // GetGoogleAdsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service get-google-ads method.
 type GetGoogleAdsPayload struct {
@@ -401,6 +444,39 @@ type GetTwitterAdsPayload struct {
 	ProjectID string
 }
 
+// GoogleAdsAudience is the result type of the
+// lfx-v2-campaign-service-connections service get-google-ads-audience method.
+type GoogleAdsAudience struct {
+	// The reporting window these counters cover
+	Window string
+	// Every bucket across all three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension then impressions descending.
+	Buckets []*GoogleAdsAudienceBucket
+	// How many buckets are in `buckets`, across all dimensions. Each dimension
+	// independently covers the same traffic, so summing impressions across
+	// dimensions triple-counts it — total within one dimension only.
+	BucketCount int
+}
+
+type GoogleAdsAudienceBucket struct {
+	// Which breakdown this bucket belongs to
+	Dimension string
+	// The bucket within that breakdown, as Google's own enum literal.
+	// UNDETERMINED/UNKNOWN are real Google values, not read failures — a sizeable
+	// share of impressions genuinely cannot be attributed to a demographic, and
+	// folding them away would make the buckets sum to less than the campaign's
+	// traffic with no indication why.
+	Value string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Cost over the window in micro-units of the account's native currency
+	CostMicros int64
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64
+}
+
 // GoogleAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-google-ads method.
 type GoogleAdsConnection struct {
@@ -445,6 +521,54 @@ type GoogleAdsCredentials struct {
 	ClientSecret string
 	// Google Ads developer token
 	DeveloperToken string
+}
+
+type GoogleAdsKeyword struct {
+	// The ad-group criterion id — the handle keyword-actions takes. Bare numeric,
+	// unique only within its ad group, which is why ad_group_id travels with it.
+	CriterionID string
+	// The ad group this criterion belongs to. Required to address the criterion: a
+	// criterion id alone does not identify a keyword.
+	AdGroupID string
+	// The Google Ads campaign this keyword serves under
+	CampaignID string
+	// The keyword text as Google stores it
+	Text string
+	// How broadly the keyword matches queries. UNKNOWN means Google reported a
+	// value this service does not recognise, never that the keyword lacks a match
+	// type.
+	MatchType string
+	// The criterion's current serving status upstream. UNKNOWN means Google
+	// reported a status this service does not recognise. REMOVED is not returned
+	// by the keywords read — its query allow-lists ENABLED and PAUSED — but the
+	// member is retained so the type stays usable if a future caller reads
+	// tombstones.
+	Status string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Cost over the window in micro-units of the account's native currency. This
+	// service performs no FX conversion, so do not blend it with another account's
+	// figures.
+	CostMicros int64
+	// Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)
+	Ctr float64
+}
+
+// GoogleAdsKeywords is the result type of the
+// lfx-v2-campaign-service-connections service get-google-ads-keywords method.
+type GoogleAdsKeywords struct {
+	// The reporting window these counters cover
+	Window string
+	// Keyword rows, ordered by impressions descending. Capped — see `truncated`.
+	Rows []*GoogleAdsKeyword
+	// How many rows are in `rows`.
+	RowCount int
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set
+	// — do not total them and present the result as the project's whole spend.
+	Truncated bool
 }
 
 // HubspotConnection is the result type of the

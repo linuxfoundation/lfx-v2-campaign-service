@@ -734,6 +734,37 @@ type ListGoogleAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
+// GetGoogleAdsKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body.
+type GetGoogleAdsKeywordsResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// Keyword rows, ordered by impressions descending. Capped — see `truncated`.
+	Rows []*GoogleAdsKeywordResponseBody `form:"rows" json:"rows" xml:"rows"`
+	// How many rows are in `rows`.
+	RowCount int `form:"row_count" json:"row_count" xml:"row_count"`
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set
+	// — do not total them and present the result as the project's whole spend.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
+// GetGoogleAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body.
+type GetGoogleAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// Every bucket across all three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension then impressions descending.
+	Buckets []*GoogleAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`, across all dimensions. Each dimension
+	// independently covers the same traffic, so summing impressions across
+	// dimensions triple-counts it — total within one dimension only.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -3073,6 +3104,132 @@ type ListGoogleAdsAccountsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetGoogleAdsKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetGoogleAdsKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "Conflict" error.
+type GetGoogleAdsKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetGoogleAdsKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetGoogleAdsKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetGoogleAdsKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "NotFound" error.
+type GetGoogleAdsKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetGoogleAdsKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetGoogleAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetGoogleAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetGoogleAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetGoogleAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetGoogleAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetGoogleAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetGoogleAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -3282,6 +3439,61 @@ type AccessibleAccountResponseBody struct {
 	ID string `form:"id" json:"id" xml:"id"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// GoogleAdsKeywordResponseBody is used to define fields on response body types.
+type GoogleAdsKeywordResponseBody struct {
+	// The ad-group criterion id — the handle keyword-actions takes. Bare numeric,
+	// unique only within its ad group, which is why ad_group_id travels with it.
+	CriterionID string `form:"criterion_id" json:"criterion_id" xml:"criterion_id"`
+	// The ad group this criterion belongs to. Required to address the criterion: a
+	// criterion id alone does not identify a keyword.
+	AdGroupID string `form:"ad_group_id" json:"ad_group_id" xml:"ad_group_id"`
+	// The Google Ads campaign this keyword serves under
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The keyword text as Google stores it
+	Text string `form:"text" json:"text" xml:"text"`
+	// How broadly the keyword matches queries. UNKNOWN means Google reported a
+	// value this service does not recognise, never that the keyword lacks a match
+	// type.
+	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
+	// The criterion's current serving status upstream. UNKNOWN means Google
+	// reported a status this service does not recognise. REMOVED is not returned
+	// by the keywords read — its query allow-lists ENABLED and PAUSED — but the
+	// member is retained so the type stays usable if a future caller reads
+	// tombstones.
+	Status string `form:"status" json:"status" xml:"status"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Cost over the window in micro-units of the account's native currency. This
+	// service performs no FX conversion, so do not blend it with another account's
+	// figures.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
+// GoogleAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type GoogleAdsAudienceBucketResponseBody struct {
+	// Which breakdown this bucket belongs to
+	Dimension string `form:"dimension" json:"dimension" xml:"dimension"`
+	// The bucket within that breakdown, as Google's own enum literal.
+	// UNDETERMINED/UNKNOWN are real Google values, not read failures — a sizeable
+	// share of impressions genuinely cannot be attributed to a demographic, and
+	// folding them away would make the buckets sum to less than the campaign's
+	// traffic with no indication why.
+	Value string `form:"value" json:"value" xml:"value"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Cost over the window in micro-units of the account's native currency
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
 }
 
 // MarketingEmailResponseBody is used to define fields on response body types.
@@ -3934,6 +4146,53 @@ func NewListGoogleAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.L
 		}
 	} else {
 		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewGetGoogleAdsKeywordsResponseBody builds the HTTP response body from the
+// result of the "get-google-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsResponseBody(res *lfxv2campaignserviceconnections.GoogleAdsKeywords) *GetGoogleAdsKeywordsResponseBody {
+	body := &GetGoogleAdsKeywordsResponseBody{
+		Window:    res.Window,
+		RowCount:  res.RowCount,
+		Truncated: res.Truncated,
+	}
+	if res.Rows != nil {
+		body.Rows = make([]*GoogleAdsKeywordResponseBody, len(res.Rows))
+		for i, val := range res.Rows {
+			if val == nil {
+				body.Rows[i] = nil
+				continue
+			}
+			body.Rows[i] = marshalLfxv2campaignserviceconnectionsGoogleAdsKeywordToGoogleAdsKeywordResponseBody(val)
+		}
+	} else {
+		body.Rows = []*GoogleAdsKeywordResponseBody{}
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceResponseBody builds the HTTP response body from the
+// result of the "get-google-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.GoogleAdsAudience) *GetGoogleAdsAudienceResponseBody {
+	body := &GetGoogleAdsAudienceResponseBody{
+		Window:      res.Window,
+		BucketCount: res.BucketCount,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*GoogleAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsGoogleAdsAudienceBucketToGoogleAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*GoogleAdsAudienceBucketResponseBody{}
 	}
 	return body
 }
@@ -6544,6 +6803,140 @@ func NewListGoogleAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignservicec
 	return body
 }
 
+// NewGetGoogleAdsKeywordsBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-google-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetGoogleAdsKeywordsBadRequestResponseBody {
+	body := &GetGoogleAdsKeywordsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsKeywordsConflictResponseBody builds the HTTP response body
+// from the result of the "get-google-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetGoogleAdsKeywordsConflictResponseBody {
+	body := &GetGoogleAdsKeywordsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetGoogleAdsKeywordsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-google-ads-keywords" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetGoogleAdsKeywordsServiceUnavailableResponseBody {
+	body := &GetGoogleAdsKeywordsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsKeywordsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-google-ads-keywords" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetGoogleAdsKeywordsInternalServerErrorResponseBody {
+	body := &GetGoogleAdsKeywordsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsKeywordsNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-google-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetGoogleAdsKeywordsNotFoundResponseBody {
+	body := &GetGoogleAdsKeywordsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsKeywordsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-google-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsKeywordsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetGoogleAdsKeywordsUnauthorizedResponseBody {
+	body := &GetGoogleAdsKeywordsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-google-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetGoogleAdsAudienceBadRequestResponseBody {
+	body := &GetGoogleAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "get-google-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetGoogleAdsAudienceConflictResponseBody {
+	body := &GetGoogleAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-google-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetGoogleAdsAudienceServiceUnavailableResponseBody {
+	body := &GetGoogleAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-google-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetGoogleAdsAudienceInternalServerErrorResponseBody {
+	body := &GetGoogleAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-google-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetGoogleAdsAudienceNotFoundResponseBody {
+	body := &GetGoogleAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetGoogleAdsAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-google-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetGoogleAdsAudienceUnauthorizedResponseBody {
+	body := &GetGoogleAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMetaAdsAccountsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-meta-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -7229,6 +7622,28 @@ func NewSetCredentialHubspotPayload(body *SetCredentialHubspotRequestBody, proje
 func NewListGoogleAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload{}
 	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsPayload builds a lfx-v2-campaign-service-connections
+// service get-google-ads-keywords endpoint payload.
+func NewGetGoogleAdsKeywordsPayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload {
+	v := &lfxv2campaignserviceconnections.GetGoogleAdsKeywordsPayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetGoogleAdsAudiencePayload builds a lfx-v2-campaign-service-connections
+// service get-google-ads-audience endpoint payload.
+func NewGetGoogleAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
 	v.BearerToken = bearerToken
 
 	return v
