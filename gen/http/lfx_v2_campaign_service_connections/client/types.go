@@ -734,6 +734,37 @@ type ListGoogleAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
 }
 
+// GetGoogleAdsKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body.
+type GetGoogleAdsKeywordsResponseBody struct {
+	// The reporting window these counters cover
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Keyword rows, ordered by impressions descending. Capped — see `truncated`.
+	Rows []*GoogleAdsKeywordResponseBody `form:"rows,omitempty" json:"rows,omitempty" xml:"rows,omitempty"`
+	// How many rows are in `rows`.
+	RowCount *int `form:"row_count,omitempty" json:"row_count,omitempty" xml:"row_count,omitempty"`
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set
+	// — do not total them and present the result as the project's whole spend.
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
+// GetGoogleAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body.
+type GetGoogleAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across all three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension then impressions descending.
+	Buckets []*GoogleAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all dimensions. Each dimension
+	// independently covers the same traffic, so summing impressions across
+	// dimensions triple-counts it — total within one dimension only.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -3503,6 +3534,132 @@ type ListGoogleAdsAccountsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetGoogleAdsKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetGoogleAdsKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "Conflict" error.
+type GetGoogleAdsKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetGoogleAdsKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetGoogleAdsKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetGoogleAdsKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "NotFound" error.
+type GetGoogleAdsKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetGoogleAdsKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetGoogleAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetGoogleAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetGoogleAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetGoogleAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetGoogleAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetGoogleAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetGoogleAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -3923,6 +4080,61 @@ type AccessibleAccountResponseBody struct {
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// GoogleAdsKeywordResponseBody is used to define fields on response body types.
+type GoogleAdsKeywordResponseBody struct {
+	// The ad-group criterion id — the handle keyword-actions takes. Bare numeric,
+	// unique only within its ad group, which is why ad_group_id travels with it.
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+	// The ad group this criterion belongs to. Required to address the criterion: a
+	// criterion id alone does not identify a keyword.
+	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
+	// The Google Ads campaign this keyword serves under
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The keyword text as Google stores it
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// How broadly the keyword matches queries. UNKNOWN means Google reported a
+	// value this service does not recognise, never that the keyword lacks a match
+	// type.
+	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
+	// The criterion's current serving status upstream. UNKNOWN means Google
+	// reported a status this service does not recognise. REMOVED is not returned
+	// by the keywords read — its query allow-lists ENABLED and PAUSED — but the
+	// member is retained so the type stays usable if a future caller reads
+	// tombstones.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Cost over the window in micro-units of the account's native currency. This
+	// service performs no FX conversion, so do not blend it with another account's
+	// figures.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// GoogleAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type GoogleAdsAudienceBucketResponseBody struct {
+	// Which breakdown this bucket belongs to
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// The bucket within that breakdown, as Google's own enum literal.
+	// UNDETERMINED/UNKNOWN are real Google values, not read failures — a sizeable
+	// share of impressions genuinely cannot be attributed to a demographic, and
+	// folding them away would make the buckets sum to less than the campaign's
+	// traffic with no indication why.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Cost over the window in micro-units of the account's native currency
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
 // MarketingEmailResponseBody is used to define fields on response body types.
@@ -7902,6 +8114,191 @@ func NewListGoogleAdsAccountsUnauthorized(body *ListGoogleAdsAccountsUnauthorize
 	return v
 }
 
+// NewGetGoogleAdsKeywordsGoogleAdsKeywordsOK builds a
+// "lfx-v2-campaign-service-connections" service "get-google-ads-keywords"
+// endpoint result from a HTTP "OK" response.
+func NewGetGoogleAdsKeywordsGoogleAdsKeywordsOK(body *GetGoogleAdsKeywordsResponseBody) *lfxv2campaignserviceconnections.GoogleAdsKeywords {
+	v := &lfxv2campaignserviceconnections.GoogleAdsKeywords{
+		Window:    *body.Window,
+		RowCount:  *body.RowCount,
+		Truncated: *body.Truncated,
+	}
+	v.Rows = make([]*lfxv2campaignserviceconnections.GoogleAdsKeyword, len(body.Rows))
+	for i, val := range body.Rows {
+		if val == nil {
+			v.Rows[i] = nil
+			continue
+		}
+		v.Rows[i] = unmarshalGoogleAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsKeyword(val)
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsBadRequest builds a
+// lfx-v2-campaign-service-connections service get-google-ads-keywords endpoint
+// BadRequest error.
+func NewGetGoogleAdsKeywordsBadRequest(body *GetGoogleAdsKeywordsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsConflict builds a lfx-v2-campaign-service-connections
+// service get-google-ads-keywords endpoint Conflict error.
+func NewGetGoogleAdsKeywordsConflict(body *GetGoogleAdsKeywordsConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-google-ads-keywords endpoint
+// ServiceUnavailable error.
+func NewGetGoogleAdsKeywordsServiceUnavailable(body *GetGoogleAdsKeywordsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-google-ads-keywords endpoint
+// InternalServerError error.
+func NewGetGoogleAdsKeywordsInternalServerError(body *GetGoogleAdsKeywordsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsNotFound builds a lfx-v2-campaign-service-connections
+// service get-google-ads-keywords endpoint NotFound error.
+func NewGetGoogleAdsKeywordsNotFound(body *GetGoogleAdsKeywordsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsKeywordsUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-google-ads-keywords endpoint
+// Unauthorized error.
+func NewGetGoogleAdsKeywordsUnauthorized(body *GetGoogleAdsKeywordsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceGoogleAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetGoogleAdsAudienceGoogleAdsAudienceOK(body *GetGoogleAdsAudienceResponseBody) *lfxv2campaignserviceconnections.GoogleAdsAudience {
+	v := &lfxv2campaignserviceconnections.GoogleAdsAudience{
+		Window:      *body.Window,
+		BucketCount: *body.BucketCount,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.GoogleAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalGoogleAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-google-ads-audience endpoint
+// BadRequest error.
+func NewGetGoogleAdsAudienceBadRequest(body *GetGoogleAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceConflict builds a lfx-v2-campaign-service-connections
+// service get-google-ads-audience endpoint Conflict error.
+func NewGetGoogleAdsAudienceConflict(body *GetGoogleAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-google-ads-audience endpoint
+// ServiceUnavailable error.
+func NewGetGoogleAdsAudienceServiceUnavailable(body *GetGoogleAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-google-ads-audience endpoint
+// InternalServerError error.
+func NewGetGoogleAdsAudienceInternalServerError(body *GetGoogleAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceNotFound builds a lfx-v2-campaign-service-connections
+// service get-google-ads-audience endpoint NotFound error.
+func NewGetGoogleAdsAudienceNotFound(body *GetGoogleAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetGoogleAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-google-ads-audience endpoint
+// Unauthorized error.
+func NewGetGoogleAdsAudienceUnauthorized(body *GetGoogleAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMetaAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -8939,6 +9336,63 @@ func ValidateListGoogleAdsAccountsResponseBody(body *ListGoogleAdsAccountsRespon
 	for _, e := range body.Accounts {
 		if e != nil {
 			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateGetGoogleAdsKeywordsResponseBody runs the validations defined on
+// Get-Google-Ads-KeywordsResponseBody
+func ValidateGetGoogleAdsKeywordsResponseBody(body *GetGoogleAdsKeywordsResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Rows == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("rows", "body"))
+	}
+	if body.RowCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("row_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Rows {
+		if e != nil {
+			if err2 := ValidateGoogleAdsKeywordResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceResponseBody runs the validations defined on
+// Get-Google-Ads-AudienceResponseBody
+func ValidateGetGoogleAdsAudienceResponseBody(body *GetGoogleAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := ValidateGoogleAdsAudienceBucketResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -12332,6 +12786,164 @@ func ValidateListGoogleAdsAccountsUnauthorizedResponseBody(body *ListGoogleAdsAc
 	return
 }
 
+// ValidateGetGoogleAdsKeywordsBadRequestResponseBody runs the validations
+// defined on get-google-ads-keywords_BadRequest_response_body
+func ValidateGetGoogleAdsKeywordsBadRequestResponseBody(body *GetGoogleAdsKeywordsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsKeywordsConflictResponseBody runs the validations
+// defined on get-google-ads-keywords_Conflict_response_body
+func ValidateGetGoogleAdsKeywordsConflictResponseBody(body *GetGoogleAdsKeywordsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateGetGoogleAdsKeywordsServiceUnavailableResponseBody runs the
+// validations defined on
+// get-google-ads-keywords_ServiceUnavailable_response_body
+func ValidateGetGoogleAdsKeywordsServiceUnavailableResponseBody(body *GetGoogleAdsKeywordsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsKeywordsInternalServerErrorResponseBody runs the
+// validations defined on
+// get-google-ads-keywords_InternalServerError_response_body
+func ValidateGetGoogleAdsKeywordsInternalServerErrorResponseBody(body *GetGoogleAdsKeywordsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsKeywordsNotFoundResponseBody runs the validations
+// defined on get-google-ads-keywords_NotFound_response_body
+func ValidateGetGoogleAdsKeywordsNotFoundResponseBody(body *GetGoogleAdsKeywordsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsKeywordsUnauthorizedResponseBody runs the validations
+// defined on get-google-ads-keywords_Unauthorized_response_body
+func ValidateGetGoogleAdsKeywordsUnauthorizedResponseBody(body *GetGoogleAdsKeywordsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceBadRequestResponseBody runs the validations
+// defined on get-google-ads-audience_BadRequest_response_body
+func ValidateGetGoogleAdsAudienceBadRequestResponseBody(body *GetGoogleAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceConflictResponseBody runs the validations
+// defined on get-google-ads-audience_Conflict_response_body
+func ValidateGetGoogleAdsAudienceConflictResponseBody(body *GetGoogleAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// get-google-ads-audience_ServiceUnavailable_response_body
+func ValidateGetGoogleAdsAudienceServiceUnavailableResponseBody(body *GetGoogleAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// get-google-ads-audience_InternalServerError_response_body
+func ValidateGetGoogleAdsAudienceInternalServerErrorResponseBody(body *GetGoogleAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceNotFoundResponseBody runs the validations
+// defined on get-google-ads-audience_NotFound_response_body
+func ValidateGetGoogleAdsAudienceNotFoundResponseBody(body *GetGoogleAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetGoogleAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on get-google-ads-audience_Unauthorized_response_body
+func ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(body *GetGoogleAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListMetaAdsAccountsBadRequestResponseBody runs the validations
 // defined on list-meta-ads-accounts_BadRequest_response_body
 func ValidateListMetaAdsAccountsBadRequestResponseBody(body *ListMetaAdsAccountsBadRequestResponseBody) (err error) {
@@ -12679,6 +13291,81 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 func ValidateAccessibleAccountResponseBody(body *AccessibleAccountResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	return
+}
+
+// ValidateGoogleAdsKeywordResponseBody runs the validations defined on
+// google-ads-keywordResponseBody
+func ValidateGoogleAdsKeywordResponseBody(body *GoogleAdsKeywordResponseBody) (err error) {
+	if body.CriterionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criterion_id", "body"))
+	}
+	if body.AdGroupID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_group_id", "body"))
+	}
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if body.MatchType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_type", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.MatchType != nil {
+		if !(*body.MatchType == "EXACT" || *body.MatchType == "PHRASE" || *body.MatchType == "BROAD" || *body.MatchType == "UNKNOWN") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"EXACT", "PHRASE", "BROAD", "UNKNOWN"}))
+		}
+	}
+	if body.Status != nil {
+		if !(*body.Status == "ENABLED" || *body.Status == "PAUSED" || *body.Status == "REMOVED" || *body.Status == "UNKNOWN") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"ENABLED", "PAUSED", "REMOVED", "UNKNOWN"}))
+		}
+	}
+	return
+}
+
+// ValidateGoogleAdsAudienceBucketResponseBody runs the validations defined on
+// google-ads-audience-bucketResponseBody
+func ValidateGoogleAdsAudienceBucketResponseBody(body *GoogleAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "device") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"age", "gender", "device"}))
+		}
 	}
 	return
 }

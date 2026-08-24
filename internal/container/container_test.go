@@ -174,6 +174,9 @@ func (stubCampaignRepo) GetCampaign(context.Context, string, string, string) (*m
 func (stubCampaignRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
 	return nil, nil
 }
+func (stubCampaignRepo) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
 func (stubCampaignRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }

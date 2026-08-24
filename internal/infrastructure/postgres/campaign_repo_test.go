@@ -120,6 +120,11 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 		// pause a campaign. A soft-deleted row surfacing there would offer them a campaign
 		// that no longer exists to act on.
 		"ListCampaignsForBrief": listCampaignsForBriefQuery,
+		// The project-scope read is what CONFINES the Google Ads keyword/audience endpoints
+		// to the calling project — they would be account-wide without it, on a customer
+		// shared across every foundation. A soft-deleted campaign here would keep widening
+		// those reads after the campaign was removed.
+		"ListProjectPlatformCampaignIDs": listProjectPlatformCampaignIDsQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, normalizeWS(q), livePredicate,
@@ -128,6 +133,40 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 					"looking occupied.", livePredicate)
 		})
 	}
+}
+
+// TestListProjectPlatformCampaignIDs_IsScopedInSQL pins the authorization boundary for the
+// Google Ads keyword and audience endpoints.
+//
+// Those reads run against a customer SHARED by every foundation (docs/architecture.md, "Account
+// Tenancy"), so the ids this query returns are the only thing narrowing them to the caller. The
+// scoping must be in the WHERE clause: filtering in Go after an unscoped read leaves the same
+// cross-tenant exposure one layer up, and the call site would look identical in review.
+//
+// It also excludes rows with no upstream id yet. A claimed-but-undispatched campaign has an empty
+// platform_campaign_id, and an empty string in the rendered IN list is at best dead weight and at
+// worst a widening.
+func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
+	q := normalizeWS(listProjectPlatformCampaignIDsQuery)
+
+	require.Contains(t, q, "project_id=$1",
+		"the project scope must be applied in SQL; a Go-side filter over an unscoped read is the "+
+			"same cross-project exposure one layer up")
+	require.Contains(t, q, "platform=$2",
+		"the platform must be part of the scope, or one provider's ids would scope another's query")
+	require.Contains(t, q, "platform_campaign_id <> ''",
+		"rows with no upstream id must be excluded: an empty id in the rendered IN list is not a "+
+			"campaign this project owns")
+	require.Contains(t, strings.ToUpper(q), "SELECT DISTINCT PLATFORM_CAMPAIGN_ID, RESULT",
+		"the id and its provenance are needed and nothing else; selecting whole rows hands the caller "+
+			"fields it has no use for")
+	// `result` carries the creating customer, which the adapter matches against the customer
+	// the project's connection NOW resolves to. Without it the caller has only a bare numeric
+	// id — unique only within its own customer — and a re-pointed connection would let that id
+	// address a different account's campaign of the same number.
+	require.Contains(t, q, "result",
+		"the provenance blob must travel with each id, or the adapter cannot apply the "+
+			"creation-customer check that ReadMetrics already enforces")
 }
 
 // TestDeleteCampaign_IsSoftDelete pins that the delete is a status UPDATE and never a
