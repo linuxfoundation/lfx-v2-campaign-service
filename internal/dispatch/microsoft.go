@@ -94,10 +94,20 @@ type MicrosoftDispatcher struct {
 	//
 	// Sharing one instance across concurrent callers is safe for this client specifically. That
 	// needed checking separately from Google Ads rather than assumed: this client is the one
-	// with multi-customer discovery, so a CustomerID mutated per call would have made a shared
-	// instance serve one caller's request against another's customer. It does not — the customer
-	// id travels as a per-call argument (doCustomerRequest / accountsInfoForCustomer) rather than
-	// being stashed on the receiver.
+	// with multi-customer discovery, so a CustomerID that VARIED per caller would have made a
+	// shared instance serve one caller's request against another's customer.
+	//
+	// It does not, but not because the id is request-local — it is not. The configured customer
+	// is stashed ON the receiver, in c.account.CustomerID, and doCustomerRequest takes no
+	// customer argument: it reads that field (client.go doCustomerRequest, and the CustomerId
+	// request header). What makes sharing safe is that c.account is an IMMUTABLE AccountConfig
+	// fixed at construction, and the cache key pins the connection row id and version — so every
+	// caller reaching a given cached client is a caller for that same customer.
+	//
+	// The genuinely multi-customer path is the OTHER one: accountsInfoForCustomer carries a
+	// DISCOVERED customer per call, and its ListAccounts client is built with a ZERO
+	// AccountConfig and deliberately BYPASSES this cache (see cachedMicrosoftClient). Discovery
+	// and dispatch never share an instance, which is what keeps the immutability argument true.
 	//
 	// Everything written after construction is mutex-guarded, under TWO separate locks:
 	//

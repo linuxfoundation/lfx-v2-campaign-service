@@ -386,10 +386,13 @@ func TestClientCache_RedditColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 // TestClientCache_MicrosoftReusesClientAndToken is the Reddit reuse test on the Microsoft path.
 //
 // Microsoft needs its own coverage rather than inheriting Reddit's: it is the client with
-// multi-customer discovery, so it was the one where a per-call CustomerID stashed on the receiver
-// would have made a shared instance serve one caller against another caller's customer. It does
-// not do that (the customer id travels as a per-call argument), which is what makes the sharing
-// below safe — see the MicrosoftDispatcher.clients comment.
+// multi-customer discovery, so it was the one where a customer id that VARIED per caller would
+// have made a shared instance serve one caller against another caller's customer. The configured
+// customer IS held on the receiver (c.account.CustomerID; doCustomerRequest reads it rather than
+// taking it as an argument) — sharing is safe because that AccountConfig is immutable and the
+// cache key pins the connection row id and version, while per-customer discovery runs on a
+// separate zero-AccountConfig client that bypasses the cache. See the MicrosoftDispatcher.clients
+// comment.
 func TestClientCache_MicrosoftReusesClientAndToken(t *testing.T) {
 	srv, tokenHits := tokenCountingServer(t, `{"value":[]}`)
 
@@ -678,5 +681,68 @@ func googleAdsCacheConn(id, creds, accountID string, version int64) *model.Conne
 		AccountID:            accountID,
 		EncryptedCredentials: []byte(creds),
 		Status:               model.StatusActive,
+	}
+}
+
+// TestClientCache_MicrosoftAccountIsReceiverStateNotPerCall pins the ACTUAL reason sharing a
+// cached microsoft.Client is safe, because the reason recorded in this package's comments was
+// wrong for two releases: they claimed the account/customer id "travels as a per-call argument"
+// to doCustomerRequest. It does not. doCustomerRequest takes no such parameter, and the account
+// headers are read off the receiver's immutable AccountConfig (client.go, CustomerAccountId /
+// CustomerId request headers).
+//
+// That distinction IS the safety argument, so it is pinned rather than asserted in prose. If the
+// id really were per-call, sharing would be safe for a reason that does not hold here. The
+// property that actually holds: the account is fixed by the immutable AccountConfig at
+// construction, so every request a given cached client emits carries the SAME account, and the
+// cache key (row id + version) is what guarantees its callers all want that account.
+//
+// The assertion is independent of the constant under test: it never reads the field back off the
+// client. It observes the CustomerAccountId header the SERVER received, requires the requests to
+// agree with EACH OTHER across two separate resolves, and compares them to the id the connection
+// row was built with — an input, not a copy of the implementation's own state.
+func TestClientCache_MicrosoftAccountIsReceiverStateNotPerCall(t *testing.T) {
+	const wantAccount = "222222"
+
+	var mu sync.Mutex
+	var seen []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/token") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"access_token":"t","expires_in":3600}`)
+			return
+		}
+		mu.Lock()
+		seen = append(seen, r.Header.Get("CustomerAccountId"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"value":[]}`)
+	}))
+	defer srv.Close()
+
+	repo := &syncConnReader{row: microsoftCacheConn("conn-1", goodMicrosoftCreds, wantAccount, 1)}
+	d := newMicrosoftCacheDispatcher(repo, srv)
+
+	// Two independent resolves of the SAME identity: the second must hit the cached client.
+	for i := range 2 {
+		c, err := d.resolveMicrosoftClient(context.Background(), "cncf", model.ProviderMicrosoftAds, nil)
+		if err != nil {
+			t.Fatalf("resolve #%d: %v", i, err)
+		}
+		microsoftProbe(t, c)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) < 2 {
+		t.Fatalf("server saw %d API requests, want at least 2; the probes did not reach the stub", len(seen))
+	}
+	for i, got := range seen {
+		if got != wantAccount {
+			t.Fatalf("request %d carried CustomerAccountId %q, want %q: the account is receiver "+
+				"state fixed by the immutable AccountConfig, so every request from a shared "+
+				"cached client must carry the SAME id", i, got, wantAccount)
+		}
 	}
 }

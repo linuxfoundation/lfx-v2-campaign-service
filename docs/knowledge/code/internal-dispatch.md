@@ -991,16 +991,24 @@ fetch — separate because a token refresh is a small JSON round trip while a lo
 multi-MiB download, and one lock would let a slow file fetch stall every token read. Caching the
 client is also what made that geo cache SHARED state: it now spans creates for one connection
 rather than living and dying with a single `Dispatch`. Microsoft needed the check most: it is the client with multi-customer discovery, so a
-`CustomerID` mutated per call would have made a shared instance serve one caller against another's
-customer — it does not, because the customer id travels as a per-call argument
-(`doCustomerRequest` / `accountsInfoForCustomer`) rather than on the receiver. A future provider
-whose client stashes per-call state must NOT be wired to this cache without changing the client
-first.
+`CustomerID` that VARIED per caller would have made a shared instance serve one caller against
+another's customer. It does not — but not because the id is request-local. The configured customer
+is held ON the receiver in `c.account.CustomerID`, and `doCustomerRequest` reads that field rather
+than taking a customer argument. Sharing is safe because `c.account` is an immutable
+`AccountConfig` fixed at construction and the cache key pins the connection row id and version, so
+every caller of a given cached client is a caller for that same customer. The genuinely
+per-customer path is `accountsInfoForCustomer`, whose `ListAccounts` client is built with a ZERO
+`AccountConfig` and deliberately bypasses this cache. A future provider whose client stashes
+MUTABLE per-call state must NOT be wired to this cache without changing the client first.
 
 **LinkedIn, Meta and X/Twitter are not yet wired** — a deliberate partial rollout under LFXV2-3033,
 deferred only because open PRs owned those files at the time (cs#148, cs#152, cs#158). They still
-rebuild per resolve and still re-mint a token per operation; wiring them is a follow-up that
-should follow this same pattern rather than inventing a second mechanism.
+rebuild a client per resolve — but "rebuilds a client" is not "re-mints a token", and none of the
+three re-mints one: Meta and LinkedIn are handed an already-minted bearer token and do no exchange
+at construction, and X signs each request with stored OAuth 1.0a credentials. The win for them is
+allocation, not a saved token round-trip. X additionally documents its client as safe for
+SEQUENTIAL use only, so it must not be shared across concurrent callers on the strength of this
+pattern; each provider needs its own safety and benefit analysis before wiring.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each

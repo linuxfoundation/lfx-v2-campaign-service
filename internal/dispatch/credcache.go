@@ -374,7 +374,13 @@ func isComparable(v any) bool {
 // THE ROSTER LIVES HERE. Wired today into GoogleAdsDispatcher, RedditDispatcher and
 // MicrosoftDispatcher. LinkedIn, Meta and X/Twitter are deliberately NOT wired yet — a partial
 // rollout under LFXV2-3033, deferred only because open PRs owned those files at the time (cs#148,
-// cs#152, cs#158); they still rebuild per resolve and still re-mint a token per operation.
+// cs#152, cs#158); they still rebuild a client per resolve. "Rebuilds a client" is NOT the same
+// as "re-mints a token", and these three do not re-mint: Meta and LinkedIn are handed an
+// already-minted bearer token and perform no exchange at construction, and X signs each request
+// with stored OAuth 1.0a credentials. So the win for them is allocation, not a saved token
+// round-trip — and X in particular documents its client as safe for SEQUENTIAL use only, so it
+// must not be shared across concurrent callers on the strength of this pattern alone. Each needs
+// its own safety and benefit analysis before wiring.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
 // one-site edit.
 //
@@ -407,10 +413,14 @@ func isComparable(v any) bool {
 // and in-flight refresh handle with a mutex and stashes NO per-call state on the receiver. That
 // was verified per provider rather than inherited from Google Ads — see the per-dispatcher
 // comments on the `clients` field in googleads.go, reddit.go and microsoft.go, of which
-// Microsoft's is the one that most needed checking (multi-customer discovery: a CustomerID
-// mutated per call would have made a shared instance serve one caller against another's
-// customer; it travels as a per-call argument instead). A future provider whose client stashes
-// per-call state must NOT be wired to this cache without changing the client first.
+// Microsoft's is the one that most needed checking (multi-customer discovery: a CustomerID that
+// VARIED per caller would have made a shared instance serve one caller against another's
+// customer). Its configured customer IS stashed on the receiver — c.account.CustomerID, which
+// doCustomerRequest reads rather than taking as an argument — so what makes it safe is that
+// c.account is immutable and the cache key pins the connection row id and version; the
+// per-customer discovery path uses a separate ZERO-AccountConfig client that bypasses this cache.
+// A future provider whose client stashes MUTABLE per-call state must NOT be wired to this cache
+// without changing the client first.
 //
 // Entries carry the same (row id, version) validation as credCache, so a rotated or revoked
 // credential can never be served through a stale client either — a client built from an old
