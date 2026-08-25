@@ -97,6 +97,15 @@ func TestLiveCreateGetBriefRoundTripsEveryColumn(t *testing.T) {
 		t.Errorf("updated_by = %+v, want the inserting actor stamped on insert", created.UpdatedBy)
 	}
 
+	// Give created_by and updated_by DIFFERENT values before reading back. They are
+	// adjacent in briefCols, so a pair of transposed scan destinations is a live risk —
+	// and it is undetectable while both columns hold the same actor, which is exactly what
+	// CreateBrief stamps. Approving moves updated_by only, so the two now disagree and the
+	// assertions below can tell them apart.
+	if _, err := repo.Approve(ctx, project, created.ID, &model.Actor{Name: "Grace Hopper", Email: "grace@example.test"}, created.Version, nil); err != nil {
+		t.Fatalf("Approve to diverge created_by from updated_by: %v", err)
+	}
+
 	// Read it back through the real GetBrief and compare against the CREATE's return
 	// value. The two are produced by different statements sharing one scan function, so a
 	// disagreement between them is a real defect rather than a tautology.
@@ -125,6 +134,38 @@ func TestLiveCreateGetBriefRoundTripsEveryColumn(t *testing.T) {
 	assertJSONEqual(t, "targeting", got.Targeting, `{"geo":"KR"}`)
 	assertJSONEqual(t, "platforms", got.Platforms, `["google_ads"]`)
 	assertJSONEqual(t, "event_details", got.EventDetails, `{"city":"Seoul"}`)
+
+	// The remaining columns scanBrief populates. Without these the test would claim an
+	// every-column round trip while a read path that zeroed status, version, the actor
+	// blobs or the timestamps stayed green — and those are the columns whose scan
+	// destinations are easiest to transpose, because briefCols orders them together.
+	if got.Status != model.BriefApproved {
+		t.Errorf("GetBrief status = %q, want %q", got.Status, model.BriefApproved)
+	}
+	if got.Version != created.Version+1 {
+		t.Errorf("GetBrief version = %d, want %d", got.Version, created.Version+1)
+	}
+	// created_by still names the AUTHOR while updated_by and approved_by name the APPROVER.
+	// Asserting the distinct values is what makes a transposed pair of scan destinations
+	// visible; comparing both against one actor could not.
+	if got.CreatedBy == nil || got.CreatedBy.Name != "Ada Lovelace" || got.CreatedBy.Email != "ada@example.test" {
+		t.Errorf("GetBrief created_by = %+v, want the authoring actor (Ada Lovelace)", got.CreatedBy)
+	}
+	if got.UpdatedBy == nil || got.UpdatedBy.Name != "Grace Hopper" {
+		t.Errorf("GetBrief updated_by = %+v, want the approving actor (Grace Hopper): created_by and updated_by may be transposed", got.UpdatedBy)
+	}
+	if got.ApprovedBy == nil || got.ApprovedBy.Name != "Grace Hopper" {
+		t.Errorf("GetBrief approved_by = %+v, want the approving actor", got.ApprovedBy)
+	}
+	if got.ApprovedAt == nil {
+		t.Error("GetBrief approved_at is nil on an approved brief")
+	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Errorf("GetBrief timestamps = created %v / updated %v, want both populated", got.CreatedAt, got.UpdatedAt)
+	}
+	if !got.CreatedAt.Equal(created.CreatedAt) {
+		t.Errorf("GetBrief created_at = %v, want %v: the read disagrees with the write", got.CreatedAt, created.CreatedAt)
+	}
 }
 
 // TestLiveCreateBriefConflictsOnTheLiveSlug pins the partial unique index through the real
