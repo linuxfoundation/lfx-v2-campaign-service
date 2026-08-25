@@ -81,13 +81,18 @@ package runs sequentially. That is a property of the current schedule, not a gua
 package already calls `t.Parallel` in `migrate_down_live_test.go`, so the interleaving becomes
 reachable the moment the retention tests adopt it. The sweep test now deletes every job it
 creates in a `t.Cleanup` registered BEFORE the sweep, so it fires even when an assertion fails
-the test early. Verified on a pristine database: zero rows left behind. **Anything added to this
-package that ages a non-terminal row owes the same cleanup.**
+the test early. Verified on a pristine database: zero JOBS left behind. The `campaign_briefs`
+parent is deliberately retained — this package never cleans up rows, and a leftover brief is
+inert, holding a slug scoped by a `UniqueID` project with nothing sweeping `campaign_briefs`
+the way `FailStuckJobs` sweeps jobs. The jobs are what needs removing precisely because they
+are what a table-wide sweep can reach. **Anything added to this package that ages a
+non-terminal row owes the same cleanup.**
 
 ## Mutation-verified
 
-23 mutations, each turning its covering test red; no survivors. The two that are worth recording
-because they nearly escaped:
+27 mutations, each turning its covering test red; no survivors. The ones worth recording are the
+two that **passed** on first attempt, because a mutation that survives is the finding — in both
+cases the fixture, not the assertion, was what needed fixing:
 
 | mutation | result |
 | --- | --- |
@@ -101,6 +106,10 @@ because they nearly escaped:
 | `ReplaceBrief` stops clearing approval | FAIL — edited copy retained its sign-off |
 | drop `isUniqueViolation` → `ErrConflict` in `ReplaceBrief` | FAIL — raw 23505 reached the caller |
 | `FailStuckJobs` loses its status allow-list / age cutoff | FAIL — swept a succeeded job; swept a live one |
+| transpose `&j.CreatedAt` / `&j.UpdatedAt` in `scanJob` | **PASSED on a fresh job** — both come from one `now()` |
+| same, after driving one status update | FAIL at both assertions |
+| `created_at AS updated_at` in `briefCols` | FAIL — non-zero checks alone could not see it |
+| cleanup registered AFTER the inserts, 4th insert fails | 3 aged rows stranded (0 with the fix) |
 
 Two mutations were rejected as invalid before counting: replacing a version predicate with
 `$12 = $12` and a tenant predicate with `$2 IS NOT NULL` both failed on type inference (encode
