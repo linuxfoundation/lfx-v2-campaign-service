@@ -105,9 +105,9 @@ func (d *TwitterDispatcher) cachedTwitterClient(projectID string, platform model
 		return build(), nil
 	})
 	if err != nil {
-		// buildOnce only surfaces an error the build closure returned, and this one returns
-		// none. Rebuild rather than propagate, so the dispatch path cannot fail on a cache
-		// bookkeeping error.
+		// Unreachable: the closure above never returns an error. Build directly rather than
+		// propagating, so this helper keeps its total signature. Mirrors cachedMicrosoftClient,
+		// the precedent for a cached-client helper that returns a bare client.
 		return build()
 	}
 	client, isClient := built.(*twitter.Client)

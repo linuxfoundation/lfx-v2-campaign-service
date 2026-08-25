@@ -1160,6 +1160,15 @@ func (c *Client) pace(ctx context.Context) error {
 	return nil
 }
 
+// nextWriteAt returns the currently reserved next-write instant under writeMu.
+// Test-facing: reading c.nextWrite directly would touch mutex-guarded state
+// without the mutex, which is the pattern this accessor exists to avoid.
+func (c *Client) nextWriteAt() time.Time {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.nextWrite
+}
+
 // sleepCtx waits for d, honoring context cancellation.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)

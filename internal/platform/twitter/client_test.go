@@ -4287,14 +4287,14 @@ func TestPaceCancellationDoesNotConsumeASlot(t *testing.T) {
 	if err := c.pace(context.Background()); err != nil {
 		t.Fatalf("first pace: %v", err)
 	}
-	reserved := c.nextWrite
+	reserved := c.nextWriteAt()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := c.pace(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pace with cancelled ctx = %v; want context.Canceled", err)
 	}
-	if !c.nextWrite.Equal(reserved) {
-		t.Errorf("cancelled caller advanced the reservation from %v to %v; want unchanged", reserved, c.nextWrite)
+	if got := c.nextWriteAt(); !got.Equal(reserved) {
+		t.Errorf("cancelled caller advanced the reservation from %v to %v; want unchanged", reserved, got)
 	}
 }
