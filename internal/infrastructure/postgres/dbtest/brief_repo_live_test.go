@@ -45,7 +45,7 @@ func newBriefRepo(pool *pgxpool.Pool) *postgres.BriefRepo {
 func draftBrief(projectID, slug string) *model.CampaignBrief {
 	return &model.CampaignBrief{
 		ProjectID:    projectID,
-		ProgramType:  model.ProgramType("events"),
+		ProgramType:  model.ProgramEvents,
 		EventSlug:    slug,
 		URL:          "https://events.example.test/" + slug,
 		Platforms:    json.RawMessage(`["google_ads"]`),
@@ -116,8 +116,8 @@ func TestLiveCreateGetBriefRoundTripsEveryColumn(t *testing.T) {
 	if got.URL != "https://events.example.test/"+slug {
 		t.Errorf("GetBrief url = %q, want the inserted url", got.URL)
 	}
-	if got.ProgramType != model.ProgramType("events") {
-		t.Errorf("GetBrief program_type = %q, want events", got.ProgramType)
+	if got.ProgramType != model.ProgramEvents {
+		t.Errorf("GetBrief program_type = %q, want %q", got.ProgramType, model.ProgramEvents)
 	}
 	// jsonb normalises whitespace but preserves content, so compare semantically.
 	assertJSONEqual(t, "copy", got.Copy, `{"headline":"original"}`)
@@ -210,6 +210,55 @@ func TestLiveReplaceBriefTellsMissingApartFromStale(t *testing.T) {
 	absent.ID = "00000000-0000-4000-8000-00000000dead"
 	if _, err := repo.ReplaceBrief(ctx, absent, replaced.Version, nil); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("ReplaceBrief on an absent id = %v, want domain.ErrNotFound", err)
+	}
+}
+
+// TestLiveReplaceBriefConflictsWhenTheSlugIsTaken covers the OTHER error-classification arm
+// of ReplaceBrief, and it is a genuinely separate branch from the version gate above.
+//
+// replaceBriefQuery includes event_slug in its SET list, so an edit can RENAME a brief onto a
+// slug another live brief already holds. That trips the same partial unique index CreateBrief
+// does, but through a different code path: the UPDATE returns a 23505 rather than
+// pgx.ErrNoRows, so it exits through the isUniqueViolation arm instead of classifyNoRowTx.
+// Without that mapping the caller answers 500 to a legitimate 409, and the version-gate tests
+// cannot see it — they never make the statement raise a unique violation at all.
+func TestLiveReplaceBriefConflictsWhenTheSlugIsTaken(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	project := dbtest.UniqueID(t, "project")
+	takenSlug := dbtest.UniqueID(t, "taken")
+	ownSlug := dbtest.UniqueID(t, "own")
+
+	if _, err := repo.CreateBrief(ctx, draftBrief(project, takenSlug), nil); err != nil {
+		t.Fatalf("CreateBrief holding the slug: %v", err)
+	}
+	mover, err := repo.CreateBrief(ctx, draftBrief(project, ownSlug), nil)
+	if err != nil {
+		t.Fatalf("CreateBrief for the brief that will be renamed: %v", err)
+	}
+
+	// Rename the second brief onto the first one's slug.
+	edit := draftBrief(project, takenSlug)
+	edit.ID = mover.ID
+	edit.UpdatedBy = &model.Actor{Name: "Editor"}
+
+	if _, err := repo.ReplaceBrief(ctx, edit, mover.Version, nil); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("ReplaceBrief renaming onto a taken slug = %v, want domain.ErrConflict", err)
+	}
+
+	// The rejected rename must not have partially applied: the brief keeps its own slug and
+	// its version is unchanged, so the caller's ETag is still valid to retry with.
+	after, err := repo.GetBrief(ctx, project, mover.ID)
+	if err != nil {
+		t.Fatalf("GetBrief after the rejected rename: %v", err)
+	}
+	if after.EventSlug != ownSlug {
+		t.Errorf("event_slug after a rejected rename = %q, want %q: the failed write was partially applied", after.EventSlug, ownSlug)
+	}
+	if after.Version != mover.Version {
+		t.Errorf("version after a rejected rename = %d, want %d: a refused write must not consume the version", after.Version, mover.Version)
 	}
 }
 

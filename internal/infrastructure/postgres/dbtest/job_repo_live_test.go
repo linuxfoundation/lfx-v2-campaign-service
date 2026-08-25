@@ -10,12 +10,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
+)
+
+// PostgreSQL SQLSTATE codes asserted below. Named rather than inlined so a reader does not
+// have to decode a five-character literal, and so the two negative tests cannot drift onto
+// the same code by a copy-paste.
+const (
+	pgerrcodeForeignKeyViolation = "23503"
+	pgerrcodeCheckViolation      = "23514"
 )
 
 // The job repository's status transitions have been asserted only over SQL source text.
@@ -157,10 +166,15 @@ func TestLiveUpdateJobStatusWalksEveryLegalTransition(t *testing.T) {
 	}
 	assertJSONEqual(t, "result", succeeded.Result, `{"google_ads":{"campaign_id":"777"}}`)
 
-	// Every remaining legal status must be accepted by the CHECK constraint. Driving each
+	// Every status in the vocabulary must be accepted by the CHECK constraint. Driving each
 	// one through the real UPDATE is the only way to learn that the Go vocabulary and the
 	// constraint still agree.
-	for _, status := range []model.JobStatus{model.JobPartial, model.JobFailed, model.JobQueued} {
+	//
+	// Derived from model.AllJobStatuses rather than hand-copied, which is what that variable
+	// exists for: a test carrying its own list keeps agreeing with its own copy while a
+	// status added later goes unexercised — and an unexercised status is exactly one that
+	// might be missing from the CHECK constraint.
+	for _, status := range model.AllJobStatuses {
 		if err := repo.UpdateJobStatus(ctx, job.ID, status, nil, "boom"); err != nil {
 			t.Fatalf("UpdateJobStatus to %q rejected by the live column: %v", status, err)
 		}
@@ -175,6 +189,15 @@ func TestLiveUpdateJobStatusWalksEveryLegalTransition(t *testing.T) {
 		// failure can never be committed without its explanation.
 		if got.Error != "boom" {
 			t.Errorf("error after transition to %q = %q, want %q", status, got.Error, "boom")
+		}
+		// result is written UNCONDITIONALLY (`result=$2`), and nullBytes maps an empty
+		// slice to SQL NULL — so passing nil here CLEARS the document stored above rather
+		// than leaving it in place. That is real behaviour a caller depends on (a retry
+		// must not inherit the previous attempt's per-platform outcome), and it is not
+		// visible anywhere else in this walk.
+		if len(got.Result) != 0 {
+			t.Errorf("result after transition to %q = %s, want it cleared: a nil result must "+
+				"not leave the previous attempt's document in place", status, got.Result)
 		}
 	}
 
@@ -204,8 +227,17 @@ func TestLiveUpdateJobStatusRejectsAStatusOutsideTheCheckConstraint(t *testing.T
 	}
 
 	// 'cancelled' is a plausible future status that is NOT in the constraint today.
-	if err := repo.UpdateJobStatus(ctx, job.ID, model.JobStatus("cancelled"), nil, ""); err == nil {
+	//
+	// Assert the SQLSTATE, not merely that some error came back: a connection failure, a
+	// malformed id or a scan error would all satisfy a bare `err != nil` and read as
+	// "the constraint is enforced" while proving nothing about the constraint.
+	err = repo.UpdateJobStatus(ctx, job.ID, model.JobStatus("cancelled"), nil, "")
+	if err == nil {
 		t.Fatal("UpdateJobStatus accepted a status outside the CHECK constraint; campaign_jobs.status is not constrained")
+	}
+	var checkErr *pgconn.PgError
+	if !errors.As(err, &checkErr) || checkErr.Code != pgerrcodeCheckViolation {
+		t.Fatalf("UpdateJobStatus with an illegal status = %v, want SQLSTATE %s (check_violation)", err, pgerrcodeCheckViolation)
 	}
 
 	// The rejected write must not have changed the row.
@@ -225,6 +257,29 @@ func TestLiveUpdateJobStatusRejectsAStatusOutsideTheCheckConstraint(t *testing.T
 // (a job still being worked by another replica during a rolling deploy), and it must never
 // touch a row that is already terminal — rewriting a succeeded job to 'failed' would
 // destroy the record of a dispatch that actually worked.
+//
+// # This test must leave no aged non-terminal rows behind
+//
+// FailStuckJobs is TABLE-WIDE: it carries no tenant or brief predicate, so it rewrites every
+// aged queued/running row in the shared schema, including rows another test owns. The hazard
+// runs in both directions and is worth stating, because neither end is obvious from the other
+// file:
+//
+//   - Outbound: TestLivePruneTerminalJobsSparesEveryNonTerminalRow seeds queued and running
+//     jobs aged 72 hours and asserts they survive its prune. This sweep would flip them to
+//     'failed' — which is TERMINAL — and a terminal aged row is precisely what that test's
+//     prune then deletes.
+//   - Inbound: any aged non-terminal row another test leaves behind is swept by THIS call and
+//     inflates the returned count.
+//
+// The two do not collide today because each test seeds its rows and acts on them within its
+// own body, and the package runs sequentially. That is a property of the current schedule, not
+// a guarantee — this package already calls t.Parallel elsewhere (migrate_down_live_test.go).
+//
+// So this test cleans up after itself: every row it creates is deleted on exit, and the count
+// assertion is expressed as a delta over rows this test owns rather than as a table-wide
+// total. Both halves matter — the cleanup keeps this test from breaking others, and the delta
+// keeps others from breaking this one.
 func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
@@ -242,14 +297,26 @@ func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 	// what proves the status predicate is doing work.
 	oldSucceeded := insertJobAged(ctx, t, pool, briefID, model.JobSucceeded, 2*time.Hour)
 
+	// Delete this test's jobs on the way out so the rows it deliberately ages can never be
+	// swept into another test's fixture. Registered before the sweep runs, so it fires even
+	// if an assertion below fails the test early.
+	t.Cleanup(func() {
+		cctx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cctx, `DELETE FROM campaign_jobs WHERE brief_id = $1`, briefID); err != nil {
+			t.Errorf("cleanup this test's jobs: %v", err)
+		}
+	})
+
 	const sweepErr = "recovered by startup sweep"
 	n, err := repo.FailStuckJobs(ctx, sweepErr)
 	if err != nil {
 		t.Fatalf("FailStuckJobs: %v", err)
 	}
-	// Other tests in this package create jobs against their own briefs, and the sweep is
-	// table-wide, so assert a floor rather than an exact count: this test's own two stuck
-	// jobs must be included.
+	// The sweep is table-wide, so the raw count includes any aged non-terminal row another
+	// test left behind. Assert a floor — this test's own two stuck jobs must be in it. The
+	// binding evidence is the per-row assertions below, which name exactly which rows moved
+	// and which did not; the count alone could not distinguish them.
 	if n < 2 {
 		t.Errorf("FailStuckJobs swept %d rows, want at least the 2 stuck jobs this test created", n)
 	}
@@ -292,7 +359,15 @@ func TestLiveCreateJobRequiresARealBrief(t *testing.T) {
 	pool := dbtest.Pool(t)
 	repo := newJobRepo(pool)
 
-	if _, err := repo.CreateJob(ctx, "00000000-0000-4000-8000-0000000000fe"); err == nil {
+	_, err := repo.CreateJob(ctx, "00000000-0000-4000-8000-0000000000fe")
+	if err == nil {
 		t.Fatal("CreateJob accepted a brief_id with no such brief; the foreign key is not enforced")
+	}
+	// The SQLSTATE, not just "an error": CreateJob wraps whatever it gets with %w and does
+	// no FK-to-sentinel mapping, so a connection error would otherwise pass this test while
+	// telling us nothing about the foreign key.
+	var fkErr *pgconn.PgError
+	if !errors.As(err, &fkErr) || fkErr.Code != pgerrcodeForeignKeyViolation {
+		t.Fatalf("CreateJob against an absent brief = %v, want SQLSTATE %s (foreign_key_violation)", err, pgerrcodeForeignKeyViolation)
 	}
 }
