@@ -96,9 +96,13 @@ non-terminal row owes the same cleanup.**
 
 ## Mutation-verified
 
-27 mutations, each turning its covering test red; no survivors. The ones worth recording are the
-two that **passed** on first attempt, because a mutation that survives is the finding — in both
-cases the fixture, not the assertion, was what needed fixing:
+27 mutations, each turning its covering test red; no survivors. The breakdown, so the total is
+reproducible rather than asserted: **23** to the repository implementations, **3** dropping or
+narrowing live schema constraints, and **1** test-side ordering control (restoring the old
+cleanup placement to confirm it really leaked).
+
+The ones worth recording are the two that **passed** on first attempt, because a mutation that
+survives is the finding — in both cases the fixture, not the assertion, was what needed fixing:
 
 | mutation | result |
 | --- | --- |
