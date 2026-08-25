@@ -13,6 +13,7 @@ import (
 	"go/token"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,6 +74,146 @@ func newMigrator(t *testing.T, dsn string) *migrate.Migrate {
 	return m
 }
 
+// scratchReaper drops every scratch database a test created, in ONE test-level cleanup
+// under ONE deadline.
+//
+// The per-call shape this replaces registered a separate t.Cleanup per database, each with
+// its own fresh 30s budget. That is correct per database and wrong in aggregate:
+// TestLiveMigrationsGoDownAndUpAgain provisions one database per migration version, so at
+// 28 migrations the cleanups could wait ~29 x 30s serially. `go test` is run without a
+// -timeout override, so Go's 10-minute default fires first and the run dies at the opaque
+// suite timeout -- which names neither the unreachable server nor the databases left
+// behind. Bounding each step did not bound the teardown.
+//
+// One deadline for the whole reap fixes that, and one reconnect is the other half: the
+// per-call version dialled the server again for every database, so an unreachable server
+// paid the connect timeout 29 times instead of once.
+type scratchReaper struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (r *scratchReaper) add(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.names = append(r.names, name)
+}
+
+// reap drops every registered database. Errorf, not Logf: this test provisions a database
+// per migration version, so a silently-skipped drop does not cost one stray database, it
+// accumulates a whole run's worth against the persistent local harness -- and a Logf leaves
+// that invisible in a green run. The contract is that a green run leaves nothing behind, so
+// failing to drop is a test failure, not a note.
+func (r *scratchReaper) reap(t *testing.T) {
+	r.mu.Lock()
+	names := append([]string(nil), r.names...)
+	r.names = nil
+	r.mu.Unlock()
+	if len(names) == 0 {
+		return
+	}
+
+	// ONE deadline for the whole reap, and NOT derived from the test's ctx: by the time
+	// Cleanup runs the test is over and that context is cancelled, so a reap inheriting it
+	// would fail instantly without dropping anything.
+	ctx, cancel := dbtest.CleanupContext()
+	defer cancel()
+
+	conn, err := pgx.Connect(ctx, dbtest.DSN())
+	if err != nil {
+		t.Errorf("cleanup: reconnect to drop %d scratch database(s) (%s): %s; they are "+
+			"still present and this run did not leave the server as it found it",
+			len(names), strings.Join(names, ", "), dbtest.SafeDSNErr(err))
+		return
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	for _, name := range names {
+		// One shared deadline means a stalled drop stops the reap rather than letting
+		// each subsequent database pay its own full budget. Say which ones were skipped
+		// instead of reporting only the one that hung.
+		if err := ctx.Err(); err != nil {
+			t.Errorf("cleanup: the %ds reap budget expired with %d scratch database(s) "+
+				"still present; they were not dropped and this run did not leave the "+
+				"server as it found it", int(dbtest.CleanupTimeout.Seconds()), len(names))
+			return
+		}
+		if _, err := conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE)", name)); err != nil {
+			t.Errorf("cleanup: drop %s: %v; the scratch database is still present and this "+
+				"run did not leave the server as it found it", name, err)
+		}
+	}
+}
+
+// scratchDatabases returns the per-test reaper, registering its single cleanup on first use.
+func scratchDatabases(t *testing.T) *scratchReaper {
+	t.Helper()
+	if r, ok := scratchReapers.Load(t); ok {
+		return r.(*scratchReaper)
+	}
+	r := &scratchReaper{}
+	actual, loaded := scratchReapers.LoadOrStore(t, r)
+	r = actual.(*scratchReaper)
+	if !loaded {
+		t.Cleanup(func() {
+			r.reap(t)
+			scratchReapers.Delete(t)
+		})
+	}
+	return r
+}
+
+// scratchReapers keys a reaper by the *testing.T that owns it, so a helper called from
+// several tests cannot merge their databases into one another's teardown.
+var scratchReapers sync.Map
+
+// TestScratchReaperUsesOneBudgetForEveryDatabase pins the aggregate bound.
+//
+// Per-database deadlines are correct per database and wrong in aggregate: this file
+// provisions one scratch database per migration version, so 28 migrations meant ~29
+// cleanups that could each wait its own full budget -- about 14.5 minutes serially, past
+// Go's 10-minute default test timeout, so the run died at the opaque suite timeout instead
+// of reporting the databases it left behind. Bounding each step did not bound the teardown.
+//
+// This asserts the SHAPE that fixes it -- every name reaped through one registration under
+// one deadline -- which is what a unit test can reach. The stalled-server behaviour itself
+// needs a wedged Postgres and is pinned only by that shape.
+func TestScratchReaperUsesOneBudgetForEveryDatabase(t *testing.T) {
+	t.Parallel()
+
+	r := &scratchReaper{}
+	for i := range 29 {
+		r.add(fmt.Sprintf("down_scratch_%d", i))
+	}
+	if got := len(r.names); got != 29 {
+		t.Fatalf("scratchReaper collected %d names, want 29", got)
+	}
+
+	// One budget for the whole reap, not one per database. At 29 databases the per-call
+	// shape allowed 29 x CleanupTimeout; this must stay a single CleanupTimeout.
+	if worst := time.Duration(len(r.names)) * dbtest.CleanupTimeout; worst <= 10*time.Minute {
+		t.Skipf("the aggregate bound is only interesting when the per-database worst case "+
+			"(%v) exceeds go test's 10m default; adjust this test if CleanupTimeout changed",
+			worst)
+	}
+	ctx, cancel := dbtest.CleanupContext()
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("CleanupContext has no deadline, so the reap is unbounded")
+	}
+	if d := time.Until(deadline); d > dbtest.CleanupTimeout {
+		t.Errorf("reap budget is %v, want at most one CleanupTimeout (%v); a per-database "+
+			"budget is what pushed teardown past go test's default timeout", d, dbtest.CleanupTimeout)
+	}
+
+	// reap drains the list, so a second cleanup cannot double-drop.
+	r.names = nil
+	if got := len(r.names); got != 0 {
+		t.Errorf("after draining, %d names remain", got)
+	}
+}
+
 // freshDatabase creates an EMPTY database of its own and returns a DSN for it.
 //
 // An isolated database is not a nicety here, it is the precondition. This test runs Down
@@ -126,33 +267,7 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 		}
 		t.Fatalf("create scratch database: %v", err)
 	}
-	t.Cleanup(func() {
-		// Bounded, and NOT derived from the test's ctx: by the time Cleanup runs the test
-		// is over and that context is cancelled, so a cleanup inheriting it would fail
-		// instantly without dropping anything. Unbounded is the other failure: a forced
-		// DROP waiting on another session, or an unreachable server, would block here
-		// forever, the Errorf paths below would never be reached, and the package would
-		// hang to its suite-level timeout in whatever test the runner was in.
-		cleanupCtx, cancel := dbtest.CleanupContext()
-		defer cancel()
-		// Errorf, not Logf. This test provisions a database per migration version, so a
-		// silently-skipped drop does not cost one stray database, it accumulates a whole
-		// run's worth against the persistent local harness — and a Logf leaves that
-		// invisible in a green run. The contract is that a green run leaves nothing
-		// behind, so failing to drop is a test failure, not a note.
-		conn, err := pgx.Connect(cleanupCtx, dbtest.DSN())
-		if err != nil {
-			t.Errorf("cleanup: reconnect to drop %s: %s; the scratch database is still "+
-				"present and this run did not leave the server as it found it", name,
-				dbtest.SafeDSNErr(err))
-			return
-		}
-		defer func() { _ = conn.Close(cleanupCtx) }()
-		if _, err := conn.Exec(cleanupCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE)", name)); err != nil {
-			t.Errorf("cleanup: drop %s: %v; the scratch database is still present and this "+
-				"run did not leave the server as it found it", name, err)
-		}
-	})
+	scratchDatabases(t).add(name)
 
 	// Swap ONLY the database name, by editing the parsed URL's path. Rebuilding the DSN
 	// from individual fields silently drops everything not named -- the password above

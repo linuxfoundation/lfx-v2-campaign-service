@@ -192,3 +192,30 @@ format is caught by question 1, the renamed parameter by question 2.
 That is the third spelling-based heuristic this guard has shed (after `bareErrArgs` on `err`
 and the line-window scans). The six mutations are now enumerated in the test's doc comment so
 the next change to it can be checked against the ones that already fooled a version of it.
+
+**Follow-up — bounding each step did not bound the teardown.** Review pointed out that the
+per-cleanup deadline added above is correct per database and wrong in aggregate, and the
+arithmetic holds: `TestLiveMigrationsGoDownAndUpAgain` provisions one scratch database per
+migration version, there are 28 migrations, and each cleanup got its own fresh 30s budget —
+~29 x 30s = 14.5 minutes serially if Postgres goes unreachable. The Makefile sets no
+`-timeout`, so Go's 10-minute default fires first and the run dies at the opaque suite
+timeout: exactly the outcome the deadline was added to prevent, just moved.
+
+`scratchReaper` replaces it. Names are registered per test and dropped from ONE `t.Cleanup`
+under ONE `CleanupContext`, through ONE reconnect rather than one per database — an
+unreachable server now pays the connect timeout once instead of 29 times. Worst case goes
+from 14.5 min to 30s, well inside the default, so the failure is reported by the test that
+caused it. If the budget does expire mid-reap it says how many databases were left, rather
+than reporting only the drop that hung. The reaper is keyed by `*testing.T` so a helper called
+from several tests cannot merge their databases into another's teardown.
+
+Same honesty as before: `TestScratchReaperUsesOneBudgetForEveryDatabase` pins the SHAPE — 29
+names, one registration, one deadline — which is what a unit test can reach. The
+stalled-server behaviour itself still needs a wedged Postgres and is not behaviourally bound.
+
+**Also — the PR description outlived its test.** It claimed assertion (2) of
+`TestLiveCredentialSurvivesTheRealByteaColumn` verified the stored column "contains no
+recognizable fragment" of the plaintext. That `bytes.Contains` search was deliberately
+removed in favour of exact inequality plus the deterministic AES-GCM length identity, and the
+description had not caught up. Corrected to state the shipped guarantees, with the reason the
+substring check was wrong in both directions kept on the record.

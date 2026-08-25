@@ -1015,6 +1015,16 @@ All 13 cleanup-reachable sites take their context from this one helper, includin
 `restoreRequiredIndex`, which is reached from `t.Cleanup` in four tests and performs a drop,
 a create and a catalog verification.
 
+**One budget for the whole teardown, not one per database.** Per-database deadlines are
+correct per database and wrong in aggregate: `TestLiveMigrationsGoDownAndUpAgain` provisions
+one scratch database per migration version, so at 28 migrations a per-call cleanup allowed
+~29 x 30s serially — about 14.5 minutes, past `go test`'s 10-minute default (the Makefile
+sets no `-timeout`). The run then died at the opaque suite timeout, naming neither the
+unreachable server nor the databases left behind. Bounding each step did not bound the
+teardown. `scratchReaper` collects the names and drops them from ONE test-level cleanup under
+ONE `CleanupContext`, with one reconnect rather than one per database, and reports how many
+were skipped if the budget expires mid-reap.
+
 **How strongly this is pinned:** `TestCleanupContextIsBoundedAndUncancelled` binds the
 helper — reverting it to a bare `Background()` fails on the missing deadline, and deriving it
 from a cancelled parent fails on both the `Err()` and `Done()` assertions. The CALL SITES are
