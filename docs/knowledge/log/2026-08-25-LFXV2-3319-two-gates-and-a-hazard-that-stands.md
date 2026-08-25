@@ -183,3 +183,27 @@ brief-level fan-out still discards per-client state — but the reason had to be
 than left standing on a premise this change removed. A stale call-site count ("four call sites")
 in `token_expiry_warning_test.go` was deleted rather than corrected: the wiring changed it to
 three and nothing failed, which is the definition of a number no reader should rely on.
+
+## The sweep kept missing sites, and the pattern in the misses is the lesson
+
+Four review rounds each found more restatements of the same claim. The misses were not random,
+and each names a hole in how the sweep was scoped:
+
+- **`README.md`** — the operator-facing surface, missed twice because the sweep covered the Go
+  tree and `docs/` and never included the repo root. The gap was the FILE SET, not the pattern.
+- **A line-wrapped phrase** in `internal-service.md` ("a Google or / Meta connection"), invisible
+  to any single-line grep.
+- **Count words rather than names** — "those four", "the remaining four". These carry the roster
+  without containing a provider name, so every name-based sweep passes over them. A count is a
+  roster in disguise, and it goes stale the same way; the fix is to sweep for the NUMBER too.
+- **A test-helper docblock** (`accountlister_prose_parity_test.go`) spelling the map as
+  `{GoogleAds, Meta}` — in a file whose entire purpose is to stop prose from drifting from the
+  code, which is the most embarrassing place for it.
+
+One finding was a claim of mine that was simply false: the create test asserted an explicit
+`"account_id": ""` "always got through" the old contract. It did not. `Required` and `Pattern` are
+independent, and `Pattern("^[A-Za-z0-9]+$")` rejected the empty string before and after — which is
+exactly why the apivalidation table still lists it as a rejection. Only the OMITTED key changed
+status. I had written the correct version in one file and the false one in another, which is the
+same failure as the scoped/unscoped comment pair above: a claim restated is a claim to re-derive,
+not to copy.

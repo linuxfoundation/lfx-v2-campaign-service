@@ -499,9 +499,11 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
-// paragraph below MetaAdsConnectionConfig's own godoc. Of the remaining four, Microsoft (as of
-// LFXV2-3064) and X (as of LFXV2-3319) have BOTH: Reddit still lacks discovery, while LinkedIn
-// gained a discovery endpoint in the former ticket and is missing the OTHER half.
+// paragraph below MetaAdsConnectionConfig's own godoc. X is the most recent to earn both, in
+// LFXV2-3319, and unlike Microsoft it was carried across both config gates in the same change.
+// Of the three that remain required, Microsoft (as of LFXV2-3064) has BOTH: Reddit still lacks
+// discovery, while LinkedIn gained a discovery endpoint in that ticket and is missing the
+// OTHER half.
 // resolveLinkedInCredentials
 // does tag domain.ErrAccountNotSelected, but LinkedInDispatcher.Dispatch never calls it — the
 // create path resolves inline and answers a missing account id with a bare notCreated, so the

@@ -538,9 +538,12 @@ func TestCreateMetaAds_WithoutAccountID(t *testing.T) {
 // The assertions are the Google Ads three, plus the one X adds:
 //
 //  1. Accepted with the key OMITTED, which is the shape the bootstrap flow sends. Goa enforces
-//     Required at the transport layer as a presence check on the JSON key, so an explicit
-//     `"account_id": ""` always got through and only OMISSION distinguishes the loosened
-//     contract from the old one.
+//     Required at the transport layer as a presence check on the JSON KEY, so only OMISSION
+//     moved from rejection to acceptance. An explicit `"account_id": ""` did NOT "always get
+//     through": Pattern("^[A-Za-z0-9]+$") runs independently of Required and rejects the empty
+//     string either way, which is why the apivalidation table still lists that case as a
+//     rejection. An explicit null is the one other accepted form, decoding identically to an
+//     absent key (see TwitterAdsConnectionConfig in design/connection.go).
 //  2. status is ACTIVE. validateTwitterConnection refuses a non-active connection, so any other
 //     status would make GET .../connection-twitter-ads/accounts unreachable and dead-end the
 //     bootstrap at step two.
