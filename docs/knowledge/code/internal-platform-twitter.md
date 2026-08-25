@@ -173,6 +173,16 @@ returns an error, and cancellation during authoring is itself split on
 `createOutcomeAmbiguous` first, so an ambiguous cancellation still retains the
 orchestrator's claim via a non-nil partial result.
 
+The authoring response's id is read by `extractTweetID`, not the generic
+`extractID` every other endpoint on this client uses: `accounts/:id/tweet`
+returns a legacy v1.1-shaped tweet object whose `id` is a JSON **number**
+(large enough to lose precision as a float64), unlike every other Ads API
+entity's string `id` — `extractID`'s string-typed field silently fails to
+unmarshal against it and returns `""`, indistinguishable from a genuinely
+missing id. `extractTweetID` instead reads `id_str`, the same value as X's own
+string-typed escape hatch, so a successfully authored tweet is no longer
+misclassified as the malformed-success (2xx-no-id) case above.
+
 A successfully authored tweet's id flows into the exact same `tweetID` variable
 an explicit `TweetID` would have populated, so it falls through into the
 pre-existing `promoted_tweets` POST and its four-way classification unchanged —
