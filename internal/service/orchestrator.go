@@ -141,6 +141,11 @@ const toggleCallTimeout = 45 * time.Second
 // DefaultWriteTimeout.
 const metricsCallTimeout = 20 * time.Second
 
+// settingsCallTimeout bounds the SYNCHRONOUS settings-readback platform call, which — like
+// the metrics read — runs on the HTTP request goroutine and is a pure read with no cascade
+// to child resources, so it takes the same ceiling for the same reasons.
+const settingsCallTimeout = 20 * time.Second
+
 // accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
 // metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
 // with no cascade, so it can use the same ceiling as metrics reads.
@@ -204,6 +209,35 @@ type MetricsReader interface {
 	// platform-agnostic vocabulary — see model.MetricsWindow). campaign is the persisted row
 	// so an adapter can reach PlatformCampaignID and any child ids it needs to aggregate.
 	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error)
+}
+
+// SettingsReader is an OPTIONAL dispatcher capability: read a campaign's CURRENT
+// configuration from the platform and compare it against what the campaign row recorded.
+// Type-asserted like StatusToggler and MetricsReader, so a dispatcher without it yields a
+// clean ErrSettingsReadbackUnsupported -> 400.
+//
+// This is the read MetricsReader cannot be. Metrics carry impressions, clicks, cost and
+// CTR — none of which describe a campaign's CONFIGURATION — so no reading of them can tell
+// an operator that the budget upstream is not the budget the row records.
+//
+// STRICTLY READ-ONLY, in two senses that are both load-bearing:
+//
+//   - it MUST issue no mutating call upstream. Nothing here may spend money, and an
+//     implementation that "fixed" a divergence would be doing so with no operator
+//     involvement and no record of the change.
+//   - it MUST NOT write back onto the campaign row. The row records what the dispatch
+//     ASKED FOR; replacing that with an observation would change the column's meaning,
+//     diverge this platform's rows in shape from every sibling adapter's, and let one
+//     transient bad read destroy the only record of the request.
+type SettingsReader interface {
+	// ReadSettings reads the live campaign configuration and returns it compared against
+	// the persisted row. campaign is the persisted row, supplied so the adapter can reach
+	// PlatformCampaignID and the recorded config it is comparing against.
+	//
+	// A field that could not be read must be reported ABSENT with an `unknown` verdict,
+	// never defaulted to a zero or empty value — a fabricated "they match" is the exact
+	// failure this capability exists to prevent.
+	ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error)
 }
 
 // AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
@@ -435,6 +469,7 @@ const (
 	opToggleStatus   = "toggle_status"
 	opReadMetrics    = "read_metrics"
 	opLookupCampaign = "lookup_campaign"
+	opReadSettings   = "read_settings"
 	opListAccounts   = "list_accounts"
 	opSearchEmails   = "search_emails"
 	opReadKeywords   = "read_keywords"
@@ -1760,6 +1795,45 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 		return nil, fmt.Errorf("%s metrics reader returned a nil result with no error", platform)
 	}
 	return m, nil
+}
+
+// ReadCampaignSettings reads a campaign's live configuration from its platform and returns
+// it compared against what the campaign row recorded.
+//
+// A pure read in both directions: it never mutates the platform, and it never writes the
+// observation back onto the row. See SettingsReader for why the second half matters as much
+// as the first.
+func (o *Orchestrator) ReadCampaignSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	// Pre-platform guard, same rationale as ReadCampaignMetrics: never contact the platform
+	// about a campaign with nothing provisioned upstream. There is also nothing to compare —
+	// a row with no platform campaign id has no upstream counterpart at all.
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrSettingsReadbackUnsupported, platform)
+	}
+	reader, ok := d.(SettingsReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrSettingsReadbackUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, settingsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	rb, rerr := reader.ReadSettings(callCtx, projectID, platform, campaign)
+	o.recordUpstream(ctx, platform, opReadSettings, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if rb == nil {
+		// A SettingsReader returning (nil, nil) is a contract violation, not success — the
+		// handler dereferences the result unconditionally on a nil error. Convert it into an
+		// ordinary error so the request answers its declared 503 instead of panicking, the
+		// same guard ReadCampaignMetrics applies to its own reader.
+		return nil, fmt.Errorf("%s settings reader returned a nil result with no error", platform)
+	}
+	return rb, nil
 }
 
 // LookupPlatformCampaign confirms that platformCampaignID names a real campaign under the

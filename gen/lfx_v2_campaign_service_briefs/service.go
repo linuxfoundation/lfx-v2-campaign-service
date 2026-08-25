@@ -43,9 +43,10 @@ type Service interface {
 	// (in any project, since several foundations share one upstream ad account) /
 	// the brief lost approval during the read / the project has no ad-platform
 	// connection of its own, and 400 when the platform has no adoption capability
-	// wired. An adopted campaign supports metrics, delete and pause; activation is
-	// refused, because adoption does not verify the targeting the activate guard
-	// requires.
+	// wired. An adopted campaign behaves like any other campaign row on every
+	// per-campaign endpoint - the metrics read, the settings readback, delete and
+	// pause all work on it; activation is the one exception, and is refused
+	// because adoption does not verify the targeting the activate guard requires.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -59,6 +60,19 @@ type Service interface {
 	// which emails are in scope by send date and the counters are those emails'
 	// totals to date.
 	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
+	// Read the campaign's CURRENT configuration from the platform that runs it and
+	// report, per setting, where it diverges from what the campaign row recorded.
+	// A pure read: the platform is only read, never written, and the observation
+	// is never persisted back onto the campaign row — the row means "what this
+	// dispatch asked for", and the two can legitimately disagree: nothing pushes
+	// the recorded config upstream, and more than one path lets them drift apart.
+	// This is the read metrics cannot be: impressions, clicks, cost and CTR do not
+	// describe a campaign's configuration. A setting that could not be read on
+	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
+	// zero and never counted as a match. Support is per-platform: a campaign whose
+	// platform has no settings-readback dispatcher wired returns 400 — Google Ads
+	// is the only one today.
+	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
 	// Unlike get-campaign-metrics, a failure on one campaign does not fail the
@@ -155,7 +169,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [18]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job"}
+var MethodNames = [19]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -397,6 +411,76 @@ type CampaignPacing struct {
 	Label string
 }
 
+type CampaignSettingsField struct {
+	// The setting's name in this service's own stable vocabulary rather than the
+	// platform's field names. Several names do coincide with a campaign-row
+	// column, but the vocabulary is NOT a column list and must not be read as one:
+	// `advertising_channel_type` has no column and is recovered from the
+	// campaign's config snapshot, and the upstream-only names below have no
+	// recorded side at all. On Google Ads the COMPARED settings are
+	// `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`,
+	// `start_date` and `end_date`. `budget_delivery_method`,
+	// `budget_explicitly_shared` and `bidding_strategy_type` are reported
+	// UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an
+	// `unknown` verdict, because nothing this service records expresses them.
+	// `status` is also reported with no `recorded` counterpart, but for a
+	// DIFFERENT reason: the campaign row DOES record a `status`, and it is
+	// deliberately never compared because the two are different axes. The column
+	// carries this service's own lifecycle vocabulary — mostly provisioning state
+	// (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes
+	// a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery
+	// state, so comparing them would report a permanent, meaningless divergence on
+	// nearly every campaign. The upstream value is still reported so an operator
+	// can see that a campaign is paused upstream. `advertising_channel_type` is
+	// compared rather than upstream-only because the dispatch config's channel IS
+	// persisted in the campaign's config snapshot; it still reads `unknown` on a
+	// legacy row that carries no snapshot, but for the ordinary reason that
+	// nothing was recorded there — not because the field has no recorded side. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
+	Field string
+	// What the campaign row records — what this dispatch ASKED FOR. Absent when
+	// the row records nothing for this field.
+	Recorded *string
+	// What the platform currently holds, read live. Absent when the platform did
+	// not return the field — never a zero standing in for one.
+	Upstream *string
+	// The verdict. `match` and `diverged` both require BOTH sides to have been
+	// read; `unknown` means the comparison could not be made and is deliberately
+	// NOT folded into `match`.
+	Comparison string
+}
+
+// CampaignSettingsReadback is the result type of the
+// lfx-v2-campaign-service-briefs service get-campaign-settings method.
+type CampaignSettingsReadback struct {
+	// Campaign UUID
+	CampaignID string
+	// The id the PLATFORM echoed back for this campaign, not the one requested.
+	PlatformCampaignID string
+	// The channel that runs this campaign.
+	Platform string
+	// When the platform was read (RFC3339, UTC). A readback is a point-in-time
+	// observation and says nothing about the campaign after this instant.
+	ReadAt string
+	// Every setting compared, in a stable order, INCLUDING the ones that could not
+	// be compared — a field missing from this list would be indistinguishable from
+	// one this service does not know about.
+	Fields []*CampaignSettingsField
+	// How many fields carry the `diverged` verdict.
+	DivergedCount int
+	// How many fields were NOT COMPARED — either because the field has no recorded
+	// counterpart (the upstream-only observations, plus `status`, which the row
+	// does record but which is deliberately never compared — a different axis from
+	// Google's delivery status) or because a side could not be read. Reported
+	// separately from diverged_count rather than folded into it: "2 differ" reads
+	// very differently next to "and 5 were not compared". NOT a read-failure
+	// count: on a fully healthy readback most fields are unknown by construction,
+	// so a consumer watching this for failures would see a constant floor. Use
+	// each field's `comparison` to see which is which.
+	UnknownCount int
+}
+
 type CampaignUpdateInput struct {
 	// Campaign name
 	CampaignName string
@@ -596,6 +680,19 @@ type GetCampaignMetricsPayload struct {
 // GetCampaignPayload is the payload type of the lfx-v2-campaign-service-briefs
 // service get-campaign method.
 type GetCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+}
+
+// GetCampaignSettingsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-campaign-settings method.
+type GetCampaignSettingsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
 	// Project UUID or slug that scopes the connection

@@ -62,6 +62,10 @@ type Client struct {
 	// get-campaign-metrics endpoint.
 	GetCampaignMetricsDoer goahttp.Doer
 
+	// GetCampaignSettings Doer is the HTTP client used to make requests to the
+	// get-campaign-settings endpoint.
+	GetCampaignSettingsDoer goahttp.Doer
+
 	// GetBriefMetrics Doer is the HTTP client used to make requests to the
 	// get-brief-metrics endpoint.
 	GetBriefMetricsDoer goahttp.Doer
@@ -121,6 +125,7 @@ func NewClient(
 		AdoptCampaignDoer:        doer,
 		GetCampaignDoer:          doer,
 		GetCampaignMetricsDoer:   doer,
+		GetCampaignSettingsDoer:  doer,
 		GetBriefMetricsDoer:      doer,
 		GenerateEmailCopyDoer:    doer,
 		UpdateCampaignDoer:       doer,
@@ -395,6 +400,30 @@ func (c *Client) GetCampaignMetrics() goa.Endpoint {
 		resp, err := c.GetCampaignMetricsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetCampaignSettings returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service get-campaign-settings server.
+func (c *Client) GetCampaignSettings() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetCampaignSettingsRequest(c.encoder)
+		decodeResponse = DecodeGetCampaignSettingsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetCampaignSettingsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetCampaignSettingsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-campaign-settings", err)
 		}
 		return decodeResponse(resp)
 	}

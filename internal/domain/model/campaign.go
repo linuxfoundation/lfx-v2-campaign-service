@@ -541,6 +541,139 @@ type PlatformCampaignRef struct {
 	Variant string
 }
 
+// SettingsComparison is the verdict for one setting in a settings readback: does what
+// the campaign row RECORDED agree with what the platform currently HOLDS?
+//
+// Three values, and the third is the one that makes the type worth having.
+type SettingsComparison string
+
+// Settings comparison verdicts.
+const (
+	// SettingsMatch — both sides were read and they agree.
+	SettingsMatch SettingsComparison = "match"
+	// SettingsDiverged — both sides were read and they DISAGREE. This is the finding an
+	// operator acts on. The service does not reconcile it: the row records what a dispatch
+	// asked for, the platform holds its own state, and the two can legitimately differ.
+	SettingsDiverged SettingsComparison = "diverged"
+	// SettingsUnknown — the comparison could not be made, because one side or the other was
+	// not readable. It is NOT a match, and keeping it distinct is the entire point: a field
+	// the platform did not return, folded into "match", would report agreement that nobody
+	// observed — the fabricated "they match" this capability exists to make impossible.
+	SettingsUnknown SettingsComparison = "unknown"
+)
+
+// CampaignSettingsField is one setting, with both sides shown and a verdict.
+//
+// Both sides are POINTERS so that "not read" survives all the way to the response. A
+// field neither side reported is present in the report with a nil pair and an `unknown`
+// verdict, rather than being silently dropped: the operator learns that this setting was
+// not comparable, which is different from learning nothing about it.
+type CampaignSettingsField struct {
+	// Field names the setting in this service's own vocabulary (e.g. "budget_amount"),
+	// not the platform's field name — the report is read by an operator, and a caller
+	// comparing across platforms cannot be asked to learn each platform's spelling.
+	Field string
+	// Recorded is what the campaign ROW holds: what this dispatch asked for. Rendered as
+	// a string so one shape carries budgets, statuses and dates without the response type
+	// growing a union; nil when the row records nothing for this field.
+	Recorded *string
+	// Upstream is what the PLATFORM currently holds, read live. nil when the platform did
+	// not return the field — never a zero value standing in for one.
+	Upstream *string
+	// Comparison is the verdict. It is derived from Recorded and Upstream together and is
+	// never `match` unless BOTH were read.
+	Comparison SettingsComparison
+}
+
+// CampaignSettingsReadback is a live, read-only comparison of a campaign row's recorded
+// request against the campaign's current configuration upstream.
+//
+// It is never persisted, and it MUST NOT be written back onto the campaign row. The row
+// means "what this dispatch asked for" — that is what every sibling adapter's rows mean —
+// and overwriting it with an observation would change the column's meaning from request to
+// observation, break shape-consistency across adapters, and let one transient bad read
+// destroy the only record of what was requested. Divergence is information an operator
+// acts on, not state this service reconciles. When an edit capability lands it will MAKE
+// the change and record it as a new request, which is a different thing entirely and needs
+// this distinction intact.
+//
+// There is deliberately no campaign-level "in sync" boolean and no stored status. A status
+// that goes stale is worse than none, this service runs no polling, and a single flag would
+// have to collapse `unknown` into one of the other two verdicts to exist at all.
+type CampaignSettingsReadback struct {
+	// CampaignID is this service's own campaign row id.
+	CampaignID string
+	// PlatformCampaignID is the id the platform ECHOED, not the one requested.
+	PlatformCampaignID string
+	// Platform is the channel that runs this campaign.
+	Platform Provider
+	// ReadAt is when the platform was read. A readback is a point-in-time observation and
+	// says nothing about the campaign after this instant.
+	ReadAt time.Time
+	// Fields is every setting compared, in a stable order, INCLUDING the ones that could
+	// not be compared. A field missing from this slice would be indistinguishable from a
+	// field this service does not know about.
+	Fields []CampaignSettingsField
+	// DivergedCount is how many fields carry the `diverged` verdict, so a consumer can say
+	// "3 settings differ" without re-deriving it — and, more importantly, without treating
+	// `unknown` as agreement to get there.
+	DivergedCount int
+	// UnknownCount is how many fields were NOT COMPARED, for either of two reasons: the
+	// field has no RECORDED counterpart (the upstream-only observations, plus `status`,
+	// which the row does record but which is deliberately never compared because this
+	// service's lifecycle status and the platform's delivery status are different axes),
+	// or a side genuinely could not be read. Reported alongside DivergedCount rather than folded into it, because "2 differ"
+	// reads very differently next to "and 5 were not compared" than it does alone.
+	//
+	// It is NOT a read-failure count, and must not be presented as one: on a completely
+	// healthy Google Ads readback where every field was returned, most of the ten are
+	// permanently unknown by construction — six on a row whose config snapshot records a
+	// channel, and seven on a legacy row that has none, since `advertising_channel_type`
+	// only has a recorded side to compare when the snapshot supplies one. The floor is that
+	// RANGE rather than a constant, which if anything sharpens the point: a consumer
+	// watching this number for read failures would see a non-zero baseline it cannot
+	// distinguish from a real one, and cannot even pin that baseline to a single value.
+	// Per-field `Comparison` is what identifies WHICH fields those are.
+	UnknownCount int
+}
+
+// CompareSettingsField builds one comparison, and is the ONLY place the verdict rule
+// lives so no caller can invent a different one.
+//
+// The rule: a verdict of `match` or `diverged` requires BOTH sides. If either is absent
+// the answer is `unknown` — never `match`, which would be a claim of agreement derived
+// from an absence, and never `diverged`, which would report a difference between a value
+// and nothing.
+func CompareSettingsField(field string, recorded, upstream *string) CampaignSettingsField {
+	f := CampaignSettingsField{Field: field, Recorded: recorded, Upstream: upstream}
+	switch {
+	case recorded == nil || upstream == nil:
+		f.Comparison = SettingsUnknown
+	case *recorded == *upstream:
+		f.Comparison = SettingsMatch
+	default:
+		f.Comparison = SettingsDiverged
+	}
+	return f
+}
+
+// SummariseSettings fills DivergedCount and UnknownCount from Fields, so the counts cannot
+// disagree with the list they summarise.
+func (r *CampaignSettingsReadback) SummariseSettings() {
+	r.DivergedCount = 0
+	r.UnknownCount = 0
+	for _, f := range r.Fields {
+		switch f.Comparison {
+		case SettingsDiverged:
+			r.DivergedCount++
+		case SettingsUnknown:
+			r.UnknownCount++
+		case SettingsMatch:
+			// Counted by neither total; both counts describe departures from agreement.
+		}
+	}
+}
+
 // ProjectCampaignScope is ONE campaign a project owns upstream, as the authorization scope
 // for an otherwise account-wide platform read.
 //
