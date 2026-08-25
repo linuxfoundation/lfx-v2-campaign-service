@@ -993,6 +993,25 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 					Err:        err,
 				}
 			}
+			// Re-reserve a pacing slot before re-issuing a WRITE. The backoff above waits
+			// out the 429, but it is not a pacing reservation: while this caller sleeps,
+			// another writer on the same client can reserve the instant this retry is
+			// about to fire at, so the retry and that writer would issue together and
+			// rebuild the very burst the pacer exists to prevent. Reads are excluded --
+			// they never consume the write budget.
+			if isWriteMethod(method) {
+				if perr := c.pace(ctx); perr != nil {
+					// Same reasoning as the sleepCtx arm above: the 429 already happened
+					// and a mutating 429 is ambiguous, so preserve it rather than
+					// returning a bare ctx error that would read as "nothing changed".
+					return nil, &apiError{
+						StatusCode: http.StatusTooManyRequests,
+						Method:     method,
+						Path:       path,
+						Err:        perr,
+					}
+				}
+			}
 			continue
 		}
 
@@ -1117,13 +1136,33 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // path; reads (request/doRequest via the GET/list helpers) never call pace and
 // remain fully concurrent, since X does not rate-limit them.
 //
-// SCOPE -- one process. This bounds writes through THIS client instance, which
-// (given the shared client cache) is every write this replica makes for the
-// account. It does NOT coordinate across replicas: two pods dispatching for the
-// same account can still exceed the account-wide limit, which needs shared
-// cross-replica coordination (a distributed limiter, or the orchestrator
-// serializing per account) tracked by LFXV2-2665 (durable dispatch). The 429
-// exponential-backoff retry in doRequestAbs remains the backstop for that case.
+// A sync.Mutex, not a channel semaphore selecting on ctx.Done(). The semaphore
+// would make the QUEUEING WAIT itself cancellable, which this does not: a caller
+// whose context dies while queued still waits for the lock before returning. That
+// was considered and rejected for now because the cancellable-wait version has to
+// hand the reservation to the next waiter correctly on every abandonment path, and
+// getting that wrong reintroduces the burst this exists to prevent -- a worse
+// failure than a late return. What the ctx check below buys instead is that a dead
+// caller never RESERVES a slot or issues a write, so it cannot push a live writer
+// back; the cost is bounded by the writes already queued ahead of it, each one
+// writeDelay long. If that queueing latency ever becomes the binding constraint,
+// the semaphore is the upgrade, and it belongs with the account-scoped limiter in
+// LFXV2-2665 rather than bolted onto a per-instance pacer.
+//
+// SCOPE -- one CLIENT INSTANCE, which is narrower than "the account". Two clients
+// for the same X account pace independently, and three ordinary things produce
+// them: separate replicas; two PROJECTS whose connections point at the same ad
+// account (the client cache is keyed by project + connection row, and the schema
+// only makes a connection unique WITHIN a project, so it cannot collapse them);
+// and cache replacement -- a rotation, the TTL, or LRU eviction can build a
+// successor while an in-flight caller still holds its predecessor.
+//
+// So this narrows the window rather than closing it: it removes the common case
+// (a burst of concurrent dispatches for one project) and leaves the residue to
+// the 429 exponential-backoff retry in doRequestAbs, which remains the backstop.
+// Closing it needs a limiter keyed by X ACCOUNT whose lifetime is independent of
+// the client cache, plus cross-replica coordination -- tracked by LFXV2-2665
+// (durable dispatch).
 //
 // The clock is c.timeFn, so tests drive pacing deterministically rather than by
 // sleeping in real time.
@@ -1134,6 +1173,22 @@ func (c *Client) pace(ctx context.Context) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+
+	// Check cancellation BEFORE reserving anything, and check it HERE rather than before the
+	// Lock so it also covers time spent queued: sync.Mutex.Lock is not context-aware, so a
+	// caller can sit behind several writeDelay-long holders and have its deadline pass while
+	// waiting. One check after acquiring therefore subsumes the pre-lock case.
+	//
+	// It is needed because the wait arm below is not reached on every path. When the pacer is
+	// IDLE there is nothing to wait for, so an already-dead caller would take the no-wait path,
+	// never touch ctx, and still burn a slot — pushing the next real writer back by writeDelay
+	// for a write that was never issued.
+	//
+	// This does NOT make waiting for the lock itself cancellable; it bounds the damage to one
+	// slot-hold rather than letting a dead caller consume a reservation.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	now := c.timeFn()
 	// The zero value means no write has been issued yet: the first write on a fresh
@@ -1158,6 +1213,13 @@ func (c *Client) pace(ctx context.Context) error {
 		c.nextWrite = now.Add(c.writeDelay)
 	}
 	return nil
+}
+
+// isWriteMethod reports whether an HTTP method mutates, and therefore whether a
+// request through doRequestAbs spends from X's 1 write/sec account budget. GET is
+// the only method this client uses for reads (accounts.go, metrics.go).
+func isWriteMethod(method string) bool {
+	return method != http.MethodGet && method != http.MethodHead
 }
 
 // nextWriteAt returns the currently reserved next-write instant under writeMu.

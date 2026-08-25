@@ -1270,12 +1270,15 @@ under the same key, which reads as a miss. The key carries the RESOLVED scope, s
 running on the LF system fallback caches under `model.SystemProjectID` and can neither read nor
 poison a project-owned entry.
 
-**The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
-platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
-the token however cheap the credential lookup became — measured at five token-endpoint hits across
-five resolves. `GoogleAdsDispatcher`, `RedditDispatcher`, `MicrosoftDispatcher` and `TwitterDispatcher` therefore
-also cache the built client (`clientCache`), keyed and validated by the same (row id, version) identity
-as the credential, so a rotation invalidates the client in the same step. A client is exactly as
+**The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** A
+token-minting platform client caches its access token on the instance, so a client rebuilt per
+resolve re-mints the token however cheap the credential lookup became — measured at five
+token-endpoint hits across five resolves. That is why `GoogleAdsDispatcher`, `RedditDispatcher`
+and `MicrosoftDispatcher` cache the built client (`clientCache`). `TwitterDispatcher` is cached
+too but for a DIFFERENT reason — X mints no token, and the shared state that matters there is the
+write pacer (see the X/Twitter section below). All four are keyed and validated by the same
+(row id, version) identity as the credential, so a rotation invalidates the client in the same
+step. A client is exactly as
 stale as the credential it was built from; validating it any more loosely would let a revoked
 credential keep authenticating inside a cached token. Discovery paths are deliberately excluded —
 Google Ads' builds an account-agnostic client with an empty CustomerID, and Microsoft's
@@ -1341,8 +1344,15 @@ money-spending path. `twitter.Client.pace` now reserves write slots under the cl
 `writeMu`, bounding the rate per instance, which makes SHARING the precondition for the budget
 being enforceable rather than a risk. Reads never call `pace` and stay concurrent, since X does not
 rate-limit them. X still mints no token — it signs each request with stored OAuth 1.0a credentials
-— so the benefit is the shared pacer, not a saved round-trip. The bound is per-process and does not
-span replicas; cross-replica coordination remains LFXV2-2665. `TwitterDispatcher`'s create and
+— so the benefit is the shared pacer, not a saved round-trip. The bound is per CLIENT INSTANCE, which is narrower than per ACCOUNT: the cache is
+keyed by project + connection row, so two projects pointing at the same X ad account get separate
+pacers, as do separate replicas and a client replaced by rotation/TTL/LRU while a caller still
+holds its predecessor. It removes the common case — a burst of concurrent dispatches for one
+project — and leaves the residue to the 429 backoff in `doRequestAbs`. A limiter keyed by X
+account with a lifetime independent of the client cache, plus cross-replica coordination, remains
+LFXV2-2665. The pacer also covers the 429 RETRY path: a retried write takes a fresh slot, since
+the backoff sleep is not itself a reservation and a retry is by definition issued while already
+throttled. `TwitterDispatcher`'s create and
 toggle paths both resolve through `cachedTwitterClient` and share one entry; its `ListAccounts`
 discovery client keeps a ZERO `AccountConfig` and bypasses the cache for the same reason
 Microsoft's does, and being read-only it issues no write and needs no share of the write budget.

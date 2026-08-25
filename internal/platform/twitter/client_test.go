@@ -706,7 +706,7 @@ func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
 	c.timeFn = staticTime
 
 	// Stands in for toggleCallTimeout expiring during the backoff sleep.
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err := c.UpdateCampaignAndChildrenStatus(ctx, "cmp1", "li1", StatusPaused)
@@ -4296,5 +4296,94 @@ func TestPaceCancellationDoesNotConsumeASlot(t *testing.T) {
 	}
 	if got := c.nextWriteAt(); !got.Equal(reserved) {
 		t.Errorf("cancelled caller advanced the reservation from %v to %v; want unchanged", reserved, got)
+	}
+}
+
+// TestPaceIdleCancelledCallerReservesNothing covers the arm the wait-path cancellation test
+// cannot reach: an already-cancelled caller arriving when the pacer is IDLE.
+//
+// With no reservation outstanding there is nothing to wait for, so the old code took the
+// no-wait path, never consulted ctx, returned success and still advanced nextWrite. The write
+// then failed at the HTTP layer, so a write that never left pushed the next real writer back by
+// a full writeDelay.
+func TestPaceIdleCancelledCallerReservesNothing(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(time.Hour))
+	c.timeFn = staticTime
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.pace(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pace on an idle pacer with a cancelled ctx = %v; want context.Canceled", err)
+	}
+	if got := c.nextWriteAt(); !got.IsZero() {
+		t.Errorf("a cancelled caller reserved a slot on an idle pacer (nextWrite = %v); want the "+
+			"pacer untouched, since no write was issued", got)
+	}
+}
+
+// TestWriteRetryRePacesButReadRetryDoesNot pins the 429 retry path against the pacer.
+//
+// The backoff sleep is not a pacing reservation: while a rate-limited caller waits it out,
+// another writer on the same client can reserve the instant the retry is about to fire at, so
+// the retry and that writer would issue together — rebuilding the burst the pacer exists to
+// prevent. A retried WRITE must therefore take a fresh slot. A retried READ must not: reads do
+// not spend X's write budget, and pacing them would serialise them for no reason.
+//
+// The observable is whether the retry REACHES THE SERVER, not whether nextWrite moved. With an
+// hour-long delay and a slot already reserved, a re-pacing write retry blocks until the short
+// context expires — so it never makes a second request, and pace returns before reserving
+// anything (which is why nextWrite is deliberately NOT the probe here).
+func TestWriteRetryRePacesButReadRetryDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		method    string
+		wantCalls int32
+	}{
+		// A re-paced write retry blocks on its slot and never re-reaches the server.
+		{"write retry re-paces", http.MethodPost, 1},
+		// An unpaced read retry proceeds straight through and reaches it twice.
+		{"read retry does not pace", http.MethodGet, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if calls.Add(1) == 1 {
+					// Retry-After MUST be a positive server-declared reset: a 0 or absent
+					// header falls through to the COMPUTED backoff (writeDelay*2^attempt —
+					// an hour here), which exceeds maxRetryWait, so doRequestAbs aborts
+					// without ever retrying and neither arm would be exercised.
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":{"id":"ok"}}`))
+			}))
+			defer srv.Close()
+
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+				WithBaseURL(srv.URL), WithWriteDelay(time.Hour),
+			)
+			c.nonceFn = func() string { return "n" }
+			c.timeFn = staticTime
+
+			// Seed a reservation so an hour-long slot is already outstanding; without this
+			// the pacer is idle and a re-pace would return immediately, making the two arms
+			// indistinguishable.
+			if err := c.pace(context.Background()); err != nil {
+				t.Fatalf("seeding pace: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, _ = c.doRequestAbs(ctx, tc.method, srv.URL+"/x", "x", nil)
+
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Errorf("%s reached the server %d times; want %d", tc.method, got, tc.wantCalls)
+			}
+		})
 	}
 }

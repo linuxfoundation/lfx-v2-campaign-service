@@ -1015,17 +1015,28 @@ func TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 // its toggle/metrics entry point while GoogleAdsDispatcher.Dispatch still builds inline (see
 // TestClientCache_GoogleAdsDispatchBypassesTheCache). Dispatch is the burst path for X, so it is
 // the one that most needs the shared pacer.
+//
+// It COUNTS CONSTRUCTIONS rather than comparing client identity across the call. Comparing
+// identity cannot detect this regression: a Dispatch that builds inline never writes to
+// d.clients at all, so the primed entry survives untouched and an identity comparison passes
+// either way. A counting option is the only thing that distinguishes "reused the cached client"
+// from "quietly built its own".
 func TestClientCache_TwitterDispatchUsesTheCachedClient(t *testing.T) {
 	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1)}
-	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0))
 
-	// Prime the cache through the toggle-path resolver, then dispatch. If Dispatch consults the
-	// cache, no new entry appears; if it builds inline, the cache is untouched by it and a
-	// second distinct client exists.
-	primed, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
-		twitterCacheCampaign("acc1"))
-	if err != nil {
+	// twitter.Option runs once per NewClient call, so it is an exact construction counter.
+	var builds atomic.Int64
+	countingOpt := func(*twitter.Client) { builds.Add(1) }
+
+	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0), countingOpt)
+
+	// Prime the cache through the toggle-path resolver: one construction.
+	if _, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCacheCampaign("acc1")); err != nil {
 		t.Fatalf("priming resolve: %v", err)
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("priming resolve made %d clients, want 1", got)
 	}
 
 	// Dispatch will fail at the HTTP layer (no server), which is fine: the client has already
@@ -1033,13 +1044,9 @@ func TestClientCache_TwitterDispatchUsesTheCachedClient(t *testing.T) {
 	_, _ = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
 		json.RawMessage(`{"budgetAmount":100,"startDate":"2999-01-01","endDate":"2999-01-02"}`))
 
-	after, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
-		twitterCacheCampaign("acc1"))
-	if err != nil {
-		t.Fatalf("post-dispatch resolve: %v", err)
-	}
-	if after != primed {
-		t.Error("Dispatch replaced the cached client: the create path is not going through " +
-			"cachedTwitterClient, so a dispatch burst gets one write pacer per campaign")
+	if got := builds.Load(); got != 1 {
+		t.Errorf("Dispatch constructed %d clients in total, want 1 — the create path is not "+
+			"going through cachedTwitterClient, so a dispatch burst gets one write pacer per "+
+			"campaign instead of sharing the account's budget", got)
 	}
 }

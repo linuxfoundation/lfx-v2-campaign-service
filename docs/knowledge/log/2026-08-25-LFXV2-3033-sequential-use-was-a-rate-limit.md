@@ -1,7 +1,8 @@
 # 2026-08-25 — "safe for sequential use" was a rate limit, not a race
 
-**Fix** — X/Twitter was the last provider left out of the dispatch client cache, and the comment
-in `credcache.go` explaining why said this:
+**Fix** — X/Twitter was the remaining leg of LFXV2-3033's client-cache rollout (LinkedIn and Meta
+are wired separately under cs#186, and the roster still lists them as unwired at the time of this
+change). The comment in `credcache.go` explaining X's exclusion said this:
 
 > X in particular documents its client as safe for SEQUENTIAL use only, so it must not be shared
 > across concurrent callers on the strength of this pattern alone.

@@ -392,8 +392,13 @@ func isComparable(v any) bool {
 // the client's own mutex, which bounds the rate per instance; sharing that instance is therefore
 // the precondition for the budget being enforceable, not a risk to be avoided. X still mints no
 // token (it signs each request with stored OAuth 1.0a credentials), so the benefit here is the
-// shared pacer rather than a saved round-trip. The bound is per-process and does not span
-// replicas — see twitter.Client.pace, and LFXV2-2665 for cross-replica coordination.
+// shared pacer rather than a saved round-trip.
+//
+// The bound is per CLIENT INSTANCE, which is narrower than per ACCOUNT: this cache is keyed by
+// project + connection row, so two projects pointing at the same X ad account get separate
+// pacers, as do separate replicas and a client replaced by rotation/TTL/LRU while a caller still
+// holds its predecessor. It removes the common case and leaves the residue to the 429 backoff.
+// See twitter.Client.pace for the full scope note, and LFXV2-2665 for the durable fix.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
 // one-site edit.
 //
