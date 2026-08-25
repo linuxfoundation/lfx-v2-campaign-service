@@ -1062,8 +1062,16 @@ it last, `withDatabase` takes it first — because guessing "the last argument" 
 mispaired.
 
 A call that used the environment's `DSN()` is satisfied by either redactor; a call that used
-anything else requires `SafeDSNErrFor` handed that same value. The whole guard is parsed rather
-than line-scanned because two earlier window-based versions each missed a site.
+anything else requires `SafeDSNErrFor` handed that same value. Which identifiers hold a live DSN is likewise computed by DATA FLOW, not by spelling:
+`dsnCarriers` seeds from `DSN()` calls and from the string parameters of functions that
+themselves perform a DSN-bearing call, then propagates through assignment. The name-based
+version it replaces missed `databaseURL := dbtest.DSN()` aliased into `withDatabase`, and a
+raw `%v` of that call's error passed the guard.
+
+The whole guard is parsed rather than line-scanned because two earlier window-based versions
+each missed a site. Its mutation coverage is recorded in the test's own doc comment — six
+mutations, three of which turned on spelling, which is why nothing in this guard asks what an
+identifier is called.
 
 Its self-tests are counted separately, and the second exists because of a real bypass: a bare
 `pairChecked == 0` check stayed nonzero via `schemaObjects` while the explicit-DSN sites
@@ -1130,11 +1138,13 @@ non-resolvable, so no WORKING harness DSN can share it. A second assertion rende
 error against an unrelated pinned DSN and requires the text to SURVIVE — if an unrelated DSN
 withheld it too, withholding would say nothing about which DSN the redactor was handed.
 
-Serializing the test and calling `t.Setenv` is the wrong remedy, and it is the one that looks
-obvious. `SafeDSNErrFor` takes the DSN as an argument precisely so these tests need no
-process-global state; a serial test that writes `TEST_DATABASE_URL` still races the package's
-PARALLEL tests, which read it through `DSN()`, and the env var is restored on cleanup so the
-window is invisible in a green run.
+Serializing the test and calling `t.Setenv` is a worse remedy than pinning the host, though
+not an unsafe one — an earlier version of this page overstated it as a race. Go runs top-level
+parallel tests only after the serial ones finish, so a serial `Setenv` window does not overlap
+the parallel readers of `DSN()`; `TestSafeDSNErrReadsTheConfiguredDSN` uses that pattern and is
+correct. What `Setenv` costs is the ordering constraint: the test could no longer run in
+parallel, in order to re-introduce the one process-global input `SafeDSNErrFor` exists to
+remove. Pinning the host keeps both.
 
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 

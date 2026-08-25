@@ -61,10 +61,13 @@ import (
 // 127.0.0.1 value, and under a 127.0.0.2 value; it passes only under that self-referential
 // DSN.
 //
-// Serializing the test and calling t.Setenv is the wrong remedy for the same reason
-// SafeDSNErrFor exists: taking the DSN as an argument is what let these tests stop depending
-// on process-global state, and a serial test that writes TEST_DATABASE_URL still races the
-// package's PARALLEL tests, which read it through DSN().
+// Serializing the test and calling t.Setenv is a worse remedy than pinning the host, though
+// not an unsafe one -- and an earlier version of this comment overstated that. Go runs
+// top-level parallel tests only after the serial ones finish, so a serial Setenv window does
+// not overlap the parallel readers of DSN(); TestSafeDSNErrReadsTheConfiguredDSN uses that
+// pattern correctly. What Setenv costs is the ordering constraint: this test could no longer
+// run in parallel, to re-introduce the one process-global input SafeDSNErrFor was added to
+// remove. Pinning the host keeps both the parallelism and the independence.
 func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	t.Parallel()
 

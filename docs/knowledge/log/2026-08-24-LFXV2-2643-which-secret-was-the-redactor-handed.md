@@ -36,10 +36,16 @@ a developer point `TEST_DATABASE_URL` anywhere. **Verified**: with `SafeDSNErr` 
 can share, plus a control requiring an unrelated pinned DSN to PRESERVE the same text — if
 both withheld, withholding would prove nothing about the argument.
 
-The reviewer's proposed remedy, `t.Setenv` under a serial test, was not taken and the reason
-is on the record in the test: `SafeDSNErrFor` takes the DSN as an argument precisely to keep
-process-global state out of these tests, and a serial test writing `TEST_DATABASE_URL` still
-races the package's parallel tests reading it through `DSN()`.
+The reviewer's proposed remedy, `t.Setenv` under a serial test, was not taken: `SafeDSNErrFor`
+takes the DSN as an argument precisely to keep process-global state out of these tests, and
+pinning the probe host keeps the test parallel as well as independent.
+
+**Correction (2026-08-25).** The reason first given here — that a serial writer "still races
+the package's parallel tests" — was false, and it was repeated in four other places before
+review caught it. Go runs top-level parallel tests only after the serial ones finish, so the
+window cannot overlap; measured at zero overlaps against three polling parallel readers. The
+real cost of `Setenv` is the ordering constraint it imposes, not a race. Every copy has been
+corrected.
 
 **Verification** — every fix was mutation-tested, because a fix commit citing a real finding
 is the most convincing form of unverified work.
@@ -151,3 +157,38 @@ the file landed verbatim in `TestCleanupContextIsBoundedAndUncancelled`'s commen
 swept repo-wide rather than at the reported line: the same sequence was also sitting in
 `campaign_repo.go:918`, from an earlier change. Both are now plain apostrophes and
 `git grep` for the sequence is empty.
+
+**Follow-up — three suppressed findings, and a false claim of my own.**
+
+*The `t.Setenv` race did not exist.* Five places in this branch asserted that a serial test
+writing `TEST_DATABASE_URL` "races the package's PARALLEL tests" reading it through `DSN()`.
+It does not: `go test` runs top-level parallel tests only after every serial test finishes, so
+the `Setenv` window cannot overlap them — which is why this package's own
+`TestSafeDSNErrReadsTheConfiguredDSN` is correct under exactly that pattern. Measured with a
+purpose-built package: a serial `t.Setenv` test holding a 300 ms window against three parallel
+readers polling for overlap produced **zero overlaps**.
+
+The isolation rationale for `SafeDSNErrFor` survives intact; only the mechanism was wrong. The
+real cost of `Setenv` here is the ORDERING CONSTRAINT — every redaction test had to be serial —
+which is sufficient reason for the argument form and is what the comments now say. Corrected in
+`dbtest.go`, `connect_redaction_test.go`, the concept, and both log fragments. Notably, one of
+those fragments had *corrected a bot's false mechanism and then asserted its own*, which is the
+same failure one layer up.
+
+*A comment described a superseded implementation.* `TestSafeDSNErrRedactsAWrappedMigratorError`
+called the `*url.Error` path "the unwrap arm". `SafeDSNErr` does not unwrap that cause and
+re-render it — `errors.As` finds it through the wrapper and the whole error is DISCARDED for
+`dsnUnparseableMsg`, which is the point, since a `*url.Error`'s text quotes the fragment it
+choked on and that fragment can carry the credential. Now "the discard arm".
+
+*The guard still had a name heuristic.* `liveDSNArg` asked whether an argument was literally
+spelled `dsn`, so `databaseURL := dbtest.DSN()` passed to `withDatabase` made the call
+invisible; a raw `%v` of its error then passed while the other sites held all three coverage
+counters nonzero. Reproduced before fixing. `dsnCarriers` now computes the carrier set by data
+flow — seeded from `DSN()` calls and from the string parameters of functions that perform a
+DSN-bearing call, propagated through assignment — and both bypasses fail: the aliased raw
+format is caught by question 1, the renamed parameter by question 2.
+
+That is the third spelling-based heuristic this guard has shed (after `bareErrArgs` on `err`
+and the line-window scans). The six mutations are now enumerated in the test's doc comment so
+the next change to it can be checked against the ones that already fooled a version of it.

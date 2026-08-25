@@ -645,7 +645,10 @@ func TestSafeDSNErrKeepsCredentialsOutOfOutput(t *testing.T) {
 //
 // migrate.NewWithSourceInstance reaches database.Open, which parses the URL and wraps the
 // resulting *url.Error as "failed to open database: parse %q: ...". errors.As still finds
-// it, so the unwrap arm handles this too — but the wrapper text is what a reader sees, and
+// it through the wrapper, so the DISCARD arm handles this too: SafeDSNErr does not unwrap
+// the cause and re-render it, it drops the whole error and returns dsnUnparseableMsg —
+// which is the point, since a *url.Error's own text quotes the fragment it choked on and
+// that fragment can carry the credential. The wrapper text is what a reader sees, and
 // this pins that the credential does not ride along inside it.
 func TestSafeDSNErrRedactsAWrappedMigratorError(t *testing.T) {
 	t.Parallel()
@@ -1261,6 +1264,23 @@ func TestSafeDSNErrWithholdsFallbackHosts(t *testing.T) {
 // explicit one. The identifier that differed was the one that leaked.
 //
 //  1. Is the error rendered through a redactor at all, rather than with %v?
+//
+// Its mutation coverage, recorded because each of these once PASSED against an earlier
+// version of this guard and every one of those versions looked correct:
+//
+//   - `%v` in place of a redactor                       -> question 1
+//   - SafeDSNErr where the call used an explicit DSN    -> question 2
+//   - SafeDSNErrFor handed dbtest.DSN() instead of dsn  -> question 2 (right fn, wrong arg)
+//   - renaming the `dsn` parameter to `databaseURL`     -> defeated the name-based version
+//   - `databaseURL := dbtest.DSN()` aliased into
+//     withDatabase, then formatted with `%v`            -> defeated the name-based liveDSNArg
+//   - forcing every pairing onto the environment branch -> explicitPairs self-test
+//
+// Three of those six turned on SPELLING, which is why nothing in this guard is allowed to
+// ask what an identifier is called: bareErrArgs takes the identifier the call BOUND,
+// dsnCarriers is computed by data flow, and the expected DSN is read from the call's own
+// argument.
+//
 //  2. Does the redactor compare against the DSN the failing call actually USED? The
 //     expected value is read from the DSN-bearing call's own argument, so it does not
 //     depend on what any parameter is spelled. A call that used the environment's DSN()
@@ -1319,17 +1339,106 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		return ""
 	}
 
+	// dsnCarriers holds every identifier in the file that carries a live DSN, computed by
+	// DATA FLOW rather than by spelling.
+	//
+	// The seed is a call to DSN() or a function parameter whose type is string in a
+	// function that also performs a DSN-bearing call; from there assignment propagates.
+	// The name-based version this replaces asked whether an identifier was literally
+	// spelled `dsn`, which is the same spelling heuristic this guard has now been burned
+	// by three times: `databaseURL := dbtest.DSN()` followed by
+	// withDatabase(databaseURL, name) made the call invisible, and a raw %v of its error
+	// passed the guard while the other sites held every coverage counter above zero.
+	// Verified against this file before the rewrite.
+	dsnCarriers := map[string]bool{}
+	for {
+		grew := false
+		mark := func(name string) {
+			if name != "" && name != "_" && !dsnCarriers[name] {
+				dsnCarriers[name] = true
+				grew = true
+			}
+		}
+		// carriesDSN reports whether an expression evaluates to a live DSN: a DSN() call,
+		// an identifier already known to carry one, or a rewrite over either.
+		var carriesDSN func(ast.Expr) bool
+		carriesDSN = func(e ast.Expr) bool {
+			switch x := e.(type) {
+			case *ast.Ident:
+				return dsnCarriers[x.Name]
+			case *ast.CallExpr:
+				if strings.HasSuffix(selName(x.Fun), ".DSN") || selName(x.Fun) == "DSN" {
+					return true
+				}
+				// A rewrite (migrateURL, withDatabase) carries a DSN if any argument does.
+				for _, a := range x.Args {
+					if carriesDSN(a) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch st := n.(type) {
+			case *ast.AssignStmt:
+				// x := <dsn-valued expr>, positionally.
+				for i, rhs := range st.Rhs {
+					if i < len(st.Lhs) && carriesDSN(rhs) {
+						if id, ok := st.Lhs[i].(*ast.Ident); ok {
+							mark(id.Name)
+						}
+					}
+				}
+			case *ast.FuncDecl:
+				// A string parameter of a function that itself performs a DSN-bearing
+				// call is handed a DSN by its callers. newMigrator(t, dsn) and
+				// schemaObjects(ctx, t, dsn) both qualify under any spelling.
+				if st.Type.Params == nil || st.Body == nil {
+					return true
+				}
+				performsDSNCall := false
+				ast.Inspect(st.Body, func(n ast.Node) bool {
+					if c, ok := n.(*ast.CallExpr); ok && dsnCalls[selName(c.Fun)] {
+						performsDSNCall = true
+					}
+					return !performsDSNCall
+				})
+				if !performsDSNCall {
+					return true
+				}
+				for _, f := range st.Type.Params.List {
+					if id, ok := f.Type.(*ast.Ident); !ok || id.Name != "string" {
+						continue
+					}
+					for _, nm := range f.Names {
+						mark(nm.Name)
+					}
+				}
+			}
+			return true
+		})
+		if !grew {
+			break
+		}
+	}
+
 	// withDatabase is DSN-bearing only when it is handed the CONFIGURED DSN. The
 	// table-driven test at TestWithDatabase feeds it hardcoded literals ("u:p@h"), whose
 	// echo leaks nothing, and flagging those would train the reader to ignore this guard.
-	// So it qualifies by argument, not by name.
+	// So it qualifies by argument, not by name -- and "is this argument a DSN" is now
+	// answered from dsnCarriers rather than from how the identifier is spelled.
 	liveDSNArg := func(call *ast.CallExpr) bool {
 		for _, a := range call.Args {
-			if c, ok := a.(*ast.CallExpr); ok && strings.HasSuffix(selName(c.Fun), ".DSN") {
-				return true
-			}
-			if id, ok := a.(*ast.Ident); ok && id.Name == "dsn" {
-				return true
+			switch x := a.(type) {
+			case *ast.CallExpr:
+				if strings.HasSuffix(selName(x.Fun), ".DSN") || selName(x.Fun) == "DSN" {
+					return true
+				}
+			case *ast.Ident:
+				if dsnCarriers[x.Name] {
+					return true
+				}
 			}
 		}
 		return false

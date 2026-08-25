@@ -77,10 +77,20 @@ with parallel ancestors. Bugbot caught the immediate symptom: subtests still cal
 Its stated mechanism was wrong — it claimed `Parallel` walks ancestors for `denyParallel`
 and that the suite panics. Checking `testing.go`: `Setenv` sets `denyParallel` on `t` ALONE,
 `Parallel` tests only its own `t`, and the ancestor walk runs the other way (`Setenv` looks
-UP for `isParallel`). Nothing panicked, and the suite was green. The conclusion was right
-anyway, for a reason it did not give: a serial test that sets the variable runs concurrently
-with this file's PARALLEL tests, which read the same variable through `DSN()`. `Cleanup`
-restores it, so the window is invisible in a green run and would surface only as a flake.
+UP for `isParallel`). Nothing panicked, and the suite was green.
+
+**Correction (2026-08-25).** This entry then asserted its own false mechanism in place of the
+bot's: that a serial test setting the variable "runs concurrently with this file's PARALLEL
+tests". It does not. `go test` runs top-level parallel tests only after every serial test has
+finished, so the `Setenv` window cannot overlap the parallel readers of `DSN()` —
+`TestSafeDSNErrReadsTheConfiguredDSN` depends on exactly that and is correct. Measured with a
+purpose-built package (a serial `t.Setenv` test holding a 300 ms window against three parallel
+readers polling for overlap): **zero overlaps**.
+
+The real cost of `Setenv` here is the ordering constraint, not a race: every test of the
+redaction had to be serial, so one shared mutable input stood between this package and running
+those tests in parallel. That is a sufficient reason for the refactor below, and it is the
+accurate one.
 
 So the fix was to remove the shared mutable state rather than to serialise more tests.
 `SafeDSNErrFor(dsn, err)` takes the DSN explicitly and holds the logic; `SafeDSNErr(err)` is

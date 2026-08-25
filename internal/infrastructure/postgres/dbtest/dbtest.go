@@ -362,14 +362,19 @@ func SafeDSNErr(err error) string {
 // It exists because reading the environment is a property of the CALLER's convenience, not
 // of the redaction, and baking it in made the helper untestable without t.Setenv. Setenv
 // mutates process-global state and Go therefore forbids it in a test with parallel
-// ancestors, so every test of this behaviour had to be serial -- and, worse, a serial test
-// that sets TEST_DATABASE_URL runs concurrently with the package's PARALLEL tests, which
-// read the same variable through DSN(). Nothing detects that: the env var is restored by
-// Cleanup, so the window is invisible in a green run and would surface as a flake.
+// ancestors, so every test of this behaviour had to be SERIAL -- one shared, mutable input
+// standing between the package and running its redaction tests in parallel.
+//
+// That serialisation is safe, and it is worth being precise about why, because an earlier
+// version of this comment claimed otherwise: `go test` runs top-level parallel tests only
+// after every serial one has finished, so a serial Setenv window does NOT overlap the
+// parallel tests that read the same variable through DSN(). TestSafeDSNErrReadsTheConfiguredDSN
+// relies on exactly that and is correct. The cost of Setenv here is the ordering constraint,
+// not a race.
 //
 // Taking the DSN as an argument removes the shared mutable state from the question
-// entirely. The tests pass the value they mean and never touch the environment; the harness
-// keeps its one-argument convenience.
+// entirely. The tests pass the value they mean, never touch the environment, and can all
+// run in parallel; the harness keeps its one-argument convenience.
 func SafeDSNErrFor(dsn string, err error) string {
 	if err == nil {
 		return "<nil>"
