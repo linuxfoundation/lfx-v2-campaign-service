@@ -1030,10 +1030,17 @@ func TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 		// uncoalesced case) or the deadline proves they cannot (the coalesced case, where the
 		// other 15 are parked in the singleflight and will never arrive).
 		if len(entered) < callers {
+			// stop ends whichever arm loses: the poller must not outlive this construction,
+			// and the timer must not outlive it either. Without this both leak per build, and
+			// under -count they accumulate across iterations for the rest of the package run.
+			stop := make(chan struct{})
+			deadline := time.NewTimer(150 * time.Millisecond)
 			select {
-			case <-time.After(150 * time.Millisecond):
-			case <-allEntered(entered, callers):
+			case <-deadline.C:
+			case <-allEntered(entered, callers, stop):
 			}
+			close(stop)
+			deadline.Stop()
 		}
 	}
 	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0), countingOpt)
@@ -1094,12 +1101,20 @@ func TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 
 // allEntered returns a channel closed once ch holds n items. Used to release the construction
 // barrier promptly in the UNCOALESCED case rather than always paying the timeout.
-func allEntered(ch chan struct{}, n int) <-chan struct{} {
+//
+// The caller MUST close stop once it no longer cares. On the coalesced path the count never
+// reaches n — the other callers are parked in the singleflight — so the poller would otherwise
+// spin on a 1ms sleep for the remainder of the package run, one more each -count iteration.
+func allEntered(ch chan struct{}, n int, stop <-chan struct{}) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for len(ch) < n {
-			time.Sleep(time.Millisecond)
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Millisecond):
+			}
 		}
 	}()
 	return done
