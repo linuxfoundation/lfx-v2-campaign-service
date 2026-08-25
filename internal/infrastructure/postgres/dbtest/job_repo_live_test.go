@@ -27,10 +27,15 @@ const (
 	pgerrcodeCheckViolation      = "23514"
 )
 
-// The job repository's status transitions have been asserted only over SQL source text.
-// job_retention_live_test.go does drive PruneTerminalJobs live, but the transitions that
-// PUT a job into a terminal state — CreateJob, UpdateJobStatus, FailStuckJobs — and the
-// tenant-scoped GetJob read are never invoked against a live database.
+// The job repository had no repository-level test at all before this file. job_repo_test.go
+// covers only the retention surface — terminalJobStatuses against the domain vocabulary,
+// pruneTerminalJobsQuery's allow-list, DefaultJobRetention — and job_retention_live_test.go
+// drives PruneTerminalJobs live. CreateJob, GetJob, UpdateJobStatus and FailStuckJobs were
+// exercised only through service-level fakes and had never been run against PostgreSQL.
+//
+// (That is a different gap from the brief repository's, whose statements at least had
+// source-text assertions in brief_repo_test.go. The two are worth keeping apart: the shared
+// fact is only that no statement in either repo had met the real schema.)
 //
 // Two things here are only observable live. First, campaign_jobs.status carries a CHECK
 // constraint listing the five legal values; a status the Go vocabulary allows but the
@@ -66,9 +71,11 @@ func TestLiveCreateAndGetJobRoundTrip(t *testing.T) {
 	if job.BriefID != briefID {
 		t.Errorf("job brief_id = %q, want %q", job.BriefID, briefID)
 	}
-	// A fresh job has neither a result nor an error. nullBytes/nullStr map the empty
-	// values to SQL NULL, and scanJob must bring them back as zero values rather than
-	// failing to scan a NULL into a non-pointer destination.
+	// A fresh job has neither a result nor an error. CreateJob's INSERT names only brief_id,
+	// so these are SQL NULL because the omitted nullable columns default to it — not via
+	// nullBytes/nullStr, which this path never calls (UpdateJobStatus is where those run).
+	// What is under test here is scanJob: it must bring both NULLs back as zero values
+	// rather than failing to scan a NULL into a non-pointer destination.
 	if len(job.Result) != 0 {
 		t.Errorf("new job result = %s, want empty", job.Result)
 	}
@@ -333,10 +340,15 @@ func TestLiveUpdateJobStatusRejectsAStatusOutsideTheCheckConstraint(t *testing.T
 // own body, and the package runs sequentially. That is a property of the current schedule, not
 // a guarantee — this package already calls t.Parallel elsewhere (migrate_down_live_test.go).
 //
-// So this test cleans up after itself: every JOB it creates is deleted on exit, and the count
-// assertion is expressed as a delta over rows this test owns rather than as a table-wide
-// total. Both halves matter — the cleanup keeps this test from breaking others, and the delta
-// keeps others from breaking this one.
+// So this test cleans up after itself: every JOB it creates is deleted on exit. That is the
+// half that keeps this test from breaking others.
+//
+// The other direction — another test's leftovers breaking this one — is handled by where the
+// evidence sits, not by the count. The returned count is checked only as a FLOOR (at least
+// this test's two stuck rows), because a table-wide sweep can legitimately return more; it
+// cannot distinguish which rows moved. The binding assertions are the per-row checks below,
+// which name each of this test's four rows and the state it must be in. A leftover row
+// elsewhere raises the count and changes nothing those assertions read.
 func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
