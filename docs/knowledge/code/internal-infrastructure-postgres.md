@@ -1063,15 +1063,26 @@ So the brief statements were pinned as *text* and the job methods were pinned as
 against a fake*, and in both cases the question "does PostgreSQL accept this, against this
 schema" went unasked.
 
-What makes these worth running live is that **every brief write is a guarded UPDATE whose
-failure mode is invisible in its own statement text.** A gate that matches no row returns
-`pgx.ErrNoRows` whether the brief is MISSING or merely STALE, and `classifyNoRowTx` re-reads
-the table through the SAME transaction to decide which — so a dropped `AND version=$n`, a
-transposed placeholder, or a classifier answering the wrong sentinel all leave the regexes
-green while telling a client holding a stale ETag that their brief was deleted. `ReplaceBrief`
-additionally has a second, separate error arm: renaming a brief onto a slug another live brief
-holds raises 23505 rather than `ErrNoRows`, exiting through `isUniqueViolation` instead of the
-classifier. Both arms are now driven.
+What makes these worth running live is that **the two VERSION-GATED writes — `ReplaceBrief`
+and `Approve` — have a failure mode invisible in their own statement text.** They are the only
+methods that call `classifyNoRowTx`, and they need it because their gate matches no row whether
+the brief is MISSING or merely STALE, both of which surface identically as `pgx.ErrNoRows`. The
+classifier re-reads the table through the SAME transaction to decide which, so a dropped
+`AND version=$n`, a transposed placeholder, or a classifier answering the wrong sentinel all
+leave the regexes green while telling a client holding a stale ETag that their brief was
+deleted.
+
+The other two writes are shaped differently and are worth distinguishing, because assuming the
+classifier is universal is how a reader ends up looking for it in the wrong place.
+`CreateBrief` is an INSERT: it has no gate at all, and its only error mapping is
+`isUniqueViolation` → `ErrConflict` on the partial unique `(project_id, event_slug)`.
+`ArchiveBrief` is a guarded UPDATE but is NOT version-gated — its guard is
+`status <> 'archived'` — so a no-row result has one meaning and it maps straight to
+`ErrNotFound` without consulting the classifier.
+
+`ReplaceBrief` additionally has a second error arm the version gate cannot reach: renaming a
+brief onto a slug another live brief holds raises 23505 rather than `ErrNoRows`, exiting
+through `isUniqueViolation` instead of the classifier. Both of its arms are now driven.
 
 Two further brief behaviours are pinned because nothing else could see them. `ReplaceBrief`
 resets `status='draft'` and clears the approver, so edited copy cannot inherit a prior sign-off

@@ -23,12 +23,19 @@ import (
 // accepts the statement, whether the Go argument list still lines up with the
 // placeholders, or whether the version gate actually gates anything.
 //
-// It is a live gap with teeth here specifically because every brief write is a GUARDED
-// UPDATE that reports "no row matched" by returning pgx.ErrNoRows, which the repo then
-// re-interprets through classifyNoRowTx into either ErrNotFound or ErrPreconditionFailed.
-// Nothing about that re-interpretation is visible in the statement text: an off-by-one in
-// the placeholder numbering, a dropped `AND version=$n`, or a classifier that answered
-// the wrong sentinel would all leave the source regexes green.
+// It is a live gap with teeth here specifically because the two VERSION-GATED writes —
+// ReplaceBrief and Approve, the only callers of classifyNoRowTx — report "no row matched"
+// by returning pgx.ErrNoRows whether the brief is MISSING or merely STALE, and the repo
+// re-interprets that into either ErrNotFound or ErrPreconditionFailed. Nothing about the
+// re-interpretation is visible in the statement text: an off-by-one in the placeholder
+// numbering, a dropped `AND version=$n`, or a classifier that answered the wrong sentinel
+// would all leave the source regexes green.
+//
+// The other two writes are shaped differently, and conflating them with the gated pair
+// sends a reader looking for a classifier that is not there. CreateBrief is an INSERT with
+// no gate, mapping only a unique violation to ErrConflict. ArchiveBrief is a guarded
+// UPDATE but guards on `status <> 'archived'` rather than on version, so its no-row result
+// has one meaning and maps straight to ErrNotFound.
 //
 // These tests drive the real repo methods against the real table.
 

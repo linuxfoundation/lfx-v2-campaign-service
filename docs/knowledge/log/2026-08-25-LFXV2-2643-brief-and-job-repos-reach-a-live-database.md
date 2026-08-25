@@ -23,12 +23,19 @@ over `dbtest/`, which returned **0 for all nine methods**.
 
 ## What only a live database can see here
 
-Every brief write is a guarded UPDATE whose failure mode is invisible in its own statement
-text. A gate matching no row returns `pgx.ErrNoRows` whether the brief is MISSING or STALE, and
-`classifyNoRowTx` re-reads through the same transaction to decide which. A dropped
-`AND version=$n`, a transposed placeholder, or a classifier answering the wrong sentinel all
+The two VERSION-GATED writes — `ReplaceBrief` and `Approve`, the only callers of
+`classifyNoRowTx` — have a failure mode invisible in their own statement text. Their gate
+matches no row whether the brief is MISSING or STALE, both surfacing as `pgx.ErrNoRows`, so the
+classifier re-reads through the same transaction to decide which. A dropped `AND version=$n`, a
+transposed placeholder, or a classifier answering the wrong sentinel all
 leave the regexes green — while telling a client holding a stale ETag that their brief was
 deleted, which is the difference between a recoverable 412 and a dead end.
+
+The other two writes are shaped differently, and it is worth being precise rather than saying
+"every brief write": `CreateBrief` is an INSERT with no gate, mapping only 23505 → `ErrConflict`;
+`ArchiveBrief` is guarded on `status <> 'archived'` rather than on version, so its no-row result
+has a single meaning and goes straight to `ErrNotFound` without the classifier. Assuming the
+classifier is universal is how the next reader ends up looking for it where it is not.
 
 `ReplaceBrief` has a SECOND error arm that no version-gate test can reach: renaming a brief onto
 a slug another live brief holds raises 23505, exiting through `isUniqueViolation` rather than
