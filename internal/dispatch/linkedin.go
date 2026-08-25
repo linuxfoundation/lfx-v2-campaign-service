@@ -198,12 +198,30 @@ type linkedinConfig struct {
 // LinkedInDispatcher creates LinkedIn campaigns for the orchestrator.
 type LinkedInDispatcher struct {
 	creds *credsSource
-	opts  []linkedin.Option
+	// clients caches the built *linkedin.Client per connection, exactly as RedditDispatcher and
+	// MicrosoftDispatcher do. Wired by LFXV2-3033.
+	//
+	// The benefit is primarily ALLOCATION rather than a saved token round-trip on the common
+	// path: LinkedIn is handed an already-minted bearer token and performs no exchange at
+	// construction. It is not purely allocation either — the client DOES own a token cache and
+	// refreshes when a refresh token is configured (token.go accessTokenValue/fetchToken), so a
+	// rebuilt client discards that cache. The wiring test therefore asserts client IDENTITY,
+	// which holds either way, rather than a token hit count that would depend on the fixture.
+	//
+	// Sharing one instance across concurrent callers is safe for this client specifically: every
+	// field written after construction — the cached access token and its expiry, the adopted
+	// rotated refresh token and its expiry, and the in-flight single-flight handle — is written
+	// exclusively under c.tokenMu, which is never held across the network call, and no method
+	// stores per-call state on the receiver. c.creds and c.cfg are written once at construction
+	// and read-only thereafter. That is the same mutex-guarded property Reddit and Microsoft
+	// rely on, verified against this client rather than inherited from them.
+	clients *clientCache
+	opts    []linkedin.Option
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
 func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linkedin.Option) *LinkedInDispatcher {
-	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for LinkedIn.
@@ -353,6 +371,48 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
 }
 
+// cachedLinkedInClient returns the client for this connection, building it only when there is no
+// live entry for the row identity the credential just resolved from.
+//
+// Shared by the TOGGLE and METRICS paths, which build an IDENTICAL client: both scope their work
+// to the connection's own account, so the RuntimeConfig reduces to that single account. It is
+// built HERE rather than by each caller so the two cannot drift into different configs behind one
+// cache key — a shared key with divergent construction is how a cache starts serving one path's
+// client to another.
+//
+// Dispatch is deliberately NOT a caller. It builds a RuntimeConfig carrying DefaultOrgID and the
+// per-request TargetingProfiles/EmployerExclusions from the campaign config, so its client VARIES
+// per call under a cache key that does not; caching it here would let one campaign's targeting
+// serve another's. That is the same reason Google Ads' create path stays uncached.
+//
+// Entry validation is the credential's own (row id + version), so a rotation invalidates the
+// client in the same step that invalidates the credential; a stale client is a stale credential.
+func (d *LinkedInDispatcher) cachedLinkedInClient(projectID string, platform model.Provider, res *resolved, creds linkedinCreds, accountID string) *linkedin.Client {
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	build := func() *linkedin.Client {
+		runtime := linkedin.RuntimeConfig{
+			DefaultAccountID: accountID,
+			Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
+		}
+		return linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
+	}
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return build(), nil
+	})
+	if err != nil {
+		// Unreachable: the closure above never returns an error. Build directly rather than
+		// propagating, so this helper keeps its total signature.
+		return build()
+	}
+	client, isClient := built.(*linkedin.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return build()
+	}
+	return client
+}
+
 // ToggleStatus pauses or resumes an existing LinkedIn campaign on the platform. It resolves
 // the connection (active + access token; the toggle needs the account id but not the org id,
 // which is creation-only), builds the client, and CASCADES via UpdateCampaignAndCreativesStatus:
@@ -372,11 +432,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		return err
 	}
 	accountID := strings.TrimSpace(res.accountID)
-	runtime := linkedin.RuntimeConfig{
-		DefaultAccountID: accountID,
-		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
-	}
-	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
+	client := d.cachedLinkedInClient(projectID, platform, res, creds, accountID)
 	// Provenance BEFORE the mutation, and before the creative-servability question the client
 	// answers below. A campaign id is unique only within an ad account, so a connection
 	// re-pointed since create would address an unrelated campaign — and this path CHANGES
@@ -689,11 +745,7 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	}
 	accountID := strings.TrimSpace(res.accountID)
 
-	runtime := linkedin.RuntimeConfig{
-		DefaultAccountID: accountID,
-		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
-	}
-	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
+	client := d.cachedLinkedInClient(projectID, platform, res, creds, accountID)
 
 	// Prove the persisted campaign belongs to the account this read will be scoped to. The
 	// Ad Analytics finder is scoped by the sponsoredAccount URN built from accountID below,

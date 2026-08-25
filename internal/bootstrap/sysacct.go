@@ -448,11 +448,13 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //     stating which half is missing: X was excluded for the first half alone, so supplying
 //     it completed the pair without any change to the create path. X's toggle and metrics
 //     paths share the same validator and answer synchronously, so unlike Meta the naming is
-//     not log-only there. Its absence from this map is therefore a SEQUENCING decision, not
-//     a missing capability: adding it changes what this CLI accepts and belongs in its own
-//     commit. It is not the only member in that position — read the map for the current set
-//     rather than trusting this sentence to name the others, which is the mistake the note
-//     below is about.
+//     not log-only there. X was ADMITTED to this map in LFXV2-3319, in the same change that
+//     dropped Required("account_id") from TwitterAdsConnectionConfig — the two gates are
+//     separate and were relaxed together deliberately, because admitting only one leaves a
+//     provider credentials-first for the CLI and not over HTTP (or the reverse), which is
+//     half a flow. Eligibility is not admission, and members are not the only eligible
+//     providers — read the map for the current set rather than trusting this sentence to
+//     name the others, which is the mistake the note below is about.
 //   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
 //     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
 //     inline and answers an empty account id with a bare notCreated, so the create path names
@@ -486,8 +488,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // dispatcher including Reddit mentions that sentinel. Prefer adding a case to those tests over
 // correcting a member list here a fifth time.
 var accountDiscoveryProviders = map[model.Provider]bool{
-	model.ProviderGoogleAds: true,
-	model.ProviderMetaAds:   true,
+	model.ProviderGoogleAds:  true,
+	model.ProviderMetaAds:    true,
+	model.ProviderTwitterAds: true,
 }
 
 // requireAccountID checks the value about to be WRITTEN, for the same reason requireConfig

@@ -536,27 +536,28 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // this apart from a bad credential. The requirement the rule states is that a half-configured
 // connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
-// LinkedIn, Microsoft, Reddit and X keep Required("account_id"), but no longer all for the
+// LinkedIn, Microsoft and Reddit keep Required("account_id"), but no longer all for the
 // same reason, and the difference is what tells you how far each is from being relaxed.
 // Reddit still has NO list to choose from, so relaxing the requirement would create a
 // connection that can never be finished from inside this API: the operator has to obtain the
 // id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
-// Microsoft DO have a discovery endpoint as of LFXV2-3064, and X as of LFXV2-3319 — the list
-// exists. What blocks each differs, and two independent gates are easy to conflate here:
+// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists. What blocks each
+// differs, and two independent gates are easy to conflate here:
 //
 //   - THIS Required("account_id") gates the PUBLIC connection APIs. LinkedIn stays required
 //     because it lacks the second half — its create path resolves inline and answers a missing
 //     account id with a bare notCreated, so the choice is never named (paragraph above).
-//     Microsoft and X have both halves and are therefore behaviourally eligible to have it
-//     relaxed.
+//     Microsoft has both halves and is therefore behaviourally eligible to have it relaxed.
 //   - accountDiscoveryProviders (internal/bootstrap/sysacct.go) gates only whether an
-//     account-less SYSTEM row is installable by the bootstrap CLI. Neither Microsoft nor X is
-//     in it yet — that is a change to what the CLI accepts and belongs in its own commit.
+//     account-less SYSTEM row is installable by the bootstrap CLI.
 //
-// So the Microsoft and X exclusions here are a sequencing decision, not a missing capability; an
-// earlier version of this comment named the bootstrap map as its "other half", which
-// contradicted the paragraph above. Relaxing either gate without both halves is what the next
-// rule forbids.
+// BOTH gates are per-provider and must be relaxed TOGETHER to make a provider credentials-first;
+// relaxing only one leaves half the flow blocked, which is why X was carried across both in
+// LFXV2-3319. X is now credentials-first on both: it holds both halves (discovery from
+// LFXV2-3319, and a Dispatch that resolves through validateTwitterConnection and tags
+// ErrAccountNotSelected), so it no longer appears in the list above. Microsoft holds both halves
+// too and remains excluded from both gates — that exclusion is a sequencing decision, not a
+// missing capability. Relaxing either gate without both halves is what the next rule forbids.
 //
 // Add the requirement back for Google Ads or Meta, or drop it for another provider, only
 // together with that provider's discovery endpoint AND its account_not_selected tagging.
@@ -837,7 +838,16 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 		Pattern(`^[A-Za-z0-9]+$`)
 		MaxLength(64)
 	})
-	Required("account_id", "funding_instrument_id")
+	// account_id is deliberately NOT required (LFXV2-3319), making X credentials-first:
+	// a connection may be created with credentials only and pointed at an account after
+	// GET .../connection-twitter-ads/accounts enumerates the choices. X earned this by
+	// holding BOTH halves — discovery (twitter.ListAdAccounts / TwitterDispatcher.ListAccounts)
+	// and a create path that NAMES the missing choice, because Dispatch itself resolves
+	// through validateTwitterConnection, which tags an empty account id with
+	// domain.ErrAccountNotSelected. funding_instrument_id STAYS required: it has no
+	// discovery endpoint, so relaxing it would create a row nothing in this API could
+	// finish — exactly the objection that keeps Reddit's account_id required.
+	Required("funding_instrument_id")
 })
 
 var TwitterAdsConnection = Type("twitter-ads-connection", func() {

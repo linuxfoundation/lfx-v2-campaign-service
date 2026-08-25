@@ -293,7 +293,7 @@ func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *t
 		if _, err := s.UpdateTwitterAds(context.Background(), &conn.UpdateTwitterAdsPayload{
 			ProjectID: "cncf",
 			Config: &conn.TwitterAdsConnectionConfig{
-				Label: strPtr("CNCF X"), AccountID: "8r7gb", FundingInstrumentID: "lygyi",
+				Label: strPtr("CNCF X"), AccountID: strPtr("8r7gb"), FundingInstrumentID: "lygyi",
 			},
 			IfMatch: &ifMatch,
 		}); err != nil {

@@ -18,11 +18,14 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 )
 
-// This file covers the LFXV2-3033 extension of clientCache to Reddit and Microsoft. Google Ads
+// This file covers the LFXV2-3033 extension of clientCache to Reddit, Microsoft and — in the
+// second wave of the same ticket — Meta and LinkedIn. Google Ads
 // already had its own coverage in credcache_test.go; these are the two providers this change
 // wires, and each gets the same three properties the Google Ads client cache is held to:
 //
@@ -867,5 +870,137 @@ func TestClientCache_MicrosoftConcurrentDispatchSharesOneGeoCache(t *testing.T) 
 	}
 	if n := tokenHits.Load(); n != 1 {
 		t.Errorf("token endpoint hit %d times across %d concurrent dispatches, want 1", n, callers)
+	}
+}
+
+// metaCacheConn is redditCacheConn for Meta. page_id is carried because Dispatch requires it;
+// the toggle/metrics client this test exercises does not read it.
+func metaCacheConn(id, creds, accountID string, version int64) *model.Connection {
+	return &model.Connection{
+		ID:                   id,
+		Version:              version,
+		Provider:             model.ProviderMetaAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		ProviderConfig:       map[string]string{"page_id": "987654321"},
+		Status:               model.StatusActive,
+	}
+}
+
+// linkedinCacheConn is redditCacheConn for LinkedIn.
+func linkedinCacheConn(id, creds, accountID string, version int64) *model.Connection {
+	return &model.Connection{
+		ID:                   id,
+		Version:              version,
+		Provider:             model.ProviderLinkedInAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		ProviderConfig:       map[string]string{"org_id": "987654321"},
+		Status:               model.StatusActive,
+	}
+}
+
+// TestClientCache_MetaReusesClient pins the LFXV2-3033 wiring on the Meta toggle/metrics path:
+// repeated resolves of one unchanged connection hand back the SAME *meta.Client.
+//
+// It asserts client IDENTITY rather than a token hit count, and the difference from the
+// Reddit/Microsoft tests above is a property of the provider, not a weaker test. Meta is handed an
+// already-minted bearer token and performs NO exchange at construction, so there is no token
+// endpoint to count — a count-based test would read 0 with and without the cache and prove
+// nothing. Identity is what the cache actually promises here.
+//
+// Reverting cachedMetaClient's body to a direct meta.NewClient(...) is a COMPILING change that
+// leaves the rest of the suite green; this is the test that fails.
+func TestClientCache_MetaReusesClient(t *testing.T) {
+	repo := &syncConnReader{row: metaCacheConn("conn-1", goodMetaCreds, "act_777", 1)}
+	d := NewMetaDispatcher(repo, identityEncryptor{})
+
+	var first *meta.Client
+	for i := range 5 {
+		res, creds, err := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+		if err != nil {
+			t.Fatalf("resolve #%d: %v", i, err)
+		}
+		c := d.cachedMetaClient("cncf", model.ProviderMetaAds, res, creds)
+		if i == 0 {
+			first = c
+			continue
+		}
+		if c != first {
+			t.Fatalf("resolve #%d returned a NEW client for an unchanged connection: the client "+
+				"cache is not being consulted on the Meta toggle/metrics path", i)
+		}
+	}
+}
+
+// TestClientCache_MetaRotationForcesRebuild is the invalidation contract on the Meta path: a
+// client built from credential version N must not survive a bump to N+1. Without it the reuse
+// test above would be satisfied by a cache that never invalidates, which would serve a revoked
+// credential through a live client.
+func TestClientCache_MetaRotationForcesRebuild(t *testing.T) {
+	repo := &syncConnReader{row: metaCacheConn("conn-1", goodMetaCreds, "act_777", 1)}
+	d := NewMetaDispatcher(repo, identityEncryptor{})
+
+	res, creds, err := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+	first := d.cachedMetaClient("cncf", model.ProviderMetaAds, res, creds)
+
+	repo.row = metaCacheConn("conn-1", `{"AccessToken":"rotated"}`, "act_777", 2)
+	res2, creds2, err := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("resolve after rotation: %v", err)
+	}
+	if c := d.cachedMetaClient("cncf", model.ProviderMetaAds, res2, creds2); c == first {
+		t.Error("a rotated credential (version 1 -> 2) was served through the client built from " +
+			"the OLD one: the cache entry is not validated against the row version")
+	}
+}
+
+// TestClientCache_LinkedInReusesClient is TestClientCache_MetaReusesClient on the LinkedIn
+// toggle/metrics path, and asserts identity for the same reason: LinkedIn is handed an
+// already-minted bearer token and performs no exchange at construction on this fixture.
+func TestClientCache_LinkedInReusesClient(t *testing.T) {
+	repo := &syncConnReader{row: linkedinCacheConn("conn-1", goodLinkedInCreds, "123456789", 1)}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{})
+
+	var first *linkedin.Client
+	for i := range 5 {
+		res, creds, err := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+		if err != nil {
+			t.Fatalf("resolve #%d: %v", i, err)
+		}
+		c := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res, creds, res.accountID)
+		if i == 0 {
+			first = c
+			continue
+		}
+		if c != first {
+			t.Fatalf("resolve #%d returned a NEW client for an unchanged connection: the client "+
+				"cache is not being consulted on the LinkedIn toggle/metrics path", i)
+		}
+	}
+}
+
+// TestClientCache_LinkedInRotationForcesRebuild is the Meta rotation test on the LinkedIn path.
+func TestClientCache_LinkedInRotationForcesRebuild(t *testing.T) {
+	repo := &syncConnReader{row: linkedinCacheConn("conn-1", goodLinkedInCreds, "123456789", 1)}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{})
+
+	res, creds, err := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+	first := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res, creds, res.accountID)
+
+	repo.row = linkedinCacheConn("conn-1", `{"AccessToken":"rotated"}`, "123456789", 2)
+	res2, creds2, err := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("resolve after rotation: %v", err)
+	}
+	if c := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res2, creds2, res2.accountID); c == first {
+		t.Error("a rotated credential (version 1 -> 2) was served through the client built from " +
+			"the OLD one: the cache entry is not validated against the row version")
 	}
 }

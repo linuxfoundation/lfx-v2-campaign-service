@@ -526,6 +526,60 @@ func TestCreateMetaAds_WithoutAccountID(t *testing.T) {
 	}
 }
 
+// TestCreateTwitterAds_WithoutAccountID is the X counterpart, added by LFXV2-3319 alongside the
+// removal of Required("account_id") from TwitterAdsConnectionConfig.
+//
+// X earned this the way the bar demands — BOTH halves, not either: discovery
+// (twitter.ListAdAccounts / TwitterDispatcher.ListAccounts) plus a create path that NAMES the
+// missing choice, because Dispatch itself resolves through validateTwitterConnection, which tags
+// an empty account id with ErrAccountNotSelected. That is the Microsoft shape, not the LinkedIn
+// one, and it is why X could be relaxed while LinkedIn cannot.
+//
+// The assertions are the Google Ads three, plus the one X adds:
+//
+//  1. Accepted with the key OMITTED, which is the shape the bootstrap flow sends. Goa enforces
+//     Required at the transport layer as a presence check on the JSON key, so an explicit
+//     `"account_id": ""` always got through and only OMISSION distinguishes the loosened
+//     contract from the old one.
+//  2. status is ACTIVE. validateTwitterConnection refuses a non-active connection, so any other
+//     status would make GET .../connection-twitter-ads/accounts unreachable and dead-end the
+//     bootstrap at step two.
+//  3. account_id round-trips as "".
+//  4. funding_instrument_id is supplied because it stays Required, and that is the point rather
+//     than fixture noise: it has NO discovery endpoint, so relaxing it would create a row nothing
+//     in this API could finish. Credentials-first defers the ACCOUNT choice only.
+func TestCreateTwitterAds_WithoutAccountID(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	res, err := s.CreateTwitterAds(context.Background(), &conn.CreateTwitterAdsPayload{
+		ProjectID: "cncf",
+		// AccountID is nil EXPLICITLY — the absence is the subject of this test.
+		Config: &conn.TwitterAdsConnectionConfig{
+			Label: strPtr("TLF Main"), AccountID: nil, FundingInstrumentID: "lygyi",
+		},
+		Credentials: &conn.TwitterAdsCredentials{
+			ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats",
+		},
+	})
+	if err != nil {
+		t.Fatalf("a credentials-only connection must be creatable: %v", err)
+	}
+	if res.AccountID != "" {
+		t.Errorf("account_id = %q, want the empty string", res.AccountID)
+	}
+	if res.Status != string(model.StatusActive) {
+		t.Errorf("status = %q, want %q — validateTwitterConnection refuses a non-active "+
+			"connection, so any other status would make the account unchoosable",
+			res.Status, model.StatusActive)
+	}
+	if !res.HasCredentials {
+		t.Error("expected has_credentials = true: the credentials are exactly what WAS supplied")
+	}
+	if res.FundingInstrumentID == nil || *res.FundingInstrumentID != "lygyi" {
+		t.Errorf("funding_instrument_id did not round-trip: %v — it stays Required because no "+
+			"discovery endpoint can supply it later", res.FundingInstrumentID)
+	}
+}
+
 // TestUpdateGoogleAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
 // credentials-first bootstrap, and the step the existing update tests never exercised: they
 // only cover missing and stale If-Match. Here the stored row is the state a POST-with-
@@ -1064,7 +1118,7 @@ func TestCreateConnection_UUIDProjectIDRejectedBeforeAnyWrite_AllProviders(t *te
 		{"twitter", func(s *ConnectionService, pid string) error {
 			_, err := s.CreateTwitterAds(context.Background(), &conn.CreateTwitterAdsPayload{
 				ProjectID:   pid,
-				Config:      &conn.TwitterAdsConnectionConfig{AccountID: "18ce54d4x5t"},
+				Config:      &conn.TwitterAdsConnectionConfig{AccountID: strPtr("18ce54d4x5t")},
 				Credentials: &conn.TwitterAdsCredentials{AccessToken: "at", AccessTokenSecret: "ats", ConsumerKey: "ck", ConsumerSecret: "cse"},
 			})
 			return err

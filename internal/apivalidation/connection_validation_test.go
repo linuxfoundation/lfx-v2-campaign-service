@@ -143,11 +143,21 @@ func TestValidateLinkedinAdsConnectionConfig(t *testing.T) {
 }
 
 // TestValidateTwitterAdsConnectionConfig guards the X/Twitter connection contract
-// (LFXV2-2642): account_id AND funding_instrument_id must both match ^[A-Za-z0-9]+$,
-// both Required, both MaxLength(64). Both are interpolated into the account-scoped
-// request path, so a malformed value stored on an active connection could redirect a
-// paid POST — validating here rejects it as a 4xx at creation instead of an async
-// dispatch failure.
+// (LFXV2-2642): account_id AND funding_instrument_id must both match ^[A-Za-z0-9]+$ and both
+// MaxLength(64). Both are interpolated into the account-scoped request path, so a malformed value
+// stored on an active connection could redirect a paid POST — validating here rejects it as a 4xx
+// at creation instead of an async dispatch failure.
+//
+// Only funding_instrument_id is still REQUIRED. LFXV2-3319 dropped Required("account_id") to make
+// X credentials-first, so an OMITTED account_id is now the legal bootstrap state — the connection
+// is created with credentials alone and pointed at an account after discovery enumerates the
+// choices. funding_instrument_id stays required because no discovery endpoint can supply it.
+//
+// The two halves are asserted separately on purpose, and the distinction is the whole point of
+// the change: Goa's Required is a presence check on the JSON KEY, so relaxing it makes ABSENCE
+// legal without making a malformed PRESENT value legal. "empty account_id" therefore still fails
+// (Pattern rejects ""), as do the slash and overlong cases — the injection guard that motivated
+// LFXV2-2642 is untouched. Only the missing-key case moved.
 func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -156,7 +166,7 @@ func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 		errSubstr string
 	}{
 		{name: "valid alphanumeric ids", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("lygyi")}},
-		{name: "missing account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
+		{name: "missing account_id is the credentials-first state", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi")}},
 		{name: "missing funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb")}, wantErr: true, errSubstr: "funding_instrument_id"},
 		{name: "empty account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp(""), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
 		{name: "empty funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("")}, wantErr: true, errSubstr: "funding_instrument_id"},

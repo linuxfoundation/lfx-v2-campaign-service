@@ -204,12 +204,16 @@ func forcedSystemAdsAccount() bool {
 //
 // currentAccountID is what the row ALREADY stores, and the guard fires on a CHANGE rather than
 // on presence, which is what makes the paragraph above true rather than aspirational. account_id
-// is Required on LinkedIn, Reddit, X and Microsoft (design/connection.go's Required("account_id")
-// on each config type, generated as a non-pointer string), so a caller editing only the label
-// MUST resend the id it already stored — PUT is a full replace and omitting it is not an option
-// the schema offers. A presence check therefore returned 400 for every update those four
-// providers can express, leaving their update endpoints dead while the flag is on, and forced
-// Google/Meta callers to CLEAR a selection to rename a connection. Worse, it destroyed the very
+// is still Required on LinkedIn, Reddit and Microsoft (design/connection.go's
+// Required("account_id") on each config type, generated as a non-pointer string), so a caller
+// editing only the label MUST resend the id it already stored — PUT is a full replace and
+// omitting it is not an option the schema offers. A presence check therefore returned 400 for
+// every update those providers can express, leaving their update endpoints dead while the flag is
+// on, and forced credentials-first callers to CLEAR a selection to rename a connection. X left
+// that group in LFXV2-3319 and is now credentials-first like Google Ads and Meta, so an omitted
+// account_id reaches this guard as "" — the both-empty no-op below, not a rejection. Do not read
+// the roster as the reason for the change-based check: it holds for a credentials-first provider
+// too, since re-sending a stored id must stay a no-op. Worse, a presence check destroyed the very
 // thing it exists to protect: the project's own pre-flag account selection, which a rollback
 // needs, could only be preserved by never touching the connection again.
 //

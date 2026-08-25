@@ -7675,7 +7675,7 @@ func unmarshalRedditAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsRe
 func unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsConnectionConfig(v *TwitterAdsConnectionConfigRequestBody) *lfxv2campaignserviceconnections.TwitterAdsConnectionConfig {
 	res := &lfxv2campaignserviceconnections.TwitterAdsConnectionConfig{
 		Label:               v.Label,
-		AccountID:           *v.AccountID,
+		AccountID:           v.AccountID,
 		FundingInstrumentID: *v.FundingInstrumentID,
 	}
 
