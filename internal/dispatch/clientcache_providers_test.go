@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
@@ -990,36 +991,118 @@ func TestClientCache_TwitterRotationForcesRebuild(t *testing.T) {
 // cannot see: N callers that ALL miss must build ONE client, not N. Without singleflight
 // coalescing a cold key behaves like no cache at all under a dispatch burst — and for X that
 // means N independent write pacers at the exact moment concurrency is highest.
+//
+// Three things here were arrived at by mutation rather than by reasoning, and all are
+// load-bearing. Each fixed a version of this test that passed against a singleflight-free
+// buildOnce:
+//
+//  1. It resolves ONCE up front and shares the result. Resolving per goroutine coalesces at
+//     decryptOnce FIRST, so the credential-cache leader completes its build and put before the
+//     followers reach buildOnce, which then serves them a WARM entry — the test was verifying
+//     the credential cache, not this one.
+//  2. It COUNTS CONSTRUCTIONS instead of comparing instance identity. Identity (what the
+//     Reddit/Microsoft/Meta versions assert) only detects a missing singleflight when the race
+//     is actually LOST. Those providers build a client that performs a token exchange, so their
+//     window is wide; twitter.NewClient is a struct literal with no I/O, so the leader's put
+//     beats every follower and all 16 receive the same instance either way.
+//  3. It BLOCKS INSIDE build() on a barrier. Counting alone was still only ~3/10 against the
+//     mutant, because without coalescing the leader's build+put still usually completes before
+//     the next caller calls get(). The counting Option runs inside twitter.NewClient, i.e.
+//     inside build(), i.e. inside the leader's critical section — so holding it there until
+//     every caller has arrived makes both outcomes deterministic. WITH coalescing exactly one
+//     build starts, the others block in the flight, and the barrier is released by the timeout
+//     path below. WITHOUT it all 16 enter build, the barrier fills immediately, and the count
+//     is 16.
 func TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 	const callers = 16
-	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1), barrier: callers}
-	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0))
+	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1)}
 
-	var mu sync.Mutex
-	seen := map[*twitter.Client]int{}
-	var wg sync.WaitGroup
+	// twitter.Option runs once per NewClient call, so it is an exact construction counter AND a
+	// hook inside the leader's critical section.
+	var (
+		builds  atomic.Int64
+		entered = make(chan struct{}, callers)
+	)
+	countingOpt := func(*twitter.Client) {
+		builds.Add(1)
+		entered <- struct{}{}
+		// Hold this construction open until either every caller has entered build (the
+		// uncoalesced case) or the deadline proves they cannot (the coalesced case, where the
+		// other 15 are parked in the singleflight and will never arrive).
+		if len(entered) < callers {
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-allEntered(entered, callers):
+			}
+		}
+	}
+	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0), countingOpt)
+
+	// Resolve once, off the same path resolveTwitterClient uses, so every caller enters
+	// cachedTwitterClient inside the cache-miss window together. No barrier on repo.Get: only
+	// one Get happens now, so an N-party barrier would deadlock waiting for arrivals that never
+	// come. The start channel aligns the callers on buildOnce, the window under test.
+	res, rerr := d.creds.resolveExisting(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCreationAccountID(twitterCacheCampaign("acc1")))
+	if rerr != nil {
+		t.Fatalf("pre-resolve: %v", rerr)
+	}
+	creds, accountID, verr := validateTwitterConnection("cncf", res)
+	if verr != nil {
+		t.Fatalf("pre-validate: %v", verr)
+	}
+	fundingID := strings.TrimSpace(res.providerConfig["funding_instrument_id"])
+
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		got []*twitter.Client
+	)
+	start := make(chan struct{})
 	for range callers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
-				twitterCacheCampaign("acc1"))
-			if err != nil {
-				t.Errorf("concurrent resolve: %v", err)
-				return
-			}
+			<-start
+			c := d.cachedTwitterClient("cncf", model.ProviderTwitterAds, res, creds, accountID, fundingID)
+			// The lock covers ONLY the append: holding it across anything else would serialize
+			// the callers and -race would observe no overlap.
 			mu.Lock()
-			seen[c]++
+			got = append(got, c)
 			mu.Unlock()
 		}()
 	}
+	close(start)
 	wg.Wait()
 
-	if len(seen) != 1 {
-		t.Errorf("%d concurrent cold-key resolves produced %d distinct clients, want 1 — each "+
-			"carries its own write pacer, so the account's 1 write/sec budget is multiplied by "+
-			"the burst size", callers, len(seen))
+	if n := builds.Load(); n != 1 {
+		t.Errorf("%d concurrent cold-key callers performed %d constructions, want 1 — buildOnce "+
+			"is not coalescing, so a dispatch burst builds one client per caller and each carries "+
+			"its own write pacer, multiplying the account's 1 write/sec budget by the burst size",
+			callers, n)
 	}
+	if len(got) != callers {
+		t.Fatalf("got %d clients, want %d", len(got), callers)
+	}
+	// Identity still has to hold: every caller must be handed the ONE client that was built.
+	for i, c := range got {
+		if c != got[0] {
+			t.Fatalf("caller %d received a different client instance despite a single construction", i)
+		}
+	}
+}
+
+// allEntered returns a channel closed once ch holds n items. Used to release the construction
+// barrier promptly in the UNCOALESCED case rather than always paying the timeout.
+func allEntered(ch chan struct{}, n int) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for len(ch) < n {
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	return done
 }
 
 // TestClientCache_TwitterDispatchUsesTheCachedClient pins the CREATE path specifically. The
