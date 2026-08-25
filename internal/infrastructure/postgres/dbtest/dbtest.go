@@ -17,6 +17,12 @@
 //
 // # Opting in
 //
+// The value must be a postgres:// or postgresql:// URL. That is not a rule this package
+// invents: postgres.Migrate rejects the keyword/value form ("host=h user=u dbname=d"), and
+// Pool runs it through connectAndMigrate before any live test body, so a keyword DSN fails
+// at the harness gate rather than inside a test. pgx itself accepts both forms -- which is
+// why dsnIdentifiersPresent parses both -- but the migration driver does not.
+//
 // Set TEST_DATABASE_URL to a database this package may FREELY MODIFY:
 //
 //	TEST_DATABASE_URL='postgres://postgres@127.0.0.1:5432/campaign_test?sslmode=disable' go test ./...

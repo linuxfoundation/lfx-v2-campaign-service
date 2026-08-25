@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
@@ -43,7 +44,19 @@ func migrateURL(t *testing.T, dsn string) string {
 			return "pgx5://" + after
 		}
 	}
-	t.Fatalf("%s must be a postgres:// or postgresql:// URL to drive a migrator", dbtest.EnvDatabaseURL)
+	// Unreachable in practice, and deliberately a Fatalf rather than a Skipf. The URL
+	// requirement is not introduced here: postgres.Migrate rejects keyword DSNs in
+	// production (pool.go, "keyword DSNs and the internal pgx5:// scheme are not
+	// supported"), and dbtest.Pool calls it through connectAndMigrate for EVERY live
+	// test in this package. So a keyword-form TEST_DATABASE_URL fails at the harness
+	// gate before any test body runs -- verified by pointing TEST_DATABASE_URL at
+	// `host=... user=... dbname=...` and watching an unrelated connection test fail with
+	// that same production message. Skipping here would therefore hide nothing a
+	// developer had not already been told, and would mask a genuine regression if the
+	// production parser ever widened without this keeping pace.
+	t.Fatalf("%s must be a postgres:// or postgresql:// URL to drive a migrator, which is "+
+		"the same form postgres.Migrate already requires of every live test in this "+
+		"package", dbtest.EnvDatabaseURL)
 	return ""
 }
 
@@ -896,6 +909,42 @@ func TestSafeDSNErrRedactsAWrappedMigratorError(t *testing.T) {
 // afterwards and connects to the original database anyway. A string assertion on the path
 // passes in exactly the case that is broken, so the assertion has to go through the same
 // parser the migrator uses.
+// TestKeywordDSNIsRejectedBeforeAnyTestBody pins WHERE the URL-only requirement lives, so
+// the next reader does not attribute it to the down-migration test.
+//
+// Review read migrateURL's Fatalf as a new, undocumented restriction introduced by that
+// test. It is neither new nor local: postgres.Migrate rejects the keyword/value form, and
+// dbtest.Pool runs it through connectAndMigrate for EVERY live test in this package, so a
+// keyword TEST_DATABASE_URL fails at the harness gate before any test body executes.
+//
+// pgx accepts both forms, which is exactly why dsnIdentifiersPresent parses both -- the
+// asymmetry is the migration driver's, and this test names it rather than leaving the two
+// facts to look contradictory.
+func TestKeywordDSNIsRejectedBeforeAnyTestBody(t *testing.T) {
+	t.Parallel()
+
+	const keyword = "host=127.0.0.1 port=5432 user=u dbname=d sslmode=disable" // secretlint-disable-line -- synthetic keyword-form DSN
+
+	// pgx parses it happily. If this ever fails, the premise below has changed.
+	if _, err := pgconn.ParseConfig(keyword); err != nil {
+		t.Fatalf("pgconn rejected the keyword form %q: %v; this test's whole point is that "+
+			"pgx accepts it while the migration driver does not", keyword, err)
+	}
+
+	// The migration path does not. This is the production rule, reached through the same
+	// call dbtest.Pool makes, so it applies to every live test rather than to one.
+	err := postgres.Migrate(keyword)
+	if err == nil {
+		t.Fatal("postgres.Migrate accepted a keyword DSN; if the production parser has " +
+			"widened, migrateURL in this file must widen with it or the down-migration " +
+			"test becomes the only thing rejecting a DSN the harness now allows")
+	}
+	if !strings.Contains(err.Error(), "postgres://") {
+		t.Errorf("postgres.Migrate = %v, want an error naming the required URL form; the "+
+			"harness contract in dbtest.go points operators at this message", err)
+	}
+}
+
 func TestWithDatabaseRepointsTheDSN(t *testing.T) {
 	t.Parallel()
 

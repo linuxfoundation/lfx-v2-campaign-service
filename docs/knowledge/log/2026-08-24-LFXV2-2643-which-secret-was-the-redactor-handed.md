@@ -359,3 +359,25 @@ so the length assertion independently rejects a passthrough and (2) is no longer
 between the test and a no-op. They are complementary. (2) catches a passthrough on IDENTITY
 rather than size; (3) LOCALISES a storage defect that (1) would also catch, but would report as
 ErrDecryptionFailed — "decryption is broken" when the defect is in the column.
+
+**Follow-up — a finding whose premise was false, kept as documentation.** Review read
+`migrateURL`'s Fatalf as an undocumented URL-only requirement introduced by the down-migration
+test, and asked for a skip or a keyword-form rewrite. Checked before acting, and the premise
+does not hold: `postgres.Migrate` rejects the keyword/value form in production
+(`pool.go`, "keyword DSNs and the internal pgx5:// scheme are not supported"), and
+`dbtest.Pool` runs it through `connectAndMigrate` for EVERY live test in this package.
+
+Measured: with `TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=... dbname=... sslmode=disable'`,
+an unrelated connection test — nothing to do with migrations — fails at the harness gate with
+that same production message. The restriction is neither new nor local to the new test, so
+skipping there would hide nothing a developer had not already been told, and would mask a
+regression if the production parser ever widened.
+
+No code behaviour changed. What was missing was the explanation: the harness contract in
+`dbtest.go` now states the URL requirement and where it comes from, `migrateURL`'s message says
+it is the same form `postgres.Migrate` already requires, and
+`TestKeywordDSNIsRejectedBeforeAnyTestBody` pins the pair of facts that look contradictory
+otherwise — pgx's `ParseConfig` ACCEPTS the keyword form (which is why `dsnIdentifiersPresent`
+parses both), while the migration driver does not. It fails if production widens without
+`migrateURL` keeping pace; verified by making `pool.go` accept keyword DSNs and watching it go
+red.
