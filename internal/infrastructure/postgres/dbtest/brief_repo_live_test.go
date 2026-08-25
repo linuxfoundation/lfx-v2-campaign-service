@@ -526,6 +526,41 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 	if _, err := repo.GetBrief(ctx, project, created.ID); err != nil {
 		t.Fatalf("GetBrief by the owning project: %v", err)
 	}
+
+	// The WRITES need the same coverage, and for a sharper reason: a read that lost its
+	// project predicate leaks a brief, but a WRITE that lost one lets any project edit or
+	// archive another project's brief by UUID alone. replaceBriefQuery and archiveBriefQuery
+	// each carry `project_id=$n`, and until these cases existed, replacing either with a
+	// typed tautology left the suite green — Approve was the only write whose tenancy was
+	// pinned.
+	edit := draftBrief(other, created.EventSlug)
+	edit.ID = created.ID
+	edit.Copy = json.RawMessage(`{"headline":"cross-tenant edit"}`)
+	edit.UpdatedBy = &model.Actor{Name: "Intruder"}
+	if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("ReplaceBrief from a foreign project = %v, want domain.ErrNotFound", err)
+	}
+	if _, err := repo.ArchiveBrief(ctx, other, created.ID, &model.Actor{Name: "Intruder"}, nil); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("ArchiveBrief from a foreign project = %v, want domain.ErrNotFound", err)
+	}
+
+	// Refusing is only half the claim: assert the owner's row is UNTOUCHED. A write that
+	// returned ErrNotFound while still having modified the row would satisfy the two
+	// assertions above and be the worse defect.
+	after, err := repo.GetBrief(ctx, project, created.ID)
+	if err != nil {
+		t.Fatalf("GetBrief after the refused cross-project writes: %v", err)
+	}
+	if after.Version != created.Version {
+		t.Errorf("version = %d after two refused cross-project writes, want %d unchanged", after.Version, created.Version)
+	}
+	if after.Status != model.BriefDraft {
+		t.Errorf("status = %q after a refused cross-project archive, want %q", after.Status, model.BriefDraft)
+	}
+	assertJSONEqual(t, "copy", after.Copy, `{"headline":"original"}`)
+	if after.UpdatedBy == nil || after.UpdatedBy.Name != "Ada Lovelace" {
+		t.Errorf("updated_by = %+v after a refused cross-project replace, want the original author", after.UpdatedBy)
+	}
 }
 
 // assertJSONEqual compares a jsonb column against expected JSON semantically. jsonb
