@@ -46,6 +46,11 @@ func FetchEventURLLfxV2CampaignServiceBriefsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/fetch-event-url", projectID)
 }
 
+// UploadCreativeAssetLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service upload-creative-asset HTTP endpoint.
+func UploadCreativeAssetLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets", projectID, briefID)
+}
+
 // CreateCampaignsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service create-campaigns HTTP endpoint.
 func CreateCampaignsLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns", projectID, briefID)

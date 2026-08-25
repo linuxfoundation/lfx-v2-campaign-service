@@ -33,6 +33,18 @@ type FetchEventURLRequestBody struct {
 	URL string `form:"url" json:"url" xml:"url"`
 }
 
+// UploadCreativeAssetRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP request body.
+type UploadCreativeAssetRequestBody struct {
+	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
+	// server-side and must match; the stored mime_type is the verified one.
+	ContentType string `form:"content_type" json:"content_type" xml:"content_type"`
+	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
+	// server-side; the decoded image must not exceed 30 MiB.
+	Bytes string `form:"bytes" json:"bytes" xml:"bytes"`
+}
+
 // CreateCampaignsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // request body.
@@ -248,6 +260,54 @@ type FetchEventURLResponseBody struct {
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them
 	ExtractedFrom *string `form:"extracted_from,omitempty" json:"extracted_from,omitempty" xml:"extracted_from,omitempty"`
+}
+
+// UploadCreativeAssetCreatedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetCreatedResponseBody struct {
+	// Creative asset UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
+	// Size of the stored image in bytes
+	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// UploadCreativeAssetOKResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetOKResponseBody struct {
+	// Creative asset UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
+	// Size of the stored image in bytes
+	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -546,6 +606,16 @@ type CreateBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // CreateBriefUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -603,6 +673,16 @@ type FindBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
 // body for the "NotFound" error.
 type FindBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FindBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "PayloadTooLarge" error.
+type FindBriefPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -672,6 +752,16 @@ type GetBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
+// body for the "PayloadTooLarge" error.
+type GetBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetBriefUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "Unauthorized" error.
@@ -729,6 +819,16 @@ type UpdateBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateBriefPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -818,6 +918,16 @@ type ApproveBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApproveBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ApproveBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ApproveBriefPreconditionFailedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
 // response body for the "PreconditionFailed" error.
@@ -901,6 +1011,16 @@ type DeleteBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type DeleteBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteBriefUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -964,10 +1084,93 @@ type FetchEventURLNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// FetchEventURLPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type FetchEventURLPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // FetchEventURLUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
 // response body for the "Unauthorized" error.
 type FetchEventURLUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "BadRequest" error.
+type UploadCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "Conflict" error.
+type UploadCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UploadCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UploadCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UploadCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "NotFound" error.
+type UploadCreativeAssetNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UploadCreativeAssetPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UploadCreativeAssetUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1021,6 +1224,16 @@ type CreateCampaignsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateCampaignsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateCampaignsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1090,6 +1303,16 @@ type AdoptCampaignNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// AdoptCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type AdoptCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // AdoptCampaignUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1147,6 +1370,16 @@ type GetCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type GetCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetCampaignPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1216,6 +1449,16 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetCampaignMetricsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetCampaignMetricsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetCampaignMetricsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1273,6 +1516,16 @@ type GetCampaignSettingsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
 // HTTP response body for the "NotFound" error.
 type GetCampaignSettingsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignSettingsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetCampaignSettingsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1342,6 +1595,16 @@ type GetBriefMetricsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetBriefMetricsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetBriefMetricsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetBriefMetricsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1405,6 +1668,16 @@ type GenerateEmailCopyNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GenerateEmailCopyPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GenerateEmailCopyPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GenerateEmailCopyUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1462,6 +1735,16 @@ type UpdateCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateCampaignPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1551,6 +1834,16 @@ type ToggleCampaignStatusNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ToggleCampaignStatusPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ToggleCampaignStatusPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ToggleCampaignStatusPreconditionFailedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "PreconditionFailed" error.
@@ -1634,6 +1927,16 @@ type ApplyKeywordActionsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApplyKeywordActionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ApplyKeywordActionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ApplyKeywordActionsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1691,6 +1994,16 @@ type DeleteCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type DeleteCampaignPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1774,6 +2087,16 @@ type GetJobInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "NotFound" error.
 type GetJobNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetJobPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
+// body for the "PayloadTooLarge" error.
+type GetJobPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2054,6 +2377,17 @@ func NewFetchEventURLRequestBody(p *lfxv2campaignservicebriefs.FetchEventURLPayl
 	return body
 }
 
+// NewUploadCreativeAssetRequestBody builds the HTTP request body from the
+// payload of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetRequestBody(p *lfxv2campaignservicebriefs.UploadCreativeAssetPayload) *UploadCreativeAssetRequestBody {
+	body := &UploadCreativeAssetRequestBody{
+		ContentType: p.ContentType,
+		Bytes:       p.Bytes,
+	}
+	return body
+}
+
 // NewCreateCampaignsRequestBody builds the HTTP request body from the payload
 // of the "create-campaigns" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2200,6 +2534,17 @@ func NewCreateBriefNotFound(body *CreateBriefNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewCreateBriefPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service create-brief endpoint PayloadTooLarge error.
+func NewCreateBriefPayloadTooLarge(body *CreateBriefPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewCreateBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
 // create-brief endpoint Unauthorized error.
 func NewCreateBriefUnauthorized(body *CreateBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
@@ -2288,6 +2633,17 @@ func NewFindBriefInternalServerError(body *FindBriefInternalServerErrorResponseB
 // find-brief endpoint NotFound error.
 func NewFindBriefNotFound(body *FindBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFindBriefPayloadTooLarge builds a lfx-v2-campaign-service-briefs service
+// find-brief endpoint PayloadTooLarge error.
+func NewFindBriefPayloadTooLarge(body *FindBriefPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -2390,6 +2746,17 @@ func NewGetBriefNotFound(body *GetBriefNotFoundResponseBody) *lfxv2campaignservi
 	return v
 }
 
+// NewGetBriefPayloadTooLarge builds a lfx-v2-campaign-service-briefs service
+// get-brief endpoint PayloadTooLarge error.
+func NewGetBriefPayloadTooLarge(body *GetBriefPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetBriefUnauthorized builds a lfx-v2-campaign-service-briefs service
 // get-brief endpoint Unauthorized error.
 func NewGetBriefUnauthorized(body *GetBriefUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
@@ -2478,6 +2845,17 @@ func NewUpdateBriefInternalServerError(body *UpdateBriefInternalServerErrorRespo
 // update-brief endpoint NotFound error.
 func NewUpdateBriefNotFound(body *UpdateBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateBriefPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service update-brief endpoint PayloadTooLarge error.
+func NewUpdateBriefPayloadTooLarge(body *UpdateBriefPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -2602,6 +2980,17 @@ func NewApproveBriefNotFound(body *ApproveBriefNotFoundResponseBody) *lfxv2campa
 	return v
 }
 
+// NewApproveBriefPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service approve-brief endpoint PayloadTooLarge error.
+func NewApproveBriefPayloadTooLarge(body *ApproveBriefPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewApproveBriefPreconditionFailed builds a lfx-v2-campaign-service-briefs
 // service approve-brief endpoint PreconditionFailed error.
 func NewApproveBriefPreconditionFailed(body *ApproveBriefPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
@@ -2685,6 +3074,17 @@ func NewDeleteBriefInternalServerError(body *DeleteBriefInternalServerErrorRespo
 // delete-brief endpoint NotFound error.
 func NewDeleteBriefNotFound(body *DeleteBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteBriefPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service delete-brief endpoint PayloadTooLarge error.
+func NewDeleteBriefPayloadTooLarge(body *DeleteBriefPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -2777,9 +3177,136 @@ func NewFetchEventURLNotFound(body *FetchEventURLNotFoundResponseBody) *lfxv2cam
 	return v
 }
 
+// NewFetchEventURLPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service fetch-event-url endpoint PayloadTooLarge error.
+func NewFetchEventURLPayloadTooLarge(body *FetchEventURLPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewFetchEventURLUnauthorized builds a lfx-v2-campaign-service-briefs service
 // fetch-event-url endpoint Unauthorized error.
 func NewFetchEventURLUnauthorized(body *FetchEventURLUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewUploadCreativeAssetCreativeAssetCreated builds a
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// result from a HTTP "Created" response.
+func NewUploadCreativeAssetCreativeAssetCreated(body *UploadCreativeAssetCreatedResponseBody) *lfxv2campaignservicebriefs.CreativeAsset {
+	v := &lfxv2campaignservicebriefs.CreativeAsset{
+		ID:        *body.ID,
+		ProjectID: *body.ProjectID,
+		BriefID:   *body.BriefID,
+		MimeType:  *body.MimeType,
+		ByteSize:  *body.ByteSize,
+		Checksum:  *body.Checksum,
+		Created:   body.Created,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetCreativeAssetOK builds a
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// result from a HTTP "OK" response.
+func NewUploadCreativeAssetCreativeAssetOK(body *UploadCreativeAssetOKResponseBody) *lfxv2campaignservicebriefs.CreativeAsset {
+	v := &lfxv2campaignservicebriefs.CreativeAsset{
+		ID:        *body.ID,
+		ProjectID: *body.ProjectID,
+		BriefID:   *body.BriefID,
+		MimeType:  *body.MimeType,
+		ByteSize:  *body.ByteSize,
+		Checksum:  *body.Checksum,
+		Created:   body.Created,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetBadRequest builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint BadRequest error.
+func NewUploadCreativeAssetBadRequest(body *UploadCreativeAssetBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetConflict builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint Conflict error.
+func NewUploadCreativeAssetConflict(body *UploadCreativeAssetConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service upload-creative-asset endpoint
+// ServiceUnavailable error.
+func NewUploadCreativeAssetServiceUnavailable(body *UploadCreativeAssetServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetInternalServerError builds a
+// lfx-v2-campaign-service-briefs service upload-creative-asset endpoint
+// InternalServerError error.
+func NewUploadCreativeAssetInternalServerError(body *UploadCreativeAssetInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetNotFound builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint NotFound error.
+func NewUploadCreativeAssetNotFound(body *UploadCreativeAssetNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service upload-creative-asset endpoint
+// PayloadTooLarge error.
+func NewUploadCreativeAssetPayloadTooLarge(body *UploadCreativeAssetPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetUnauthorized builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint Unauthorized error.
+func NewUploadCreativeAssetUnauthorized(body *UploadCreativeAssetUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
 	v := &lfxv2campaignservicebriefs.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2855,6 +3382,17 @@ func NewCreateCampaignsInternalServerError(body *CreateCampaignsInternalServerEr
 // create-campaigns endpoint NotFound error.
 func NewCreateCampaignsNotFound(body *CreateCampaignsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateCampaignsPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service create-campaigns endpoint PayloadTooLarge error.
+func NewCreateCampaignsPayloadTooLarge(body *CreateCampaignsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -2948,6 +3486,17 @@ func NewAdoptCampaignNotFound(body *AdoptCampaignNotFoundResponseBody) *lfxv2cam
 	return v
 }
 
+// NewAdoptCampaignPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service adopt-campaign endpoint PayloadTooLarge error.
+func NewAdoptCampaignPayloadTooLarge(body *AdoptCampaignPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewAdoptCampaignUnauthorized builds a lfx-v2-campaign-service-briefs service
 // adopt-campaign endpoint Unauthorized error.
 func NewAdoptCampaignUnauthorized(body *AdoptCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
@@ -3027,6 +3576,17 @@ func NewGetCampaignInternalServerError(body *GetCampaignInternalServerErrorRespo
 // get-campaign endpoint NotFound error.
 func NewGetCampaignNotFound(body *GetCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service get-campaign endpoint PayloadTooLarge error.
+func NewGetCampaignPayloadTooLarge(body *GetCampaignPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -3125,6 +3685,17 @@ func NewGetCampaignMetricsNotFound(body *GetCampaignMetricsNotFoundResponseBody)
 	return v
 }
 
+// NewGetCampaignMetricsPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service get-campaign-metrics endpoint PayloadTooLarge error.
+func NewGetCampaignMetricsPayloadTooLarge(body *GetCampaignMetricsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetCampaignMetricsUnauthorized builds a lfx-v2-campaign-service-briefs
 // service get-campaign-metrics endpoint Unauthorized error.
 func NewGetCampaignMetricsUnauthorized(body *GetCampaignMetricsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
@@ -3212,6 +3783,18 @@ func NewGetCampaignSettingsInternalServerError(body *GetCampaignSettingsInternal
 // service get-campaign-settings endpoint NotFound error.
 func NewGetCampaignSettingsNotFound(body *GetCampaignSettingsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service get-campaign-settings endpoint
+// PayloadTooLarge error.
+func NewGetCampaignSettingsPayloadTooLarge(body *GetCampaignSettingsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -3316,6 +3899,17 @@ func NewGetBriefMetricsNotFound(body *GetBriefMetricsNotFoundResponseBody) *lfxv
 	return v
 }
 
+// NewGetBriefMetricsPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service get-brief-metrics endpoint PayloadTooLarge error.
+func NewGetBriefMetricsPayloadTooLarge(body *GetBriefMetricsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetBriefMetricsUnauthorized builds a lfx-v2-campaign-service-briefs
 // service get-brief-metrics endpoint Unauthorized error.
 func NewGetBriefMetricsUnauthorized(body *GetBriefMetricsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
@@ -3392,6 +3986,17 @@ func NewGenerateEmailCopyInternalServerError(body *GenerateEmailCopyInternalServ
 // generate-email-copy endpoint NotFound error.
 func NewGenerateEmailCopyNotFound(body *GenerateEmailCopyNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service generate-email-copy endpoint PayloadTooLarge error.
+func NewGenerateEmailCopyPayloadTooLarge(body *GenerateEmailCopyPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -3478,6 +4083,17 @@ func NewUpdateCampaignInternalServerError(body *UpdateCampaignInternalServerErro
 // update-campaign endpoint NotFound error.
 func NewUpdateCampaignNotFound(body *UpdateCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service update-campaign endpoint PayloadTooLarge error.
+func NewUpdateCampaignPayloadTooLarge(body *UpdateCampaignPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -3589,6 +4205,18 @@ func NewToggleCampaignStatusInternalServerError(body *ToggleCampaignStatusIntern
 // service toggle-campaign-status endpoint NotFound error.
 func NewToggleCampaignStatusNotFound(body *ToggleCampaignStatusNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
+// PayloadTooLarge error.
+func NewToggleCampaignStatusPayloadTooLarge(body *ToggleCampaignStatusPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -3710,6 +4338,18 @@ func NewApplyKeywordActionsNotFound(body *ApplyKeywordActionsNotFoundResponseBod
 	return v
 }
 
+// NewApplyKeywordActionsPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service apply-keyword-actions endpoint
+// PayloadTooLarge error.
+func NewApplyKeywordActionsPayloadTooLarge(body *ApplyKeywordActionsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewApplyKeywordActionsUnauthorized builds a lfx-v2-campaign-service-briefs
 // service apply-keyword-actions endpoint Unauthorized error.
 func NewApplyKeywordActionsUnauthorized(body *ApplyKeywordActionsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
@@ -3771,6 +4411,17 @@ func NewDeleteCampaignInternalServerError(body *DeleteCampaignInternalServerErro
 // delete-campaign endpoint NotFound error.
 func NewDeleteCampaignNotFound(body *DeleteCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint PayloadTooLarge error.
+func NewDeleteCampaignPayloadTooLarge(body *DeleteCampaignPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -3884,6 +4535,17 @@ func NewGetJobInternalServerError(body *GetJobInternalServerErrorResponseBody) *
 // endpoint NotFound error.
 func NewGetJobNotFound(body *GetJobNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetJobPayloadTooLarge builds a lfx-v2-campaign-service-briefs service
+// get-job endpoint PayloadTooLarge error.
+func NewGetJobPayloadTooLarge(body *GetJobPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -4082,6 +4744,80 @@ func ValidateFetchEventURLResponseBody(body *FetchEventURLResponseBody) (err err
 	if body.ExtractedFrom != nil {
 		if !(*body.ExtractedFrom == "jsonld" || *body.ExtractedFrom == "opengraph" || *body.ExtractedFrom == "fallback") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.extracted_from", *body.ExtractedFrom, []any{"jsonld", "opengraph", "fallback"}))
+		}
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetCreatedResponseBody runs the validations defined
+// on Upload-Creative-AssetCreatedResponseBody
+func ValidateUploadCreativeAssetCreatedResponseBody(body *UploadCreativeAssetCreatedResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mime_type", "body"))
+	}
+	if body.ByteSize == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("byte_size", "body"))
+	}
+	if body.Checksum == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("checksum", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
+	}
+	if body.MimeType != nil {
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Created != nil {
+		if !(*body.Created == "true" || *body.Created == "false") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.created", *body.Created, []any{"true", "false"}))
+		}
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetOKResponseBody runs the validations defined on
+// Upload-Creative-AssetOKResponseBody
+func ValidateUploadCreativeAssetOKResponseBody(body *UploadCreativeAssetOKResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mime_type", "body"))
+	}
+	if body.ByteSize == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("byte_size", "body"))
+	}
+	if body.Checksum == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("checksum", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
+	}
+	if body.MimeType != nil {
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Created != nil {
+		if !(*body.Created == "true" || *body.Created == "false") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.created", *body.Created, []any{"true", "false"}))
 		}
 	}
 	return
@@ -4478,6 +5214,18 @@ func ValidateCreateBriefNotFoundResponseBody(body *CreateBriefNotFoundResponseBo
 	return
 }
 
+// ValidateCreateBriefPayloadTooLargeResponseBody runs the validations defined
+// on create-brief_PayloadTooLarge_response_body
+func ValidateCreateBriefPayloadTooLargeResponseBody(body *CreateBriefPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateCreateBriefUnauthorizedResponseBody runs the validations defined on
 // create-brief_Unauthorized_response_body
 func ValidateCreateBriefUnauthorizedResponseBody(body *CreateBriefUnauthorizedResponseBody) (err error) {
@@ -4546,6 +5294,18 @@ func ValidateFindBriefInternalServerErrorResponseBody(body *FindBriefInternalSer
 // ValidateFindBriefNotFoundResponseBody runs the validations defined on
 // find-brief_NotFound_response_body
 func ValidateFindBriefNotFoundResponseBody(body *FindBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFindBriefPayloadTooLargeResponseBody runs the validations defined on
+// find-brief_PayloadTooLarge_response_body
+func ValidateFindBriefPayloadTooLargeResponseBody(body *FindBriefPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4632,6 +5392,18 @@ func ValidateGetBriefNotFoundResponseBody(body *GetBriefNotFoundResponseBody) (e
 	return
 }
 
+// ValidateGetBriefPayloadTooLargeResponseBody runs the validations defined on
+// get-brief_PayloadTooLarge_response_body
+func ValidateGetBriefPayloadTooLargeResponseBody(body *GetBriefPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetBriefUnauthorizedResponseBody runs the validations defined on
 // get-brief_Unauthorized_response_body
 func ValidateGetBriefUnauthorizedResponseBody(body *GetBriefUnauthorizedResponseBody) (err error) {
@@ -4700,6 +5472,18 @@ func ValidateUpdateBriefInternalServerErrorResponseBody(body *UpdateBriefInterna
 // ValidateUpdateBriefNotFoundResponseBody runs the validations defined on
 // update-brief_NotFound_response_body
 func ValidateUpdateBriefNotFoundResponseBody(body *UpdateBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateBriefPayloadTooLargeResponseBody runs the validations defined
+// on update-brief_PayloadTooLarge_response_body
+func ValidateUpdateBriefPayloadTooLargeResponseBody(body *UpdateBriefPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -4810,6 +5594,18 @@ func ValidateApproveBriefNotFoundResponseBody(body *ApproveBriefNotFoundResponse
 	return
 }
 
+// ValidateApproveBriefPayloadTooLargeResponseBody runs the validations defined
+// on approve-brief_PayloadTooLarge_response_body
+func ValidateApproveBriefPayloadTooLargeResponseBody(body *ApproveBriefPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateApproveBriefPreconditionFailedResponseBody runs the validations
 // defined on approve-brief_PreconditionFailed_response_body
 func ValidateApproveBriefPreconditionFailedResponseBody(body *ApproveBriefPreconditionFailedResponseBody) (err error) {
@@ -4911,6 +5707,18 @@ func ValidateDeleteBriefNotFoundResponseBody(body *DeleteBriefNotFoundResponseBo
 	return
 }
 
+// ValidateDeleteBriefPayloadTooLargeResponseBody runs the validations defined
+// on delete-brief_PayloadTooLarge_response_body
+func ValidateDeleteBriefPayloadTooLargeResponseBody(body *DeleteBriefPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteBriefUnauthorizedResponseBody runs the validations defined on
 // delete-brief_Unauthorized_response_body
 func ValidateDeleteBriefUnauthorizedResponseBody(body *DeleteBriefUnauthorizedResponseBody) (err error) {
@@ -4988,9 +5796,111 @@ func ValidateFetchEventURLNotFoundResponseBody(body *FetchEventURLNotFoundRespon
 	return
 }
 
+// ValidateFetchEventURLPayloadTooLargeResponseBody runs the validations
+// defined on fetch-event-url_PayloadTooLarge_response_body
+func ValidateFetchEventURLPayloadTooLargeResponseBody(body *FetchEventURLPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateFetchEventURLUnauthorizedResponseBody runs the validations defined
 // on fetch-event-url_Unauthorized_response_body
 func ValidateFetchEventURLUnauthorizedResponseBody(body *FetchEventURLUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetBadRequestResponseBody runs the validations
+// defined on upload-creative-asset_BadRequest_response_body
+func ValidateUploadCreativeAssetBadRequestResponseBody(body *UploadCreativeAssetBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetConflictResponseBody runs the validations defined
+// on upload-creative-asset_Conflict_response_body
+func ValidateUploadCreativeAssetConflictResponseBody(body *UploadCreativeAssetConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetServiceUnavailableResponseBody runs the
+// validations defined on upload-creative-asset_ServiceUnavailable_response_body
+func ValidateUploadCreativeAssetServiceUnavailableResponseBody(body *UploadCreativeAssetServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetInternalServerErrorResponseBody runs the
+// validations defined on
+// upload-creative-asset_InternalServerError_response_body
+func ValidateUploadCreativeAssetInternalServerErrorResponseBody(body *UploadCreativeAssetInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetNotFoundResponseBody runs the validations defined
+// on upload-creative-asset_NotFound_response_body
+func ValidateUploadCreativeAssetNotFoundResponseBody(body *UploadCreativeAssetNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetPayloadTooLargeResponseBody runs the validations
+// defined on upload-creative-asset_PayloadTooLarge_response_body
+func ValidateUploadCreativeAssetPayloadTooLargeResponseBody(body *UploadCreativeAssetPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetUnauthorizedResponseBody runs the validations
+// defined on upload-creative-asset_Unauthorized_response_body
+func ValidateUploadCreativeAssetUnauthorizedResponseBody(body *UploadCreativeAssetUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5056,6 +5966,18 @@ func ValidateCreateCampaignsInternalServerErrorResponseBody(body *CreateCampaign
 // ValidateCreateCampaignsNotFoundResponseBody runs the validations defined on
 // create-campaigns_NotFound_response_body
 func ValidateCreateCampaignsNotFoundResponseBody(body *CreateCampaignsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateCampaignsPayloadTooLargeResponseBody runs the validations
+// defined on create-campaigns_PayloadTooLarge_response_body
+func ValidateCreateCampaignsPayloadTooLargeResponseBody(body *CreateCampaignsPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5142,6 +6064,18 @@ func ValidateAdoptCampaignNotFoundResponseBody(body *AdoptCampaignNotFoundRespon
 	return
 }
 
+// ValidateAdoptCampaignPayloadTooLargeResponseBody runs the validations
+// defined on adopt-campaign_PayloadTooLarge_response_body
+func ValidateAdoptCampaignPayloadTooLargeResponseBody(body *AdoptCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateAdoptCampaignUnauthorizedResponseBody runs the validations defined
 // on adopt-campaign_Unauthorized_response_body
 func ValidateAdoptCampaignUnauthorizedResponseBody(body *AdoptCampaignUnauthorizedResponseBody) (err error) {
@@ -5219,6 +6153,18 @@ func ValidateGetCampaignNotFoundResponseBody(body *GetCampaignNotFoundResponseBo
 	return
 }
 
+// ValidateGetCampaignPayloadTooLargeResponseBody runs the validations defined
+// on get-campaign_PayloadTooLarge_response_body
+func ValidateGetCampaignPayloadTooLargeResponseBody(body *GetCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetCampaignUnauthorizedResponseBody runs the validations defined on
 // get-campaign_Unauthorized_response_body
 func ValidateGetCampaignUnauthorizedResponseBody(body *GetCampaignUnauthorizedResponseBody) (err error) {
@@ -5287,6 +6233,18 @@ func ValidateGetCampaignMetricsInternalServerErrorResponseBody(body *GetCampaign
 // ValidateGetCampaignMetricsNotFoundResponseBody runs the validations defined
 // on get-campaign-metrics_NotFound_response_body
 func ValidateGetCampaignMetricsNotFoundResponseBody(body *GetCampaignMetricsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignMetricsPayloadTooLargeResponseBody runs the validations
+// defined on get-campaign-metrics_PayloadTooLarge_response_body
+func ValidateGetCampaignMetricsPayloadTooLargeResponseBody(body *GetCampaignMetricsPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5374,6 +6332,18 @@ func ValidateGetCampaignSettingsNotFoundResponseBody(body *GetCampaignSettingsNo
 	return
 }
 
+// ValidateGetCampaignSettingsPayloadTooLargeResponseBody runs the validations
+// defined on get-campaign-settings_PayloadTooLarge_response_body
+func ValidateGetCampaignSettingsPayloadTooLargeResponseBody(body *GetCampaignSettingsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetCampaignSettingsUnauthorizedResponseBody runs the validations
 // defined on get-campaign-settings_Unauthorized_response_body
 func ValidateGetCampaignSettingsUnauthorizedResponseBody(body *GetCampaignSettingsUnauthorizedResponseBody) (err error) {
@@ -5442,6 +6412,18 @@ func ValidateGetBriefMetricsInternalServerErrorResponseBody(body *GetBriefMetric
 // ValidateGetBriefMetricsNotFoundResponseBody runs the validations defined on
 // get-brief-metrics_NotFound_response_body
 func ValidateGetBriefMetricsNotFoundResponseBody(body *GetBriefMetricsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetBriefMetricsPayloadTooLargeResponseBody runs the validations
+// defined on get-brief-metrics_PayloadTooLarge_response_body
+func ValidateGetBriefMetricsPayloadTooLargeResponseBody(body *GetBriefMetricsPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5528,6 +6510,18 @@ func ValidateGenerateEmailCopyNotFoundResponseBody(body *GenerateEmailCopyNotFou
 	return
 }
 
+// ValidateGenerateEmailCopyPayloadTooLargeResponseBody runs the validations
+// defined on generate-email-copy_PayloadTooLarge_response_body
+func ValidateGenerateEmailCopyPayloadTooLargeResponseBody(body *GenerateEmailCopyPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGenerateEmailCopyUnauthorizedResponseBody runs the validations
 // defined on generate-email-copy_Unauthorized_response_body
 func ValidateGenerateEmailCopyUnauthorizedResponseBody(body *GenerateEmailCopyUnauthorizedResponseBody) (err error) {
@@ -5596,6 +6590,18 @@ func ValidateUpdateCampaignInternalServerErrorResponseBody(body *UpdateCampaignI
 // ValidateUpdateCampaignNotFoundResponseBody runs the validations defined on
 // update-campaign_NotFound_response_body
 func ValidateUpdateCampaignNotFoundResponseBody(body *UpdateCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignPayloadTooLargeResponseBody runs the validations
+// defined on update-campaign_PayloadTooLarge_response_body
+func ValidateUpdateCampaignPayloadTooLargeResponseBody(body *UpdateCampaignPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5699,6 +6705,18 @@ func ValidateToggleCampaignStatusInternalServerErrorResponseBody(body *ToggleCam
 // ValidateToggleCampaignStatusNotFoundResponseBody runs the validations
 // defined on toggle-campaign-status_NotFound_response_body
 func ValidateToggleCampaignStatusNotFoundResponseBody(body *ToggleCampaignStatusNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusPayloadTooLargeResponseBody runs the validations
+// defined on toggle-campaign-status_PayloadTooLarge_response_body
+func ValidateToggleCampaignStatusPayloadTooLargeResponseBody(body *ToggleCampaignStatusPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5812,6 +6830,18 @@ func ValidateApplyKeywordActionsNotFoundResponseBody(body *ApplyKeywordActionsNo
 	return
 }
 
+// ValidateApplyKeywordActionsPayloadTooLargeResponseBody runs the validations
+// defined on apply-keyword-actions_PayloadTooLarge_response_body
+func ValidateApplyKeywordActionsPayloadTooLargeResponseBody(body *ApplyKeywordActionsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateApplyKeywordActionsUnauthorizedResponseBody runs the validations
 // defined on apply-keyword-actions_Unauthorized_response_body
 func ValidateApplyKeywordActionsUnauthorizedResponseBody(body *ApplyKeywordActionsUnauthorizedResponseBody) (err error) {
@@ -5880,6 +6910,18 @@ func ValidateDeleteCampaignInternalServerErrorResponseBody(body *DeleteCampaignI
 // ValidateDeleteCampaignNotFoundResponseBody runs the validations defined on
 // delete-campaign_NotFound_response_body
 func ValidateDeleteCampaignNotFoundResponseBody(body *DeleteCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignPayloadTooLargeResponseBody runs the validations
+// defined on delete-campaign_PayloadTooLarge_response_body
+func ValidateDeleteCampaignPayloadTooLargeResponseBody(body *DeleteCampaignPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -5981,6 +7023,18 @@ func ValidateGetJobInternalServerErrorResponseBody(body *GetJobInternalServerErr
 // ValidateGetJobNotFoundResponseBody runs the validations defined on
 // get-job_NotFound_response_body
 func ValidateGetJobNotFoundResponseBody(body *GetJobNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetJobPayloadTooLargeResponseBody runs the validations defined on
+// get-job_PayloadTooLarge_response_body
+func ValidateGetJobPayloadTooLargeResponseBody(body *GetJobPayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

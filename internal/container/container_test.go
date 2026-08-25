@@ -21,6 +21,7 @@ import (
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -258,7 +259,7 @@ var registeredProviders = []model.Provider{
 // wiring line (or adding an unlisted one) fails this test, not just a missing-key check.
 // registerDispatchers only stores its args, so nil repo/encryptor build the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
-	m := registerDispatchers(nil, nil, nil)
+	m := registerDispatchers(nil, nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
@@ -284,7 +285,7 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	// Feed a map with one provider deliberately REMOVED rather than relying on a real gap:
 	// adapters keep landing, so a test that asserts "provider X is still unregistered" rots
 	// the moment X ships. A synthetic gap keeps proving the function is not a no-op forever.
-	full := registerDispatchers(nil, nil, nil)
+	full := registerDispatchers(nil, nil, nil, nil)
 	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
 	for p, d := range full {
 		if p == model.ProviderRedditAds {
@@ -1472,4 +1473,186 @@ func scrapeRegistry(t *testing.T, r *metrics.Registry) string {
 	r.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	return rec.Body.String()
+}
+
+// TestBriefService_ColdStartBindsCreativeAssetRepo pins that the cold-start retry path binds the
+// creative-asset repo in the SAME step it binds the brief repos.
+//
+// Written because deleting either SetCreativeAssetRepo call from container.go COMPILED and left
+// the entire suite green, while in production every upload would answer 503 forever on that pod
+// — the exact silent gap that pulled SetBriefRepo/SetBuilder onto audienceBackendSetter. The
+// handler's 503 is availability-neutral and identical to the no-database mode's, so no
+// error-based assertion can distinguish a wired service from an unwired one; the wiring has to be
+// observed directly (see BriefService.CreativeAssetRepoIsSet).
+//
+// Declaring the variable as briefBackendSetter is load-bearing: it makes the concrete service
+// satisfy the full late-bind contract at COMPILE time, so dropping SetCreativeAssetRepo from the
+// interface breaks the build here rather than silently narrowing what cold start restores.
+func TestBriefService_ColdStartBindsCreativeAssetRepo(t *testing.T) {
+	var bb briefBackendSetter = service.NewBriefService(nil, nil, nil, nil)
+
+	s, ok := bb.(*service.BriefService)
+	require.True(t, ok)
+	require.False(t, s.CreativeAssetRepoIsSet(), "premise: an unwired service must start unbound")
+
+	bb.SetBackend(nil, nil, nil, nil)
+	assert.False(t, s.CreativeAssetRepoIsSet(),
+		"SetBackend must NOT bind the creative-asset repo; if it did, this test could not tell the two wiring steps apart")
+
+	bb.SetCreativeAssetRepo(fakeCreativeAssetRepo{})
+	assert.True(t, s.CreativeAssetRepoIsSet(),
+		"the cold-start path must bind the creative-asset repo; binding only the brief repos leaves UploadCreativeAsset 503 forever")
+}
+
+// TestBindBriefLiveBackends_BindsEveryPoolBackedDependency covers the ONE place both startup
+// paths bind the brief service's pool-backed collaborators, and it is the test that actually
+// holds the wiring.
+//
+// The interface test above proves SetCreativeAssetRepo exists and works; it cannot prove the
+// container CALLS it. Deleting either original call site compiled and kept the suite green, and
+// so does deleting the bind from this helper — an unused *postgres.Pool parameter is legal Go.
+// So the assertion has to be that the helper leaves the service BOUND, observed through
+// CreativeAssetRepoIsSet.
+//
+// A nil *postgres.Pool is deliberate and sufficient: NewCreativeAssetRepo only stores its
+// argument, so no connection is attempted, and the resulting repo is still a non-nil interface
+// value — which is exactly the fact under test (that something was bound), not that it can serve
+// queries. Binding behaviour against a real database belongs to the repo's own live tests.
+func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
+	s := service.NewBriefService(nil, nil, nil, nil)
+	require.False(t, s.CreativeAssetRepoIsSet(), "premise: unbound before wiring")
+
+	require.False(t, s.DecodeReserverIsSet(), "premise: unbound before wiring")
+
+	bindBriefLiveBackends(s, nil, nil, nil, nil, nil)
+
+	assert.True(t, s.CreativeAssetRepoIsSet(),
+		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
+
+	// The decode budget is bound by the same helper and needs the same assertion, for a worse
+	// failure mode: an unbound repo makes uploads fail LOUDLY with a 503, but an unbound
+	// reserver makes them succeed with the aggregate pixel-buffer bound silently absent — the
+	// pod OOMs under concurrent compressed uploads and nothing in the code path says why.
+	// Verified to be necessary: deleting the bind from the helper compiled and left the suite
+	// green until this line existed.
+	assert.True(t, s.DecodeReserverIsSet(),
+		"the shared live-wiring helper must bind the decode reserver; without it BOTH startup paths decode concurrent uploads with no aggregate memory bound")
+}
+
+// TestSetCreativeAssetRepo_IgnoresNil guards the degraded path: a nil repo must leave the service
+// reporting unbound rather than storing a nil interface that panics on first upload.
+func TestSetCreativeAssetRepo_IgnoresNil(t *testing.T) {
+	s := service.NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(nil)
+	assert.False(t, s.CreativeAssetRepoIsSet(), "a nil creative-asset repo must not register as configured")
+}
+
+// fakeCreativeAssetRepo is a wiring stand-in only; the upload behaviour it would back is covered
+// in internal/service.
+type fakeCreativeAssetRepo struct{}
+
+func (fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
+	return a, true, nil
+}
+
+func (fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
+	return 0, domain.ErrNotFound
+}
+
+// TestRegisterDispatchers_BindsMetaCreativeAssetRepo pins the PRODUCTION wiring for the
+// creative-asset read path on the Meta dispatcher.
+//
+// This exists because the wiring was previously unasserted in exactly the way that hides
+// its own absence. Both other tests in this file call registerDispatchers(nil, nil, nil,
+// nil), and the dispatch-side tests bind the repo by hand with SetCreativeAssetRepo — so
+// DELETING the `metaDispatcher.SetCreativeAssetRepo(creatives)` line in
+// registerDispatchers compiled and left the entire suite green, while every asset-backed
+// dispatch in production failed with "the creative-asset store is not configured": the
+// brief's creative uploads fine, and then no ad is ever created for it.
+//
+// A non-nil repo is passed (NewCreativeAssetRepo over a nil pool is a real, non-nil
+// *CreativeAssetRepo — this asserts the BINDING, not any query), and the assertion reads
+// the dispatcher's own view of whether it is bound. The nil case below is asserted in the
+// same test so the concrete-pointer guard in registerDispatchers is covered too.
+func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil))
+
+	md, ok := m[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
+	require.True(t, ok, "the meta entry must be a *dispatch.MetaDispatcher")
+	assert.True(t, md.CreativeAssetRepoIsSet(),
+		"registerDispatchers must bind the creative-asset repo onto the Meta dispatcher; without it every imageAssetId variant fails with \"the creative-asset store is not configured\" and the brief's ad is never created")
+
+	// The no-database path passes a nil *CreativeAssetRepo. registerDispatchers guards on
+	// the CONCRETE pointer, because handing a typed nil to the interface parameter would
+	// produce a NON-nil interface holding a nil pointer — which reports as bound and then
+	// nil-panics mid-dispatch instead of failing cleanly pre-spend.
+	unbound := registerDispatchers(nil, nil, nil, nil)
+	mu, ok := unbound[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
+	require.True(t, ok, "the meta entry must be a *dispatch.MetaDispatcher")
+	assert.False(t, mu.CreativeAssetRepoIsSet(),
+		"a nil *CreativeAssetRepo must leave the dispatcher UNBOUND, not bound to a typed nil that panics on first asset-backed dispatch")
+}
+
+// orderRecordingBriefSetter records the ORDER in which the live-wiring helper publishes each
+// dependency. The order is the property under test, so it is captured rather than the values.
+type orderRecordingBriefSetter struct {
+	calls []string
+}
+
+func (r *orderRecordingBriefSetter) SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator) {
+	r.calls = append(r.calls, "backend")
+}
+
+func (r *orderRecordingBriefSetter) SetCreativeAssetRepo(domain.CreativeAssetRepository) {
+	r.calls = append(r.calls, "repo")
+}
+
+func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
+	r.calls = append(r.calls, "reserver")
+}
+
+// TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate pins the ORDER of two independently
+// locked setters, which on the cold-start retry path decides whether a memory bound can be
+// bypassed.
+//
+// bindBriefLiveBackends mutates a BriefService that is ALREADY MOUNTED and serving. Each setter
+// takes s.mu on its own, so between them there is a real window in which a concurrent
+// UploadCreativeAsset observes published state. The repo is the handler's availability gate --
+// it returns 503 while the repo is nil -- and a nil DecodeReserver is deliberately a silent
+// no-op. Publishing the gate FIRST therefore opens uploads for the length of that window with
+// the aggregate pixel-memory bound unenforced: they succeed, and they are unbounded, which is
+// worse than being refused.
+//
+// Publishing the bound first closes it: while the repo is still nil every upload is refused with
+// 503, so no request can ever observe a live repo without a reserver.
+//
+// Asserted as a relative order rather than an exact call list, so adding a future dependency
+// does not falsely fail this test -- only moving the reserver after the gate does.
+func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
+	rec := &orderRecordingBriefSetter{}
+
+	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil)
+
+	idx := func(name string) int {
+		for i, c := range rec.calls {
+			if c == name {
+				return i
+			}
+		}
+		return -1
+	}
+	reserver, repo := idx("reserver"), idx("repo")
+	if reserver < 0 || repo < 0 {
+		t.Fatalf("wiring did not publish both dependencies; calls = %v", rec.calls)
+	}
+	if reserver > repo {
+		t.Errorf("decode reserver is published AFTER the creative-asset repo (calls = %v): the "+
+			"repo is the handler's availability gate and a nil reserver is a silent no-op, so "+
+			"on the cold-start retry path an upload arriving between the two setters is served "+
+			"with the aggregate pixel-memory bound unenforced", rec.calls)
+	}
 }

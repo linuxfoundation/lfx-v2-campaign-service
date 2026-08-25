@@ -79,6 +79,7 @@ func EncodeCreateGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -178,6 +179,20 @@ func DecodeCreateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
 			}
 			return nil, NewCreateGoogleAdsInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateGoogleAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-google-ads", err)
+			}
+			err = ValidateCreateGoogleAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
+			}
+			return nil, NewCreateGoogleAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateGoogleAdsUnauthorizedResponseBody
@@ -264,6 +279,7 @@ func EncodeGetGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) func
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -363,6 +379,20 @@ func DecodeGetGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
 			}
 			return nil, NewGetGoogleAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			err = ValidateGetGoogleAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			return nil, NewGetGoogleAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetGoogleAdsUnauthorizedResponseBody
@@ -458,6 +488,7 @@ func EncodeUpdateGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -559,6 +590,20 @@ func DecodeUpdateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
 			}
 			return nil, NewUpdateGoogleAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateGoogleAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-google-ads", err)
+			}
+			err = ValidateUpdateGoogleAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
+			}
+			return nil, NewUpdateGoogleAdsPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateGoogleAdsPreconditionFailedResponseBody
@@ -674,6 +719,7 @@ func EncodeDeleteGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -749,6 +795,20 @@ func DecodeDeleteGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
 			}
 			return nil, NewDeleteGoogleAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteGoogleAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			err = ValidateDeleteGoogleAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			return nil, NewDeleteGoogleAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteGoogleAdsUnauthorizedResponseBody
@@ -835,6 +895,7 @@ func EncodeTestGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -923,6 +984,20 @@ func DecodeTestGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-google-ads", err)
 			}
 			return nil, NewTestGoogleAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestGoogleAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			err = ValidateTestGoogleAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			return nil, NewTestGoogleAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestGoogleAdsUnauthorizedResponseBody
@@ -1014,6 +1089,7 @@ func EncodeSetCredentialGoogleAdsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1089,6 +1165,20 @@ func DecodeSetCredentialGoogleAdsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
 			}
 			return nil, NewSetCredentialGoogleAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialGoogleAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
+			}
+			err = ValidateSetCredentialGoogleAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-google-ads", err)
+			}
+			return nil, NewSetCredentialGoogleAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialGoogleAdsUnauthorizedResponseBody
@@ -1180,6 +1270,7 @@ func EncodeCreateLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1279,6 +1370,20 @@ func DecodeCreateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
 			}
 			return nil, NewCreateLinkedinAdsInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateLinkedinAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
+			}
+			err = ValidateCreateLinkedinAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
+			}
+			return nil, NewCreateLinkedinAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateLinkedinAdsUnauthorizedResponseBody
@@ -1365,6 +1470,7 @@ func EncodeGetLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1464,6 +1570,20 @@ func DecodeGetLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
 			}
 			return nil, NewGetLinkedinAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetLinkedinAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			err = ValidateGetLinkedinAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			return nil, NewGetLinkedinAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetLinkedinAdsUnauthorizedResponseBody
@@ -1559,6 +1679,7 @@ func EncodeUpdateLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -1660,6 +1781,20 @@ func DecodeUpdateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
 			}
 			return nil, NewUpdateLinkedinAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateLinkedinAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
+			}
+			err = ValidateUpdateLinkedinAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
+			}
+			return nil, NewUpdateLinkedinAdsPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateLinkedinAdsPreconditionFailedResponseBody
@@ -1775,6 +1910,7 @@ func EncodeDeleteLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1850,6 +1986,20 @@ func DecodeDeleteLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
 			}
 			return nil, NewDeleteLinkedinAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteLinkedinAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			err = ValidateDeleteLinkedinAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			return nil, NewDeleteLinkedinAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteLinkedinAdsUnauthorizedResponseBody
@@ -1937,6 +2087,7 @@ func EncodeTestLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2025,6 +2176,20 @@ func DecodeTestLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
 			}
 			return nil, NewTestLinkedinAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestLinkedinAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			err = ValidateTestLinkedinAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			return nil, NewTestLinkedinAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestLinkedinAdsUnauthorizedResponseBody
@@ -2117,6 +2282,7 @@ func EncodeSetCredentialLinkedinAdsRequest(encoder func(*http.Request) goahttp.E
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2192,6 +2358,20 @@ func DecodeSetCredentialLinkedinAdsResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
 			}
 			return nil, NewSetCredentialLinkedinAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialLinkedinAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
+			}
+			err = ValidateSetCredentialLinkedinAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-linkedin-ads", err)
+			}
+			return nil, NewSetCredentialLinkedinAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialLinkedinAdsUnauthorizedResponseBody
@@ -2282,6 +2462,7 @@ func EncodeCreateMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2381,6 +2562,20 @@ func DecodeCreateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
 			}
 			return nil, NewCreateMetaAdsInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
+			}
+			err = ValidateCreateMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
+			}
+			return nil, NewCreateMetaAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateMetaAdsUnauthorizedResponseBody
@@ -2467,6 +2662,7 @@ func EncodeGetMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2566,6 +2762,20 @@ func DecodeGetMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
 			}
 			return nil, NewGetMetaAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			err = ValidateGetMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			return nil, NewGetMetaAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetMetaAdsUnauthorizedResponseBody
@@ -2660,6 +2870,7 @@ func EncodeUpdateMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -2761,6 +2972,20 @@ func DecodeUpdateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
 			}
 			return nil, NewUpdateMetaAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
+			}
+			err = ValidateUpdateMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
+			}
+			return nil, NewUpdateMetaAdsPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateMetaAdsPreconditionFailedResponseBody
@@ -2875,6 +3100,7 @@ func EncodeDeleteMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2950,6 +3176,20 @@ func DecodeDeleteMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
 			}
 			return nil, NewDeleteMetaAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			err = ValidateDeleteMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			return nil, NewDeleteMetaAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteMetaAdsUnauthorizedResponseBody
@@ -3036,6 +3276,7 @@ func EncodeTestMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3124,6 +3365,20 @@ func DecodeTestMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
 			}
 			return nil, NewTestMetaAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			err = ValidateTestMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			return nil, NewTestMetaAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestMetaAdsUnauthorizedResponseBody
@@ -3215,6 +3470,7 @@ func EncodeSetCredentialMetaAdsRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3290,6 +3546,20 @@ func DecodeSetCredentialMetaAdsResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
 			}
 			return nil, NewSetCredentialMetaAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
+			}
+			err = ValidateSetCredentialMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-meta-ads", err)
+			}
+			return nil, NewSetCredentialMetaAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialMetaAdsUnauthorizedResponseBody
@@ -3381,6 +3651,7 @@ func EncodeCreateRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3480,6 +3751,20 @@ func DecodeCreateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
 			}
 			return nil, NewCreateRedditAdsInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateRedditAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
+			}
+			err = ValidateCreateRedditAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
+			}
+			return nil, NewCreateRedditAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateRedditAdsUnauthorizedResponseBody
@@ -3566,6 +3851,7 @@ func EncodeGetRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) func
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3665,6 +3951,20 @@ func DecodeGetRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
 			}
 			return nil, NewGetRedditAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetRedditAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			err = ValidateGetRedditAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			return nil, NewGetRedditAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetRedditAdsUnauthorizedResponseBody
@@ -3760,6 +4060,7 @@ func EncodeUpdateRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -3861,6 +4162,20 @@ func DecodeUpdateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
 			}
 			return nil, NewUpdateRedditAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateRedditAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
+			}
+			err = ValidateUpdateRedditAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
+			}
+			return nil, NewUpdateRedditAdsPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateRedditAdsPreconditionFailedResponseBody
@@ -3976,6 +4291,7 @@ func EncodeDeleteRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -4051,6 +4367,20 @@ func DecodeDeleteRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
 			}
 			return nil, NewDeleteRedditAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteRedditAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			err = ValidateDeleteRedditAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			return nil, NewDeleteRedditAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteRedditAdsUnauthorizedResponseBody
@@ -4137,6 +4467,7 @@ func EncodeTestRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -4225,6 +4556,20 @@ func DecodeTestRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
 			}
 			return nil, NewTestRedditAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestRedditAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			err = ValidateTestRedditAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			return nil, NewTestRedditAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestRedditAdsUnauthorizedResponseBody
@@ -4316,6 +4661,7 @@ func EncodeSetCredentialRedditAdsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -4391,6 +4737,20 @@ func DecodeSetCredentialRedditAdsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
 			}
 			return nil, NewSetCredentialRedditAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialRedditAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
+			}
+			err = ValidateSetCredentialRedditAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-reddit-ads", err)
+			}
+			return nil, NewSetCredentialRedditAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialRedditAdsUnauthorizedResponseBody
@@ -4482,6 +4842,7 @@ func EncodeCreateTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -4581,6 +4942,20 @@ func DecodeCreateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
 			}
 			return nil, NewCreateTwitterAdsInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateTwitterAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
+			}
+			err = ValidateCreateTwitterAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
+			}
+			return nil, NewCreateTwitterAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateTwitterAdsUnauthorizedResponseBody
@@ -4667,6 +5042,7 @@ func EncodeGetTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -4766,6 +5142,20 @@ func DecodeGetTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
 			}
 			return nil, NewGetTwitterAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetTwitterAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			err = ValidateGetTwitterAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			return nil, NewGetTwitterAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetTwitterAdsUnauthorizedResponseBody
@@ -4861,6 +5251,7 @@ func EncodeUpdateTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -4962,6 +5353,20 @@ func DecodeUpdateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
 			}
 			return nil, NewUpdateTwitterAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateTwitterAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
+			}
+			err = ValidateUpdateTwitterAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
+			}
+			return nil, NewUpdateTwitterAdsPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateTwitterAdsPreconditionFailedResponseBody
@@ -5077,6 +5482,7 @@ func EncodeDeleteTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -5152,6 +5558,20 @@ func DecodeDeleteTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
 			}
 			return nil, NewDeleteTwitterAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteTwitterAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			err = ValidateDeleteTwitterAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			return nil, NewDeleteTwitterAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteTwitterAdsUnauthorizedResponseBody
@@ -5238,6 +5658,7 @@ func EncodeTestTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -5326,6 +5747,20 @@ func DecodeTestTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
 			}
 			return nil, NewTestTwitterAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestTwitterAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			err = ValidateTestTwitterAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			return nil, NewTestTwitterAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestTwitterAdsUnauthorizedResponseBody
@@ -5417,6 +5852,7 @@ func EncodeSetCredentialTwitterAdsRequest(encoder func(*http.Request) goahttp.En
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -5492,6 +5928,20 @@ func DecodeSetCredentialTwitterAdsResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
 			}
 			return nil, NewSetCredentialTwitterAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialTwitterAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
+			}
+			err = ValidateSetCredentialTwitterAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-twitter-ads", err)
+			}
+			return nil, NewSetCredentialTwitterAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialTwitterAdsUnauthorizedResponseBody
@@ -5583,6 +6033,7 @@ func EncodeCreateMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -5682,6 +6133,20 @@ func DecodeCreateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
 			}
 			return nil, NewCreateMicrosoftAdsInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateMicrosoftAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
+			}
+			err = ValidateCreateMicrosoftAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
+			}
+			return nil, NewCreateMicrosoftAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateMicrosoftAdsUnauthorizedResponseBody
@@ -5769,6 +6234,7 @@ func EncodeGetMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -5868,6 +6334,20 @@ func DecodeGetMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
 			}
 			return nil, NewGetMicrosoftAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetMicrosoftAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			err = ValidateGetMicrosoftAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			return nil, NewGetMicrosoftAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetMicrosoftAdsUnauthorizedResponseBody
@@ -5963,6 +6443,7 @@ func EncodeUpdateMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -6064,6 +6545,20 @@ func DecodeUpdateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
 			}
 			return nil, NewUpdateMicrosoftAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateMicrosoftAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
+			}
+			err = ValidateUpdateMicrosoftAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
+			}
+			return nil, NewUpdateMicrosoftAdsPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateMicrosoftAdsPreconditionFailedResponseBody
@@ -6179,6 +6674,7 @@ func EncodeDeleteMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -6254,6 +6750,20 @@ func DecodeDeleteMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
 			}
 			return nil, NewDeleteMicrosoftAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteMicrosoftAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			err = ValidateDeleteMicrosoftAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			return nil, NewDeleteMicrosoftAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteMicrosoftAdsUnauthorizedResponseBody
@@ -6341,6 +6851,7 @@ func EncodeTestMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -6429,6 +6940,20 @@ func DecodeTestMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
 			}
 			return nil, NewTestMicrosoftAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestMicrosoftAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			err = ValidateTestMicrosoftAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			return nil, NewTestMicrosoftAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestMicrosoftAdsUnauthorizedResponseBody
@@ -6521,6 +7046,7 @@ func EncodeSetCredentialMicrosoftAdsRequest(encoder func(*http.Request) goahttp.
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -6596,6 +7122,20 @@ func DecodeSetCredentialMicrosoftAdsResponse(decoder func(*http.Response) goahtt
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
 			}
 			return nil, NewSetCredentialMicrosoftAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialMicrosoftAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
+			}
+			err = ValidateSetCredentialMicrosoftAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-microsoft-ads", err)
+			}
+			return nil, NewSetCredentialMicrosoftAdsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialMicrosoftAdsUnauthorizedResponseBody
@@ -6686,6 +7226,7 @@ func EncodeCreateHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -6785,6 +7326,20 @@ func DecodeCreateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
 			}
 			return nil, NewCreateHubspotInternalServerError(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateHubspotPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot", err)
+			}
+			err = ValidateCreateHubspotPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
+			}
+			return nil, NewCreateHubspotPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateHubspotUnauthorizedResponseBody
@@ -6871,6 +7426,7 @@ func EncodeGetHubspotRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -6970,6 +7526,20 @@ func DecodeGetHubspotResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
 			}
 			return nil, NewGetHubspotNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetHubspotPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			err = ValidateGetHubspotPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			return nil, NewGetHubspotPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetHubspotUnauthorizedResponseBody
@@ -7064,6 +7634,7 @@ func EncodeUpdateHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignserviceconnections.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignserviceconnections.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
@@ -7165,6 +7736,20 @@ func DecodeUpdateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
 			}
 			return nil, NewUpdateHubspotNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateHubspotPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "update-hubspot", err)
+			}
+			err = ValidateUpdateHubspotPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
+			}
+			return nil, NewUpdateHubspotPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateHubspotPreconditionFailedResponseBody
@@ -7279,6 +7864,7 @@ func EncodeDeleteHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -7354,6 +7940,20 @@ func DecodeDeleteHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
 			}
 			return nil, NewDeleteHubspotNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteHubspotPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			err = ValidateDeleteHubspotPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			return nil, NewDeleteHubspotPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteHubspotUnauthorizedResponseBody
@@ -7440,6 +8040,7 @@ func EncodeTestHubspotRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeTestHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -7528,6 +8129,20 @@ func DecodeTestHubspotResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-hubspot", err)
 			}
 			return nil, NewTestHubspotNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body TestHubspotPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			err = ValidateTestHubspotPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			return nil, NewTestHubspotPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body TestHubspotUnauthorizedResponseBody
@@ -7619,6 +8234,7 @@ func EncodeSetCredentialHubspotRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeSetCredentialHubspotResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -7694,6 +8310,20 @@ func DecodeSetCredentialHubspotResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
 			}
 			return nil, NewSetCredentialHubspotNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetCredentialHubspotPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
+			}
+			err = ValidateSetCredentialHubspotPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "set-credential-hubspot", err)
+			}
+			return nil, NewSetCredentialHubspotPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body SetCredentialHubspotUnauthorizedResponseBody
@@ -7781,6 +8411,7 @@ func EncodeListGoogleAdsAccountsRequest(encoder func(*http.Request) goahttp.Enco
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -7869,6 +8500,20 @@ func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.De
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
 			}
 			return nil, NewListGoogleAdsAccountsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListGoogleAdsAccountsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			return nil, NewListGoogleAdsAccountsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListGoogleAdsAccountsUnauthorizedResponseBody
@@ -7962,6 +8607,7 @@ func EncodeGetGoogleAdsKeywordsRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetGoogleAdsKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8064,6 +8710,20 @@ func DecodeGetGoogleAdsKeywordsResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
 			}
 			return nil, NewGetGoogleAdsKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			err = ValidateGetGoogleAdsKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-keywords", err)
+			}
+			return nil, NewGetGoogleAdsKeywordsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetGoogleAdsKeywordsUnauthorizedResponseBody
@@ -8157,6 +8817,7 @@ func EncodeGetGoogleAdsAudienceRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8259,6 +8920,20 @@ func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
 			}
 			return nil, NewGetGoogleAdsAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetGoogleAdsAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			err = ValidateGetGoogleAdsAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+			}
+			return nil, NewGetGoogleAdsAudiencePayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetGoogleAdsAudienceUnauthorizedResponseBody
@@ -8346,6 +9021,7 @@ func EncodeListMetaAdsAccountsRequest(encoder func(*http.Request) goahttp.Encode
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8434,6 +9110,20 @@ func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Deco
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
 			}
 			return nil, NewListMetaAdsAccountsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListMetaAdsAccountsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			return nil, NewListMetaAdsAccountsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListMetaAdsAccountsUnauthorizedResponseBody
@@ -8521,6 +9211,7 @@ func EncodeListLinkedinAdsAccountsRequest(encoder func(*http.Request) goahttp.En
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListLinkedinAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8609,6 +9300,20 @@ func DecodeListLinkedinAdsAccountsResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
 			}
 			return nil, NewListLinkedinAdsAccountsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListLinkedinAdsAccountsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			return nil, NewListLinkedinAdsAccountsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListLinkedinAdsAccountsUnauthorizedResponseBody
@@ -8697,6 +9402,7 @@ func EncodeListMicrosoftAdsAccountsRequest(encoder func(*http.Request) goahttp.E
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListMicrosoftAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8785,6 +9491,20 @@ func DecodeListMicrosoftAdsAccountsResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
 			}
 			return nil, NewListMicrosoftAdsAccountsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListMicrosoftAdsAccountsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			return nil, NewListMicrosoftAdsAccountsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListMicrosoftAdsAccountsUnauthorizedResponseBody
@@ -8872,6 +9592,7 @@ func EncodeListTwitterAdsAccountsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListTwitterAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -8960,6 +9681,20 @@ func DecodeListTwitterAdsAccountsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
 			}
 			return nil, NewListTwitterAdsAccountsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListTwitterAdsAccountsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			return nil, NewListTwitterAdsAccountsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListTwitterAdsAccountsUnauthorizedResponseBody
@@ -9052,6 +9787,7 @@ func EncodeListHubspotEmailsRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeListHubspotEmailsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -9140,6 +9876,20 @@ func DecodeListHubspotEmailsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
 			}
 			return nil, NewListHubspotEmailsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListHubspotEmailsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			return nil, NewListHubspotEmailsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ListHubspotEmailsUnauthorizedResponseBody

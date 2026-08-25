@@ -265,7 +265,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   onto `campaign_audiences`, and for the same reason: the row copies `project_id` and the read
   path trusts that copy, so a `brief_id`-only FK would let a non-API writer persist an asset
   whose `project_id` names a different project than its brief. It also carries `project_id`
-  for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`,
+  for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`
+  (bounded above at 30 MiB by `000029`, see below),
   a `checksum` (lowercase-hex SHA-256 of the bytes), the `bytes` themselves as `BYTEA`, and
   `created_by` JSONB. `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
   table is INSERT-ONLY: no `updated_at`, no `version` — an asset is created once and read back,
@@ -1524,9 +1525,17 @@ write is — see `enqueueCampaignIndex`.
 ## `CreativeAssetRepo` (creative-asset storage, LFXV2-3295)
 
 `CreativeAssetRepo` backs `000028`'s `creative_assets` table with two methods, and both are
-built around the parent-brief gate and the content-addressed dedupe key. This is the STORAGE
-layer only: nothing in the service calls it yet — the upload endpoint and the dispatch-time
-asset resolution land in the two follow-on PRs, and the repo is wired into the container there.
+built around the parent-brief gate and the content-addressed dedupe key.
+
+`CreateAsset`'s caller is `BriefService.UploadCreativeAsset`, backing
+`POST .../briefs/{brief_id}/creative-assets` (see [internal/service](internal-service.md)),
+which validates the bytes and derives the checksum before this layer sees them. Both startup
+paths bind the repo through `bindBriefLiveBackends` (see
+[internal/container](internal-container.md)). `GetAsset`'s caller is
+`MetaDispatcher.resolveVariantAssets` (`internal/dispatch/meta.go`), which reads the stored bytes
+at dispatch time to attach a creative by `image_hash`; `registerDispatchers` binds the repo into
+that dispatcher, guarding on the CONCRETE pointer so a nil `*CreativeAssetRepo` cannot become a
+non-nil interface.
 
 `CreateAsset` runs a TRANSACTION: it locks the parent brief with `SELECT status FROM
 campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`, checks the status, then runs
@@ -1603,10 +1612,21 @@ transaction. Six things are doing work here and each has a failure mode if chang
   any read that avoids the blob — it is silently wrong exactly where it is relied on.
   `TestCreativeAssetRepo_CreateAsset_StoresByteSizeMatchingPayload` asserts the stored
   `byte_size` equals `length(bytes)` READ BACK FROM THE DATABASE, so it fails on a stored `0`
-  or any other value that disagrees with the payload actually persisted. The column carries ONE
-  constraint, `CHECK (byte_size = octet_length(bytes))` — a separate `CHECK (byte_size >= 0)` was
-  removed as redundant, since `octet_length()` is never negative so the equality already implies
-  it, and deleting the `>= 0` clause broke no test. It is load-bearing because
+  or any other value that disagrees with the payload actually persisted. The column carries TWO
+  constraints. The first, `CHECK (byte_size = octet_length(bytes))`, binds the size to the blob —
+  a separate `CHECK (byte_size >= 0)` was removed as redundant, since `octet_length()` is never
+  negative so the equality already implies it, and deleting the `>= 0` clause broke no test. The
+  second, `CHECK (byte_size <= 31457280)` from `000029`, is the UPPER bound `000028` deferred
+  until the upload endpoint existed. It is the DECODED 30 MiB ceiling (`maxCreativeStoredBytes`
+  in `internal/service`), not the design's `MaxLength(41943040)`, which is the same ceiling in
+  base64 CHARACTERS — this column counts decoded octets, so the base64 figure would admit rows a
+  third larger than the handler accepts. It matters for the same reason the equality does: the
+  handler's `len()` check guards the HTTP path only, so a repository caller or backfill would
+  otherwise persist an oversize blob, and `internal/dispatch`'s aggregate cap assumes a tripping
+  asset adds at most 30 MiB. Both are pinned by
+  `TestCreativeAssets_ByteSizeUpperBoundIsEnforcedByTheTable`, which asserts BOTH edges (30 MiB + 1
+  raises SQLSTATE `23514`; exactly 30 MiB is accepted) so tightening the bound to `<` cannot pass.
+  The equality is load-bearing because
   `CreateAsset` binds `a.ByteSize` and `a.Bytes` as INDEPENDENT parameters — nothing in the
   insert derives one from the other — so a buggy caller or any direct writer could otherwise
   persist a size that does not describe the blob, invisibly to every reader that uses the column

@@ -1,0 +1,150 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package dispatch
+
+import (
+	"context"
+	"time"
+
+	"golang.org/x/sync/semaphore"
+)
+
+// AssetReserver bounds the creative-asset bytes that CONCURRENT dispatches may hold at once.
+//
+// # Why maxVariantAssetBytes alone was not a bound
+//
+// maxVariantAssetBytes caps ONE dispatch. Nothing capped how many dispatches run together, and
+// the orchestrator's semaphore is process-wide across ALL jobs with NO per-provider partition
+// (internal/service/orchestrator.go: `sem: make(chan struct{}, maxParallelDispatch)`), so all
+// five slots can be Meta at the same moment. Five dispatches each holding the per-dispatch peak
+// — 240 MiB retained plus the one asset already materialised when the ceiling trips — is
+// 5 x 270 MiB = 1.32 GiB against a 512 MiB pod, a 2.6x overshoot. It does not need the worst
+// case either: TWO asset-heavy dispatches already exceed the limit before multipart copies and
+// ordinary process memory.
+//
+// A per-request ceiling and an aggregate ceiling are different bounds, and only the per-request
+// one existed. This is the aggregate one.
+//
+// # Why the budget equals maxVariantAssetBytes rather than something smaller
+//
+// The budget is deliberately NOT sized to make the five-way arithmetic fit. Any budget below
+// maxVariantAssetBytes would mean a single dispatch carrying eight maximum-size assets could
+// never acquire, so it would be refused — and a bound that satisfies its arithmetic by rejecting
+// work the contract accepts is not a fix, it is the same shape as pricing an upload so cheaply
+// that nothing legal fits. Equal to the per-dispatch cap is the SMALLEST value that refuses no
+// legal config: exactly one full-size dispatch fits, and every smaller one shares the remainder,
+// which is the same "priced for the worst legal input, shared by everything smaller" shape as
+// the upload and decode budgets.
+//
+// What it removes is the MULTIPLIER. Dispatch-side worst case goes from 5 x 270 MiB = 1.32 GiB
+// to 240 MiB, about 47% of the pod.
+//
+// # What the budget covers, enumerated
+//
+// A bound is only worth its number if every copy of the image is inside it, so the sites are
+// listed rather than implied. Per dispatch:
+//
+//   - the resolved asset slices — CHARGED here. Variants naming the same asset alias one buffer,
+//     so the charge is per DISTINCT asset.
+//   - the multipart request body — ZERO. internal/platform/meta frames the body AROUND the image
+//     (a small fixed prefix and suffix, with the payload referenced in place) rather than copying
+//     it into a buffer. It used to copy, which put a second full copy of every in-flight image
+//     outside this budget: five concurrent dispatches added ~150 MiB nothing accounted for.
+//     Measured at ~0.5% of the payload by TestUploadImageDoesNotCopyTheImage.
+//   - the per-attempt HTTP body reader — ZERO. bytes.NewReader is a view over a slice, not a copy,
+//     and a fresh one per retry attempt copies nothing.
+//   - the per-campaign uploadCache — ZERO. It stores sha256 keys and hash strings, never bytes.
+//
+// So the dispatch-side figure above is the whole of it, and it does not scale with the number of
+// concurrent dispatches: this semaphore is the only thing that admits asset bytes.
+//
+// # Why the charge is taken BEFORE the read
+//
+// The reservation is priced from CreativeAssetRepository.GetAssetSize — one BIGINT, no BYTEA —
+// and taken before GetAsset materialises the blob. The ordering is the whole bound: charging
+// after the read means every concurrent dispatch has already allocated its full allowance by the
+// time it blocks on the semaphore, so the permit gates the /adimages phase and bounds resident
+// memory not at all. An earlier revision of this control did exactly that and was fixed.
+//
+// It also removes the overshoot the per-dispatch cap used to document. Because the ceiling is
+// now applied to the SIZE, the asset that trips it is never loaded, so the peak is
+// maxVariantAssetBytes rather than that plus one maximum-size asset.
+//
+// # Lifetime
+//
+// The reservation is held for the whole dispatch, not just the resolve loop, because the bytes
+// are held that long: resolveVariantAssets returns them in the variant slice and the Meta client
+// POSTs them to /adimages later in the same call. Releasing at the end of the resolve would free
+// budget that is still occupied, which is the mistake DecodeReserver's comment records in the
+// other direction (holding a pixel reservation across a database insert that no longer needs it).
+//
+// That is the SUCCESS path. On any failure — an error or a panic — resolveVariantAssets unwinds
+// its own reservations before returning, because the bytes never reach the caller and holding
+// budget for memory nobody has is a leak, not a bound. It is structural rather than per-return:
+// a permit leaked on a failure arm is never recovered, so repeated partial resolves would shrink
+// this budget until the process restarts.
+//
+// A nil *AssetReserver reserves nothing, so every construction that does not wire one — every
+// test dispatcher, and the no-database mode — keeps working unchanged.
+type AssetReserver struct {
+	sem    *semaphore.Weighted
+	budget int64
+	wait   time.Duration
+}
+
+// NewAssetReserver returns a reserver bounding concurrent dispatch asset memory to budgetBytes.
+// A non-positive budget returns nil, which reserves nothing.
+func NewAssetReserver(budgetBytes int64, wait time.Duration) *AssetReserver {
+	if budgetBytes <= 0 {
+		return nil
+	}
+	return &AssetReserver{sem: semaphore.NewWeighted(budgetBytes), budget: budgetBytes, wait: wait}
+}
+
+// reserve waits — boundedly — for want bytes and reports whether it got them.
+//
+// It returns a release func rather than the weight, so the amount released cannot drift from the
+// amount acquired; releasing a different weight than was taken silently corrupts a weighted
+// semaphore's accounting rather than failing.
+//
+// A request priced above the entire budget is refused immediately rather than blocking until its
+// context expires: it could never be admitted, so waiting only delays the same answer. That case
+// is unreachable through resolveVariantAssets, which refuses at maxVariantAssetBytes first, but
+// it is handled here so this type is correct independently of that caller.
+//
+// The wait is bounded so a dispatch cannot queue indefinitely behind another one's assets. A
+// dispatch that cannot get budget fails as a retryable dispatch error rather than hanging: it is
+// a background job with no caller waiting on a socket, and the orchestrator's own
+// providerCallTimeout would otherwise be the only thing to end it.
+//
+// A NON-POSITIVE want is admitted holding nothing, and is deliberately NOT refused. `false` here
+// means one thing to every caller — "the budget could not accommodate this" — and callers render
+// it as a retryable capacity shortage. A zero-size asset is the opposite: a permanent data defect
+// that no amount of freed budget will fix, and reporting it as capacity both told the caller to
+// retry something that can never succeed and made resolveVariantAssets' empty-bytes guard
+// unreachable, since the refusal happened before the bytes were ever read. Charging zero for zero
+// is also the arithmetically correct answer — it consumes none of the budget it is bounding — so
+// the caller proceeds to load the asset and refuses it on what is actually wrong with it.
+// A NEGATIVE want cannot come from a byte_size (migration 000029 CHECKs it non-negative); it is
+// treated the same way rather than acquired, since a negative weight would CREDIT the semaphore.
+func (a *AssetReserver) reserve(ctx context.Context, want int64) (func(), bool) {
+	if a == nil {
+		return func() {}, true
+	}
+	if want <= 0 {
+		return func() {}, true
+	}
+	if want > a.budget {
+		return func() {}, false
+	}
+	if a.wait > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.wait)
+		defer cancel()
+	}
+	if err := a.sem.Acquire(ctx, want); err != nil {
+		return func() {}, false
+	}
+	return func() { a.sem.Release(want) }, true
+}

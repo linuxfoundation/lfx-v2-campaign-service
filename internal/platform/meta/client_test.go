@@ -6162,3 +6162,140 @@ func TestCreateCampaignAdSetLookupConflictIsCleanFailure(t *testing.T) {
 	})
 	assertCleanConflict(t, res, err, "ad set status")
 }
+
+// A 5xx on the /adimages upload must NOT be reported as "the ad/creative may have been
+// created". At that point only the image upload has run: no adcreative and no ad request has
+// been attempted, so nothing exists to verify in Ads Manager. The generic UNCONFIRMED wording
+// sends an operator to look for an object that certainly does not exist AND tells them not to
+// recreate it — which on this path is the one instruction that guarantees the variant never
+// runs. The upload itself is content-addressed, so REPEATING THE UPLOAD re-derives the same
+// hash; only the library image may or may not have landed, and that is harmless. That is a
+// property of repeating the upload, not a recovery promise: a normal re-dispatch reuses the
+// terminal created_degraded campaign and never reaches /adimages again, which
+// TestAmbiguousUploadStepDoesNotPromiseRedispatchRecovery pins directly.
+func TestCreateCampaignUploadStageFailureDoesNotClaimTheAdMayExist(t *testing.T) {
+	// Counted with atomics, not plain ints: httptest.Server runs each handler in its own
+	// goroutine and the assertions below read from the test goroutine, so a plain int is an
+	// unsynchronised handoff. `make test` runs -race always (Makefile:95), which makes that a
+	// detected failure rather than a theoretical one — and it would surface as an unrelated
+	// test flaking on a loaded runner. See
+	// docs/reviews/knowledge-base/test-hygiene.md:httptest-handler-state-needs-synchronized-handoff.
+	var uploadHits, creativeHits, adHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/adimages"):
+			atomic.AddInt32(&uploadHits, 1)
+			// A 5xx is ambiguous for a MUTATING call in general, which is exactly why the
+			// upload arm reaches createOutcomeAmbiguous today.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"upstream unavailable","type":"OAuthException","code":2}}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			atomic.AddInt32(&creativeHits, 1)
+			_, _ = io.WriteString(w, `{"id":"120300000000001"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			atomic.AddInt32(&adHits, 1)
+			_, _ = io.WriteString(w, `{"id":"120400000000001"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		default:
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants: []AdVariant{{
+			PrimaryText: "p", Headline: "h",
+			ImageBytes: []byte("\xff\xd8\xffnot-a-real-jpeg-but-bytes-are-bytes"),
+			ImageMIME:  "image/jpeg",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("a per-variant upload failure must stay non-fatal: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected a campaign result")
+	}
+
+	// The premise of the assertion: the run really did stop at the upload.
+	if atomic.LoadInt32(&uploadHits) == 0 {
+		t.Fatalf("the upload was never attempted; this test cannot say anything about upload-stage classification")
+	}
+	if gotCreative, gotAd := atomic.LoadInt32(&creativeHits), atomic.LoadInt32(&adHits); gotCreative != 0 || gotAd != 0 {
+		t.Fatalf("creative/ad requests were made (%d/%d); the failure did not stop at the upload stage",
+			gotCreative, gotAd)
+	}
+	if res.AdCount != 0 {
+		t.Errorf("ad count = %d, want 0", res.AdCount)
+	}
+
+	step := strings.Join(res.Steps, " | ")
+	if strings.Contains(step, "it may have been created") {
+		t.Errorf("an upload-stage failure was reported as though the AD may exist. No creative "+
+			"or ad request was ever sent, so there is nothing to verify in Ads Manager, and "+
+			"\"verify before recreating\" stops the variant from ever running.\nsteps: %s", step)
+	}
+	if !strings.Contains(step, "image upload") && !strings.Contains(step, "Image upload") {
+		t.Errorf("the step does not tell the operator the failure was in the IMAGE UPLOAD stage; "+
+			"they cannot act on it.\nsteps: %s", step)
+	}
+}
+
+// The /adimages request is MULTIPART and its first part is the caller's image, so a proxy or
+// gateway that reflects the request puts image bytes inside the first 300 characters of the
+// response body — ahead of anything resembling Graph JSON. redactSecrets removes the Bearer
+// token and known credentials and cannot recognise image bytes, so surfacing a redacted
+// snippet here (as do() does for ordinary JSON calls) copies binary creative content into
+// APIError.Message, which CreateCampaign writes into CampaignResult.Steps and persists.
+//
+// This asserts the bytes do not reach the error at all, rather than asserting some particular
+// redaction: there is no rule that can reliably tell image bytes from an error message, so
+// withholding the body is the only answer that holds for every image.
+func TestUploadImageErrorNeverCarriesTheRequestBody(t *testing.T) {
+	marker := "IMAGEBYTESMARKER0123456789"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write(body) // a proxy reflecting the request back
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "tok-value-long-enough"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.uploadImage(context.Background(), []byte(marker+strings.Repeat("A", 500)), "image/jpeg")
+	if err == nil {
+		t.Fatal("expected an error from a 502 upload")
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Errorf("the caller's image bytes reached the error, which is persisted into "+
+			"CampaignResult.Steps: %v", err)
+	}
+	if strings.Contains(err.Error(), "Content-Disposition") {
+		t.Errorf("the reflected multipart request body reached the error: %v", err)
+	}
+	// The failure must still be classifiable as ambiguous: withholding the body removes the
+	// DETAIL, and must not silently convert an unknown outcome into a clean rejection.
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected an *APIError, got %T", err)
+	}
+	if !apiErr.EnvelopeUnreadable {
+		t.Error("a non-Graph error body must be marked EnvelopeUnreadable; a missing Code would " +
+			"otherwise read as a clean semantic rejection")
+	}
+}

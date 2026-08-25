@@ -50,7 +50,15 @@ type CreativeAssetRepository interface {
 	// so "same checksum" means "same image", and a second upload is a no-op that returns what
 	// is already there — the same id every time, which is what lets the caller (and the Meta
 	// image-upload step at dispatch) treat upload as safe to retry.
-	CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error)
+	//
+	// The second return reports whether THIS call performed the insert: true when the row was
+	// created, false when an existing row was returned by the idempotent path. It exists because
+	// the two outcomes are indistinguishable in the returned row — the idempotent path returns a
+	// fully-populated asset with a real id and the FIRST upload's created_at — and the HTTP layer
+	// has to tell them apart to answer 201 (created) rather than 200 (already existed). Without
+	// it the transport can only report creation unconditionally, which tells a retrying client it
+	// created something it did not.
+	CreateAsset(ctx context.Context, a *model.CreativeAsset) (asset *model.CreativeAsset, created bool, err error)
 
 	// GetAsset loads a single stored asset — INCLUDING its Bytes — by id, scoped to
 	// (projectID, briefID) AND to an ACTIVE parent brief. The scope is part of the lookup, not
@@ -70,4 +78,16 @@ type CreativeAssetRepository interface {
 	// The id is expected to be a well-formed asset id — the caller validates untrusted input
 	// before calling, as the sibling repositories' id lookups assume (see GetBrief/GetAudience).
 	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+
+	// GetAssetSize returns byte_size WITHOUT loading the bytes, under the same (project, brief)
+	// and active-parent scope as GetAsset.
+	//
+	// It exists so a caller can bound an allocation BEFORE making it. The Meta dispatcher
+	// reserves aggregate asset memory from this figure and only then calls GetAsset: reading the
+	// size off the row it is about to materialise would be too late, because the blob is already
+	// resident by the time its size is known. That ordering is the whole point — an aggregate
+	// budget charged after the memory is held bounds nothing.
+	//
+	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
+	GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error)
 }

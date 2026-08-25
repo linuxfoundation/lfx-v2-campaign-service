@@ -33,6 +33,18 @@ type FetchEventURLRequestBody struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
+// UploadCreativeAssetRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP request body.
+type UploadCreativeAssetRequestBody struct {
+	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
+	// server-side and must match; the stored mime_type is the verified one.
+	ContentType *string `form:"content_type,omitempty" json:"content_type,omitempty" xml:"content_type,omitempty"`
+	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
+	// server-side; the decoded image must not exceed 30 MiB.
+	Bytes *string `form:"bytes,omitempty" json:"bytes,omitempty" xml:"bytes,omitempty"`
+}
+
 // CreateCampaignsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // request body.
@@ -248,6 +260,54 @@ type FetchEventURLResponseBody struct {
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them
 	ExtractedFrom string `form:"extracted_from" json:"extracted_from" xml:"extracted_from"`
+}
+
+// UploadCreativeAssetCreatedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetCreatedResponseBody struct {
+	// Creative asset UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
+	// Size of the stored image in bytes
+	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// UploadCreativeAssetOKResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetOKResponseBody struct {
+	// Creative asset UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
+	// Size of the stored image in bytes
+	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -546,6 +606,16 @@ type CreateBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateBriefUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -603,6 +673,16 @@ type FindBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
 // body for the "NotFound" error.
 type FindBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// FindBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "PayloadTooLarge" error.
+type FindBriefPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -672,6 +752,16 @@ type GetBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
+// body for the "PayloadTooLarge" error.
+type GetBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetBriefUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "Unauthorized" error.
@@ -729,6 +819,16 @@ type UpdateBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateBriefPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -818,6 +918,16 @@ type ApproveBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ApproveBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ApproveBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ApproveBriefPreconditionFailedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
 // response body for the "PreconditionFailed" error.
@@ -901,6 +1011,16 @@ type DeleteBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// DeleteBriefPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type DeleteBriefPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteBriefUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -964,10 +1084,93 @@ type FetchEventURLNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// FetchEventURLPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type FetchEventURLPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // FetchEventURLUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
 // response body for the "Unauthorized" error.
 type FetchEventURLUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "BadRequest" error.
+type UploadCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "Conflict" error.
+type UploadCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UploadCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UploadCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UploadCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "NotFound" error.
+type UploadCreativeAssetNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UploadCreativeAssetPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UploadCreativeAssetUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1021,6 +1224,16 @@ type CreateCampaignsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCampaignsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateCampaignsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1090,6 +1303,16 @@ type AdoptCampaignNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// AdoptCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type AdoptCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AdoptCampaignUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1147,6 +1370,16 @@ type GetCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type GetCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetCampaignPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1216,6 +1449,16 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetCampaignMetricsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetCampaignMetricsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetCampaignMetricsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1273,6 +1516,16 @@ type GetCampaignSettingsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
 // HTTP response body for the "NotFound" error.
 type GetCampaignSettingsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignSettingsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetCampaignSettingsPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1342,6 +1595,16 @@ type GetBriefMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetBriefMetricsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetBriefMetricsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetBriefMetricsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1405,6 +1668,16 @@ type GenerateEmailCopyNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GenerateEmailCopyPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GenerateEmailCopyPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GenerateEmailCopyUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -1462,6 +1735,16 @@ type UpdateCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateCampaignPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1551,6 +1834,16 @@ type ToggleCampaignStatusNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ToggleCampaignStatusPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ToggleCampaignStatusPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ToggleCampaignStatusPreconditionFailedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "PreconditionFailed" error.
@@ -1634,6 +1927,16 @@ type ApplyKeywordActionsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ApplyKeywordActionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ApplyKeywordActionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ApplyKeywordActionsUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP response body for the "Unauthorized" error.
@@ -1691,6 +1994,16 @@ type DeleteCampaignInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type DeleteCampaignPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1774,6 +2087,16 @@ type GetJobInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "NotFound" error.
 type GetJobNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetJobPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
+// body for the "PayloadTooLarge" error.
+type GetJobPayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -2166,6 +2489,38 @@ func NewFetchEventURLResponseBody(res *lfxv2campaignservicebriefs.EventDetails) 
 	return body
 }
 
+// NewUploadCreativeAssetCreatedResponseBody builds the HTTP response body from
+// the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetCreatedResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *UploadCreativeAssetCreatedResponseBody {
+	body := &UploadCreativeAssetCreatedResponseBody{
+		ID:        res.ID,
+		ProjectID: res.ProjectID,
+		BriefID:   res.BriefID,
+		MimeType:  res.MimeType,
+		ByteSize:  res.ByteSize,
+		Checksum:  res.Checksum,
+		Created:   res.Created,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetOKResponseBody builds the HTTP response body from the
+// result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetOKResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *UploadCreativeAssetOKResponseBody {
+	body := &UploadCreativeAssetOKResponseBody{
+		ID:        res.ID,
+		ProjectID: res.ProjectID,
+		BriefID:   res.BriefID,
+		MimeType:  res.MimeType,
+		ByteSize:  res.ByteSize,
+		Checksum:  res.Checksum,
+		Created:   res.Created,
+	}
+	return body
+}
+
 // NewCreateCampaignsResponseBody builds the HTTP response body from the result
 // of the "create-campaigns" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2448,6 +2803,17 @@ func NewCreateBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFound
 	return body
 }
 
+// NewCreateBriefPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "create-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCreateBriefPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *CreateBriefPayloadTooLargeResponseBody {
+	body := &CreateBriefPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateBriefUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "create-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2509,6 +2875,17 @@ func NewFindBriefInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs
 // service.
 func NewFindBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *FindBriefNotFoundResponseBody {
 	body := &FindBriefNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewFindBriefPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "find-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewFindBriefPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *FindBriefPayloadTooLargeResponseBody {
+	body := &FindBriefPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2582,6 +2959,17 @@ func NewGetBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundErr
 	return body
 }
 
+// NewGetBriefPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "get-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetBriefPayloadTooLargeResponseBody {
+	body := &GetBriefPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetBriefUnauthorizedResponseBody builds the HTTP response body from the
 // result of the "get-brief" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2643,6 +3031,17 @@ func NewUpdateBriefInternalServerErrorResponseBody(res *lfxv2campaignservicebrie
 // "lfx-v2-campaign-service-briefs" service.
 func NewUpdateBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *UpdateBriefNotFoundResponseBody {
 	body := &UpdateBriefNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateBriefPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "update-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateBriefPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *UpdateBriefPayloadTooLargeResponseBody {
+	body := &UpdateBriefPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2738,6 +3137,17 @@ func NewApproveBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoun
 	return body
 }
 
+// NewApproveBriefPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "approve-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApproveBriefPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ApproveBriefPayloadTooLargeResponseBody {
+	body := &ApproveBriefPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewApproveBriefPreconditionFailedResponseBody builds the HTTP response body
 // from the result of the "approve-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2827,6 +3237,17 @@ func NewDeleteBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFound
 	return body
 }
 
+// NewDeleteBriefPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "delete-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteBriefPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *DeleteBriefPayloadTooLargeResponseBody {
+	body := &DeleteBriefPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteBriefUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "delete-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2894,11 +3315,100 @@ func NewFetchEventURLNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFou
 	return body
 }
 
+// NewFetchEventURLPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "fetch-event-url" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewFetchEventURLPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *FetchEventURLPayloadTooLargeResponseBody {
+	body := &FetchEventURLPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewFetchEventURLUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "fetch-event-url" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 func NewFetchEventURLUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *FetchEventURLUnauthorizedResponseBody {
 	body := &FetchEventURLUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetBadRequestResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *UploadCreativeAssetBadRequestResponseBody {
+	body := &UploadCreativeAssetBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetConflictResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *UploadCreativeAssetConflictResponseBody {
+	body := &UploadCreativeAssetConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *UploadCreativeAssetServiceUnavailableResponseBody {
+	body := &UploadCreativeAssetServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *UploadCreativeAssetInternalServerErrorResponseBody {
+	body := &UploadCreativeAssetInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetNotFoundResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *UploadCreativeAssetNotFoundResponseBody {
+	body := &UploadCreativeAssetNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *UploadCreativeAssetPayloadTooLargeResponseBody {
+	body := &UploadCreativeAssetPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UploadCreativeAssetUnauthorizedResponseBody {
+	body := &UploadCreativeAssetUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2955,6 +3465,17 @@ func NewCreateCampaignsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-briefs" service.
 func NewCreateCampaignsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *CreateCampaignsNotFoundResponseBody {
 	body := &CreateCampaignsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCampaignsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCreateCampaignsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *CreateCampaignsPayloadTooLargeResponseBody {
+	body := &CreateCampaignsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3028,6 +3549,17 @@ func NewAdoptCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFou
 	return body
 }
 
+// NewAdoptCampaignPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "adopt-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAdoptCampaignPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *AdoptCampaignPayloadTooLargeResponseBody {
+	body := &AdoptCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewAdoptCampaignUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "adopt-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3089,6 +3621,17 @@ func NewGetCampaignInternalServerErrorResponseBody(res *lfxv2campaignservicebrie
 // "lfx-v2-campaign-service-briefs" service.
 func NewGetCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCampaignNotFoundResponseBody {
 	body := &GetCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "get-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetCampaignPayloadTooLargeResponseBody {
+	body := &GetCampaignPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3162,6 +3705,17 @@ func NewGetCampaignMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.N
 	return body
 }
 
+// NewGetCampaignMetricsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetCampaignMetricsPayloadTooLargeResponseBody {
+	body := &GetCampaignMetricsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetCampaignMetricsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "get-campaign-metrics" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3223,6 +3777,17 @@ func NewGetCampaignSettingsInternalServerErrorResponseBody(res *lfxv2campaignser
 // "lfx-v2-campaign-service-briefs" service.
 func NewGetCampaignSettingsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCampaignSettingsNotFoundResponseBody {
 	body := &GetCampaignSettingsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignSettingsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-campaign-settings" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignSettingsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetCampaignSettingsPayloadTooLargeResponseBody {
+	body := &GetCampaignSettingsPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3296,6 +3861,17 @@ func NewGetBriefMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotF
 	return body
 }
 
+// NewGetBriefMetricsPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetBriefMetricsPayloadTooLargeResponseBody {
+	body := &GetBriefMetricsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetBriefMetricsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "get-brief-metrics" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3363,6 +3939,17 @@ func NewGenerateEmailCopyNotFoundResponseBody(res *lfxv2campaignservicebriefs.No
 	return body
 }
 
+// NewGenerateEmailCopyPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GenerateEmailCopyPayloadTooLargeResponseBody {
+	body := &GenerateEmailCopyPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGenerateEmailCopyUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "generate-email-copy" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3424,6 +4011,17 @@ func NewUpdateCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceb
 // "lfx-v2-campaign-service-briefs" service.
 func NewUpdateCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *UpdateCampaignNotFoundResponseBody {
 	body := &UpdateCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *UpdateCampaignPayloadTooLargeResponseBody {
+	body := &UpdateCampaignPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3519,6 +4117,17 @@ func NewToggleCampaignStatusNotFoundResponseBody(res *lfxv2campaignservicebriefs
 	return body
 }
 
+// NewToggleCampaignStatusPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "toggle-campaign-status" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewToggleCampaignStatusPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ToggleCampaignStatusPayloadTooLargeResponseBody {
+	body := &ToggleCampaignStatusPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewToggleCampaignStatusPreconditionFailedResponseBody builds the HTTP
 // response body from the result of the "toggle-campaign-status" endpoint of
 // the "lfx-v2-campaign-service-briefs" service.
@@ -3608,6 +4217,17 @@ func NewApplyKeywordActionsNotFoundResponseBody(res *lfxv2campaignservicebriefs.
 	return body
 }
 
+// NewApplyKeywordActionsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "apply-keyword-actions" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApplyKeywordActionsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ApplyKeywordActionsPayloadTooLargeResponseBody {
+	body := &ApplyKeywordActionsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewApplyKeywordActionsUnauthorizedResponseBody builds the HTTP response body
 // from the result of the "apply-keyword-actions" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -3669,6 +4289,17 @@ func NewDeleteCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceb
 // "lfx-v2-campaign-service-briefs" service.
 func NewDeleteCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *DeleteCampaignNotFoundResponseBody {
 	body := &DeleteCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *DeleteCampaignPayloadTooLargeResponseBody {
+	body := &DeleteCampaignPayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3762,6 +4393,17 @@ func NewGetJobNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError
 	return body
 }
 
+// NewGetJobPayloadTooLargeResponseBody builds the HTTP response body from the
+// result of the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetJobPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetJobPayloadTooLargeResponseBody {
+	body := &GetJobPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetJobUnauthorizedResponseBody builds the HTTP response body from the
 // result of the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -3849,6 +4491,20 @@ func NewFetchEventURLPayload(body *FetchEventURLRequestBody, projectID string, b
 		URL: *body.URL,
 	}
 	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUploadCreativeAssetPayload builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint payload.
+func NewUploadCreativeAssetPayload(body *UploadCreativeAssetRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.UploadCreativeAssetPayload {
+	v := &lfxv2campaignservicebriefs.UploadCreativeAssetPayload{
+		ContentType: *body.ContentType,
+		Bytes:       *body.Bytes,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
 	v.BearerToken = bearerToken
 
 	return v
@@ -4046,6 +4702,33 @@ func ValidateUpdateBriefRequestBody(body *UpdateBriefRequestBody) (err error) {
 func ValidateFetchEventURLRequestBody(body *FetchEventURLRequestBody) (err error) {
 	if body.URL == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("url", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetRequestBody runs the validations defined on
+// Upload-Creative-AssetRequestBody
+func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody) (err error) {
+	if body.ContentType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content_type", "body"))
+	}
+	if body.Bytes == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
+	}
+	if body.ContentType != nil {
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Bytes != nil {
+		if utf8.RuneCountInString(*body.Bytes) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", *body.Bytes, utf8.RuneCountInString(*body.Bytes), 1, true))
+		}
+	}
+	if body.Bytes != nil {
+		if utf8.RuneCountInString(*body.Bytes) > 41943040 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", *body.Bytes, utf8.RuneCountInString(*body.Bytes), 41943040, false))
+		}
 	}
 	return
 }

@@ -186,6 +186,16 @@ type CreateAudienceNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateAudienceUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -243,6 +253,16 @@ type GetAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "get-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type GetAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "get-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -312,6 +332,16 @@ type ListAudiencesNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListAudiencesUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -369,6 +399,16 @@ type UpdateAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -452,6 +492,16 @@ type BuildAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type BuildAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// BuildAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type BuildAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -693,6 +743,17 @@ func NewCreateAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiences.No
 	return body
 }
 
+// NewCreateAudiencePayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "create-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewCreateAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiences.PayloadTooLargeError) *CreateAudiencePayloadTooLargeResponseBody {
+	body := &CreateAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateAudienceUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "create-audience" endpoint of the
 // "lfx-v2-campaign-service-audiences" service.
@@ -754,6 +815,17 @@ func NewGetAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceaudi
 // "lfx-v2-campaign-service-audiences" service.
 func NewGetAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiences.NotFoundError) *GetAudienceNotFoundResponseBody {
 	body := &GetAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudiencePayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "get-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewGetAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiences.PayloadTooLargeError) *GetAudiencePayloadTooLargeResponseBody {
+	body := &GetAudiencePayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -827,6 +899,17 @@ func NewListAudiencesNotFoundResponseBody(res *lfxv2campaignserviceaudiences.Not
 	return body
 }
 
+// NewListAudiencesPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "list-audiences" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewListAudiencesPayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiences.PayloadTooLargeError) *ListAudiencesPayloadTooLargeResponseBody {
+	body := &ListAudiencesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListAudiencesUnauthorizedResponseBody builds the HTTP response body from
 // the result of the "list-audiences" endpoint of the
 // "lfx-v2-campaign-service-audiences" service.
@@ -888,6 +971,17 @@ func NewUpdateAudienceInternalServerErrorResponseBody(res *lfxv2campaignservicea
 // "lfx-v2-campaign-service-audiences" service.
 func NewUpdateAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiences.NotFoundError) *UpdateAudienceNotFoundResponseBody {
 	body := &UpdateAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateAudiencePayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "update-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewUpdateAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiences.PayloadTooLargeError) *UpdateAudiencePayloadTooLargeResponseBody {
+	body := &UpdateAudiencePayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -977,6 +1071,17 @@ func NewBuildAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceau
 // "lfx-v2-campaign-service-audiences" service.
 func NewBuildAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiences.NotFoundError) *BuildAudienceNotFoundResponseBody {
 	body := &BuildAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewBuildAudiencePayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewBuildAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiences.PayloadTooLargeError) *BuildAudiencePayloadTooLargeResponseBody {
+	body := &BuildAudiencePayloadTooLargeResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

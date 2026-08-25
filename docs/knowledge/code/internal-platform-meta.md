@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached by URL as `link_data.picture`, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -43,10 +43,21 @@ with the TS contract is deferred (LFXV2-2665).
 
 Ad creatives are website-click ads built from `object_story_spec.link_data`
 (page id, the UTM click URL, primary text, headline, optional description). A
-variant may additionally carry an OPTIONAL `AdVariant.ImageURL`, which turns the
-ad into a SINGLE-IMAGE ad: the URL is attached to that variant's creative as
-`link_data.picture`. The field is additive — a variant with no `ImageURL`
-produces exactly the previous bare-link creative.
+variant may additionally carry an image, which turns the ad into a SINGLE-IMAGE
+ad. There are TWO ways to supply one and they COEXIST, because Meta documents two
+different creative fields for them:
+
+- `AdVariant.ImageURL` — attached to that variant's creative as
+  `link_data.picture`. No upload; Meta fetches the URL server-side.
+- `AdVariant.ImageAssetID` — a creative asset previously uploaded against the
+  brief. The dispatcher resolves it to `ImageBytes`, the client POSTs those bytes
+  to `/act_<id>/adimages`, and the returned account-scoped hash is attached as
+  `link_data.image_hash`.
+
+Both are additive — a variant with neither produces exactly the previous bare-link
+creative. They are MUTUALLY EXCLUSIVE per variant (see below), which is a
+restriction on one creative, not on the codebase: each variant independently
+chooses a route, and a campaign may mix by-URL and by-bytes variants.
 
 `picture` is the DOCUMENTED by-URL field on `AdCreativeLinkData`: "URL of a
 picture to use in the post. Specify this field or `image_hash` but not both. ...
@@ -54,23 +65,97 @@ The image specified at the URL will be saved into the ad accounts image library.
 META fetches the image server-side, so the client never dereferences the caller's
 URL and acquires no outbound-fetch (or SSRF) surface, and the whole creative stays
 one JSON create inside the ordinary hardened request path — no second transport.
-Because the reference makes `picture` and `image_hash` mutually exclusive, only
-`picture` is ever sent.
+Because the reference makes `picture` and `image_hash` mutually exclusive, a
+single creative carries exactly one of them. `validateVariantImage` REFUSES a
+variant supplying both, locally and before any upstream call, rather than letting
+Meta reject it after the campaign and ad set already exist. `objectStorySpec`
+then encodes the same exclusivity structurally: `picture` is set only when no hash
+was uploaded.
 
-An earlier revision instead uploaded to `POST /act_<id>/adimages` with a `url`
-field and attached the returned hash as `link_data.image_hash`. That was wrong:
-the adimages edge documents only `bytes` (base64) and `copy_from` as CREATE
-parameters — `url` is a field on the RETURNED image object, not an accepted
-input — so the call would have been rejected against a live account, after the
-campaign and ad set already existed. `picture` reaches the same by-URL outcome
-with one fewer round-trip and no undocumented parameter. Nothing in the repo
-calls `/adimages` any more.
+`image_hash` comes from `POST /act_<id>/adimages`, with the image sent as a
+multipart FILE part.
+
+The body is FRAMED AROUND the image, never copied around it. Multipart framing for a
+single part is a small fixed prefix (boundary + headers) and suffix (closing boundary),
+both independent of the payload, so `multipartFraming` generates them once with an empty
+part and the request body becomes prefix + image + suffix with the payload referenced in
+place. Each retry attempt builds a FRESH `io.MultiReader` over the same three slices —
+a reader is consumed by its send, so reusing one would post a truncated body and the
+failure would be misread as a rejection rather than a replay bug — and `ContentLength` is
+set explicitly, because `net/http` cannot infer it from a `MultiReader` and would
+otherwise send the upload chunked.
+
+This matters beyond tidiness: the earlier version buffered the whole encoded body, so
+every in-flight image was resident twice and the second copy sat OUTSIDE
+`dispatch.AssetReserver`'s process-wide budget — five concurrent dispatches added ~150 MiB
+that no bound accounted for. Measured at ~0.5% of the payload now, against ~100% before.
+
+ON THE PART'S FIELD NAME — the docs do not settle it, and an earlier version of
+this entry claimed they did. The reference documents exactly two CREATE
+parameters, `bytes` ("Image file", typed "Base64 UTF-8 string") and `copy_from`,
+and documents NO multipart file field: it is SILENT on multipart upload
+altogether. So "the parameter list says `bytes`, therefore the part must be named
+`bytes`" does not follow — that list describes a different (base64-in-a-scalar)
+way of sending the image.
+
+What shows the name is not load-bearing is that Meta's two OFFICIAL SDKs send
+DIFFERENT names against this same endpoint, both in production: the Python SDK's
+`FacebookRequest.add_file` builds `file_key = 'source' + str(self._file_counter)`
+and uploads under `source0`, while the PHP SDK's `AdImage.php` sets
+`AdImageFields::FILENAME` and uploads under `filename`. Two vendor SDKs, two
+names, one endpoint ⇒ the upload handler accepts any file part. The client's
+current name is therefore not a defect and is left alone.
+
+What IS load-bearing is that the part carries a FILENAME: that is what makes
+Graph treat it as a file upload rather than a scalar field, and Meta echoes the
+filename's BASENAME back as the key of the `images` map (the PHP SDK reads
+`images[basename($filename)]`). Whether that filename needs a real EXTENSION is
+undocumented in both directions — no authoritative source states a rule, and Meta
+sniffs content for format — so nothing in the code or tests asserts one.
+
+The response is `Map { string: Map { string: Struct { hash, url, ... } } }` under
+`images`. Because the key's contract lives in SDK source rather than in the
+reference, `uploadImage` does not derive it: it ENFORCES that exactly one entry is
+present (one upload yields one entry) and reads that entry BY VALUE. The count
+guard is not decoration. The earlier revision iterated the map and returned the
+first non-empty hash, which under Go's RANDOMIZED map iteration returned an
+arbitrary hash from a multi-entry response — and that hash becomes
+`link_data.image_hash` on a creative that spends money, so the failure mode was
+the wrong creative on a live paid ad, silently. Anything other than exactly one
+entry, or an entry whose hash is empty, is now refused as a `transportError`.
+
+CORRECTING AN EARLIER OVER-GENERALISATION: an earlier revision called the same
+edge with a `url` field, which is NOT an accepted input (`url` is a field on the
+RETURNED image object), so it would have been rejected against a live account
+after the campaign and ad set already existed. That verdict is about the `url`
+PARAMETER and was recorded as if it disqualified the ENDPOINT — the note read
+"nothing in the repo calls `/adimages` any more", which is no longer true and was
+never the necessary conclusion. `/adimages` is the only route that attaches an
+image the service holds as STORED BYTES rather than as a URL, so it is called
+again — this time on the multipart transport the official SDKs use.
+
+Be precise about which transport, because the reference and the code do not
+match and the mismatch reads as a bug: Meta's `/adimages` reference documents
+two create parameters, `bytes` (a Base64 UTF-8 SCALAR) and `copy_from`, and
+documents no multipart file field at all. `uploadImage` does not use the `bytes`
+parameter — it sends a raw multipart file part named `source`. That is not the
+documented parameter and is not claimed to be; the published docs are SILENT on
+the multipart mechanism, and the evidence for it is that Meta's own SDKs ship it
+(Python uploads under `source0`, PHP under a filename param). See
+`docs/knowledge/log/2026-08-21-LFXV2-3295-adimages-part-name-and-one-entry-guard.md`
+for the full derivation — including why "the parameter list says `bytes`, so the
+part must be named `bytes`" does not follow.
 
 The URL is validated up front alongside the copy-limit checks (absolute, https,
 no embedded userinfo) so a malformed URL is rejected BEFORE any paid resource
 exists, rather than at the per-variant creative step where the campaign and ad
 set are already created. Meta fetches the URL, so userinfo is rejected
-specifically to avoid handing a basic-auth secret to Meta.
+specifically to avoid handing a basic-auth secret to Meta. The both-supplied
+refusal runs in the same pre-spend pass.
+
+Neither path logs caller bytes, a byte count, or a checksum: an upload failure
+names only which variant failed, so the by-bytes path needs no analogue of
+`scrubURLFromErr` — there is no caller-supplied value in its error text to scrub.
 
 A creative rejected over its picture URL is non-fatal per-variant and is reported
 in `Steps` like any other per-variant failure. Because the URL now travels as a
@@ -166,6 +251,35 @@ by name" below), and nothing re-dispatches a retained partial — so the UNCONFI
 is surfaced for verification in Ads Manager rather than reconciled on a next run. The
 suppression is scoped to creates, not to POST as a method — the status-update POSTs
 assert a desired state, so repeating them changes nothing and they keep the retry.
+
+The test the suppression actually applies is IDEMPOTENCY, not the HTTP method and not
+the word "create": a request may be retried exactly when repeating it cannot bring a
+second thing into existence. Creates fail that test because Meta exposes no create
+idempotency key, so a re-POST of a shed create can duplicate a PAID object — which is
+why the rule stands as written above.
+
+`POST /act_<id>/adimages` is the one create-shaped call that PASSES it, and therefore
+DOES retry throttles (`uploadImage`/`uploadImageAttempt`, outside `doCreate`). Meta
+content-addresses ad images: posting identical bytes twice returns the same hash and
+creates nothing the first post did not, so the duplicate-paid-object hazard the
+suppression exists to prevent cannot arise. The exception is justified by that property
+alone — it is not a general softening of the create rule, and a future endpoint earns
+the same treatment only by demonstrating the same idempotency. Not retrying here is the
+costly choice: the campaign and ad set already exist by the time the upload runs, so a
+transient throttle drops the variant into a terminal `created_degraded` campaign that no
+re-dispatch repairs. The retry uses the same bounded schedule as `do()` — the same
+`Retry-After` policy including its over-cap abort, and the same capped exponential
+fallback via the shared `backoffDelay` helper, which both paths call so the two cannot
+drift apart. Only the THROTTLE arm retries; every other classification stays final.
+
+Throttle classification does NOT depend on reading the body completely, matching `do()`.
+A truncated read (a mismatched `Content-Length` makes `io.ReadAll` return "unexpected
+EOF") does not imply an unusable envelope, since the common shape is a complete JSON body
+followed by an early close. Both arms therefore ignore `readErr`: the status-only 429 arm,
+and the Graph-envelope arm that catches the MORE common shape — Meta reports rate limiting
+as a 400 carrying a rate-limit code more often than as a 429, so gating the envelope parse
+would leave that shape terminal. A truncated envelope keeps whatever parsed and also sets
+`EnvelopeUnreadable`, so a caller never reads a short body as a complete rejection.
 Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
 For a `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
@@ -446,7 +560,10 @@ CurrencyOffset.
 
 It implements `StatusToggler` and CASCADES: its create PAUSES the campaign, ad set, and
 ads, so `UpdateCampaignAndChildrenStatus` POSTs the status to the campaign, the persisted
-ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta persists the ad set id
-but not the individual ad ids). It needs only the access token, not the page id.
+ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads`. Since LFXV2-3295 the result blob
+also records the created ad ids (`CampaignResult.Ads`, one entry per successfully-created ad),
+so the discovery is a deliberate choice rather than a necessity: the live enumeration also
+covers ads added to the ad set after dispatch, and still works for rows written before that
+field existed. It needs only the access token, not the page id.
 
 See [internal/platform/meta](../../../internal/platform/meta).

@@ -215,6 +215,13 @@ type NotFoundError struct {
 	Message string
 }
 
+type PayloadTooLargeError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+}
+
 type PreconditionFailedError struct {
 	// HTTP status code
 	Code string
@@ -321,6 +328,23 @@ func (e *NotFoundError) ErrorName() string {
 // GoaErrorName returns "not-found-error".
 func (e *NotFoundError) GoaErrorName() string {
 	return "NotFound"
+}
+
+// Error returns an error description.
+func (e *PayloadTooLargeError) Error() string {
+	return ""
+}
+
+// ErrorName returns "payload-too-large-error".
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *PayloadTooLargeError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns "payload-too-large-error".
+func (e *PayloadTooLargeError) GoaErrorName() string {
+	return "PayloadTooLarge"
 }
 
 // Error returns an error description.

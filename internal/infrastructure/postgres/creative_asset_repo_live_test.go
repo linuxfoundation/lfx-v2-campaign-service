@@ -130,7 +130,7 @@ func TestCreativeAssetRepo_CreateAsset_StoresAndReturnsMetadata(t *testing.T) {
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 	asset := newTestAsset(t, projectID, briefID)
 
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestCreativeAssetRepo_CreateAsset_StoresByteSizeMatchingPayload(t *testing.
 	asset.Bytes = append(asset.Bytes, make([]byte, 512)...)
 	asset.ByteSize = int64(len(asset.Bytes))
 
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -216,9 +216,13 @@ func TestCreativeAssetRepo_CreateAsset_IsIdempotentOnChecksum(t *testing.T) {
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 	asset := newTestAsset(t, projectID, briefID)
 
-	first, err := repo.CreateAsset(ctx, asset)
+	first, firstCreated, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("first CreateAsset: %v", err)
+	}
+	if !firstCreated {
+		t.Error("first CreateAsset reported created=false; the initial upload DID insert the row, " +
+			"and reporting otherwise makes the transport answer 200 for a genuine creation")
 	}
 
 	// A second upload of the same checksum by a DIFFERENT actor.
@@ -228,9 +232,16 @@ func TestCreativeAssetRepo_CreateAsset_IsIdempotentOnChecksum(t *testing.T) {
 	reupload.ByteSize = asset.ByteSize
 	reupload.CreatedBy = json.RawMessage(`{"principal":"second-uploader"}`)
 
-	second, err := repo.CreateAsset(ctx, reupload)
+	second, secondCreated, err := repo.CreateAsset(ctx, reupload)
 	if err != nil {
 		t.Fatalf("re-upload CreateAsset: %v", err)
+	}
+	// The flag is the ONLY thing that separates these two outcomes: the returned row is fully
+	// populated and identical either way, so without it the transport answers 201 for a retry
+	// that created nothing.
+	if secondCreated {
+		t.Error("re-upload reported created=true, but the ON CONFLICT path returned the EXISTING " +
+			"row and inserted nothing; a client retrying would be told it created a resource")
 	}
 	if second.ID != first.ID {
 		t.Errorf("re-upload returned a new id %s, want the existing %s — the upload was not idempotent", second.ID, first.ID)
@@ -287,7 +298,7 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 		// nothing was inserted).
 		briefID := "00000000-0000-4000-8000-000000000000"
 		asset := newTestAsset(t, creativeAssetUniqueID(t, "proj"), briefID)
-		_, err := repo.CreateAsset(ctx, asset)
+		_, _, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound", err)
 		}
@@ -297,7 +308,7 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 	t.Run("archived brief", func(t *testing.T) {
 		briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "archived")
 		asset := newTestAsset(t, projectID, briefID)
-		_, err := repo.CreateAsset(ctx, asset)
+		_, _, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound — an archived brief must not accrue assets", err)
 		}
@@ -311,7 +322,7 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 		// boundary, so it is the most important of the three to prove stored NOTHING, not just to
 		// prove it returned an error.
 		asset := newTestAsset(t, creativeAssetUniqueID(t, "other-proj"), briefID)
-		_, err := repo.CreateAsset(ctx, asset)
+		_, _, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound — a caller must not attach an asset to another project's brief", err)
 		}
@@ -335,7 +346,7 @@ func TestCreativeAssetRepo_CreateAsset_AcceptsDraftBrief(t *testing.T) {
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "draft")
 	asset := newTestAsset(t, projectID, briefID)
 
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset under a DRAFT brief: %v — an asset must be storable while the "+
 			"brief is still being composed; the parent predicate is ACTIVE, not APPROVED", err)
@@ -449,6 +460,64 @@ func TestCreativeAssets_ByteSizeChecksBindSizeToPayload(t *testing.T) {
 	}
 }
 
+// TestCreativeAssets_ByteSizeUpperBoundIsEnforcedByTheTable pins the 30 MiB per-row ceiling at
+// the COLUMN, which is what migration 000029 added and what 000028 deferred to it.
+//
+// Why the table and not only the handler. internal/service refuses an oversize upload with a
+// len() on the decoded slice, but that guards the HTTP path alone: byte_size is caller-supplied
+// on the INSERT (createCreativeAssetQuery binds it as $4), so a repository caller, a backfill or
+// any future writer reaches the row without passing that check. The dispatcher then assumes a
+// tripping asset adds at most 30 MiB (maxVariantAssetBytes in internal/dispatch), an assumption
+// nothing below the handler enforced until this constraint existed.
+//
+// The write BYPASSES the repository deliberately, for the same reason the tenant-FK test does:
+// going through CreateAsset would test whichever value the caller set, while a direct insert
+// tests the COLUMN. Both edges are asserted, because a bound is only pinned if the test would
+// notice it moving in either direction — an off-by-one to `<` would still reject 30 MiB + 1 and
+// only the at-the-limit case catches it.
+//
+// The payload is built with repeat() in SQL rather than shipped from Go: a 30 MiB bytea in a
+// bind parameter is a 30 MiB round trip per case, and the CHECK reads the size from the varlena
+// header (byteaoctetlen does not detoast), so where the bytes are generated is irrelevant to
+// what is under test.
+func TestCreativeAssets_ByteSizeUpperBoundIsEnforcedByTheTable(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+
+	// maxCreativeStoredBytes in internal/service. Stated as a literal rather than imported: the
+	// point of this test is that the DATABASE agrees with that number, and deriving it from the
+	// same constant would make the test agree with itself if the constant moved.
+	const maxStored = 31457280
+
+	// ONE BYTE OVER must be refused. This is the case that was reachable before 000029.
+	_, err := pool.Exec(ctx, `
+		INSERT INTO creative_assets (project_id, brief_id, mime_type, byte_size, checksum, bytes)
+		VALUES ($1, $2, 'image/png', $4::bigint, $3, repeat('a', $5::int)::bytea)`,
+		projectID, briefID, creativeAssetUniqueID(t, "sum"), maxStored+1, maxStored+1)
+	if err == nil {
+		t.Fatal("a byte_size of 30 MiB + 1 was accepted — CHECK (byte_size <= 31457280) is " +
+			"missing, so a writer that bypasses the upload handler can persist an oversize blob")
+	}
+	// 23514 = check_violation. Asserting the code keeps this from passing on an unrelated error
+	// (an FK failure or a bad bind would otherwise read as success here).
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("err = %v, want a check_violation (SQLSTATE 23514) on the byte_size upper bound", err)
+	}
+
+	// EXACTLY AT the limit must be accepted. Without this the bound could be tightened to `<`
+	// (or to any smaller number) and the over-limit case above would still pass, while the
+	// endpoint's own ceiling — which admits exactly 30 MiB — started failing at the database.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO creative_assets (project_id, brief_id, mime_type, byte_size, checksum, bytes)
+		VALUES ($1, $2, 'image/png', $4::bigint, $3, repeat('a', $5::int)::bytea)`,
+		projectID, briefID, creativeAssetUniqueID(t, "sum"), maxStored, maxStored); err != nil {
+		t.Fatalf("byte_size = 31457280 (exactly the handler's ceiling) must be accepted, got: %v", err)
+	}
+}
+
 // TestCreativeAssets_CompositeTenantFKRejectsMismatchedProject pins the DATABASE-level
 // parent-tenant constraint, independently of CreateAsset's WHERE EXISTS gate.
 //
@@ -507,7 +576,7 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 
 	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 	asset := newTestAsset(t, projectID, briefID)
-	stored, err := repo.CreateAsset(ctx, asset)
+	stored, _, err := repo.CreateAsset(ctx, asset)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -556,7 +625,7 @@ func TestCreativeAssetRepo_GetAsset_ReturnsBytesScopedToTenant(t *testing.T) {
 		// reopen the archival race.
 		liveBriefID, liveProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 		a := newTestAsset(t, liveProjectID, liveBriefID)
-		created, err := repo.CreateAsset(ctx, a)
+		created, _, err := repo.CreateAsset(ctx, a)
 		if err != nil {
 			t.Fatalf("CreateAsset under the active brief: %v", err)
 		}
@@ -628,7 +697,7 @@ func TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		_, cerr := repo.CreateAsset(ctx, asset)
+		_, _, cerr := repo.CreateAsset(ctx, asset)
 		done <- result{err: cerr}
 	}()
 

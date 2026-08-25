@@ -85,6 +85,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -177,6 +184,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -264,6 +278,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -375,6 +396,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -455,6 +483,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -560,6 +595,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -645,6 +687,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -744,6 +793,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -837,6 +893,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -954,6 +1017,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -1051,6 +1121,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -1140,6 +1217,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -1237,6 +1321,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -1355,6 +1446,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -1453,6 +1551,13 @@ paths:
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -1556,6 +1661,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -1665,6 +1777,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -1755,6 +1874,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -1874,6 +2000,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -1982,6 +2115,125 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/creative-assets:
+        post:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: upload-creative-asset lfx-v2-campaign-service-briefs
+            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.'
+            operationId: lfx-v2-campaign-service-briefs#upload-creative-asset
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  type: string
+                  format: uuid
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+                - name: Upload-Creative-AssetRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceBriefsUploadCreativeAssetRequestBody'
+                    required:
+                        - content_type
+                        - bytes
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/CreativeAsset'
+                        required:
+                            - id
+                            - project_id
+                            - brief_id
+                            - mime_type
+                            - byte_size
+                            - checksum
+                "201":
+                    description: Created response.
+                    schema:
+                        $ref: '#/definitions/CreativeAsset'
+                        required:
+                            - id
+                            - project_id
+                            - brief_id
+                            - mime_type
+                            - byte_size
+                            - checksum
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: Conflict response.
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -2063,6 +2315,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -2164,6 +2423,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -2238,6 +2504,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -2336,6 +2609,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -2429,6 +2709,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -2489,6 +2776,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -2557,6 +2851,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -2631,6 +2932,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -2696,6 +3004,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -2773,6 +3088,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -2871,6 +3193,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -2964,6 +3293,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -3024,6 +3360,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3100,6 +3443,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -3171,6 +3521,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -3236,6 +3593,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3313,6 +3677,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3411,6 +3782,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -3504,6 +3882,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -3564,6 +3949,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3632,6 +4024,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3706,6 +4105,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -3771,6 +4177,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3848,6 +4261,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -3946,6 +4366,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -4039,6 +4466,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -4099,6 +4533,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4167,6 +4608,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4241,6 +4689,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -4306,6 +4761,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4383,6 +4845,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4481,6 +4950,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -4574,6 +5050,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -4634,6 +5117,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4702,6 +5192,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4776,6 +5273,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -4841,6 +5345,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -4918,6 +5429,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5016,6 +5534,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -5109,6 +5634,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -5169,6 +5701,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5243,6 +5782,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -5308,6 +5854,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5385,6 +5938,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5483,6 +6043,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "428":
                     description: Precondition Required response.
                     schema:
@@ -5576,6 +6143,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -5636,6 +6210,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5704,6 +6285,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5778,6 +6366,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -5843,6 +6438,13 @@ paths:
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -5927,6 +6529,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -6017,6 +6626,13 @@ paths:
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
                         required:
                             - code
                             - message
@@ -6111,6 +6727,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -6193,6 +6816,13 @@ paths:
                         required:
                             - code
                             - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -6219,14 +6849,14 @@ definitions:
             id:
                 type: string
                 description: 'Account identifier in the ad platform''s OWN namespace, ready to store as the connection''s account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method''s own example shows its provider''s form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.'
-                example: Dolorem quia delectus sequi amet harum.
+                example: Et dolor repudiandae amet id.
             label:
                 type: string
                 description: Human-readable account name or label
-                example: Totam facere corrupti est.
+                example: Voluptas a natus est dolor voluptatum.
         example:
-            id: Sit odit minus nihil.
-            label: Quos ea.
+            id: Sit dignissimos est.
+            label: Voluptate doloremque deleniti quo assumenda.
         required:
             - id
     Audience:
@@ -6236,15 +6866,15 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Autem aut maiores ut sint.
+                example: Aut in voluptate quam delectus optio saepe.
             id:
                 type: string
                 description: Audience UUID
-                example: Non quam suscipit ea ea.
+                example: Quisquam sit ut aliquid consectetur.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: In qui est recusandae amet beatae.
+                example: Ab iste earum consequatur laboriosam maxime nemo.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -6254,15 +6884,15 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Quia ducimus inventore quis delectus soluta repudiandae.
+                example: Vel cum alias iusto molestiae.
             project_id:
                 type: string
                 description: Owning project
-                example: Quia sed harum.
+                example: Harum nisi illo quia.
             status:
                 type: string
                 description: Build lifecycle status
-                example: failed
+                example: built
                 enum:
                     - building
                     - built
@@ -6271,31 +6901,30 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Mollitia exercitationem.
+                    example: Et id voluptatem et et et eveniet.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Similique sequi occaecati.
-                    - Eaque omnis nihil itaque.
-                    - Impedit perspiciatis ipsam sunt distinctio consequuntur.
+                    - Et doloribus ex dolor quia et dolores.
+                    - Distinctio ea.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 449679910589491376
+                example: 1623751227268513960
                 format: int64
         example:
-            brief_id: Provident voluptates cumque reiciendis error.
-            id: Consequatur expedita nihil.
-            inclusion_summary: Magnam omnis fugit.
+            brief_id: Veritatis molestiae similique optio et corporis error.
+            id: Error consequatur nam veniam ipsum.
+            inclusion_summary: Sit iure quos aut eligendi facere.
             platform: hubspot
-            platform_master_list_id: Enim corrupti.
-            project_id: Soluta consequuntur sapiente quam.
+            platform_master_list_id: Repellat consectetur alias reiciendis.
+            project_id: A et quia.
             status: built
             suppression_list_ids:
-                - Voluptas culpa.
-                - Iste nihil itaque et.
-                - Delectus non aut ipsum.
-                - Rerum nesciunt veritatis consequatur porro.
-            version: 4206331836708979930
+                - Cumque est quis nostrum quod.
+                - Dolorum enim doloribus.
+                - Ex enim rem.
+                - Omnis repellendus atque.
+            version: 6027409796815781045
         required:
             - id
             - project_id
@@ -6310,7 +6939,7 @@ definitions:
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Culpa est ex.
+                example: Repellat eos.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -6320,11 +6949,11 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Sed voluptatem repudiandae soluta.
+                example: Quaerat sed et modi.
             status:
                 type: string
                 description: Build lifecycle status
-                example: failed
+                example: building
                 enum:
                     - building
                     - built
@@ -6333,20 +6962,22 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Et quisquam dolores.
+                    example: Magni repellendus et.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Aut et qui qui aut sed.
-                    - Officiis et error nemo iste harum.
-                    - Commodi occaecati.
+                    - Eligendi rerum.
+                    - Necessitatibus alias.
+                    - Vitae sapiente dolor unde harum dolorem iusto.
         example:
-            inclusion_summary: Eum tenetur magnam quaerat.
+            inclusion_summary: Velit in.
             platform: hubspot
-            platform_master_list_id: Deserunt nostrum sed.
-            status: failed
+            platform_master_list_id: Sit incidunt in et ea.
+            status: building
             suppression_list_ids:
-                - Provident eius eos sit quam.
-                - Adipisci non rerum et recusandae.
+                - Et culpa similique quasi ratione.
+                - Laboriosam dolorem ut dolorem odio aut reprehenderit.
+                - Quis inventore iste nemo rerum corporis repellat.
+                - Excepturi iusto in.
         required:
             - platform
     AudienceUpdateInput:
@@ -6356,15 +6987,15 @@ definitions:
             clear_suppression_lists:
                 type: boolean
                 description: Set true to remove all suppression lists (round-trips where an empty array cannot)
-                example: false
+                example: true
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Eaque eos veniam quidem maiores adipisci.
+                example: Nihil labore accusamus illum in delectus magnam.
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Est aut et rem eos quia et.
+                example: Sunt et eveniet eaque.
             status:
                 type: string
                 description: Build lifecycle status
@@ -6377,23 +7008,22 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Accusantium et repudiandae.
+                    example: Architecto aut eius quo voluptate repudiandae.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Ab laboriosam placeat.
-                    - Cumque adipisci.
-                    - Nihil a temporibus error incidunt.
-                    - Voluptas ullam optio.
+                    - Et corrupti magnam deleniti nam laboriosam esse.
+                    - Eaque ut voluptatibus qui qui officia.
+                    - Alias quis voluptates nihil odio facere magnam.
+                    - Dolorem impedit sint consequatur.
         example:
-            clear_suppression_lists: false
-            inclusion_summary: Et qui quos corrupti quam unde.
-            platform_master_list_id: Dolor molestias ullam aut odit repellat.
+            clear_suppression_lists: true
+            inclusion_summary: Dolores dolores sed.
+            platform_master_list_id: Laboriosam placeat nesciunt tempore.
             status: building
             suppression_list_ids:
-                - Voluptatum reprehenderit nemo voluptatibus et perferendis corrupti.
-                - Tempore aut voluptas ipsa quis animi.
-                - Sunt reprehenderit aliquam perspiciatis libero.
-                - Ratione pariatur.
+                - Nemo adipisci deleniti.
+                - Suscipit qui molestias aliquid.
+                - Consequatur est qui qui ducimus enim.
         required:
             - platform
     BadRequestError:
@@ -6421,34 +7051,34 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Porro est.
+                example: Ut est est mollitia.
             event_details:
                 description: Extracted event/course details
-                example: Magni est error maiores excepturi exercitationem.
+                example: Natus enim non.
             event_slug:
                 type: string
                 description: Event/course slug (unique within the project)
-                example: Aut ut non praesentium repellendus voluptatem ad.
+                example: Omnis explicabo sed et.
             id:
                 type: string
                 description: Brief UUID
-                example: Illum cum rerum est.
+                example: Repellendus commodi quia.
             keywords:
                 description: Keyword list
-                example: Nemo architecto est aut.
+                example: Corporis omnis.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Nesciunt nesciunt magnam omnis est unde adipisci.
+                    example: Eligendi corporis tenetur delectus excepturi et.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Vitae perferendis quod quidem eum.
-                    - Sed explicabo et quo et velit qui.
+                    - Et consequuntur id libero sunt.
+                    - Suscipit consequatur iure dolor sit quis ut.
             program_type:
                 type: string
                 description: Funnel context
-                example: events
+                example: membership
                 enum:
                     - events
                     - education
@@ -6456,7 +7086,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Enim est sapiente.
+                example: Sit eveniet hic ea et sequi.
             status:
                 type: string
                 description: Lifecycle status
@@ -6467,32 +7097,32 @@ definitions:
                     - archived
             targeting:
                 description: Targeting recommendation
-                example: Ab culpa consequatur.
+                example: Ea in sunt odit aspernatur.
             url:
                 type: string
                 description: Event/course page URL
-                example: Est et saepe quo quis ut in.
+                example: Commodi autem eos enim temporibus facere.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 4885942589041663757
+                example: 2850937812109107547
                 format: int64
         example:
-            copy: Provident quisquam sit ut aliquid consectetur.
-            event_details: Sint recusandae iusto aspernatur fugit et facere.
-            event_slug: Inventore et voluptatum praesentium ut.
-            id: Quia excepturi et eveniet sunt.
-            keywords: Harum nisi illo quia.
+            copy: Odio aut suscipit.
+            event_details: Facere dolorum rem laborum dolor provident.
+            event_slug: Animi reprehenderit inventore aliquam dolorem voluptas autem.
+            id: Minima quas voluptatem.
+            keywords: Vitae voluptas fuga aut minima inventore tenetur.
             platforms:
-                - Voluptatum nobis ipsam blanditiis commodi.
-                - Maxime sint.
-                - Sed eum ad sunt.
-            program_type: education
-            project_id: Veniam ut et sit.
+                - Illum totam autem ratione est.
+                - Sapiente a animi.
+                - Voluptas earum provident qui.
+            program_type: membership
+            project_id: Dolore doloribus similique.
             status: draft
-            targeting: Aut in voluptate quam delectus optio saepe.
-            url: Laboriosam debitis aut vitae.
-            version: 627055464761364540
+            targeting: Quam aliquid reiciendis maiores similique ab.
+            url: Aut ut enim eum.
+            version: 891818008480731995
         required:
             - id
             - project_id
@@ -6506,28 +7136,27 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Velit architecto error consequatur nam.
+                example: Libero veritatis cum dignissimos deleniti dolorem voluptas.
             event_details:
                 description: Extracted event/course details
-                example: Maxime nemo.
+                example: Pariatur accusamus aut.
             event_slug:
                 type: string
                 description: Event/course slug (unique within the project)
-                example: gq
+                example: br
                 minLength: 1
             keywords:
                 description: Keyword list
-                example: Ipsum est a.
+                example: Soluta repudiandae quisquam accusamus quidem perferendis.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Et ad et.
+                    example: In officiis dolores delectus architecto.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Dolor quia et.
-                    - Commodi distinctio ea dignissimos ab.
-                    - Earum consequatur.
+                    - Eligendi omnis est vel est.
+                    - Eveniet iure consectetur.
             program_type:
                 type: string
                 description: Funnel context
@@ -6538,24 +7167,23 @@ definitions:
                     - membership
             targeting:
                 description: Targeting recommendation
-                example: Quia voluptatem veritatis molestiae similique.
+                example: Ratione architecto corporis totam et.
             url:
                 type: string
                 description: Event/course page URL
-                example: Fuga et id voluptatem et et et.
+                example: Excepturi rerum.
         example:
-            copy: Quo eveniet fuga quaerat.
-            event_details: Sit iure quos aut eligendi facere.
-            event_slug: snm
-            keywords: Et modi eveniet magni repellendus et.
+            copy: Eum iure aut eaque autem possimus.
+            event_details: Qui omnis et blanditiis asperiores.
+            event_slug: ux
+            keywords: Recusandae deserunt ratione eius culpa sit.
             platforms:
-                - Cumque est quis nostrum quod.
-                - Dolorum enim doloribus.
-                - Ex enim rem.
-                - Omnis repellendus atque.
+                - Mollitia nulla.
+                - Dolorem necessitatibus blanditiis.
+                - Eligendi tempora reprehenderit eveniet in.
             program_type: education
-            targeting: Deserunt eligendi rerum architecto necessitatibus alias.
-            url: Repellat consectetur alias reiciendis.
+            targeting: Dolore esse quos quis.
+            url: Magnam ea repellat qui ducimus eveniet dolor.
         required:
             - program_type
             - event_slug
@@ -6625,11 +7253,11 @@ definitions:
                         platform_campaign_id: "104670127234"
                         window: last_30_days
                       pacing:
-                        label: underspending
+                        label: unknown
                         pct: 94.2
                       platform: linkedin-ads
                       reason: this window is not supported for the campaign's platform
-                      status: ok
+                      status: unsupported
                     - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -6647,11 +7275,11 @@ definitions:
                         platform_campaign_id: "104670127234"
                         window: last_30_days
                       pacing:
-                        label: underspending
+                        label: unknown
                         pct: 94.2
                       platform: linkedin-ads
                       reason: this window is not supported for the campaign's platform
-                      status: ok
+                      status: unsupported
                     - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -6669,15 +7297,15 @@ definitions:
                         platform_campaign_id: "104670127234"
                         window: last_30_days
                       pacing:
-                        label: underspending
+                        label: unknown
                         pct: 94.2
                       platform: linkedin-ads
                       reason: this window is not supported for the campaign's platform
-                      status: ok
+                      status: unsupported
             window:
                 type: string
                 description: The window REQUESTED for this read. Per-platform defaults still apply when it is omitted, so an individual row may have been read over a narrower window than this — X Ads caps queryable ranges at 7 days. Each row's own metrics.window is what that row actually covers.
-                example: last_7_days
+                example: today
                 enum:
                     - today
                     - yesterday
@@ -6688,6 +7316,12 @@ definitions:
                     - last_month
         example:
             action_items:
+                - action: Check targeting and creative approval status
+                  campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                  issue: No impressions or spend recorded
+                  platform: reddit-ads
+                  priority: HIGH
+                  rule: zero_delivery
                 - action: Check targeting and creative approval status
                   campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                   issue: No impressions or spend recorded
@@ -6726,11 +7360,11 @@ definitions:
                     platform_campaign_id: "104670127234"
                     window: last_30_days
                   pacing:
-                    label: underspending
+                    label: unknown
                     pct: 94.2
                   platform: linkedin-ads
                   reason: this window is not supported for the campaign's platform
-                  status: ok
+                  status: unsupported
                 - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                   metrics:
                     campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -6748,12 +7382,56 @@ definitions:
                     platform_campaign_id: "104670127234"
                     window: last_30_days
                   pacing:
-                    label: underspending
+                    label: unknown
                     pct: 94.2
                   platform: linkedin-ads
                   reason: this window is not supported for the campaign's platform
-                  status: ok
-            window: last_14_days
+                  status: unsupported
+                - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                  metrics:
+                    campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                    clicks: 212
+                    cost_micros: 0
+                    ctr: 0.1152
+                    email:
+                        bounces: 95
+                        clicks: 212
+                        delivered: 9268
+                        opens: 1840
+                        sent: 9400
+                        unsubscribes: 17
+                    impressions: 1840
+                    platform_campaign_id: "104670127234"
+                    window: last_30_days
+                  pacing:
+                    label: unknown
+                    pct: 94.2
+                  platform: linkedin-ads
+                  reason: this window is not supported for the campaign's platform
+                  status: unsupported
+                - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                  metrics:
+                    campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                    clicks: 212
+                    cost_micros: 0
+                    ctr: 0.1152
+                    email:
+                        bounces: 95
+                        clicks: 212
+                        delivered: 9268
+                        opens: 1840
+                        sent: 9400
+                        unsubscribes: 17
+                    impressions: 1840
+                    platform_campaign_id: "104670127234"
+                    window: last_30_days
+                  pacing:
+                    label: unknown
+                    pct: 94.2
+                  platform: linkedin-ads
+                  reason: this window is not supported for the campaign's platform
+                  status: unsupported
+            window: this_month
         required:
             - brief_id
             - window
@@ -6783,7 +7461,7 @@ definitions:
             status:
                 type: string
                 description: Whether this row carries a measurement. ONLY `ok` does.
-                example: not_ready
+                example: ok
                 enum:
                     - ok
                     - unsupported
@@ -6808,11 +7486,11 @@ definitions:
                 platform_campaign_id: "104670127234"
                 window: last_30_days
             pacing:
-                label: underspending
+                label: unknown
                 pct: 94.2
             platform: linkedin-ads
             reason: this window is not supported for the campaign's platform
-            status: connection_problem
+            status: not_ready
         required:
             - campaign_id
             - platform
@@ -6824,45 +7502,45 @@ definitions:
             brief_id:
                 type: string
                 description: Parent brief
-                example: Corporis tenetur delectus excepturi et a.
+                example: Ea quidem perspiciatis.
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Natus enim non.
+                example: Iste quaerat quo.
             id:
                 type: string
                 description: Campaign UUID
-                example: Impedit omnis explicabo sed et et commodi.
+                example: Consequuntur alias natus quasi quibusdam nihil qui.
             platform:
                 type: string
                 description: Channel
-                example: Et consequuntur id libero sunt.
+                example: Qui esse et voluptatum ullam.
             platform_campaign_id:
                 type: string
                 description: ID returned by the ad platform
-                example: Suscipit consequatur iure dolor sit quis ut.
+                example: Eos mollitia aliquam et veritatis.
             project_id:
                 type: string
                 description: Owning project
-                example: Eos enim temporibus facere sit.
+                example: Illo facilis.
             status:
                 type: string
                 description: Campaign status
-                example: Ut est est mollitia.
+                example: Aut ut.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 2989531438001624755
+                example: 133644591736560175
                 format: int64
         example:
-            brief_id: Minima quas voluptatem.
-            campaign_name: Autem enim aut.
-            id: Omnis eius.
-            platform: Dolore doloribus similique.
-            platform_campaign_id: Et animi reprehenderit inventore aliquam dolorem.
-            project_id: In sunt odit aspernatur exercitationem delectus.
-            status: Enim eum.
-            version: 9206040609471306649
+            brief_id: Unde id perspiciatis perferendis ut.
+            campaign_name: Distinctio repudiandae eum pariatur ea et.
+            id: Velit mollitia laudantium fugiat.
+            platform: Velit commodi eum.
+            platform_campaign_id: Et ullam explicabo est beatae laudantium veritatis.
+            project_id: Qui eum non beatae.
+            status: Ab excepturi occaecati autem et perspiciatis ullam.
+            version: 7279547861421666090
         required:
             - id
             - project_id
@@ -6954,7 +7632,7 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: linkedin-ads
+                    example: hubspot
                     enum:
                         - google-ads
                         - linkedin-ads
@@ -7038,7 +7716,7 @@ definitions:
             window:
                 type: string
                 description: 'The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email''s totals to date — see the email object.'
-                example: last_7_days
+                example: yesterday
                 enum:
                     - today
                     - yesterday
@@ -7077,7 +7755,7 @@ definitions:
             label:
                 type: string
                 description: The band pct falls into. `unknown` means no pacing could be derived, which is NOT the same as being on plan.
-                example: underspending
+                example: overspending
                 enum:
                     - underspending
                     - normal
@@ -7090,7 +7768,7 @@ definitions:
                 example: 94.2
                 format: double
         example:
-            label: normal
+            label: underspending
             pct: 94.2
         required:
             - label
@@ -7145,15 +7823,11 @@ definitions:
                     $ref: '#/definitions/CampaignSettingsField'
                 description: Every setting compared, in a stable order, INCLUDING the ones that could not be compared — a field missing from this list would be indistinguishable from one this service does not know about.
                 example:
-                    - comparison: diverged
+                    - comparison: match
                       field: budget_amount
                       recorded: "500.00"
                       upstream: "750.00"
-                    - comparison: diverged
-                      field: budget_amount
-                      recorded: "500.00"
-                      upstream: "750.00"
-                    - comparison: diverged
+                    - comparison: match
                       field: budget_amount
                       recorded: "500.00"
                       upstream: "750.00"
@@ -7168,7 +7842,7 @@ definitions:
             read_at:
                 type: string
                 description: When the platform was read (RFC3339, UTC). A readback is a point-in-time observation and says nothing about the campaign after this instant.
-                example: "2015-04-29T20:13:15Z"
+                example: "1970-09-04T14:23:57Z"
                 format: date-time
             unknown_count:
                 type: integer
@@ -7232,18 +7906,18 @@ definitions:
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Cum dignissimos deleniti dolorem voluptas.
+                example: Iure corporis.
             config:
                 description: Campaign configuration snapshot
-                example: Ratione architecto corporis totam et.
+                example: Non praesentium.
             status:
                 type: string
                 description: Campaign status
-                example: Soluta repudiandae quisquam accusamus quidem perferendis.
+                example: Eum excepturi.
         example:
-            campaign_name: Minima optio.
-            config: Eveniet dolor necessitatibus est mollitia.
-            status: Tempora magnam ea repellat qui.
+            campaign_name: Dicta voluptatem ex.
+            config: Aliquam sed nisi eum.
+            status: Tempora voluptas qui.
         required:
             - campaign_name
             - status
@@ -7301,16 +7975,71 @@ definitions:
             message:
                 type: string
                 description: Human-readable detail
-                example: Ut autem.
+                example: Explicabo error ducimus laboriosam illo fuga et.
             ok:
                 type: boolean
                 description: Whether the credential authenticated against the provider
                 example: true
         example:
-            message: Omnis id eaque omnis in architecto.
-            ok: true
+            message: Corporis dignissimos dolor.
+            ok: false
         required:
             - ok
+    CreativeAsset:
+        title: CreativeAsset
+        type: object
+        properties:
+            brief_id:
+                type: string
+                description: Parent brief
+                example: Doloribus sed vitae.
+            byte_size:
+                type: integer
+                description: Size of the stored image in bytes
+                example: 1841107414194909151
+                format: int64
+            checksum:
+                type: string
+                description: Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief
+                example: Rerum est et et aliquid ut.
+            created:
+                type: string
+                description: '"true" when this request stored the asset; "false" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.'
+                example: "true"
+                enum:
+                    - "true"
+                    - "false"
+            id:
+                type: string
+                description: Creative asset UUID
+                example: d54f1660-136d-4c99-ad8b-c72ec2e9a51c
+                format: uuid
+            mime_type:
+                type: string
+                description: Stored image MIME type, as verified from the bytes (not merely the declared header)
+                example: image/jpeg
+                enum:
+                    - image/png
+                    - image/jpeg
+            project_id:
+                type: string
+                description: Owning project
+                example: Mollitia est repellendus et.
+        example:
+            brief_id: Ut qui minima nemo deserunt quia vero.
+            byte_size: 3318397650999369152
+            checksum: Magni quod veritatis voluptatem voluptatibus itaque laborum.
+            created: "true"
+            id: 2b892614-cc36-4deb-b72f-28a9b9322901
+            mime_type: image/png
+            project_id: Consequuntur possimus corporis molestiae hic tempore.
+        required:
+            - id
+            - project_id
+            - brief_id
+            - mime_type
+            - byte_size
+            - checksum
     EmailCopy:
         title: EmailCopy
         type: object
@@ -7401,11 +8130,11 @@ definitions:
             description:
                 type: string
                 description: Event description
-                example: Vitae sapiente dolor unde harum dolorem iusto.
+                example: Voluptas sed ut dolor.
             end_date:
                 type: string
                 description: Event end date, same caveat as start_date
-                example: Et nesciunt et culpa similique quasi ratione.
+                example: Aperiam placeat odio.
             event_name:
                 type: string
                 description: Event name
@@ -7413,7 +8142,7 @@ definitions:
             extracted_from:
                 type: string
                 description: Which strategy produced this record — the whole record came from exactly one of them
-                example: jsonld
+                example: fallback
                 enum:
                     - jsonld
                     - opengraph
@@ -7421,28 +8150,28 @@ definitions:
             image:
                 type: string
                 description: Event image URL
-                example: Laboriosam dolorem ut dolorem odio aut reprehenderit.
+                example: Perspiciatis neque ab commodi nesciunt.
             location:
                 type: string
                 description: Event location as written on the page — free text, not a resolved place
-                example: Repellat eos.
+                example: Enim modi ut esse numquam.
             start_date:
                 type: string
                 description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                example: Qui repellendus sit incidunt in et.
+                example: Laborum aut nobis ex exercitationem.
             url:
                 type: string
                 description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                example: Quis inventore iste nemo rerum corporis repellat.
+                example: Facilis est pariatur.
         example:
-            description: Iusto in commodi velit in odio.
-            end_date: Eius quo.
+            description: Inventore qui exercitationem eos reprehenderit sapiente necessitatibus.
+            end_date: Eaque consequatur possimus qui est numquam omnis.
             event_name: KubeCon + CloudNativeCon Europe 2026
             extracted_from: fallback
-            image: Repudiandae enim distinctio et.
-            location: Aliquam voluptatem sunt et eveniet.
-            start_date: Non architecto.
-            url: Magnam deleniti nam laboriosam esse temporibus.
+            image: Est culpa eos sed sed est.
+            location: Voluptates pariatur facilis nostrum sint enim.
+            start_date: Unde natus ipsam amet.
+            url: Non suscipit quisquam.
         required:
             - extracted_from
     GoogleAdsAudience:
@@ -7463,19 +8192,31 @@ definitions:
                     - clicks: 742
                       cost_micros: 3120000
                       ctr: 0.0578
-                      dimension: gender
+                      dimension: device
                       impressions: 12840
                       value: AGE_RANGE_25_34
                     - clicks: 742
                       cost_micros: 3120000
                       ctr: 0.0578
-                      dimension: gender
+                      dimension: device
+                      impressions: 12840
+                      value: AGE_RANGE_25_34
+                    - clicks: 742
+                      cost_micros: 3120000
+                      ctr: 0.0578
+                      dimension: device
+                      impressions: 12840
+                      value: AGE_RANGE_25_34
+                    - clicks: 742
+                      cost_micros: 3120000
+                      ctr: 0.0578
+                      dimension: device
                       impressions: 12840
                       value: AGE_RANGE_25_34
             window:
                 type: string
                 description: The reporting window these counters cover
-                example: last_30_days
+                example: last_14_days
                 enum:
                     - today
                     - yesterday
@@ -7490,13 +8231,13 @@ definitions:
                 - clicks: 742
                   cost_micros: 3120000
                   ctr: 0.0578
-                  dimension: gender
+                  dimension: device
                   impressions: 12840
                   value: AGE_RANGE_25_34
                 - clicks: 742
                   cost_micros: 3120000
                   ctr: 0.0578
-                  dimension: gender
+                  dimension: device
                   impressions: 12840
                   value: AGE_RANGE_25_34
             window: today
@@ -7526,7 +8267,7 @@ definitions:
             dimension:
                 type: string
                 description: Which breakdown this bucket belongs to
-                example: device
+                example: gender
                 enum:
                     - age
                     - gender
@@ -7544,7 +8285,7 @@ definitions:
             clicks: 742
             cost_micros: 3120000
             ctr: 0.0578
-            dimension: age
+            dimension: device
             impressions: 12840
             value: AGE_RANGE_25_34
         required:
@@ -7561,31 +8302,31 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Est culpa eos sed sed est.
+                example: Accusamus magni sit.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: false
+                example: true
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Voluptates pariatur facilis nostrum sint enim.
+                example: Similique magni.
             label:
                 type: string
                 description: Optional friendly name
-                example: Eaque consequatur possimus qui est numquam omnis.
+                example: Modi sapiente id quo fugiat.
             login_customer_id:
                 type: string
                 description: Manager account used for API access
-                example: Culpa in et explicabo possimus sit et.
+                example: Eos nemo.
             project_id:
                 type: string
                 description: Owning project
-                example: Unde natus ipsam amet.
+                example: Et blanditiis consequuntur.
             status:
                 type: string
                 description: Connection status
-                example: deleted
+                example: inactive
                 enum:
                     - active
                     - inactive
@@ -7594,17 +8335,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 7242648459542985427
+                example: 5739229592179310293
                 format: int64
         example:
-            account_id: Quia corrupti blanditiis ducimus.
+            account_id: A labore a sed enim illum.
             has_credentials: true
-            id: Ut sint tempore porro et.
-            label: Doloremque aut nulla esse.
-            login_customer_id: Provident laborum exercitationem pariatur.
-            project_id: Voluptatem fugiat laboriosam sit.
-            status: deleted
-            version: 5842228765089669646
+            id: Quae sequi et maxime voluptatibus vero aspernatur.
+            label: Ratione esse facere est rem nihil.
+            login_customer_id: Qui dolore molestiae dignissimos ratione.
+            project_id: Velit at occaecati qui praesentium non.
+            status: active
+            version: 7127283885016891082
         required:
             - id
             - project_id
@@ -7639,25 +8380,25 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Est vero odit.
+                example: Soluta sint soluta asperiores nemo quia voluptatum.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Repudiandae aliquid ex voluptas enim aut.
+                example: Beatae natus alias culpa omnis.
             developer_token:
                 type: string
                 description: Google Ads developer token
-                example: Impedit ea sit totam eveniet suscipit.
+                example: Nisi qui voluptas illum ipsum recusandae.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: Incidunt beatae.
+                example: Exercitationem assumenda.
         description: Google Ads OAuth credential set. Write-only; never returned.
         example:
-            client_id: Repellendus et.
-            client_secret: Doloribus sed vitae.
-            developer_token: Aut consequatur rerum est et.
-            refresh_token: Ratione labore mollitia.
+            client_id: Maiores dolor sapiente ab minima.
+            client_secret: Qui dolor excepturi molestiae aut voluptate.
+            developer_token: Est distinctio fugiat ipsum quia dolore.
+            refresh_token: Dolor quae perspiciatis.
         required:
             - refresh_token
             - client_id
@@ -7702,7 +8443,7 @@ definitions:
             match_type:
                 type: string
                 description: How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.
-                example: PHRASE
+                example: BROAD
                 enum:
                     - EXACT
                     - PHRASE
@@ -7729,8 +8470,8 @@ definitions:
             criterion_id: "305729261"
             ctr: 0.0645
             impressions: 4820
-            match_type: UNKNOWN
-            status: UNKNOWN
+            match_type: BROAD
+            status: REMOVED
             text: kubernetes training
         required:
             - criterion_id
@@ -7765,7 +8506,7 @@ definitions:
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
-                      match_type: BROAD
+                      match_type: EXACT
                       status: UNKNOWN
                       text: kubernetes training
                     - ad_group_id: "176216228"
@@ -7775,7 +8516,7 @@ definitions:
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
-                      match_type: BROAD
+                      match_type: EXACT
                       status: UNKNOWN
                       text: kubernetes training
                     - ad_group_id: "176216228"
@@ -7785,7 +8526,7 @@ definitions:
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
-                      match_type: BROAD
+                      match_type: EXACT
                       status: UNKNOWN
                       text: kubernetes training
                     - ad_group_id: "176216228"
@@ -7795,7 +8536,7 @@ definitions:
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
-                      match_type: BROAD
+                      match_type: EXACT
                       status: UNKNOWN
                       text: kubernetes training
             truncated:
@@ -7805,7 +8546,7 @@ definitions:
             window:
                 type: string
                 description: The reporting window these counters cover
-                example: today
+                example: this_month
                 enum:
                     - today
                     - yesterday
@@ -7824,7 +8565,7 @@ definitions:
                   criterion_id: "305729261"
                   ctr: 0.0645
                   impressions: 4820
-                  match_type: BROAD
+                  match_type: EXACT
                   status: UNKNOWN
                   text: kubernetes training
                 - ad_group_id: "176216228"
@@ -7834,7 +8575,7 @@ definitions:
                   criterion_id: "305729261"
                   ctr: 0.0645
                   impressions: 4820
-                  match_type: BROAD
+                  match_type: EXACT
                   status: UNKNOWN
                   text: kubernetes training
                 - ad_group_id: "176216228"
@@ -7844,21 +8585,11 @@ definitions:
                   criterion_id: "305729261"
                   ctr: 0.0645
                   impressions: 4820
-                  match_type: BROAD
-                  status: UNKNOWN
-                  text: kubernetes training
-                - ad_group_id: "176216228"
-                  campaign_id: "21234567890"
-                  clicks: 311
-                  cost_micros: 1284000
-                  criterion_id: "305729261"
-                  ctr: 0.0645
-                  impressions: 4820
-                  match_type: BROAD
+                  match_type: EXACT
                   status: UNKNOWN
                   text: kubernetes training
             truncated: true
-            window: last_7_days
+            window: last_month
         required:
             - window
             - rows
@@ -7871,43 +8602,43 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Aliquam pariatur at.
+                example: Et non et.
             brand_kit:
                 type: string
                 description: Per-project brand kit selector
-                example: Voluptatem adipisci est.
+                example: Ipsum ullam quis est incidunt debitis qui.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: true
+                example: false
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Consequatur corrupti distinctio animi cumque.
+                example: Et dolorum est ipsa itaque.
             label:
                 type: string
                 description: Optional friendly name
-                example: Suscipit laboriosam vel optio doloribus.
+                example: Quasi vel sint nisi laborum laboriosam assumenda.
             portal_id:
                 type: string
                 description: HubSpot portal/account ID
-                example: Adipisci rerum.
+                example: Ipsam quia ut quibusdam et.
             project_id:
                 type: string
                 description: Owning project
-                example: Eligendi ratione autem molestias.
+                example: Repudiandae sequi.
             sender_email:
                 type: string
                 description: Default sender address
-                example: Facilis est necessitatibus.
+                example: Vel delectus molestias qui magnam.
             sender_name:
                 type: string
                 description: Default sender name
-                example: Illo exercitationem iusto iusto nostrum nemo rerum.
+                example: Modi dolores iure doloremque vel et aut.
             status:
                 type: string
                 description: Connection status
-                example: inactive
+                example: error
                 enum:
                     - active
                     - inactive
@@ -7916,20 +8647,20 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 4519105089496222260
+                example: 8096816874786045562
                 format: int64
         example:
-            account_id: Quas explicabo quis.
-            brand_kit: Placeat nam itaque quasi dolorem laborum.
-            has_credentials: false
-            id: Consequuntur ipsum quas ut aut.
-            label: Voluptas sapiente ut recusandae exercitationem omnis.
-            portal_id: Culpa omnis laudantium in aut mollitia voluptas.
-            project_id: Quidem explicabo tenetur enim sed architecto perspiciatis.
-            sender_email: Qui autem.
-            sender_name: Omnis quaerat nobis iure suscipit ut.
+            account_id: Quia sequi consequatur aut dolorem.
+            brand_kit: Rerum cum.
+            has_credentials: true
+            id: Aspernatur enim perferendis.
+            label: Soluta porro distinctio cupiditate.
+            portal_id: Reprehenderit sint.
+            project_id: Quia sunt dignissimos pariatur dolorem natus.
+            sender_email: Quam dolor omnis ipsam.
+            sender_name: Sed laudantium ut ea iure assumenda repellat.
             status: active
-            version: 5447206795734824830
+            version: 4338634352096015782
         required:
             - id
             - project_id
@@ -7944,34 +8675,34 @@ definitions:
             account_id:
                 type: string
                 description: HubSpot list/audience ID
-                example: Omnis corporis mollitia quia provident nam.
+                example: Aut maiores ea omnis quia quas.
             brand_kit:
                 type: string
                 description: Per-project brand kit selector
-                example: Qui ab.
+                example: Earum non fugiat placeat.
             label:
                 type: string
                 description: Optional friendly name
-                example: Aut non at voluptate beatae.
+                example: Ad a et inventore tempora facilis dolores.
             portal_id:
                 type: string
                 description: HubSpot portal/account ID
-                example: Debitis quis quidem quam corrupti.
+                example: Animi similique voluptatem vel voluptatibus.
             sender_email:
                 type: string
                 description: Default sender address
-                example: Distinctio vero est illo.
+                example: Sunt odit molestiae ab praesentium enim.
             sender_name:
                 type: string
                 description: Default sender name
-                example: Voluptatem labore excepturi quibusdam iure.
+                example: Natus ratione.
         example:
-            account_id: Qui consequatur cumque reiciendis.
-            brand_kit: Rerum autem ipsum.
-            label: Consequuntur ea saepe optio.
-            portal_id: Et nihil.
-            sender_email: Ut quas laboriosam culpa.
-            sender_name: Fugit tempora at quod maiores quis.
+            account_id: Iure tempora non ea facilis nihil eius.
+            brand_kit: Repudiandae distinctio quo reprehenderit et omnis consequatur.
+            label: Amet quam consequuntur nulla quaerat.
+            portal_id: Commodi dolores autem doloribus laborum et.
+            sender_email: Corporis nesciunt ipsam voluptates magnam atque.
+            sender_name: Consequatur beatae.
         required:
             - account_id
     HubspotCredentials:
@@ -7981,10 +8712,10 @@ definitions:
             private_app_token:
                 type: string
                 description: HubSpot private app token
-                example: Molestias aut molestiae ipsam quas odio nihil.
+                example: Totam dolorem.
         description: HubSpot private app token. Write-only; never returned.
         example:
-            private_app_token: Reprehenderit ipsa occaecati perferendis asperiores aliquam.
+            private_app_token: Aut enim.
         required:
             - private_app_token
     InternalServerError:
@@ -8013,17 +8744,17 @@ definitions:
             job_id:
                 type: string
                 description: Poll GET /projects/{projectId}/jobs/{jobId}
-                example: Voluptatibus qui qui officia tempora.
+                example: Voluptatem molestias qui aut laudantium sint fugiat.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Voluptates nihil odio facere.
+                    example: Autem voluptatem.
                 description: Platforms this job will create on
                 example:
-                    - Dolorem impedit sint consequatur.
-                    - Nihil labore accusamus illum in delectus magnam.
-                    - Velit sed laboriosam placeat nesciunt.
+                    - Aperiam eveniet nihil qui.
+                    - In libero adipisci velit.
+                    - Omnis ut.
             status:
                 type: string
                 description: Initial status (always 'queued' on create)
@@ -8031,12 +8762,12 @@ definitions:
                 enum:
                     - queued
         example:
-            job_id: Porro voluptatum nemo adipisci.
+            job_id: Sequi id aut praesentium maiores.
             platforms:
-                - Qui molestias aliquid dolorum consequatur est qui.
-                - Ducimus enim aut dolores dolores sed.
-                - Optio enim repellendus commodi quia quod sit.
-                - Hic ea et.
+                - Suscipit quasi repellat molestias eius.
+                - Recusandae labore tempora quia enim ut.
+                - Culpa est aspernatur laudantium.
+                - Asperiores officiis temporibus.
             status: queued
         required:
             - job_id
@@ -8049,37 +8780,29 @@ definitions:
             error:
                 type: string
                 description: Terminal error, if any
-                example: Placeat odio sint perspiciatis.
+                example: Dolore delectus odio.
             job_id:
                 type: string
                 description: Job UUID
-                example: Eveniet in aliquid qui omnis et.
+                example: Totam rerum ut quia consequatur perspiciatis.
             result:
                 type: array
                 items:
                     $ref: '#/definitions/PlatformResult'
                 description: Per-platform results, written once when the job reaches a terminal state
                 example:
-                    - campaign_id: Rerum sed consequatur.
-                      error: Quia amet vero dolorum incidunt officia nihil.
-                      ok: false
-                      platform: Quis optio enim.
-                    - campaign_id: Rerum sed consequatur.
-                      error: Quia amet vero dolorum incidunt officia nihil.
-                      ok: false
-                      platform: Quis optio enim.
-                    - campaign_id: Rerum sed consequatur.
-                      error: Quia amet vero dolorum incidunt officia nihil.
-                      ok: false
-                      platform: Quis optio enim.
-                    - campaign_id: Rerum sed consequatur.
-                      error: Quia amet vero dolorum incidunt officia nihil.
-                      ok: false
-                      platform: Quis optio enim.
+                    - campaign_id: Molestias aut excepturi cumque ullam esse voluptate.
+                      error: Autem voluptatem ut hic distinctio non recusandae.
+                      ok: true
+                      platform: Aut quia voluptates voluptates nisi.
+                    - campaign_id: Molestias aut excepturi cumque ullam esse voluptate.
+                      error: Autem voluptatem ut hic distinctio non recusandae.
+                      ok: true
+                      platform: Aut quia voluptates voluptates nisi.
             status:
                 type: string
                 description: Job status
-                example: queued
+                example: failed
                 enum:
                     - queued
                     - running
@@ -8087,25 +8810,21 @@ definitions:
                     - partial
                     - failed
         example:
-            error: Inventore qui exercitationem eos reprehenderit sapiente necessitatibus.
-            job_id: Ab commodi nesciunt est facilis est.
+            error: Tenetur tenetur cum maiores et.
+            job_id: Molestiae doloribus.
             result:
-                - campaign_id: Rerum sed consequatur.
-                  error: Quia amet vero dolorum incidunt officia nihil.
-                  ok: false
-                  platform: Quis optio enim.
-                - campaign_id: Rerum sed consequatur.
-                  error: Quia amet vero dolorum incidunt officia nihil.
-                  ok: false
-                  platform: Quis optio enim.
-                - campaign_id: Rerum sed consequatur.
-                  error: Quia amet vero dolorum incidunt officia nihil.
-                  ok: false
-                  platform: Quis optio enim.
-                - campaign_id: Rerum sed consequatur.
-                  error: Quia amet vero dolorum incidunt officia nihil.
-                  ok: false
-                  platform: Quis optio enim.
+                - campaign_id: Molestias aut excepturi cumque ullam esse voluptate.
+                  error: Autem voluptatem ut hic distinctio non recusandae.
+                  ok: true
+                  platform: Aut quia voluptates voluptates nisi.
+                - campaign_id: Molestias aut excepturi cumque ullam esse voluptate.
+                  error: Autem voluptatem ut hic distinctio non recusandae.
+                  ok: true
+                  platform: Aut quia voluptates voluptates nisi.
+                - campaign_id: Molestias aut excepturi cumque ullam esse voluptate.
+                  error: Autem voluptatem ut hic distinctio non recusandae.
+                  ok: true
+                  platform: Aut quia voluptates voluptates nisi.
             status: partial
         required:
             - job_id
@@ -8134,7 +8853,7 @@ definitions:
                 pattern: ^[0-9]+$
                 maxLength: 19
         example:
-            action: REMOVE
+            action: PAUSE
             ad_group_id: "176216228"
             criterion_id: "305729261"
         required:
@@ -8148,7 +8867,7 @@ definitions:
             action:
                 type: string
                 description: The action that was applied
-                example: PAUSE
+                example: REMOVE
                 enum:
                     - PAUSE
                     - REMOVE
@@ -8193,11 +8912,15 @@ definitions:
                     $ref: '#/definitions/KeywordActionResult'
                 description: One entry per requested action, in request order. All applied, or the request failed and none were.
                 example:
-                    - action: PAUSE
+                    - action: REMOVE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                    - action: PAUSE
+                    - action: REMOVE
+                      ad_group_id: "176216228"
+                      criterion_id: "305729261"
+                      resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
+                    - action: REMOVE
                       ad_group_id: "176216228"
                       criterion_id: "305729261"
                       resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
@@ -8205,11 +8928,19 @@ definitions:
             applied_count: 3
             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
             results:
-                - action: PAUSE
+                - action: REMOVE
                   ad_group_id: "176216228"
                   criterion_id: "305729261"
                   resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                - action: PAUSE
+                - action: REMOVE
+                  ad_group_id: "176216228"
+                  criterion_id: "305729261"
+                  resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
+                - action: REMOVE
+                  ad_group_id: "176216228"
+                  criterion_id: "305729261"
+                  resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
+                - action: REMOVE
                   ad_group_id: "176216228"
                   criterion_id: "305729261"
                   resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
@@ -8225,14 +8956,13 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Laboriosam possimus dolor facere velit dolores.
+                inclusion_summary: Ullam omnis autem.
                 platform: hubspot
-                platform_master_list_id: Non quia dolores voluptatibus tempora possimus consequatur.
+                platform_master_list_id: Aut molestiae exercitationem et impedit at.
                 status: built
                 suppression_list_ids:
-                    - Nihil et laudantium.
-                    - Est voluptas sequi.
-                    - Numquam quidem qui.
+                    - Perferendis autem ut alias quis nihil dolore.
+                    - Reprehenderit et aut animi.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:
@@ -8244,80 +8974,80 @@ definitions:
                 items:
                     $ref: '#/definitions/Audience'
                 example:
-                    - brief_id: Nostrum corporis quasi magnam.
-                      etag: Corrupti et nobis voluptas dignissimos.
-                      id: Omnis ratione expedita voluptatum.
-                      inclusion_summary: Neque facilis est qui possimus eligendi.
+                    - brief_id: Magni repudiandae.
+                      etag: Totam ut illo.
+                      id: Dignissimos non sed omnis officiis et.
+                      inclusion_summary: Corporis voluptas cupiditate ut.
                       platform: hubspot
-                      platform_master_list_id: Quidem exercitationem sint ipsa.
-                      project_id: Fuga ipsa.
-                      status: failed
+                      platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                      project_id: Laboriosam qui id enim.
+                      status: built
                       suppression_list_ids:
-                        - Architecto quas eligendi impedit qui sed.
-                        - Necessitatibus laudantium est ut.
-                      version: 5544068926153000809
-                    - brief_id: Nostrum corporis quasi magnam.
-                      etag: Corrupti et nobis voluptas dignissimos.
-                      id: Omnis ratione expedita voluptatum.
-                      inclusion_summary: Neque facilis est qui possimus eligendi.
+                        - Quam et eos quaerat rem.
+                        - Fuga aut est dolor.
+                      version: 1995168378618678740
+                    - brief_id: Magni repudiandae.
+                      etag: Totam ut illo.
+                      id: Dignissimos non sed omnis officiis et.
+                      inclusion_summary: Corporis voluptas cupiditate ut.
                       platform: hubspot
-                      platform_master_list_id: Quidem exercitationem sint ipsa.
-                      project_id: Fuga ipsa.
-                      status: failed
+                      platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                      project_id: Laboriosam qui id enim.
+                      status: built
                       suppression_list_ids:
-                        - Architecto quas eligendi impedit qui sed.
-                        - Necessitatibus laudantium est ut.
-                      version: 5544068926153000809
+                        - Quam et eos quaerat rem.
+                        - Fuga aut est dolor.
+                      version: 1995168378618678740
         example:
             audiences:
-                - brief_id: Nostrum corporis quasi magnam.
-                  etag: Corrupti et nobis voluptas dignissimos.
-                  id: Omnis ratione expedita voluptatum.
-                  inclusion_summary: Neque facilis est qui possimus eligendi.
+                - brief_id: Magni repudiandae.
+                  etag: Totam ut illo.
+                  id: Dignissimos non sed omnis officiis et.
+                  inclusion_summary: Corporis voluptas cupiditate ut.
                   platform: hubspot
-                  platform_master_list_id: Quidem exercitationem sint ipsa.
-                  project_id: Fuga ipsa.
-                  status: failed
+                  platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                  project_id: Laboriosam qui id enim.
+                  status: built
                   suppression_list_ids:
-                    - Architecto quas eligendi impedit qui sed.
-                    - Necessitatibus laudantium est ut.
-                  version: 5544068926153000809
-                - brief_id: Nostrum corporis quasi magnam.
-                  etag: Corrupti et nobis voluptas dignissimos.
-                  id: Omnis ratione expedita voluptatum.
-                  inclusion_summary: Neque facilis est qui possimus eligendi.
+                    - Quam et eos quaerat rem.
+                    - Fuga aut est dolor.
+                  version: 1995168378618678740
+                - brief_id: Magni repudiandae.
+                  etag: Totam ut illo.
+                  id: Dignissimos non sed omnis officiis et.
+                  inclusion_summary: Corporis voluptas cupiditate ut.
                   platform: hubspot
-                  platform_master_list_id: Quidem exercitationem sint ipsa.
-                  project_id: Fuga ipsa.
-                  status: failed
+                  platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                  project_id: Laboriosam qui id enim.
+                  status: built
                   suppression_list_ids:
-                    - Architecto quas eligendi impedit qui sed.
-                    - Necessitatibus laudantium est ut.
-                  version: 5544068926153000809
-                - brief_id: Nostrum corporis quasi magnam.
-                  etag: Corrupti et nobis voluptas dignissimos.
-                  id: Omnis ratione expedita voluptatum.
-                  inclusion_summary: Neque facilis est qui possimus eligendi.
+                    - Quam et eos quaerat rem.
+                    - Fuga aut est dolor.
+                  version: 1995168378618678740
+                - brief_id: Magni repudiandae.
+                  etag: Totam ut illo.
+                  id: Dignissimos non sed omnis officiis et.
+                  inclusion_summary: Corporis voluptas cupiditate ut.
                   platform: hubspot
-                  platform_master_list_id: Quidem exercitationem sint ipsa.
-                  project_id: Fuga ipsa.
-                  status: failed
+                  platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                  project_id: Laboriosam qui id enim.
+                  status: built
                   suppression_list_ids:
-                    - Architecto quas eligendi impedit qui sed.
-                    - Necessitatibus laudantium est ut.
-                  version: 5544068926153000809
-                - brief_id: Nostrum corporis quasi magnam.
-                  etag: Corrupti et nobis voluptas dignissimos.
-                  id: Omnis ratione expedita voluptatum.
-                  inclusion_summary: Neque facilis est qui possimus eligendi.
+                    - Quam et eos quaerat rem.
+                    - Fuga aut est dolor.
+                  version: 1995168378618678740
+                - brief_id: Magni repudiandae.
+                  etag: Totam ut illo.
+                  id: Dignissimos non sed omnis officiis et.
+                  inclusion_summary: Corporis voluptas cupiditate ut.
                   platform: hubspot
-                  platform_master_list_id: Quidem exercitationem sint ipsa.
-                  project_id: Fuga ipsa.
-                  status: failed
+                  platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                  project_id: Laboriosam qui id enim.
+                  status: built
                   suppression_list_ids:
-                    - Architecto quas eligendi impedit qui sed.
-                    - Necessitatibus laudantium est ut.
-                  version: 5544068926153000809
+                    - Quam et eos quaerat rem.
+                    - Fuga aut est dolor.
+                  version: 1995168378618678740
         required:
             - audiences
     LfxV2CampaignServiceAudiencesUpdateAudienceRequestBody:
@@ -8329,13 +9059,13 @@ definitions:
         example:
             audience:
                 clear_suppression_lists: false
-                inclusion_summary: Quos hic doloribus.
-                platform_master_list_id: Dolor ut corporis.
-                status: built
+                inclusion_summary: Quis delectus.
+                platform_master_list_id: Quia cum non.
+                status: building
                 suppression_list_ids:
-                    - Ut illo dolor quaerat totam ut.
-                    - Vitae occaecati omnis quibusdam pariatur debitis.
-                    - Explicabo possimus consequatur.
+                    - Autem sint minus voluptatum ducimus tempore.
+                    - Eum consequatur dolore unde.
+                    - Illum dolores tenetur ut illum atque quo.
         required:
             - audience
     LfxV2CampaignServiceBriefsAdoptCampaignRequestBody:
@@ -8388,17 +9118,18 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Ipsa rerum velit et impedit.
-                event_details: Qui aut quas suscipit eos.
-                event_slug: tp
-                keywords: Quaerat labore dolor.
+                copy: Ullam distinctio dolore velit.
+                event_details: Eius dicta.
+                event_slug: 1a1
+                keywords: Non assumenda perspiciatis.
                 platforms:
-                    - Dolorem repellendus porro et distinctio.
-                    - Aut assumenda fugiat quia eaque dolor porro.
-                    - Alias error aut maxime.
-                program_type: events
-                targeting: Velit quam omnis.
-                url: Est vel amet rem ab corporis.
+                    - Aspernatur voluptate itaque fugit.
+                    - Cumque quae.
+                    - Suscipit non iusto.
+                    - Consequatur in vero soluta.
+                program_type: education
+                targeting: Porro ut et cupiditate.
+                url: Nostrum ratione id.
         required:
             - brief
     LfxV2CampaignServiceBriefsCreateCampaignsRequestBody:
@@ -8455,7 +9186,7 @@ definitions:
             status:
                 type: string
                 description: Desired run state
-                example: paused
+                example: active
                 enum:
                     - active
                     - paused
@@ -8471,17 +9202,18 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Ipsa rerum velit et impedit.
-                event_details: Qui aut quas suscipit eos.
-                event_slug: tp
-                keywords: Quaerat labore dolor.
+                copy: Ullam distinctio dolore velit.
+                event_details: Eius dicta.
+                event_slug: 1a1
+                keywords: Non assumenda perspiciatis.
                 platforms:
-                    - Dolorem repellendus porro et distinctio.
-                    - Aut assumenda fugiat quia eaque dolor porro.
-                    - Alias error aut maxime.
-                program_type: events
-                targeting: Velit quam omnis.
-                url: Est vel amet rem ab corporis.
+                    - Aspernatur voluptate itaque fugit.
+                    - Cumque quae.
+                    - Suscipit non iusto.
+                    - Consequatur in vero soluta.
+                program_type: education
+                targeting: Porro ut et cupiditate.
+                url: Nostrum ratione id.
         required:
             - brief
     LfxV2CampaignServiceBriefsUpdateCampaignRequestBody:
@@ -8492,11 +9224,34 @@ definitions:
                 $ref: '#/definitions/CampaignUpdateInput'
         example:
             campaign:
-                campaign_name: Necessitatibus eaque officia.
-                config: Et est et corporis.
-                status: Dolorem asperiores autem aut aut soluta.
+                campaign_name: Et unde.
+                config: Voluptas fuga officia nulla.
+                status: Facilis dolor quod nihil quia id.
         required:
             - campaign
+    LfxV2CampaignServiceBriefsUploadCreativeAssetRequestBody:
+        title: LfxV2CampaignServiceBriefsUploadCreativeAssetRequestBody
+        type: object
+        properties:
+            bytes:
+                type: string
+                description: The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded server-side; the decoded image must not exceed 30 MiB.
+                example: aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=
+                minLength: 1
+                maxLength: 41943040
+            content_type:
+                type: string
+                description: Declared MIME type of the uploaded bytes. The bytes are re-sniffed server-side and must match; the stored mime_type is the verified one.
+                example: image/jpeg
+                enum:
+                    - image/png
+                    - image/jpeg
+        example:
+            bytes: aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=
+            content_type: image/jpeg
+        required:
+            - content_type
+            - bytes
     LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody:
         title: LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody
         type: object
@@ -8511,10 +9266,10 @@ definitions:
                 label: TLF Main
                 login_customer_id: "9746983954"
             credentials:
-                client_id: Id ducimus excepturi est et est.
-                client_secret: Deleniti non in iure dolores et quis.
-                developer_token: Recusandae similique assumenda ut quia.
-                refresh_token: Non aliquid qui facilis neque sed alias.
+                client_id: Corporis corporis et iste impedit voluptas ut.
+                client_secret: Officiis et accusamus provident omnis.
+                developer_token: Eos earum fuga.
+                refresh_token: Sint optio nobis.
         required:
             - config
             - credentials
@@ -8528,14 +9283,14 @@ definitions:
                 $ref: '#/definitions/HubspotCredentials'
         example:
             config:
-                account_id: Eos fugiat rem minima ab ea animi.
-                brand_kit: Ullam sint aliquam.
-                label: Eos qui facilis possimus consequatur sequi.
-                portal_id: Et et deserunt.
-                sender_email: Ea incidunt et molestiae modi voluptatem.
-                sender_name: Consectetur non ducimus.
+                account_id: Et qui qui aut.
+                brand_kit: Voluptas provident eius eos sit quam fugiat.
+                label: Soluta expedita et quisquam dolores magni nemo.
+                portal_id: Consequatur officiis et error nemo iste.
+                sender_email: In commodi occaecati nihil culpa est.
+                sender_name: Quae aliquid porro deserunt nostrum sed.
             credentials:
-                private_app_token: Voluptatibus non impedit incidunt sint reprehenderit temporibus.
+                private_app_token: Non rerum.
         required:
             - config
             - credentials
@@ -8550,13 +9305,13 @@ definitions:
         example:
             config:
                 account_id: "538170226"
-                label: Dignissimos in tempore quo consequatur sint qui.
+                label: Tempora quod expedita magni.
                 org_id: "208777"
             credentials:
-                access_token: Illum expedita commodi in dolores nemo similique.
-                client_id: Voluptatibus voluptatem libero quia quam.
-                client_secret: Molestiae cupiditate ab.
-                refresh_token: Autem impedit.
+                access_token: Harum ipsa.
+                client_id: Voluptatibus natus tempora commodi et.
+                client_secret: Et minima dolorem.
+                refresh_token: Distinctio dignissimos.
         required:
             - config
             - credentials
@@ -8571,12 +9326,12 @@ definitions:
         example:
             config:
                 account_id: act_193556282970417
-                app_id: Illo eveniet.
-                label: Debitis ea molestiae eum voluptatum.
+                app_id: Voluptatem recusandae amet qui.
+                label: Excepturi suscipit fugiat deserunt reiciendis dolorem.
                 page_id: "123456789012345"
             credentials:
-                access_token: Consequatur nemo molestiae modi ut non atque.
-                app_secret: Sed commodi voluptatibus.
+                access_token: Autem repudiandae.
+                app_secret: Est consectetur porro quo pariatur.
         required:
             - config
             - credentials
@@ -8590,14 +9345,14 @@ definitions:
                 $ref: '#/definitions/MicrosoftAdsCredentials'
         example:
             config:
-                account_id: Molestias et officiis asperiores quibusdam accusamus.
-                customer_id: Iste ullam sunt rem non doloribus omnis.
-                label: Magni temporibus et molestias.
+                account_id: Magnam dolor sint.
+                customer_id: Ipsa nam ipsa magnam praesentium eos cum.
+                label: Ad dolores tempore ut est totam.
             credentials:
-                client_id: Ea nostrum corrupti ipsum minima consequuntur.
-                client_secret: Et saepe aperiam hic et illo aut.
-                developer_token: Et dolorem labore laboriosam repellat harum.
-                refresh_token: Et accusamus ipsa.
+                client_id: Sed est recusandae enim quidem.
+                client_secret: Illum natus doloremque facere quis et beatae.
+                developer_token: Dignissimos eos facere sit animi.
+                refresh_token: Doloremque pariatur qui magni facere.
         required:
             - config
             - credentials
@@ -8613,11 +9368,11 @@ definitions:
             config:
                 account_id: t2_gv9wtbfa
                 conversion_pixel_id: a2_1b3c5d7e9f
-                label: Vel molestiae quo non placeat.
+                label: Itaque consequatur corporis nulla magni.
             credentials:
-                client_id: Natus pariatur et et sed debitis.
-                client_secret: Quaerat iure ipsam.
-                refresh_token: Necessitatibus reprehenderit illum.
+                client_id: Fugit et soluta.
+                client_secret: Et qui officiis repudiandae qui iste accusantium.
+                refresh_token: Voluptatem iste nemo numquam unde perspiciatis.
         required:
             - config
             - credentials
@@ -8633,12 +9388,12 @@ definitions:
             config:
                 account_id: 8r7gb
                 funding_instrument_id: lygyi
-                label: Tempore laboriosam praesentium beatae quis ut.
+                label: Rerum corrupti.
             credentials:
-                access_token: Excepturi provident saepe aliquam architecto.
-                access_token_secret: Vero provident voluptas consequatur iusto.
-                consumer_key: Harum tempore.
-                consumer_secret: Est nemo ullam voluptatibus.
+                access_token: Et ex aut cupiditate qui placeat omnis.
+                access_token_secret: Voluptas voluptatem eum consequuntur.
+                consumer_key: Alias laudantium sit et.
+                consumer_secret: Sed eius reiciendis rerum voluptatem suscipit rerum.
         required:
             - config
             - credentials
@@ -8778,10 +9533,10 @@ definitions:
                 $ref: '#/definitions/GoogleAdsCredentials'
         example:
             credentials:
-                client_id: Id ducimus excepturi est et est.
-                client_secret: Deleniti non in iure dolores et quis.
-                developer_token: Recusandae similique assumenda ut quia.
-                refresh_token: Non aliquid qui facilis neque sed alias.
+                client_id: Corporis corporis et iste impedit voluptas ut.
+                client_secret: Officiis et accusamus provident omnis.
+                developer_token: Eos earum fuga.
+                refresh_token: Sint optio nobis.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialHubspotRequestBody:
@@ -8792,7 +9547,7 @@ definitions:
                 $ref: '#/definitions/HubspotCredentials'
         example:
             credentials:
-                private_app_token: Voluptatibus non impedit incidunt sint reprehenderit temporibus.
+                private_app_token: Non rerum.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsRequestBody:
@@ -8803,10 +9558,10 @@ definitions:
                 $ref: '#/definitions/LinkedinAdsCredentials'
         example:
             credentials:
-                access_token: Illum expedita commodi in dolores nemo similique.
-                client_id: Voluptatibus voluptatem libero quia quam.
-                client_secret: Molestiae cupiditate ab.
-                refresh_token: Autem impedit.
+                access_token: Harum ipsa.
+                client_id: Voluptatibus natus tempora commodi et.
+                client_secret: Et minima dolorem.
+                refresh_token: Distinctio dignissimos.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialMetaAdsRequestBody:
@@ -8817,8 +9572,8 @@ definitions:
                 $ref: '#/definitions/MetaAdsCredentials'
         example:
             credentials:
-                access_token: Consequatur nemo molestiae modi ut non atque.
-                app_secret: Sed commodi voluptatibus.
+                access_token: Autem repudiandae.
+                app_secret: Est consectetur porro quo pariatur.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsRequestBody:
@@ -8829,10 +9584,10 @@ definitions:
                 $ref: '#/definitions/MicrosoftAdsCredentials'
         example:
             credentials:
-                client_id: Ea nostrum corrupti ipsum minima consequuntur.
-                client_secret: Et saepe aperiam hic et illo aut.
-                developer_token: Et dolorem labore laboriosam repellat harum.
-                refresh_token: Et accusamus ipsa.
+                client_id: Sed est recusandae enim quidem.
+                client_secret: Illum natus doloremque facere quis et beatae.
+                developer_token: Dignissimos eos facere sit animi.
+                refresh_token: Doloremque pariatur qui magni facere.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialRedditAdsRequestBody:
@@ -8843,9 +9598,9 @@ definitions:
                 $ref: '#/definitions/RedditAdsCredentials'
         example:
             credentials:
-                client_id: Natus pariatur et et sed debitis.
-                client_secret: Quaerat iure ipsam.
-                refresh_token: Necessitatibus reprehenderit illum.
+                client_id: Fugit et soluta.
+                client_secret: Et qui officiis repudiandae qui iste accusantium.
+                refresh_token: Voluptatem iste nemo numquam unde perspiciatis.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialTwitterAdsRequestBody:
@@ -8856,10 +9611,10 @@ definitions:
                 $ref: '#/definitions/TwitterAdsCredentials'
         example:
             credentials:
-                access_token: Excepturi provident saepe aliquam architecto.
-                access_token_secret: Vero provident voluptas consequatur iusto.
-                consumer_key: Harum tempore.
-                consumer_secret: Est nemo ullam voluptatibus.
+                access_token: Et ex aut cupiditate qui placeat omnis.
+                access_token_secret: Voluptas voluptatem eum consequuntur.
+                consumer_key: Alias laudantium sit et.
+                consumer_secret: Sed eius reiciendis rerum voluptatem suscipit rerum.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsUpdateGoogleAdsRequestBody:
@@ -8883,12 +9638,12 @@ definitions:
                 $ref: '#/definitions/HubspotConnectionConfig'
         example:
             config:
-                account_id: Eos fugiat rem minima ab ea animi.
-                brand_kit: Ullam sint aliquam.
-                label: Eos qui facilis possimus consequatur sequi.
-                portal_id: Et et deserunt.
-                sender_email: Ea incidunt et molestiae modi voluptatem.
-                sender_name: Consectetur non ducimus.
+                account_id: Et qui qui aut.
+                brand_kit: Voluptas provident eius eos sit quam fugiat.
+                label: Soluta expedita et quisquam dolores magni nemo.
+                portal_id: Consequatur officiis et error nemo iste.
+                sender_email: In commodi occaecati nihil culpa est.
+                sender_name: Quae aliquid porro deserunt nostrum sed.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateLinkedinAdsRequestBody:
@@ -8900,7 +9655,7 @@ definitions:
         example:
             config:
                 account_id: "538170226"
-                label: Dignissimos in tempore quo consequatur sint qui.
+                label: Tempora quod expedita magni.
                 org_id: "208777"
         required:
             - config
@@ -8913,8 +9668,8 @@ definitions:
         example:
             config:
                 account_id: act_193556282970417
-                app_id: Illo eveniet.
-                label: Debitis ea molestiae eum voluptatum.
+                app_id: Voluptatem recusandae amet qui.
+                label: Excepturi suscipit fugiat deserunt reiciendis dolorem.
                 page_id: "123456789012345"
         required:
             - config
@@ -8926,9 +9681,9 @@ definitions:
                 $ref: '#/definitions/MicrosoftAdsConnectionConfig'
         example:
             config:
-                account_id: Molestias et officiis asperiores quibusdam accusamus.
-                customer_id: Iste ullam sunt rem non doloribus omnis.
-                label: Magni temporibus et molestias.
+                account_id: Magnam dolor sint.
+                customer_id: Ipsa nam ipsa magnam praesentium eos cum.
+                label: Ad dolores tempore ut est totam.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateRedditAdsRequestBody:
@@ -8941,7 +9696,7 @@ definitions:
             config:
                 account_id: t2_gv9wtbfa
                 conversion_pixel_id: a2_1b3c5d7e9f
-                label: Vel molestiae quo non placeat.
+                label: Itaque consequatur corporis nulla magni.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateTwitterAdsRequestBody:
@@ -8954,7 +9709,7 @@ definitions:
             config:
                 account_id: 8r7gb
                 funding_instrument_id: lygyi
-                label: Tempore laboriosam praesentium beatae quis ut.
+                label: Rerum corrupti.
         required:
             - config
     LinkedinAdsConnection:
@@ -8964,31 +9719,31 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Iure natus quia voluptatem reprehenderit earum voluptatem.
+                example: Impedit deleniti omnis doloribus eius molestias.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: false
+                example: true
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Quas maxime.
+                example: Eos recusandae eos fuga debitis nemo explicabo.
             label:
                 type: string
                 description: Optional friendly name
-                example: Maiores ut beatae non non.
+                example: Nam aspernatur itaque itaque recusandae molestias.
             org_id:
                 type: string
                 description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
-                example: Aut excepturi temporibus ipsum perferendis blanditiis occaecati.
+                example: Debitis repellat.
             project_id:
                 type: string
                 description: Owning project
-                example: Explicabo aut.
+                example: Quia harum.
             status:
                 type: string
                 description: Connection status
-                example: inactive
+                example: deleted
                 enum:
                     - active
                     - inactive
@@ -8997,17 +9752,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 503100528719923387
+                example: 1229239294308020217
                 format: int64
         example:
-            account_id: Facilis et aut consequuntur possimus corporis molestiae.
-            has_credentials: true
-            id: Sequi voluptatem.
-            label: Quo expedita vero ipsam.
-            org_id: Qui minima nemo deserunt quia vero molestiae.
-            project_id: Ipsum quos voluptas iure eum tempore.
-            status: error
-            version: 5666489860948221707
+            account_id: Tempore repellat et.
+            has_credentials: false
+            id: Eius eum itaque odit facere.
+            label: Sed praesentium.
+            org_id: Nemo voluptatibus recusandae.
+            project_id: Ut nisi tenetur repellat tempore iste cumque.
+            status: deleted
+            version: 5102907769917843537
         required:
             - id
             - project_id
@@ -9028,7 +9783,7 @@ definitions:
             label:
                 type: string
                 description: Optional friendly name
-                example: Aut magni quod veritatis voluptatem voluptatibus.
+                example: Accusantium repellat voluptas est id.
             org_id:
                 type: string
                 description: 'LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full urn:li:organization: URN)'
@@ -9037,7 +9792,7 @@ definitions:
                 maxLength: 64
         example:
             account_id: "538170226"
-            label: Laborum aut quia possimus voluptatem molestias qui.
+            label: Recusandae ipsum vero et veniam dolores odio.
             org_id: "208777"
         required:
             - account_id
@@ -9049,25 +9804,25 @@ definitions:
             access_token:
                 type: string
                 description: 'OAuth access token (LinkedIn: valid 60 days)'
-                example: Laudantium sint fugiat provident.
+                example: Sint numquam fuga et amet laborum.
             client_id:
                 type: string
                 description: OAuth client id (optional; required together with refresh_token and client_secret)
-                example: Ut aperiam eveniet nihil qui ea.
+                example: Deleniti rerum soluta et rem magnam voluptas.
             client_secret:
                 type: string
                 description: OAuth client secret (optional; required together with refresh_token and client_id)
-                example: Libero adipisci velit occaecati omnis ut id.
+                example: Quas facere est repudiandae a.
             refresh_token:
                 type: string
                 description: OAuth refresh token (optional; MDP-approved apps only, valid ~365 days). Must be supplied together with client_id and client_secret.
-                example: Autem voluptatem.
+                example: Ut expedita ipsum et rerum est ea.
         description: LinkedIn Ads credential. Write-only; never returned.
         example:
-            access_token: Id aut praesentium maiores unde quo culpa.
-            client_id: Recusandae labore tempora quia enim ut.
-            client_secret: Culpa est aspernatur laudantium.
-            refresh_token: Quasi repellat molestias eius.
+            access_token: Consequatur corrupti distinctio animi cumque.
+            client_id: Suscipit laboriosam vel optio doloribus.
+            client_secret: Aliquam pariatur at.
+            refresh_token: Eligendi ratione autem molestias.
         required:
             - access_token
     MarketingEmail:
@@ -9081,25 +9836,25 @@ definitions:
             name:
                 type: string
                 description: Internal email name, as it appears in the HubSpot email list
-                example: Numquam debitis vel.
+                example: Aliquid quia natus.
             state:
                 type: string
                 description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
-                example: Nobis soluta.
+                example: Cupiditate vero sint distinctio in.
             subject:
                 type: string
                 description: Subject line
-                example: Non ea maxime modi architecto.
+                example: Voluptatibus ut.
             updated_at:
                 type: string
                 description: Last-modified timestamp (ISO-8601)
-                example: Qui magnam culpa consequatur omnis quis.
+                example: Fugit nostrum rerum.
         example:
             id: "112233445566"
-            name: Reiciendis enim.
-            state: Repudiandae consequatur qui minus quidem consequatur aliquam.
-            subject: Exercitationem quam sunt aperiam sit sit fuga.
-            updated_at: Adipisci maiores fugiat.
+            name: Sint expedita fugit iste nemo voluptas.
+            state: Fugit unde ea quis.
+            subject: Et assumenda magnam suscipit.
+            updated_at: Quidem est.
         required:
             - id
     MetaAdsConnection:
@@ -9109,35 +9864,35 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Quidem perspiciatis ab qui esse et.
+                example: Illo exercitationem iusto iusto nostrum nemo rerum.
             app_id:
                 type: string
                 description: Meta app ID
-                example: Quo ab aut.
+                example: Quas ut aut labore quidem.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: true
+                example: false
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Asperiores officiis temporibus.
+                example: Ut quia.
             label:
                 type: string
                 description: Optional friendly name
-                example: Quibusdam nihil qui et illo facilis sed.
+                example: Facilis est necessitatibus.
             page_id:
                 type: string
                 description: Facebook page ID
-                example: Mollitia aliquam et veritatis beatae iste.
+                example: Ipsam consequuntur.
             project_id:
                 type: string
                 description: Owning project
-                example: Dolor consequuntur alias natus.
+                example: Adipisci rerum.
             status:
                 type: string
                 description: Connection status
-                example: error
+                example: deleted
                 enum:
                     - active
                     - inactive
@@ -9146,18 +9901,18 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 4462070712015088143
+                example: 6096491098857596655
                 format: int64
         example:
-            account_id: Doloremque velit commodi eum eum et ullam.
-            app_id: Et non ab excepturi occaecati autem et.
+            account_id: Ducimus culpa voluptatem culpa omnis laudantium.
+            app_id: Suscipit ut.
             has_credentials: true
-            id: Sunt dolorem velit mollitia laudantium fugiat sequi.
-            label: Id perspiciatis perferendis.
-            page_id: Veritatis reprehenderit distinctio repudiandae eum pariatur.
-            project_id: Eum non beatae dolores.
-            status: inactive
-            version: 4286903475860164725
+            id: Tenetur enim sed architecto perspiciatis dolorem voluptas.
+            label: Quas explicabo quis.
+            page_id: Accusamus qui autem vel omnis quaerat nobis.
+            project_id: Ut recusandae exercitationem omnis.
+            status: active
+            version: 4643038387294279770
         required:
             - id
             - project_id
@@ -9178,11 +9933,11 @@ definitions:
             app_id:
                 type: string
                 description: Meta app ID
-                example: Id ipsam qui repellat expedita voluptatem.
+                example: Aut non at voluptate beatae.
             label:
                 type: string
                 description: Optional friendly name
-                example: Ullam mollitia officia harum rerum.
+                example: Placeat nam itaque quasi dolorem laborum.
             page_id:
                 type: string
                 description: Facebook page ID
@@ -9191,8 +9946,8 @@ definitions:
                 maxLength: 64
         example:
             account_id: act_193556282970417
-            app_id: Aliquid ducimus ut adipisci est laboriosam ut.
-            label: Quam consequuntur nihil in harum perferendis qui.
+            app_id: Debitis quis quidem quam corrupti.
+            label: Omnis corporis mollitia quia provident nam.
             page_id: "123456789012345"
         required:
             - page_id
@@ -9203,15 +9958,15 @@ definitions:
             access_token:
                 type: string
                 description: Meta access token
-                example: Cum ut eius.
+                example: Distinctio vero est illo.
             app_secret:
                 type: string
                 description: Meta app secret
-                example: Accusantium nihil omnis.
+                example: Voluptatem labore excepturi quibusdam iure.
         description: Meta Ads credential. Write-only; never returned.
         example:
-            access_token: Temporibus laboriosam nihil consequatur mollitia sed.
-            app_secret: Facere molestiae atque voluptatem.
+            access_token: Qui ab.
+            app_secret: Consequuntur ea saepe optio.
         required:
             - access_token
             - app_secret
@@ -9222,11 +9977,11 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Laboriosam illo.
+                example: Velit sunt.
             customer_id:
                 type: string
                 description: Microsoft Advertising customer ID
-                example: Corporis dignissimos dolor.
+                example: Eaque fuga rerum iure.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
@@ -9234,15 +9989,15 @@ definitions:
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Qui dolor excepturi molestiae aut voluptate.
+                example: Qui nihil autem assumenda.
             label:
                 type: string
                 description: Optional friendly name
-                example: Aperiam explicabo error.
+                example: Adipisci quas itaque omnis.
             project_id:
                 type: string
                 description: Owning project
-                example: Est distinctio fugiat ipsum quia dolore.
+                example: Qui ut facere magni qui veniam architecto.
             status:
                 type: string
                 description: Connection status
@@ -9255,17 +10010,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 1837085096429389011
+                example: 4988039362622403665
                 format: int64
         example:
-            account_id: Impedit deleniti omnis doloribus eius molestias.
-            customer_id: Debitis repellat.
+            account_id: Alias molestiae ea sint et.
+            customer_id: Tenetur deleniti molestias est earum.
             has_credentials: true
-            id: Eos recusandae eos fuga debitis nemo explicabo.
-            label: Nam aspernatur itaque itaque recusandae molestias.
-            project_id: Quia harum.
-            status: deleted
-            version: 1229239294308020217
+            id: Et autem hic voluptatibus accusamus vel est.
+            label: Rerum reprehenderit quo maxime.
+            project_id: Aliquid eos nostrum.
+            status: error
+            version: 7964164655314480544
         required:
             - id
             - project_id
@@ -9280,19 +10035,19 @@ definitions:
             account_id:
                 type: string
                 description: Microsoft Advertising account ID
-                example: Ut nisi tenetur repellat tempore iste cumque.
+                example: Porro et fuga facere est qui vero.
             customer_id:
                 type: string
                 description: Microsoft Advertising customer ID
-                example: Sed praesentium.
+                example: Neque ipsam neque ut modi ut cumque.
             label:
                 type: string
                 description: Optional friendly name
-                example: Eius eum itaque odit facere.
+                example: Veniam doloremque dolores voluptatum aut mollitia aperiam.
         example:
-            account_id: Porro ea exercitationem.
-            customer_id: Voluptatibus recusandae accusantium accusantium repellat voluptas.
-            label: Tempore repellat et.
+            account_id: Quos atque dolorem error fugiat qui.
+            customer_id: Quae rem quae beatae non culpa nemo.
+            label: Molestias quisquam est.
         required:
             - account_id
     MicrosoftAdsCredentials:
@@ -9302,25 +10057,25 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Id impedit recusandae ipsum.
+                example: Enim molestiae suscipit sequi et.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Et veniam.
+                example: Et et.
             developer_token:
                 type: string
                 description: Microsoft Advertising developer token
-                example: Numquam fuga.
+                example: At qui error totam aut.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: Odio ex.
+                example: Aut quidem aliquid fugiat.
         description: Microsoft Advertising OAuth credential set. Write-only; never returned.
         example:
-            client_id: Amet laborum.
-            client_secret: Ut expedita ipsum et rerum est ea.
-            developer_token: Quas facere est repudiandae a.
-            refresh_token: Deleniti rerum soluta et rem magnam voluptas.
+            client_id: Veritatis culpa quasi qui iure consequuntur porro.
+            client_secret: Dolorem cumque mollitia et in.
+            developer_token: Eum aut delectus voluptatem.
+            refresh_token: Nobis quas sunt dolorum.
         required:
             - client_id
             - client_secret
@@ -9345,6 +10100,25 @@ definitions:
         required:
             - code
             - message
+    PayloadTooLargeError:
+        title: PayloadTooLargeError
+        type: object
+        properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "413"
+            message:
+                type: string
+                description: Error message
+                example: The request payload was too large.
+        description: Payload too large
+        example:
+            code: "413"
+            message: The request payload was too large.
+        required:
+            - code
+            - message
     PlatformResult:
         title: PlatformResult
         type: object
@@ -9352,24 +10126,24 @@ definitions:
             campaign_id:
                 type: string
                 description: Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.
-                example: Autem possimus asperiores recusandae deserunt.
+                example: Distinctio itaque exercitationem reprehenderit ex voluptas.
             error:
                 type: string
                 description: Failure reason (present when not ok)
-                example: Eius culpa sit voluptatem dolore.
+                example: Qui et quo vitae alias.
             ok:
                 type: boolean
                 description: Whether the campaign was created (or reused) successfully
-                example: true
+                example: false
             platform:
                 type: string
                 description: Platform this result is for
-                example: Vel eum iure.
+                example: Omnis porro magni.
         example:
-            campaign_id: Enim modi ut esse numquam.
-            error: Laborum aut nobis ex exercitationem.
+            campaign_id: Consequatur quos est eum.
+            error: Impedit sequi.
             ok: true
-            platform: Quos quis optio voluptas sed ut.
+            platform: Dolor rerum molestiae sit voluptatem.
         required:
             - platform
             - ok
@@ -9418,27 +10192,27 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Ex et est.
+                example: Fugit tempora at quod maiores quis.
             conversion_pixel_id:
                 type: string
                 description: Reddit conversion pixel ID
-                example: Provident saepe iure.
+                example: Dolor molestias aut molestiae ipsam.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: false
+                example: true
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Aperiam dolore vitae voluptatem sed reiciendis et.
+                example: Qui consequatur cumque reiciendis.
             label:
                 type: string
                 description: Optional friendly name
-                example: Ipsum tempore eum atque molestias quas.
+                example: Ut quas laboriosam culpa.
             project_id:
                 type: string
                 description: Owning project
-                example: Doloribus et aut.
+                example: Et nihil.
             status:
                 type: string
                 description: Connection status
@@ -9451,17 +10225,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 8615352846373348479
+                example: 3127723307383461162
                 format: int64
         example:
-            account_id: Totam aliquam sed nisi.
-            conversion_pixel_id: Non odit ut totam aliquid recusandae.
+            account_id: Facere corrupti est totam sit odit minus.
+            conversion_pixel_id: Cumque enim omnis et rerum assumenda nam.
             has_credentials: true
-            id: Architecto eum.
-            label: Ut tempora voluptas.
-            project_id: Veritatis non praesentium asperiores dicta voluptatem.
-            status: active
-            version: 7646246609951629655
+            id: Odio nihil ut reprehenderit ipsa occaecati perferendis.
+            label: Delectus sequi amet harum tempore.
+            project_id: Aliquam voluptatibus dolorem.
+            status: error
+            version: 3996292428691408115
         required:
             - id
             - project_id
@@ -9484,11 +10258,11 @@ definitions:
             label:
                 type: string
                 description: Optional friendly name
-                example: Rerum ut quia consequatur.
+                example: Quis facere ea sunt.
         example:
             account_id: t2_gv9wtbfa
             conversion_pixel_id: a2_1b3c5d7e9f
-            label: Aut illo omnis porro magni.
+            label: Ducimus nisi numquam debitis.
         required:
             - account_id
     RedditAdsCredentials:
@@ -9498,20 +10272,20 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Eos distinctio.
+                example: Vero non ea maxime modi architecto.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Exercitationem reprehenderit ex voluptas.
+                example: Nobis soluta.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: Qui et quo vitae alias.
+                example: Qui magnam culpa consequatur omnis quis.
         description: Reddit Ads OAuth credential. Write-only; never returned.
         example:
-            client_id: Dolor rerum molestiae sit voluptatem.
-            client_secret: Fuga consequatur quos est.
-            refresh_token: Tenetur impedit sequi doloremque.
+            client_id: Reiciendis enim.
+            client_secret: Exercitationem quam sunt aperiam sit sit fuga.
+            refresh_token: Repudiandae consequatur qui minus quidem consequatur aliquam.
         required:
             - client_id
             - client_secret
@@ -9523,11 +10297,11 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Et et similique magni.
+                example: Et eveniet minus ut accusantium sed.
             funding_instrument_id:
                 type: string
                 description: Funding instrument for the ad account
-                example: Ab modi sapiente.
+                example: Tempora qui fugiat et aspernatur.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
@@ -9535,19 +10309,19 @@ definitions:
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Dolore delectus odio.
+                example: Adipisci maiores fugiat.
             label:
                 type: string
                 description: Optional friendly name
-                example: Ipsa est tenetur tenetur cum.
+                example: Repellendus et facere possimus.
             project_id:
                 type: string
                 description: Owning project
-                example: Molestiae doloribus.
+                example: Harum nostrum beatae et et minus.
             status:
                 type: string
                 description: Connection status
-                example: deleted
+                example: error
                 enum:
                     - active
                     - inactive
@@ -9556,17 +10330,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 7550658906156142583
+                example: 8484466509499146412
                 format: int64
         example:
-            account_id: Voluptatem quae sequi.
-            funding_instrument_id: Aspernatur ipsa.
-            has_credentials: false
-            id: Quo fugiat.
-            label: Iste et aliquid eos.
-            project_id: Accusamus magni sit.
-            status: error
-            version: 4542276588540873827
+            account_id: Qui eum vel accusantium et eos.
+            funding_instrument_id: Ipsam impedit et minima minus quasi ratione.
+            has_credentials: true
+            id: Maxime perspiciatis illum ullam libero.
+            label: Impedit consequuntur est fugit et dolor hic.
+            project_id: Quo quo ipsum natus odio cumque.
+            status: active
+            version: 606409894115197230
         required:
             - id
             - project_id
@@ -9593,11 +10367,11 @@ definitions:
             label:
                 type: string
                 description: Optional friendly name
-                example: At occaecati qui praesentium non.
+                example: Consequatur in vero.
         example:
             account_id: 8r7gb
             funding_instrument_id: lygyi
-            label: Ratione esse facere est rem nihil.
+            label: Rerum dolor.
         required:
             - account_id
             - funding_instrument_id
@@ -9608,25 +10382,25 @@ definitions:
             access_token:
                 type: string
                 description: OAuth 1.0a access token
-                example: Molestiae dignissimos ratione quia exercitationem assumenda.
+                example: Consequatur possimus nemo.
             access_token_secret:
                 type: string
                 description: OAuth 1.0a access token secret
-                example: Soluta sint soluta asperiores nemo quia voluptatum.
+                example: Quo recusandae.
             consumer_key:
                 type: string
                 description: OAuth 1.0a consumer key
-                example: A labore a sed enim illum.
+                example: Necessitatibus praesentium odio est quisquam.
             consumer_secret:
                 type: string
                 description: OAuth 1.0a consumer secret
-                example: Eligendi non id qui.
+                example: Iure voluptas voluptatem impedit est similique.
         description: X/Twitter Ads OAuth 1.0a credential set. Write-only; never returned.
         example:
-            access_token: Dolor quae perspiciatis.
-            access_token_secret: Maiores dolor sapiente ab minima.
-            consumer_key: Beatae natus alias culpa omnis.
-            consumer_secret: Nisi qui voluptas illum ipsum recusandae.
+            access_token: Ab quo porro asperiores.
+            access_token_secret: Officiis maiores iusto dolorem.
+            consumer_key: Quod corrupti impedit.
+            consumer_secret: Consectetur mollitia.
         required:
             - consumer_key
             - consumer_secret

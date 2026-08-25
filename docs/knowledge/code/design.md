@@ -104,4 +104,55 @@ than `""`, which is the distinction a form being pre-filled actually needs.
 parameter it lands verbatim in access logs, proxy logs and browser history at every hop;
 as a body parameter it does not. That outweighs the idempotency `GET` would advertise.
 
+`upload-creative-asset` (`POST .../briefs/{brief_id}/creative-assets`, LFXV2-3295) is the
+briefs service's image-upload method, backing the Meta single-image creative. It is
+SYNCHRONOUS — unlike `create-campaigns`, which returns a job — because it only validates and
+stores bytes and touches no ad platform. The `bytes` attribute is a base64 **`String`**, not Goa's
+`Bytes` type, and the reason is that the published contract has to describe the wire. Goa emits a
+`Bytes` attribute as `type: string, format: binary`, which in OAS3 means RAW OCTETS — while an
+`application/json` body can only carry base64 — so a strict generator built a client this server
+cannot decode. That is unconditional in the generator (`goa v3.25.3`
+`http/codegen/openapi/v3/types.go:179-180`), `Format()` is validated against a whitelist with no
+byte/base64 member, and `openapi:extension:` meta cannot set `format`; so the field TYPE changes
+rather than the generator. It publishes `type: string` with a description and a base64 example.
+The media type is unchanged — still `application/json`, no multipart machinery.
+
+`MinLength(1)`/`MaxLength(41943040)` put the accepted size in the OpenAPI document and the
+generated validator applies them before the handler runs. They bound the ENCODED string in
+CHARACTERS, which is both what OpenAPI `maxLength` means and what the validator now compares —
+those were different quantities under `Bytes`, where goa applied the encoded figure to the
+decoded slice. `MinLength(1)` rejects an empty upload.
+
+The service decodes the string at the boundary (`base64.StdEncoding`, padded), and malformed
+base64 is a **400**, never a panic or a 500. The 30-MiB DECODED ceiling at Meta's documented
+single-image maximum is then enforced on `len(decoded)` in the handler (`maxCreativeStoredBytes`)
+and, for writers that never reach the handler, as a table CHECK on `byte_size`
+(migration `000029`). The encoded and decoded ceilings agree by construction:
+`base64.EncodedLen(31457280) == 41943040`. `MaxLength` does not bound the wire either: the
+validator sees the string only after the JSON decoder has read the entire body, so it alone
+leaves the server buffering whatever a caller chooses to send. The inbound bound is
+`constants.MaxRequestBodyBytes` (42 MiB), applied by `middleware.MaxBodyBytes` across every route
+and sized from this ceiling: base64 expands by 4/3, so a maximum-size 30-MiB image is 40 MiB of
+base64 exactly, plus the JSON envelope — which is why the cap is not 40 MiB, and why raising
+`MaxLength` requires raising it in step. Every brief and connection method also declares a
+`PayloadTooLarge` error mapped to `413`. No handler returns it — `middleware.MaxBodyBytes` sits
+outside the mux and never reaches a Goa encoder — but declaring it is what gives the generated
+CLIENT a decode case (without it an ordinary oversized upload surfaces as `ErrInvalidResponse`,
+an unknown-status failure) and what puts the status in the OpenAPI documents. It is declared on
+every method, not just the body-bearing ones, because the cap is global middleware.
+
+`content_type` is an `Enum("image/png", "image/jpeg")`, but
+the enum only constrains the DECLARED value — the handler re-sniffs the bytes and stores the
+verified type (see [internal/service](internal-service.md)). It responds `201` when THIS request
+stored the asset and `200` when an identical upload already existed and the stored row was
+returned unchanged — the upload is idempotent on `(brief_id, checksum)`, and an unconditional
+`201` told a retrying client it had created something when nothing was created. The two statuses
+are selected by the `created` attribute via `Response(StatusCreated, Tag("created","true"))` plus
+a default `Response(StatusOK)`; both share one body shape. Neither carries an ETag: creative
+assets are insert-only and carry no version, so there is no optimistic-concurrency
+handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
+uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,
+because the asset is bound to a campaign later by its own id and the id is never stamped into a
+campaign name.
+
 See [design](../../../design).

@@ -186,6 +186,16 @@ type CreateAudienceNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CreateAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // CreateAudienceUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -243,6 +253,16 @@ type GetAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "get-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type GetAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "get-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -312,6 +332,16 @@ type ListAudiencesNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListAudiencesUnauthorizedResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
 // response body for the "Unauthorized" error.
@@ -369,6 +399,16 @@ type UpdateAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -452,6 +492,16 @@ type BuildAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type BuildAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type BuildAudiencePayloadTooLargeResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -630,6 +680,17 @@ func NewCreateAudienceNotFound(body *CreateAudienceNotFoundResponseBody) *lfxv2c
 	return v
 }
 
+// NewCreateAudiencePayloadTooLarge builds a lfx-v2-campaign-service-audiences
+// service create-audience endpoint PayloadTooLarge error.
+func NewCreateAudiencePayloadTooLarge(body *CreateAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceaudiences.PayloadTooLargeError {
+	v := &lfxv2campaignserviceaudiences.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewCreateAudienceUnauthorized builds a lfx-v2-campaign-service-audiences
 // service create-audience endpoint Unauthorized error.
 func NewCreateAudienceUnauthorized(body *CreateAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
@@ -722,6 +783,17 @@ func NewGetAudienceNotFound(body *GetAudienceNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewGetAudiencePayloadTooLarge builds a lfx-v2-campaign-service-audiences
+// service get-audience endpoint PayloadTooLarge error.
+func NewGetAudiencePayloadTooLarge(body *GetAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceaudiences.PayloadTooLargeError {
+	v := &lfxv2campaignserviceaudiences.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetAudienceUnauthorized builds a lfx-v2-campaign-service-audiences
 // service get-audience endpoint Unauthorized error.
 func NewGetAudienceUnauthorized(body *GetAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
@@ -801,6 +873,17 @@ func NewListAudiencesInternalServerError(body *ListAudiencesInternalServerErrorR
 // list-audiences endpoint NotFound error.
 func NewListAudiencesNotFound(body *ListAudiencesNotFoundResponseBody) *lfxv2campaignserviceaudiences.NotFoundError {
 	v := &lfxv2campaignserviceaudiences.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListAudiencesPayloadTooLarge builds a lfx-v2-campaign-service-audiences
+// service list-audiences endpoint PayloadTooLarge error.
+func NewListAudiencesPayloadTooLarge(body *ListAudiencesPayloadTooLargeResponseBody) *lfxv2campaignserviceaudiences.PayloadTooLargeError {
+	v := &lfxv2campaignserviceaudiences.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -895,6 +978,17 @@ func NewUpdateAudienceInternalServerError(body *UpdateAudienceInternalServerErro
 // update-audience endpoint NotFound error.
 func NewUpdateAudienceNotFound(body *UpdateAudienceNotFoundResponseBody) *lfxv2campaignserviceaudiences.NotFoundError {
 	v := &lfxv2campaignserviceaudiences.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateAudiencePayloadTooLarge builds a lfx-v2-campaign-service-audiences
+// service update-audience endpoint PayloadTooLarge error.
+func NewUpdateAudiencePayloadTooLarge(body *UpdateAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceaudiences.PayloadTooLargeError {
+	v := &lfxv2campaignserviceaudiences.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -1014,6 +1108,17 @@ func NewBuildAudienceInternalServerError(body *BuildAudienceInternalServerErrorR
 // build-audience endpoint NotFound error.
 func NewBuildAudienceNotFound(body *BuildAudienceNotFoundResponseBody) *lfxv2campaignserviceaudiences.NotFoundError {
 	v := &lfxv2campaignserviceaudiences.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewBuildAudiencePayloadTooLarge builds a lfx-v2-campaign-service-audiences
+// service build-audience endpoint PayloadTooLarge error.
+func NewBuildAudiencePayloadTooLarge(body *BuildAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceaudiences.PayloadTooLargeError {
+	v := &lfxv2campaignserviceaudiences.PayloadTooLargeError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -1250,6 +1355,18 @@ func ValidateCreateAudienceNotFoundResponseBody(body *CreateAudienceNotFoundResp
 	return
 }
 
+// ValidateCreateAudiencePayloadTooLargeResponseBody runs the validations
+// defined on create-audience_PayloadTooLarge_response_body
+func ValidateCreateAudiencePayloadTooLargeResponseBody(body *CreateAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateCreateAudienceUnauthorizedResponseBody runs the validations defined
 // on create-audience_Unauthorized_response_body
 func ValidateCreateAudienceUnauthorizedResponseBody(body *CreateAudienceUnauthorizedResponseBody) (err error) {
@@ -1318,6 +1435,18 @@ func ValidateGetAudienceInternalServerErrorResponseBody(body *GetAudienceInterna
 // ValidateGetAudienceNotFoundResponseBody runs the validations defined on
 // get-audience_NotFound_response_body
 func ValidateGetAudienceNotFoundResponseBody(body *GetAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAudiencePayloadTooLargeResponseBody runs the validations defined
+// on get-audience_PayloadTooLarge_response_body
+func ValidateGetAudiencePayloadTooLargeResponseBody(body *GetAudiencePayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -1404,6 +1533,18 @@ func ValidateListAudiencesNotFoundResponseBody(body *ListAudiencesNotFoundRespon
 	return
 }
 
+// ValidateListAudiencesPayloadTooLargeResponseBody runs the validations
+// defined on list-audiences_PayloadTooLarge_response_body
+func ValidateListAudiencesPayloadTooLargeResponseBody(body *ListAudiencesPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListAudiencesUnauthorizedResponseBody runs the validations defined
 // on list-audiences_Unauthorized_response_body
 func ValidateListAudiencesUnauthorizedResponseBody(body *ListAudiencesUnauthorizedResponseBody) (err error) {
@@ -1472,6 +1613,18 @@ func ValidateUpdateAudienceInternalServerErrorResponseBody(body *UpdateAudienceI
 // ValidateUpdateAudienceNotFoundResponseBody runs the validations defined on
 // update-audience_NotFound_response_body
 func ValidateUpdateAudienceNotFoundResponseBody(body *UpdateAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateAudiencePayloadTooLargeResponseBody runs the validations
+// defined on update-audience_PayloadTooLarge_response_body
+func ValidateUpdateAudiencePayloadTooLargeResponseBody(body *UpdateAudiencePayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -1573,6 +1726,18 @@ func ValidateBuildAudienceInternalServerErrorResponseBody(body *BuildAudienceInt
 // ValidateBuildAudienceNotFoundResponseBody runs the validations defined on
 // build-audience_NotFound_response_body
 func ValidateBuildAudienceNotFoundResponseBody(body *BuildAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudiencePayloadTooLargeResponseBody runs the validations
+// defined on build-audience_PayloadTooLarge_response_body
+func ValidateBuildAudiencePayloadTooLargeResponseBody(body *BuildAudiencePayloadTooLargeResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

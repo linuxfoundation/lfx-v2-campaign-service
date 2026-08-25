@@ -1,0 +1,47 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Lands the upper bound that 000028 deliberately deferred.
+--
+-- 000028 wrote: "An upper bound is deliberately NOT set here -- it has to equal the upload
+-- endpoint's request limit, and that endpoint does not exist yet, so it lands with it rather
+-- than being guessed now and silently disagreeing later." This is that endpoint's release, so
+-- the bound lands here.
+--
+-- WHICH LIMIT, precisely -- because there are two numbers in play and they are not the same
+-- quantity:
+--
+--   * 31457280 (30 MiB) is maxCreativeStoredBytes in internal/service. It is a len() on the
+--     already-DECODED slice, and it is what the handler enforces
+--     (creative_asset.go: `if len(p.Bytes) > maxCreativeStoredBytes`).
+--   * 41943040 (40 MiB) is the design's MaxLength -- the same ceiling expressed in base64
+--     CHARACTERS, the unit the published wire schema measures.
+--
+-- This column is the DECODED one. The service writes `ByteSize: int64(len(p.Bytes))`, and the
+-- CHECK already on this column ties it to octet_length(bytes), which counts stored -- that is,
+-- decoded -- octets. So the bound that "equals the upload endpoint's request limit" for THIS
+-- column is 31457280. Using the base64 figure here would admit rows a third larger than the
+-- handler accepts and would be exactly the "silently disagreeing later" the deferral existed to
+-- avoid.
+--
+-- WHY THE DATABASE AND NOT ONLY THE HANDLER. byte_size is caller-supplied on the INSERT
+-- (createCreativeAssetQuery passes it as $4), so the handler's len() check guards the HTTP path
+-- only. A repository caller, a backfill, or a future writer reaches CreateAsset without it. The
+-- dispatcher's aggregate cap then assumes a tripping asset adds at most 30 MiB
+-- (maxVariantAssetBytes in internal/dispatch), and nothing below the handler enforced that.
+-- A table-level CHECK makes it an invariant of the data rather than a promise each writer keeps.
+--
+-- NARROWING SAFETY (the expand/contract rule in README.md). This adds a constraint, which is a
+-- narrowing, so it must not break a running N-1 binary. It cannot: the creative_assets repo
+-- exists in the previous release but is NEVER BOUND INTO THE CONTAINER there -- no
+-- SetCreativeAssetRepo / NewCreativeAssetRepo call exists outside this release -- so no live code
+-- path can INSERT, and the table is necessarily empty wherever 000028 has been applied. There is
+-- no existing row to violate the bound and no old writer to start failing. The endpoint that
+-- writes it arrives in the SAME release as this constraint, already refusing anything larger.
+--
+-- Stated as a plain CHECK rather than NOT VALID + VALIDATE: with no rows to scan the ACCESS
+-- EXCLUSIVE lock is momentary, and a plain CHECK is validated for future writes immediately
+-- rather than leaving a window where it is declared but not enforced.
+ALTER TABLE creative_assets
+    ADD CONSTRAINT creative_assets_byte_size_max
+    CHECK (byte_size <= 31457280);

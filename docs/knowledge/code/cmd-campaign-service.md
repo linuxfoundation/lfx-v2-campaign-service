@@ -44,4 +44,30 @@ installed, nothing logged, and no exit code for the Job to fail on. Only the FIR
 classified, and only when it does not begin with `-`: a subcommand has to come first, and scanning
 further would mistake a flag VALUE (`-p 8080`) for a command and break ordinary startup.
 
+`buildHandler` is the chain seam beside `buildMux`, and exists for the same reason: it
+wraps the mounted mux in the service's middleware — innermost `middleware.MaxBodyBytes`
+(the inbound body cap that answers `413`, sized by `constants.MaxRequestBodyBytes`), then
+`middleware.UploadAdmission`, then request-ID, then debug/OTel, with the in-flight tracker
+outermost.
+
+The admission layer's position is security-relevant, which is why it is named here rather
+than left to the code. It sits OUTSIDE `MaxBodyBytes` and outside the mux because Goa's
+generated handler decodes the request body BEFORE the endpoint authenticates it: the
+permit has to be taken while the pre-auth allocation is still ahead of the chain, not after
+the decoder has already made it. Inside the body wrapper — or inside the service method —
+it would bound only the decode tail and leave the unauthenticated read unguarded while
+appearing to bound it. `MaxBodyBytes` bounds ONE body; admission bounds how many may be in
+flight at once.
+
+`buildServer` is the third seam, holding the `http.Server` timeouts. They share one clock:
+the write deadline is installed when the headers are read and keeps expiring through the
+body read and the handler, so `DefaultReadTimeout` plus `UploadHandlerHeadroom` must stay
+within `DefaultWriteTimeout`. Extracting the constructor is what lets a test assert that on
+the real object instead of restating the constants. The cap sits inside the
+other wrappers so a refused request still carries a request id and is still traced, but
+outside the mux, because the Goa decoders behind the mux are what would otherwise buffer an
+unbounded body. Extracting it lets a test drive the REAL chain — a security control's
+presence is invisible to any test that exercises the mux directly. See
+[internal/middleware](internal-middleware.md) for the cap's rationale and sizing.
+
 See [cmd/campaign-service](../../../cmd/campaign-service).

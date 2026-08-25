@@ -162,7 +162,73 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	// closes; the tracker is waited on between the forced Close and cont.Close.
 	inflight := middleware.NewInflightTracker()
 
-	var handler http.Handler = mux
+	handler := buildHandler(mux, cfg, inflight)
+
+	srv := buildServer(cfg, handler)
+
+	return runServerWithContext(ctx, srv, cont, inflight)
+}
+
+// buildServer assembles the http.Server with its timeouts.
+//
+// It is a seam for the same reason buildHandler is one: the timeouts are security controls whose
+// ABSENCE is invisible. Constructing the server inline meant the only way to check ReadTimeout
+// was to restate it in a test literal — which asserts the constant's value and proves nothing
+// about the running server, so deleting the field left every test green. Extracting it lets a
+// test read the real object.
+func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              cfg.ServerAddress(),
+		Handler:           handler,
+		ReadHeaderTimeout: constants.DefaultReadHeaderTimeout,
+		// Bounds the whole request read, not just the headers: without it a slowloris can
+		// dribble a body indefinitely while holding an upload admission permit, exhausting
+		// the admission budget with requests that never complete.
+		ReadTimeout:  constants.DefaultReadTimeout,
+		WriteTimeout: constants.DefaultWriteTimeout,
+		IdleTimeout:  constants.DefaultIdleTimeout,
+	}
+}
+
+// buildHandler wraps the mounted mux in the service's middleware chain. It is a seam
+// for the same reason buildMux is one: the chain contains a security control — the
+// inbound body cap — whose presence is invisible to any test that exercises the mux
+// directly, and standing up a full container just to prove a request is bounded is not
+// something a unit test can do. Extracting it lets a test drive the REAL chain.
+//
+// Order, innermost (applied first) to outermost (applied last):
+//
+//   - MaxBodyBytes wraps the mux directly. The Goa decoders live behind the mux and are
+//     exactly what would otherwise buffer an unbounded body, so the
+//     cap has to be inside every other wrapper but outside the mux (see
+//     constants.MaxRequestBodyBytes).
+//   - UploadAdmission sits immediately OUTSIDE MaxBodyBytes, and that order is the point.
+//     MaxBodyBytes bounds ONE body; admission bounds how many may be in flight at once. It
+//     has to run before the body is read at all, because Goa's generated handler decodes the
+//     request before the endpoint authenticates it — so the permit must be taken while the
+//     pre-auth allocation is still ahead of us, not after the decoder has already made it.
+//     Being outermost would otherwise invert the two refusals a caller can get, so admission
+//     is handed MaxRequestBodyBytes and answers 413 for an already-over-cap DECLARED size
+//     before seeking a permit: that verdict is permanent and knowable from the headers, and
+//     shedding it with a retryable 503 because the budget was busy told the caller to retry
+//     something that can never succeed. Undeclared/chunked bodies are unaffected and still
+//     reach MaxBodyBytes' reader arm, which is the only place their size becomes known.
+//   - RequestID and, when enabled, debug/OTel sit OUTSIDE it, so a request refused with
+//     413 still carries a request id and is still traced — an operator investigating a
+//     rejection needs it correlated like any other response.
+//   - The inflight tracker is OUTERMOST, so a request is counted from the instant it
+//     enters the chain. If it were inner, a handler that has started but not yet reached
+//     the inner wrapper would be invisible to Wait, and shutdown could observe zero,
+//     close the pool, and let that straggler touch a closing pool.
+func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker) http.Handler {
+	handler := mux
+	handler = middleware.MaxBodyBytes(constants.MaxRequestBodyBytes)(handler)
+	handler = middleware.UploadAdmission(
+		constants.UploadAdmissionBudgetBytes,
+		constants.MaxRequestBodyBytes,
+		constants.UploadAdmissionWeightFor,
+		constants.UploadAdmissionWait,
+	)(handler)
 	handler = middleware.RequestIDMiddleware()(handler)
 	if cfg.Debug {
 		handler = debug.HTTP()(handler)
@@ -170,22 +236,8 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	handler = otelhttp.NewHandler(handler, "lfx-v2-campaign-service",
 		otelhttp.WithFilter(func(r *http.Request) bool { return shouldTrace(r.URL.Path) }),
 	)
-	// Wrap the inflight tracker OUTERMOST (applied last), so a request is counted
-	// from the instant it enters the handler chain — before the request-ID / debug /
-	// OTel wrappers. If it were inner, a handler that has started but not yet reached
-	// the inner wrapper would be invisible to Wait, and shutdown could observe zero,
-	// close the pool, and let that straggler touch a closing pool.
 	handler = inflight.Middleware()(handler)
-
-	srv := &http.Server{
-		Addr:              cfg.ServerAddress(),
-		Handler:           handler,
-		ReadHeaderTimeout: constants.DefaultReadHeaderTimeout,
-		WriteTimeout:      constants.DefaultWriteTimeout,
-		IdleTimeout:       constants.DefaultIdleTimeout,
-	}
-
-	return runServerWithContext(ctx, srv, cont, inflight)
+	return handler
 }
 
 // inflightWaiter is the subset of middleware.InflightTracker the shutdown path

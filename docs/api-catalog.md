@@ -43,6 +43,7 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 | POST | `/projects/{projectId}/briefs/{brief_id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
 | POST | `/projects/{projectId}/briefs/{brief_id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
 | POST | `/projects/{projectId}/briefs/{brief_id}/email-copy` | `campaign_manager` | JSON | Generate AI-written email copy (subject, preheader, body, CTA) for the brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503. Requires valid brief event details (event name). |
+| POST | `/projects/{projectId}/briefs/{brief_id}/creative-assets` | `campaign_manager` | JSON | Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated and stored in Postgres (`bytea`), returning a `CreativeAsset` (`id`, verified `mime_type`, `byte_size`, SHA-256 `checksum`). The bytes are base64-encoded in the JSON body, so a request body is roughly 4/3 the image size. The field is declared a **`String`**, not a Goa `Bytes` attribute, so the published schema says `type: string` rather than `format: binary` (which in OAS3 means raw octets and would describe a wire this endpoint does not accept); the service decodes it at the boundary and answers **`400`** for malformed base64. The published `maxLength` on that field is the **encoded** ceiling (41,943,040 base64 characters = 30 MiB decoded), because OpenAPI `maxLength` counts characters of the JSON string rather than decoded bytes; the 30 MiB decoded ceiling itself is enforced in the handler and answers `400` (and is carried as a `byte_size` table CHECK by migration `000029`, for writers that never reach the handler). Bodies above `constants.MaxRequestBodyBytes` (42 MiB) are refused with `413`, by one of two arms depending on whether the size is DECLARED. A request whose `Content-Length` exceeds the cap is refused before any of the body is read. A chunked/undeclared body cannot be measured up front, so it is wrapped in `http.MaxBytesReader` and the overflow is only discovered by reading up to the cap; the decoder then fails with a generic `400` about malformed JSON, which the middleware replaces with the `413`. Both answer `413` and neither buffers more than the cap, but only the declared arm avoids reading the body at all. Re-uploading identical bytes to the same brief returns the existing asset (idempotent on `(brief_id, checksum)`), and the STATUS distinguishes the two outcomes: **`201`** when this request stored the asset, **`200`** when an identical upload already existed and the stored row was returned unchanged. The body is the same `CreativeAsset` either way — it also carries `created` (`"true"`/`"false"`), the field the status is derived from. An unconditional `201` would tell a retrying client it had created a resource when nothing was created. Touches **no ad platform** — the account-scoped Meta `image_hash` is resolved later, at campaign dispatch. `400` for an empty body, a `bytes` value that is not valid base64, bytes that are not a decodable image, a format outside the PNG/JPEG allow-list, a declared `content_type` that disagrees with the sniffed bytes, an image whose decoded pixel buffer would exceed 80 MiB or whose sides exceed 10,000 (the decompression-bomb gate, priced from the header's colour model before any decode, so a 16-bit PNG is charged the 8-bytes-per-pixel it really costs), or image data that is truncated or corrupt (proven by a full decode, so a header-only PNG cannot be stored); `413` if the request body exceeds the cap — including when the DECLARED `Content-Length` already exceeds it, which is refused before any admission permit is sought so a plainly-oversized request is never answered with a retryable `503` it can never retry past; `503` in three distinct cases: while the database is still binding (cold start) **or, in the supported no-database mode, permanently** — the repository is never bound there, so that arm is NOT a transient state a client can retry past and its wording is deliberately availability-neutral rather than promising recovery; when `UploadAdmission` cannot get wire-memory capacity within 250 ms; and when `DecodeReserver` cannot get decoded-pixel capacity within the same window. Only the last two are transient — they are CAPACITY, not failure — the request was refused without being attempted, so retrying after a short backoff is the correct client behaviour, and none of the three should be diagnosed as a database problem. Only the `UploadAdmission` case carries a `Retry-After` header: it is written by the middleware, which sits outside the mux and controls its own response. The cold-start and `DecodeReserver` cases are typed Goa errors whose generated encoder emits status and body only, so a client must not condition its retry on the header being present. |
 | DELETE | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
 
 > Listing briefs and viewing a brief's version history are served by the Query Service, not by dedicated endpoints here.
@@ -717,6 +718,33 @@ imageUrl?: string               — OPTIONAL https URL to a single image for thi
                                   Meta rejects over the image fails only THAT variant's ad
                                   (non-fatal), and is reported in the result Steps with the
                                   URL's query/fragment stripped (it may be pre-signed).
+imageAssetId?: string            — OPTIONAL id of a creative asset previously uploaded against
+                                  THIS brief (see POST .../briefs/{brief_id}/creative-assets).
+                                  The alternative to `imageUrl`: instead of Meta fetching a
+                                  URL, the service resolves the asset to its stored bytes at
+                                  dispatch, POSTs them to `/act_<id>/adimages`, and attaches
+                                  the returned account-scoped hash as
+                                  `object_story_spec.link_data.image_hash`.
+                                  Must be a valid UUID naming an asset that exists FOR THIS
+                                  BRIEF — an asset belonging to another brief or project is
+                                  rejected, as is an asset with no stored bytes. Every such
+                                  failure fails the platform job BEFORE any paid resource is
+                                  created (no campaign, no ad set, no spend) and RELEASES the
+                                  dispatch claim; a bad reference never degrades to a
+                                  link-only ad, because the caller asked for an image and
+                                  silently creating an imageless ad would spend budget on a
+                                  creative nobody approved.
+                                  Resolution is bounded: variants naming the SAME asset id
+                                  resolve once and share one buffer, and a config naming more
+                                  than 240 MiB of DISTINCT assets is refused pre-create.
+                                  MUTUALLY EXCLUSIVE with `imageUrl`. Meta documents
+                                  `link_data.picture` as "Specify this field or `image_hash`
+                                  but not both", so a variant supplying BOTH has no correct
+                                  interpretation and is REFUSED — locally, before any
+                                  upstream call is made, rather
+                                  than discovered at the per-variant creative step where the
+                                  campaign and ad set already exist. Supply one or neither;
+                                  neither still yields the bare-link creative.
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that

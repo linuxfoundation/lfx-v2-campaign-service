@@ -21,7 +21,15 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 )
 
-// maxParallelDispatch bounds concurrent per-platform campaign creation.
+// maxParallelDispatch bounds concurrent provider dispatches ACROSS THE PROCESS.
+//
+// Not "per-platform", which an earlier version of this comment said and which is wrong in the
+// direction that matters: the semaphore below is a single process-wide channel with NO
+// per-provider partition, so all five slots can be the SAME provider. Reading it as a
+// per-platform limit understates the concurrency by a factor of five, and a memory bound was
+// once sized against that misreading — five simultaneous Meta dispatches each holding their
+// creative assets, against a per-dispatch cap that assumed it was the only one.
+// dispatch.MaxConcurrentVariantAssetBytes is the aggregate that now covers it.
 const maxParallelDispatch = 5
 
 // CancelGracePeriod is how long Shutdown waits, after cancelling in-flight runs
@@ -128,10 +136,14 @@ const providerCallTimeout = 2 * time.Minute
 // toggleCallTimeout bounds the SYNCHRONOUS status-toggle platform call, which runs on the
 // HTTP request goroutine (unlike the async dispatch above). Without it, a cascade of
 // sequential PATCHes — each with its own retry budget — could exceed the server's
-// DefaultWriteTimeout (60s), so the platform + DB would change but the response could no
-// longer reach the caller (a silent "did it apply?" for the operator). Kept comfortably
-// under the 60s write timeout so a failed toggle still returns an error the client receives;
-// on timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
+// DefaultWriteTimeout, so the platform + DB would change but the response could no
+// longer reach the caller (a silent "did it apply?" for the operator).
+//
+// The requirement is stated as a RELATIONSHIP rather than a repeated figure: this must stay
+// comfortably under constants.DefaultWriteTimeout so a failed toggle still returns an error the
+// client receives. Naming the number here meant this comment said 60s after the write budget was
+// raised to 120s — a stale figure that a reader sizing the next timeout would have trusted. On
+// timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
 const toggleCallTimeout = 45 * time.Second
 
 // metricsCallTimeout bounds the SYNCHRONOUS metrics-read platform call, which — like the

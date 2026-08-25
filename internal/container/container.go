@@ -64,6 +64,16 @@ type backendSetter interface {
 // signature) so the retry path can wire both.
 type briefBackendSetter interface {
 	SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator)
+	// SetCreativeAssetRepo is on this interface, not folded into SetBackend, so the cold-start
+	// path binds it in the SAME step it binds the brief repos. Omitting it there would leave
+	// UploadCreativeAsset serving 503 forever on a cold-started pod while every other route
+	// worked — the same silent gap that pulled SetBriefRepo/SetBuilder onto audienceBackendSetter.
+	SetCreativeAssetRepo(domain.CreativeAssetRepository)
+	// SetDecodeReserver is on this interface for the same reason SetCreativeAssetRepo is: it is
+	// a memory BOUND, and a cold-started pod that bound the repo without it would serve uploads
+	// with the aggregate decode budget unenforced — working normally, and unbounded, which is
+	// the failure a compile-time contract exists to prevent.
+	SetDecodeReserver(*service.DecodeReserver)
 }
 
 // audienceBackendSetter late-binds the audience repo after a cold-start retry.
@@ -404,12 +414,36 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 // dispatcher registered" for that platform (logged as a startup warning).
 // audiences is the audience repository the HubSpot (email) dispatcher reads to resolve a brief's
 // built send-list. The ad dispatchers don't need it, so it is a distinct arg rather than folded
-// into the connection repo.
-func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo) map[model.Provider]service.PlatformDispatcher {
+// into the connection repo. creatives is the same shape for Meta: the creative-asset store it
+// reads to resolve a variant's imageAssetId to the image bytes it uploads.
+func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo, creatives *postgres.CreativeAssetRepo) map[model.Provider]service.PlatformDispatcher {
+	// Bound here rather than in NewMetaDispatcher's signature so the ~30 direct-construction
+	// dispatch tests that create no asset-backed variants stay unchanged, and so BOTH call
+	// sites of registerDispatchers (fast path and cold-start retry) get the binding from one
+	// statement — the same reasoning that put the brief repos behind bindBriefLiveBackends.
+	metaDispatcher := dispatch.NewMetaDispatcher(repo, enc)
+	// Guard on the CONCRETE pointer, not inside SetCreativeAssetRepo: passing a nil
+	// *postgres.CreativeAssetRepo into an interface parameter yields a NON-nil interface
+	// holding a nil pointer, so the callee's `r == nil` check cannot see it. Left unguarded,
+	// resolveVariantAssets' "store is not configured" branch would be skipped and an
+	// asset-backed variant would nil-panic mid-dispatch instead of failing cleanly
+	// pre-spend. The no-database tests call registerDispatchers with all-nil args, so this
+	// is a reachable path, not a hypothetical.
+	if creatives != nil {
+		metaDispatcher.SetCreativeAssetRepo(creatives)
+	}
+	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
+	// guard above. The two are independent: that guard exists because a nil concrete pointer
+	// in an interface is not a nil interface, whereas this takes a concrete *AssetReserver
+	// whose nil case is already a documented no-op. Binding it here means every dispatcher the
+	// live and cold-start paths build shares ONE budget — which is the point, since the bound
+	// is across concurrent dispatches rather than within one.
+	metaDispatcher.SetAssetReserver(dispatch.NewAssetReserver(
+		dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait))
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
-		model.ProviderMetaAds:      dispatch.NewMetaDispatcher(repo, enc),
+		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
@@ -706,6 +740,41 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 		"registered", len(dispatchers))
 }
 
+// bindBriefLiveBackends binds EVERY pool-backed collaborator the brief service needs, and is the
+// single place either startup path may do so.
+//
+// It exists because the two bindings are one obligation that was expressible as two independent
+// statements. Deleting the creative-asset line from either path compiled and left the whole suite
+// green, while in production every upload answered 503 forever on that pod — the brief routes
+// would be live and only the upload silently dead. The repo-injection contract cannot catch that:
+// briefBackendSetter forces the METHOD to exist, not the call to be made, and the handler's 503
+// is deliberately indistinguishable from the no-database mode's, so no black-box assertion can
+// tell a mis-wired live container from a correctly wired 503 one.
+//
+// Routing both paths through one function makes the coupling structural instead of remembered: a
+// future pool-backed dependency added here lands on both paths at once, and neither path can bind
+// the brief repos while forgetting the rest, because there is no longer a separate statement to
+// forget. This is the same reasoning that put SetOrchestrator behind the backendSetter interface
+// rather than a direct cast — one declared contract, both injection sites.
+func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) {
+	bb.SetBackend(briefs, campaigns, jobs, orch)
+	// ORDER MATTERS between these two, and only in one direction.
+	//
+	// On the cold-start retry path this mutates a BriefService that is ALREADY MOUNTED and
+	// serving, and the two setters take the service's lock independently — so a concurrent
+	// UploadCreativeAsset can observe the state published by the first without the second. The
+	// repo is the handler's AVAILABILITY GATE (a nil repo answers 503), while a nil
+	// DecodeReserver is deliberately a silent no-op. Publishing the gate first would therefore
+	// open uploads for the width of that window with the aggregate pixel-memory bound
+	// unenforced: they would succeed, unbounded — strictly worse than being refused, and
+	// invisible because nothing fails.
+	//
+	// Binding the BOUND first makes the window harmless: while the repo is still nil every
+	// upload is refused with 503, so no request can observe a live repo without a reserver.
+	bb.SetDecodeReserver(service.NewDecodeReserver(constants.DecodeAdmissionBudgetBytes))
+	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+}
+
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
 	c.Connections = c.newConnectionService(repo, enc)
@@ -719,7 +788,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
-	dispatchers := registerDispatchers(repo, enc, audienceRepo)
+	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool))
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -735,7 +804,9 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// declared contract and a signature change breaks both at compile time rather than
 	// leaving this one silently behind.
 	c.Connections.(backendSetter).SetOrchestrator(orch)
-	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	briefSvc := c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch)
+	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
@@ -794,7 +865,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
-			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
+			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool))
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
@@ -813,7 +884,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
 			c.orch = orch
-			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
+			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch)
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)

@@ -6,10 +6,15 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
+	"unicode"
+
+	"github.com/google/uuid"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -62,15 +67,420 @@ type metaConfig struct {
 	CurrencyOffset int64 `json:"currencyOffset"`
 }
 
+// creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
+// stored asset's bytes. It deliberately does not embed domain.CreativeAssetRepository —
+// the dispatcher must be able to READ an asset, never to create one. Least privilege,
+// exactly as the HubSpot dispatcher's audienceReader narrows the audience repository.
+type creativeAssetReader interface {
+	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+	// GetAssetSize prices an asset before it is loaded, so the aggregate reservation can be
+	// taken BEFORE the blob is materialised. Reserving afterwards bounds nothing: the memory
+	// is already resident by the time the semaphore is consulted.
+	GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error)
+}
+
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
 type MetaDispatcher struct {
 	creds *credsSource
-	opts  []meta.Option
+	// creatives resolves a variant's imageAssetId to image bytes at dispatch. Bound by
+	// registerDispatchers on the live and cold-start paths; nil in the direct-construction
+	// tests that create no image-by-asset variants, where it is never read
+	// (resolveVariantAssets touches it only for a variant that references an asset).
+	creatives creativeAssetReader
+	// assets bounds the creative-asset bytes CONCURRENT dispatches may hold. Bound by
+	// registerDispatchers alongside creatives; nil in direct-construction tests, where it
+	// reserves nothing (see AssetReserver). Without it maxVariantAssetBytes caps one
+	// dispatch while five run at once — the aggregate this closes.
+	assets *AssetReserver
+	opts   []meta.Option
 }
 
-// NewMetaDispatcher builds the adapter from the connection repo + encryptor.
+// NewMetaDispatcher builds the adapter from the connection repo + encryptor. The
+// creative-asset read path is bound separately via SetCreativeAssetRepo (see
+// BriefService.SetCreativeAssetRepo for the same opt-in shape), so the existing
+// direct-construction tests that create no asset-backed variants stay unchanged.
 func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Option) *MetaDispatcher {
 	return &MetaDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+}
+
+// SetCreativeAssetRepo binds the creative-asset read path so image-referencing variants
+// resolve to bytes at dispatch. registerDispatchers calls it once at construction, before
+// the dispatcher is shared with the orchestrator, so no lock guards it (unlike
+// BriefService, which late-binds across a cold start). A nil argument is ignored —
+// mirroring BriefService.SetCreativeAssetRepo — leaving the dispatcher image-less rather
+// than storing a typed-nil that would panic when a variant referenced an asset.
+func (d *MetaDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
+	if r == nil {
+		return
+	}
+	d.creatives = r
+}
+
+// SetAssetReserver late-binds the PROCESS-WIDE creative-asset memory budget, mirroring
+// SetCreativeAssetRepo's opt-in shape. A nil reserver reserves nothing, so the
+// direct-construction tests are unaffected.
+func (d *MetaDispatcher) SetAssetReserver(a *AssetReserver) {
+	if a == nil {
+		return
+	}
+	d.assets = a
+}
+
+// AssetReserverIsSet reports whether the aggregate asset budget was bound.
+//
+// Exported for exactly the reason CreativeAssetRepoIsSet is: the container's wiring tests
+// construct dispatchers with all-nil arguments, so deleting registerDispatchers' bind
+// COMPILES and leaves the suite green while production loses the aggregate bound. Only an
+// assertion on the bound state itself holds the wiring.
+func (d *MetaDispatcher) AssetReserverIsSet() bool {
+	return d.assets != nil
+}
+
+// CreativeAssetRepoIsSet reports whether the creative-asset read path was bound.
+// Exported ONLY so the container's wiring tests can assert the binding directly, for
+// exactly the reason BriefService.CreativeAssetRepoIsSet is (see
+// internal/service/creative_asset.go): the container tests construct dispatchers with
+// all-nil arguments, so deleting registerDispatchers' SetCreativeAssetRepo call
+// COMPILES and leaves the whole suite green — while every asset-backed production
+// dispatch fails with "the creative-asset store is not configured", i.e. no ad at all
+// for a brief whose creative was uploaded successfully.
+//
+// An error-based assertion cannot close this gap: a dispatcher that was never bound
+// and one bound to a repo that cannot find the asset both fail the variant, and the
+// no-database container legitimately produces the unbound state. Only asking the
+// dispatcher directly distinguishes wired from unwired.
+func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != nil }
+
+// maxVariantAssetBytes bounds the total DISTINCT creative-asset bytes one dispatch may
+// hold in memory at once.
+//
+// It is aligned with the caps PR #170 already established rather than inventing a third
+// scheme. Those are all derived from ONE number — the 30 MiB per-asset ceiling enforced on
+// the upload (internal/service's maxCreativeStoredBytes, itself set at Meta's documented
+// single-image maximum; the design's MaxLength(41943040) is that same ceiling expressed in
+// base64 CHARACTERS, which is the unit the wire schema measures): constants.MaxRequestBodyBytes
+// is 42 MiB (one 30 MiB image base64-expanded by 4/3, plus envelope) and the decode budget is
+// 80 MiB. This is the same ceiling applied to the one code path that holds SEVERAL assets
+// simultaneously.
+//
+// 240 MiB is EIGHT maximum-size (30 MiB) assets. Justified against a legitimate campaign:
+// real Meta creatives are nothing like 30 MiB — Meta's own recommended feed image is
+// 1936x1936, which is a few hundred KiB as PNG or JPEG, so 240 MiB is several hundred
+// realistic creatives. A/B tests in this service run a handful of variants, not hundreds,
+// and a campaign that genuinely needs more distinct artwork than this is better split than
+// dispatched as one job. The bound therefore refuses only configs that are already
+// pathological, while capping what a single dispatch can allocate at a fixed, modest
+// multiple of the largest thing the upload contract admits.
+//
+// Deduplication (below) is what makes the bound meaningful: without it the SAME asset id
+// repeated N times would charge N times over, so the cheapest attack would exhaust the
+// budget using one stored image.
+//
+// The bound is on bytes RETAINED and the peak IS this value. It used to be this value plus one
+// maximum-size asset, because the ceiling was checked only after GetAsset had already
+// materialised the tripping blob; resolveVariantAssets now prices each asset with GetAssetSize
+// first, so the asset that crosses the ceiling is refused on its size and never loaded.
+//
+// IT BOUNDS ONE DISPATCH ONLY. The aggregate across concurrent dispatches is
+// MaxConcurrentVariantAssetBytes below; this constant said nothing about how many dispatches
+// run at once, and five of them did.
+const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB) assets
+
+// MaxConcurrentVariantAssetBytes is the total creative-asset memory ALL concurrent dispatches
+// may hold at once, the aggregate companion to maxVariantAssetBytes.
+//
+// THE DEFECT IT CLOSES. maxParallelDispatch (internal/service/orchestrator.go) is 5, and that
+// semaphore is process-wide across all jobs with NO per-provider partition, so every slot can be
+// a Meta dispatch. Five at the per-dispatch peak is 5 x 270 MiB = 1.32 GiB against a 512 MiB
+// pod — 2.6x. It does not take the worst case: TWO asset-heavy dispatches already exceed the
+// pod before multipart copies and ordinary process memory.
+//
+// WHY IT EQUALS maxVariantAssetBytes RATHER THAN A SMALLER NUMBER THAT MAKES 5 FIT. Sizing this
+// to satisfy the five-way arithmetic would put it below the per-dispatch cap, and then a single
+// config carrying eight maximum-size assets — legal today, and accepted by the per-dispatch
+// ceiling — could never acquire and would be refused. A bound that meets its arithmetic by
+// rejecting work the contract accepts is not a fix; it is the same error shape as pricing a
+// permit so cheaply that nothing legal fits, which this service has already made once.
+//
+// Equal to the per-dispatch cap is the SMALLEST value that refuses no legal config: exactly one
+// maximum-size dispatch fits, and every smaller one shares the remainder — the same "priced for
+// the worst legal input, shared by everything smaller" shape as the upload and decode budgets.
+// What it removes is the MULTIPLIER, which is where the 2.6x came from:
+//
+//	before: 5 x (240 MiB + 30 MiB materialised) = 1.32 GiB = 2.6x the pod
+//	after:      240 MiB                         =  240 MiB = 47% of the pod
+//
+// It is NOT derived from PodMemoryLimitBytes the way the upload and decode budgets are, and that
+// is deliberate: those bound HTTP-request memory and are sized as fractions of the pod, while
+// this one is pinned to the per-dispatch contract because the binding constraint is "one legal
+// dispatch must always fit", not a share of the pod. Lowering maxVariantAssetBytes lowers this
+// in step, which is the intended coupling.
+const MaxConcurrentVariantAssetBytes int64 = maxVariantAssetBytes
+
+// VariantAssetReserveWait bounds how long a dispatch waits for asset budget before it is
+// refused.
+//
+// Longer than the HTTP-side admission waits (250ms) because the trade is different: a dispatch is
+// a background job with no client on a socket, so a short wait buys nothing and a queued dispatch
+// is cheaper than a failed one. It is bounded rather than open-ended so a dispatch cannot sit
+// behind another's assets indefinitely — without it, providerCallTimeout would be the only thing
+// ending the wait, and it would spend that whole budget queueing instead of dispatching.
+const VariantAssetReserveWait = 30 * time.Second
+
+// maxAssetIDInError bounds how much of a REJECTED imageAssetId is quoted back. A valid
+// id is a 36-character UUID, so this is generous for anything legitimate while keeping a
+// malformed value short enough to stay readable. Deliberately well under
+// errSummaryMaxRunes (200) so this value cannot by itself consume an error summary and
+// push the surrounding wording — which says WHICH variant and WHAT is wrong — out of the
+// truncation window.
+const maxAssetIDInError = 64
+
+// safeAssetIDForError renders a rejected imageAssetId for an error message that reaches
+// operator-facing output and a structured error log.
+//
+// imageAssetId is opaque CALLER JSON with no length or charset bound anywhere on its path
+// (design/brief.go sets none, and the config is decoded straight into metaConfig), so the
+// raw value is attacker-controlled in both size and content. It reaches
+// slog.ErrorContext's "error" attribute via notCreated → the orchestrator's default
+// pre-create arm, so quoting it unchanged would let a caller write arbitrary text — and
+// arbitrarily MUCH of it — into the orchestrator's structured error log.
+//
+// Two independent problems, so two independent controls:
+//   - UNBOUNDED LENGTH → truncated to maxAssetIDInError runes (runes, not bytes, so a
+//     multi-byte value is never split mid-character into invalid UTF-8).
+//   - LOG INJECTION → every non-graphic rune is replaced. Newlines and carriage returns
+//     are the ones that matter: a log line the caller can break is a log line the caller
+//     can forge a second, fake entry inside.
+//
+// It is NOT a redactor and makes no claim to be one — the same distinction
+// safeErrSummary carries. It bounds and neutralises; it does not decide that the content
+// was secret. Nothing secret is expected here (this is a caller-supplied reference, not a
+// credential), so bounding the blast radius is the appropriate control.
+//
+// The value is wrapped in explicit markers rather than %q. %q would escape the control
+// characters, but only AFTER the unbounded value had already been accepted, and it leaves
+// the reader unable to tell a truncated value from a complete one.
+func safeAssetIDForError(id string) string {
+	var b strings.Builder
+	n := 0
+	truncated := false
+	for _, r := range id {
+		if n == maxAssetIDInError {
+			truncated = true
+			break
+		}
+		if unicode.IsGraphic(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(unicode.ReplacementChar)
+		}
+		n++
+	}
+	out := "<" + b.String() + ">"
+	if truncated {
+		out = "<" + b.String() + "… (truncated)>"
+	}
+	return out
+}
+
+// resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
+// the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
+// campaignFromMeta for the degraded-count check and the config snapshot — is not mutated.
+// The copy is for CALLER ISOLATION: those later readers must see the config the caller
+// sent, not one this function rewrote. It is not what keeps bytes out of the persisted
+// snapshot — meta.AdVariant.ImageBytes is tagged `json:"-"` (internal/platform/meta/
+// client.go:2469), so resolved bytes never marshal into config_snapshot regardless.
+// A variant with no imageAssetId passes through unchanged (a link-only or by-URL creative).
+//
+// Every failure here is a caller/wiring error that MUST fail the dispatch BEFORE any
+// upstream create — the sole call site wraps the returned error in notCreated so the
+// (brief, platform) claim is RELEASED rather than stranded, and the resolution runs before
+// meta.NewClient, so no Meta call is made. It is NOT a pre-credential boundary: Dispatch
+// calls resolveMetaCredentials as its first statement, which loads, decrypts and decodes
+// the stored token before this ever runs. The guarantee is pre-spend, not
+// credential-avoidance:
+//   - a malformed imageAssetId cannot reference a real asset, so it is rejected up front
+//     rather than handed to the UUID primary-key lookup (which would raise an opaque
+//     driver error);
+//   - a nil repo with an image-referencing variant is a wiring defect (registerDispatchers
+//     always binds it) — surfaced as a clear error, not a nil-panic;
+//   - an asset absent for THIS brief (missing, or another brief's/project's) is ErrNotFound
+//     from GetAsset's scoped lookup, reported as a bad reference.
+//
+// A bad asset must NOT fall through to a link-only ad: the caller asked for an image, and
+// silently creating an imageless ad would spend budget on a creative nobody approved.
+// It returns a RELEASE func, always non-nil, so `defer release()` at the call site is safe on
+// every path.
+//
+// ON SUCCESS the reservation is NOT released here and the returned func owns it: the resolved
+// bytes are handed back in the variant slice and the Meta client POSTs them to /adimages later
+// in the same dispatch, so releasing at this function's return would free budget that is still
+// occupied.
+//
+// ON FAILURE — any error, and any panic — this function releases everything it reserved before
+// returning, and the returned func is a no-op. The caller therefore cannot leak by forgetting,
+// and a caller that defers unconditionally cannot double-release either (releaseAll is
+// idempotent). That asymmetry is deliberate: it used to be the caller's job on both paths, and
+// the result was a leak on every error arm.
+func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, func(), error) {
+	out := make([]meta.AdVariant, len(variants))
+	copy(out, variants)
+	// Resolved assets are CACHED BY ID for the duration of this call, which is what makes
+	// the memory bound hold. Nothing caps how many variants a config may carry, and each
+	// asset may be 30 MiB (design/brief.go's MaxLength on the upload), so the earlier
+	// version's one-read-and-one-30-MiB-buffer PER VARIANT was unbounded in both DB reads
+	// and allocation — and the cheapest way to trigger it was the SAME asset id repeated,
+	// which needs no extra stored data at all. De-duplication makes repetition free: N
+	// variants naming one asset now cost one read and one buffer, and the ImageBytes slices
+	// alias that single buffer (they are only ever read, never mutated — the meta client
+	// copies them onto the wire).
+	//
+	// Cost is then bounded by the number of DISTINCT assets, so an aggregate ceiling is
+	// still needed for a config naming many different ones. It is deliberately derived from
+	// the caps PR #170 already set rather than being a third scheme: that PR bounds ONE
+	// request at constants.MaxRequestBodyBytes (42 MiB) and one decode at 80 MiB, both
+	// sized from the same 30 MiB per-asset ceiling. maxVariantAssetBytes applies the same
+	// idea to the one place that holds SEVERAL assets at once.
+	byID := make(map[string][]byte, len(out))
+	mimeByID := make(map[string]string, len(out))
+	var totalBytes int64
+
+	// Per-asset reservations, released together. Collected rather than folded into one weight
+	// because each is acquired separately (before its own load), and a weighted semaphore must
+	// be released with exactly the weights it was acquired with — releasing a different total
+	// silently corrupts its accounting rather than failing.
+	//
+	// THE RELEASE IS STRUCTURAL, not a thing each return statement must remember.
+	//
+	// The previous shape returned releaseAll from every arm and relied on the author of each
+	// return — and on the CALLER's defer — to hand it back. That leaked twice over: two arms
+	// returned a no-op instead, and the caller's `defer releaseAssets()` sat BELOW its error
+	// check, so it never ran on failure at all. Both are the same bug, which is that a
+	// correctness property was spread across every exit rather than expressed once.
+	//
+	// The defer below owns it instead. On ANY error return — including ones added later, and
+	// including a panic — it unwinds every reservation taken so far. On success it does nothing
+	// and the caller receives the releaser, because the resolved bytes outlive this call: they
+	// go back in the variant slice and the Meta client POSTs them to /adimages later in the same
+	// dispatch. That is the one case the caller must still own, and it is now the ONLY one.
+	var releases []func()
+	releaseAll := func() {
+		for _, rel := range releases {
+			rel()
+		}
+		releases = nil
+	}
+	//
+	// The flag asks "did this function hand the reservation to the caller", NOT "did it fail",
+	// and the difference is the panic path. An `if err != nil` defer (which needs a named error
+	// return) skips the release on a PANIC, because err is nil there too — and a panic is the
+	// one exit a defer exists to cover in the first place. A flag set immediately before the
+	// single successful return covers every other exit as a side effect: any return that is not
+	// that one, existing or added later, unwinds.
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			releaseAll()
+		}
+	}()
+	for i := range out {
+		assetID := strings.TrimSpace(out[i].ImageAssetID)
+		if assetID == "" {
+			continue
+		}
+		parsed, perr := uuid.Parse(assetID)
+		if perr != nil {
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
+		}
+		// CANONICALIZE before the id is used as a cache key or a lookup value.
+		//
+		// uuid.Parse accepts four spellings of the SAME uuid — canonical, braced
+		// ({...}), URN (urn:uuid:...) and unhyphenated — so the caller's raw spelling is
+		// not a stable identity. Keying the cache on it would let a config reference one
+		// asset through several valid aliases and defeat the dedupe entirely: each alias
+		// would miss the map, read the row again, retain another buffer, and be charged
+		// against the aggregate budget again. That is the exact unbounded case the dedupe
+		// exists to prevent, reachable with no extra stored data — and it would eventually
+		// refuse a legitimate config with a false "distinct creative assets" rejection
+		// naming assets that are not distinct.
+		//
+		// The canonical form is also what the lookup should carry: the stored primary key
+		// is a uuid column, so a braced or URN spelling is this service's spelling
+		// problem, not a different asset.
+		assetID = parsed.String()
+		if b, seen := byID[assetID]; seen {
+			// Already resolved for an earlier variant: no second read, no second buffer,
+			// and no second charge against the aggregate budget.
+			out[i].ImageBytes = b
+			out[i].ImageMIME = mimeByID[assetID]
+			continue
+		}
+		if d.creatives == nil {
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+		}
+		// PRICE THE ASSET BEFORE LOADING IT.
+		//
+		// This read costs one BIGINT and no BYTEA. It exists because the aggregate reservation
+		// has to be taken BEFORE the blob is resident — charging afterwards bounds nothing, since
+		// every concurrent dispatch would already be holding its full allowance by the time it
+		// blocked on the semaphore. That was a real defect in the first version of this bound.
+		size, serr := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
+		if serr != nil {
+			if errors.Is(serr, domain.ErrNotFound) {
+				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+			}
+			return nil, func() {}, fmt.Errorf("meta variant %d: size creative asset %s: %w", i+1, assetID, serr)
+		}
+
+		// The PER-DISPATCH ceiling, now also applied before the read rather than after it. The
+		// asset that trips the ceiling is no longer materialised first, so the old
+		// "peak is the cap plus one asset" overshoot is gone.
+		totalBytes += size
+		if totalBytes > maxVariantAssetBytes {
+			return nil, func() {}, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+				maxVariantAssetBytes, totalBytes, i+1)
+		}
+
+		// AGGREGATE reservation for THIS asset, taken before it is loaded. Charged incrementally
+		// rather than once at the end for exactly the ordering reason above.
+		relOne, ok := d.assets.reserve(ctx, size)
+		if !ok {
+			return nil, func() {}, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
+		}
+		releases = append(releases, relOne)
+
+		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
+		if gerr != nil {
+			if errors.Is(gerr, domain.ErrNotFound) {
+				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+			}
+			return nil, func() {}, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+		}
+		// The reservation was priced from byte_size; the CHECK on that column
+		// (migration 000029) ties it to octet_length(bytes), so the two agree by construction.
+		// A mismatch would mean the row violates its own constraint, which is a data defect
+		// rather than something to silently re-charge for.
+		_ = size
+		// A resolved asset that carries no bytes cannot become a creative. Refuse rather
+		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
+		// variant that asked for an image — a silent downgrade that spends money.
+		if len(asset.Bytes) == 0 {
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+		}
+		byID[assetID] = asset.Bytes
+		mimeByID[assetID] = asset.MimeType
+		out[i].ImageBytes = asset.Bytes
+		out[i].ImageMIME = asset.MimeType
+	}
+	// Every asset was reserved BEFORE it was loaded, so by here the aggregate budget already
+	// accounts for exactly what this dispatch holds. releaseAll returns all of it at once.
+	//
+	// A config with no asset-backed variants took no reservation at all, so releaseAll is a
+	// no-op over an empty slice — such a dispatch never queues behind one that holds assets.
+	// Hand the reservation to the caller: the resolved bytes outlive this call, so the deferred
+	// unwind above must NOT fire.
+	succeeded = true
+	return out, releaseAll, nil
 }
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
@@ -227,6 +637,33 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		hsToken = bf.HSToken
 	}
 
+	// Resolve every variant's referenced image to BYTES before the client exists. Any
+	// bad reference (malformed id, unknown/foreign asset, an asset with no bytes) fails
+	// the dispatch HERE — notCreated marks it NoUpstreamCreate so the orchestrator
+	// RELEASES the pending (brief, platform) claim instead of stranding it, and because
+	// this runs before meta.NewClient below, no Meta call is made. The credential is
+	// already resolved and decrypted by this point (resolveMetaCredentials runs first),
+	// so this is a pre-spend boundary, not a pre-credential one.
+	// A variant that carries an image URL instead resolves to nothing here and is
+	// attached by the client as link_data.picture; the two are mutually exclusive per
+	// variant and the client refuses a variant supplying both.
+	// The release is deferred to the END OF THE DISPATCH, not to the resolve, because the
+	// resolved bytes live in `variants` and the Meta client POSTs them to /adimages further
+	// down this same function. Releasing earlier would hand the budget back while the memory
+	// it accounts for is still resident, which is exactly the bound this reservation exists to
+	// provide.
+	//
+	// THE DEFER GOES ABOVE THE ERROR CHECK, and that ordering is the fix for a real leak: it
+	// used to sit below, so a failed resolve returned without ever running it. resolveVariantAssets
+	// now unwinds its own reservations on error and hands back a no-op, so this defer is
+	// harmless on the error path — but it is placed here so the two cannot disagree again.
+	// releaseAssets is never nil, on any path.
+	variants, releaseAssets, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
+	defer releaseAssets()
+	if verr != nil {
+		return nil, notCreated(verr)
+	}
+
 	in := meta.CampaignInput{
 		EventName: bf.EventName,
 		EventSlug: brief.EventSlug,
@@ -245,7 +682,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		InstagramUserID: cfg.InstagramUserID,
 		DSABeneficiary:  cfg.DSABeneficiary,
 		DSAPayor:        cfg.DSAPayor,
-		Variants:        cfg.Variants,
+		// The RESOLVED variants (image bytes filled in), not cfg.Variants — cfg.Variants
+		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
+		Variants: variants,
 	}
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)
@@ -282,8 +721,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 // see resolveMetaCredentials), builds the client, and CASCADES the status to the campaign,
 // its ad set, and every ad — Meta's create PAUSES all three, so toggling only the campaign
 // to ACTIVE would not serve. campaign is the persisted row; the ad set id is read from its
-// CampaignResult (Meta persists the ad set id but not the individual ad ids, which the
-// client discovers via GET /{adSetID}/ads). status is model.CampaignRunActive or
+// CampaignResult, and the ads are enumerated live via GET /{adSetID}/ads rather than from
+// CampaignResult.Ads (which LFXV2-3295 does persist) — see UpdateCampaignAndChildrenStatus
+// for why discovery is the deliberate choice. status is model.CampaignRunActive or
 // model.CampaignRunPaused. Returns nil only when the platform confirms; an UNCONFIRMED
 // outcome (including a partial cascade) is wrapped so the caller reports "verify before
 // retry" (via the Unconfirmed() behavioral interface).
@@ -303,8 +743,10 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
 	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
-	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
-	// individual ad ids — the client discovers those via GET /{adSetID}/ads).
+	// The ad set id is read from the persisted CampaignResult. The ads are DISCOVERED via
+	// GET /{adSetID}/ads even though CampaignResult.Ads now records the ones this service
+	// created: a live enumeration also covers ads added to the ad set since dispatch, and
+	// works for rows written before that field existed.
 	// Provenance BEFORE the provisioning guard below, deliberately. A campaign id is unique
 	// only within an ad account, so a connection re-pointed since create would address an
 	// unrelated campaign — and this path CHANGES delivery, so a collision pauses or activates

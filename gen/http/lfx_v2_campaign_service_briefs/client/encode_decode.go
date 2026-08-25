@@ -79,6 +79,7 @@ func EncodeCreateBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateBriefResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -188,6 +189,20 @@ func DecodeCreateBriefResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-brief", err)
 			}
 			return nil, NewCreateBriefNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateBriefPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-brief", err)
+			}
+			err = ValidateCreateBriefPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-brief", err)
+			}
+			return nil, NewCreateBriefPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateBriefUnauthorizedResponseBody
@@ -278,6 +293,7 @@ func EncodeFindBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(*h
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeFindBriefResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -387,6 +403,20 @@ func DecodeFindBriefResponse(decoder func(*http.Response) goahttp.Decoder, resto
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
 			}
 			return nil, NewFindBriefNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body FindBriefPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			return nil, NewFindBriefPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body FindBriefUnauthorizedResponseBody
@@ -475,6 +505,7 @@ func EncodeGetBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(*ht
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetBriefResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -584,6 +615,20 @@ func DecodeGetBriefResponse(decoder func(*http.Response) goahttp.Decoder, restor
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief", err)
 			}
 			return nil, NewGetBriefNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetBriefPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief", err)
+			}
+			err = ValidateGetBriefPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief", err)
+			}
+			return nil, NewGetBriefPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetBriefUnauthorizedResponseBody
@@ -681,6 +726,7 @@ func EncodeUpdateBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
@@ -792,6 +838,20 @@ func DecodeUpdateBriefResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-brief", err)
 			}
 			return nil, NewUpdateBriefNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateBriefPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-brief", err)
+			}
+			err = ValidateUpdateBriefPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-brief", err)
+			}
+			return nil, NewUpdateBriefPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateBriefPreconditionFailedResponseBody
@@ -913,6 +973,7 @@ func EncodeApproveBriefRequest(encoder func(*http.Request) goahttp.Encoder) func
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
@@ -1024,6 +1085,20 @@ func DecodeApproveBriefResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "approve-brief", err)
 			}
 			return nil, NewApproveBriefNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ApproveBriefPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			err = ValidateApproveBriefPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			return nil, NewApproveBriefPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body ApproveBriefPreconditionFailedResponseBody
@@ -1141,6 +1216,7 @@ func EncodeDeleteBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeDeleteBriefResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1230,6 +1306,20 @@ func DecodeDeleteBriefResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-brief", err)
 			}
 			return nil, NewDeleteBriefNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteBriefPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-brief", err)
+			}
+			err = ValidateDeleteBriefPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-brief", err)
+			}
+			return nil, NewDeleteBriefPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body DeleteBriefUnauthorizedResponseBody
@@ -1321,6 +1411,7 @@ func EncodeFetchEventURLRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeFetchEventURLResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1423,6 +1514,20 @@ func DecodeFetchEventURLResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
 			}
 			return nil, NewFetchEventURLNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body FetchEventURLPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			err = ValidateFetchEventURLPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return nil, NewFetchEventURLPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body FetchEventURLUnauthorizedResponseBody
@@ -1451,6 +1556,234 @@ func DecodeFetchEventURLResponse(decoder func(*http.Response) goahttp.Decoder, r
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "fetch-event-url", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildUploadCreativeAssetRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "upload-creative-asset" endpoint
+func (c *Client) BuildUploadCreativeAssetRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.UploadCreativeAssetPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "upload-creative-asset", "*lfxv2campaignservicebriefs.UploadCreativeAssetPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UploadCreativeAssetLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "upload-creative-asset", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeUploadCreativeAssetRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs upload-creative-asset server.
+func EncodeUploadCreativeAssetRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.UploadCreativeAssetPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "upload-creative-asset", "*lfxv2campaignservicebriefs.UploadCreativeAssetPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewUploadCreativeAssetRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+		}
+		return nil
+	}
+}
+
+// DecodeUploadCreativeAssetResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs upload-creative-asset endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeUploadCreativeAssetResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeUploadCreativeAssetResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			var (
+				body UploadCreativeAssetCreatedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetCreatedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			res := NewUploadCreativeAssetCreativeAssetCreated(&body)
+			tmp := "true"
+			res.Created = &tmp
+			return res, nil
+		case http.StatusOK:
+			var (
+				body UploadCreativeAssetOKResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetOKResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			res := NewUploadCreativeAssetCreativeAssetOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body UploadCreativeAssetBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body UploadCreativeAssetConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body UploadCreativeAssetServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body UploadCreativeAssetInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body UploadCreativeAssetNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UploadCreativeAssetPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UploadCreativeAssetUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "upload-creative-asset", resp.StatusCode, string(body))
 		}
 	}
 }
@@ -1516,6 +1849,7 @@ func EncodeCreateCampaignsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeCreateCampaignsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1618,6 +1952,20 @@ func DecodeCreateCampaignsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
 			}
 			return nil, NewCreateCampaignsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateCampaignsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
+			}
+			err = ValidateCreateCampaignsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
+			}
+			return nil, NewCreateCampaignsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body CreateCampaignsUnauthorizedResponseBody
@@ -1711,6 +2059,7 @@ func EncodeAdoptCampaignRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeAdoptCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -1820,6 +2169,20 @@ func DecodeAdoptCampaignResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
 			}
 			return nil, NewAdoptCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body AdoptCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body AdoptCampaignUnauthorizedResponseBody
@@ -1911,6 +2274,7 @@ func EncodeGetCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2020,6 +2384,20 @@ func DecodeGetCampaignResponse(decoder func(*http.Response) goahttp.Decoder, res
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign", err)
 			}
 			return nil, NewGetCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign", err)
+			}
+			err = ValidateGetCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign", err)
+			}
+			return nil, NewGetCampaignPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetCampaignUnauthorizedResponseBody
@@ -2117,6 +2495,7 @@ func EncodeGetCampaignMetricsRequest(encoder func(*http.Request) goahttp.Encoder
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetCampaignMetricsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2219,6 +2598,20 @@ func DecodeGetCampaignMetricsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
 			}
 			return nil, NewGetCampaignMetricsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetCampaignMetricsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			return nil, NewGetCampaignMetricsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetCampaignMetricsUnauthorizedResponseBody
@@ -2311,6 +2704,7 @@ func EncodeGetCampaignSettingsRequest(encoder func(*http.Request) goahttp.Encode
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetCampaignSettingsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2413,6 +2807,20 @@ func DecodeGetCampaignSettingsResponse(decoder func(*http.Response) goahttp.Deco
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-settings", err)
 			}
 			return nil, NewGetCampaignSettingsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetCampaignSettingsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-settings", err)
+			}
+			err = ValidateGetCampaignSettingsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-settings", err)
+			}
+			return nil, NewGetCampaignSettingsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetCampaignSettingsUnauthorizedResponseBody
@@ -2507,6 +2915,7 @@ func EncodeGetBriefMetricsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetBriefMetricsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2609,6 +3018,20 @@ func DecodeGetBriefMetricsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
 			}
 			return nil, NewGetBriefMetricsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetBriefMetricsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			return nil, NewGetBriefMetricsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetBriefMetricsUnauthorizedResponseBody
@@ -2698,6 +3121,7 @@ func EncodeGenerateEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder)
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGenerateEmailCopyResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -2800,6 +3224,20 @@ func DecodeGenerateEmailCopyResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
 			}
 			return nil, NewGenerateEmailCopyNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GenerateEmailCopyPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			return nil, NewGenerateEmailCopyPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GenerateEmailCopyUnauthorizedResponseBody
@@ -2899,6 +3337,7 @@ func EncodeUpdateCampaignRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
@@ -3010,6 +3449,20 @@ func DecodeUpdateCampaignResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign", err)
 			}
 			return nil, NewUpdateCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign", err)
+			}
+			err = ValidateUpdateCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign", err)
+			}
+			return nil, NewUpdateCampaignPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body UpdateCampaignPreconditionFailedResponseBody
@@ -3138,6 +3591,7 @@ func EncodeToggleCampaignStatusRequest(encoder func(*http.Request) goahttp.Encod
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
@@ -3249,6 +3703,20 @@ func DecodeToggleCampaignStatusResponse(decoder func(*http.Response) goahttp.Dec
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
 			}
 			return nil, NewToggleCampaignStatusNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ToggleCampaignStatusPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body ToggleCampaignStatusPreconditionFailedResponseBody
@@ -3373,6 +3841,7 @@ func EncodeApplyKeywordActionsRequest(encoder func(*http.Request) goahttp.Encode
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3475,6 +3944,20 @@ func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Deco
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
 			}
 			return nil, NewApplyKeywordActionsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ApplyKeywordActionsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			err = ValidateApplyKeywordActionsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+			}
+			return nil, NewApplyKeywordActionsPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body ApplyKeywordActionsUnauthorizedResponseBody
@@ -3570,6 +4053,7 @@ func EncodeDeleteCampaignRequest(encoder func(*http.Request) goahttp.Encoder) fu
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
 //   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
@@ -3661,6 +4145,20 @@ func DecodeDeleteCampaignResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
 			}
 			return nil, NewDeleteCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body DeleteCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignPayloadTooLarge(&body)
 		case http.StatusPreconditionFailed:
 			var (
 				body DeleteCampaignPreconditionFailedResponseBody
@@ -3777,6 +4275,7 @@ func EncodeGetJobRequest(encoder func(*http.Request) goahttp.Encoder) func(*http
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
 //   - error: internal error
 func DecodeGetJobResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
@@ -3879,6 +4378,20 @@ func DecodeGetJobResponse(decoder func(*http.Response) goahttp.Decoder, restoreB
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-job", err)
 			}
 			return nil, NewGetJobNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetJobPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-job", err)
+			}
+			err = ValidateGetJobPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-job", err)
+			}
+			return nil, NewGetJobPayloadTooLarge(&body)
 		case http.StatusUnauthorized:
 			var (
 				body GetJobUnauthorizedResponseBody

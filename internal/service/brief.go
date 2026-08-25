@@ -61,6 +61,14 @@ type BriefService struct {
 	// instant — a test that reads the wall clock passes or fails by WHEN it is run. Nil means
 	// time.Now, so every existing construction keeps working without naming it.
 	clock func() time.Time
+	// creativeAssets backs UploadCreativeAsset. Bound alongside the other repositories on the
+	// live/cold-start paths (SetCreativeAssetRepo), so it is nil in the no-database and
+	// cold-start-pending modes — which is why that handler checks it rather than ready().
+	creativeAssets domain.CreativeAssetRepository
+	// decodeReserve bounds the AGGREGATE pixel-buffer memory concurrent creative-asset decodes
+	// may allocate. Nil in every construction that does not wire one (SetDecodeReserver), which
+	// reserves nothing — so tests and cold-start paths behave exactly as before.
+	decodeReserve *DecodeReserver
 }
 
 // SetClock overrides the time source used for pacing. For tests.

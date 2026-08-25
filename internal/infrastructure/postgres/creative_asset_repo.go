@@ -24,11 +24,13 @@ func NewCreativeAssetRepo(pool *Pool) *CreativeAssetRepo { return &CreativeAsset
 
 var _ domain.CreativeAssetRepository = (*CreativeAssetRepo)(nil)
 
-// creativeAssetCols is the column list every creative-asset read scans, in scanCreativeAsset
-// order. It deliberately OMITS bytes: no caller of this repo needs the image back yet (the
-// upload endpoint returns metadata only, and the byte-loading read used at dispatch lands with
-// the Meta image step), so shipping a multi-megabyte column out of every write would be pure
-// waste. A reader that needs the bytes selects them explicitly.
+// creativeAssetCols is the column list the METADATA-ONLY creative-asset reads scan, in the
+// scanner order. It deliberately OMITS bytes so a read that does not need the image never ships
+// a multi-megabyte column: the upload endpoint returns metadata only, and GetAssetSize reads
+// byte_size precisely so a caller can size an allocation WITHOUT materialising the blob.
+//
+// One read does need the image — GetAsset, called at Meta dispatch to upload the creative — and
+// it appends the column through creativeAssetColsWithBytes below rather than widening this list.
 const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 	mime_type, byte_size, checksum, created_by, created_at`
 
@@ -106,6 +108,15 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // (DO NOTHING plus a follow-up SELECT) costs a second round trip on every duplicate and
 // reintroduces the read-after-write race this single statement avoids.
 //
+// RETURNING carries `(xmax = 0) AS inserted`, which is how the caller tells a first upload from
+// an idempotent re-upload. The returned ROW cannot distinguish them — the conflict path returns a
+// fully-populated asset with a real id and the FIRST upload's created_at — so without this the
+// transport could only answer 201 unconditionally, telling a retrying client it created something
+// it did not. xmax is the row version's deleting/locking transaction id: an INSERT leaves it 0,
+// while the ON CONFLICT DO UPDATE arm writes a new row version whose xmax is this transaction, so
+// `xmax = 0` is true for exactly the rows this statement inserted. It is read on the same
+// RETURNING as the row itself, so it cannot disagree with what was returned.
+//
 // This DOES run inside an explicit transaction, because the parent-brief lock and the insert
 // have to be one atomic unit (see the ordering argument above). The idempotency key still makes
 // a lost commit-ack harmless — the retry returns the row the first attempt committed rather than
@@ -120,17 +131,21 @@ const createCreativeAssetQuery = `INSERT INTO creative_assets
 			WHERE id = $2 AND project_id = $1 AND status <> 'archived'
 		)
 		ON CONFLICT (brief_id, checksum) DO UPDATE SET byte_size = creative_assets.byte_size
-		RETURNING ` + creativeAssetCols
+		RETURNING ` + creativeAssetCols + `, (xmax = 0) AS inserted`
 
 // CreateAsset stores an uploaded image and returns it, or ErrNotFound when the parent brief is
 // absent, archived, or owned by another project. Idempotent on (brief_id, checksum).
-func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error) {
+//
+// The bool reports whether THIS call inserted the row (true) or resolved to an existing one
+// (false), so the transport can answer 201 only for a genuine creation. It is meaningful only
+// when err is nil.
+func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
 	// Lock the parent brief, then insert on the SAME transaction. The lock is what orders this
 	// against a concurrent ArchiveBrief; the insert's own WHERE EXISTS gate is retained because
 	// it still enforces tenancy and the active-status rule, and re-reads the row under the lock.
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create creative asset: begin tx: %w", err)
+		return nil, false, fmt.Errorf("create creative asset: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -144,15 +159,15 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 			// Absent, or owned by another project. Both are ErrNotFound for the same reason the
 			// insert's gate collapses them: telling them apart leaks whether a brief the caller
 			// cannot see exists.
-			return nil, domain.ErrNotFound
+			return nil, false, domain.ErrNotFound
 		}
-		return nil, fmt.Errorf("create creative asset: lock brief: %w", lerr)
+		return nil, false, fmt.Errorf("create creative asset: lock brief: %w", lerr)
 	}
 	if status == "archived" {
-		return nil, domain.ErrNotFound
+		return nil, false, domain.ErrNotFound
 	}
 
-	stored, err := scanCreativeAsset(tx.QueryRow(ctx, createCreativeAssetQuery,
+	stored, inserted, err := scanCreativeAssetWithInserted(tx.QueryRow(ctx, createCreativeAssetQuery,
 		a.ProjectID, a.BriefID, a.MimeType, a.ByteSize, a.Checksum, a.Bytes, nullJSON(a.CreatedBy)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -161,15 +176,49 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 			// and the status rule, and a gate whose failure path is unhandled is a panic waiting
 			// on a future change. Telling the cases apart would leak whether a brief the caller
 			// cannot see exists.
-			return nil, domain.ErrNotFound
+			return nil, false, domain.ErrNotFound
 		}
-		return nil, fmt.Errorf("create creative asset: %w", err)
+		return nil, false, fmt.Errorf("create creative asset: %w", err)
 	}
 
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return nil, fmt.Errorf("create creative asset: commit: %w", cerr)
+		return nil, false, fmt.Errorf("create creative asset: commit: %w", cerr)
 	}
-	return stored, nil
+	return stored, inserted, nil
+}
+
+// getCreativeAssetSizeQuery reads ONE column — byte_size — under exactly the same tenant and
+// active-parent scope as getCreativeAssetQuery below.
+//
+// It exists so a caller can learn what an asset WOULD cost before paying for it. The Meta
+// dispatcher reserves aggregate memory from this number and only then calls GetAsset; reading
+// the size from the row it is about to materialise would be too late, because the blob is
+// resident by the time the size is known.
+//
+// Cheap for the reason migration 000028 records about the byte_size CHECK: byte_size is a
+// stored BIGINT, so this never touches the BYTEA and never detoasts. The scope predicate is
+// duplicated rather than shared with getCreativeAssetQuery because the two must stay
+// identical — a size read that is scoped more loosely than the byte read would let a caller
+// probe the existence of another tenant's asset.
+const getCreativeAssetSizeQuery = `SELECT byte_size
+	FROM creative_assets ca
+	WHERE ca.id = $1 AND ca.project_id = $2 AND ca.brief_id = $3
+	AND EXISTS (
+		SELECT 1 FROM campaign_briefs b
+		WHERE b.id = ca.brief_id AND b.project_id = ca.project_id AND b.status <> 'archived'
+	)`
+
+// GetAssetSize returns a stored asset's byte_size WITHOUT loading its bytes, or ErrNotFound when
+// no such asset exists for that brief. Same scoping and same malformed-id caveat as GetAsset.
+func (r *CreativeAssetRepo) GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error) {
+	var size int64
+	if err := r.db.QueryRow(ctx, getCreativeAssetSizeQuery, assetID, projectID, briefID).Scan(&size); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, domain.ErrNotFound
+		}
+		return 0, fmt.Errorf("get creative asset size: %w", err)
+	}
+	return size, nil
 }
 
 // creativeAssetColsWithBytes is creativeAssetCols plus the bytes column, for the ONE read that
@@ -221,7 +270,7 @@ func (r *CreativeAssetRepo) GetAsset(ctx context.Context, projectID, briefID, as
 }
 
 // scanCreativeAssetWithBytes reads one creative_assets row in creativeAssetColsWithBytes order —
-// scanCreativeAsset's fields plus the trailing bytes column into model.Bytes.
+// the creativeAssetCols fields plus the trailing bytes column into model.Bytes.
 func scanCreativeAssetWithBytes(row pgx.Row) (*model.CreativeAsset, error) {
 	var (
 		a         model.CreativeAsset
@@ -237,19 +286,25 @@ func scanCreativeAssetWithBytes(row pgx.Row) (*model.CreativeAsset, error) {
 	return &a, nil
 }
 
-// scanCreativeAsset reads one creative_assets row in creativeAssetCols order. It does not scan
-// bytes (creativeAssetCols omits them); the returned model's Bytes stays nil.
-func scanCreativeAsset(row pgx.Row) (*model.CreativeAsset, error) {
+// scanCreativeAssetWithInserted reads one creative_assets row in creativeAssetCols order, plus the
+// `(xmax = 0) AS inserted` probe that createCreativeAssetQuery appends. It does not scan bytes
+// (creativeAssetCols omits them); the returned model's Bytes stays nil.
+//
+// It is the ONLY row scanner for this table's create path, and the only one that reads the probe:
+// no other statement selects that column, and a flag would be meaningless outside an
+// INSERT ... ON CONFLICT. Reads that do not need it use scanCreativeAssetWithBytes or scan inline.
+func scanCreativeAssetWithInserted(row pgx.Row) (*model.CreativeAsset, bool, error) {
 	var (
 		a         model.CreativeAsset
 		createdBy []byte
+		inserted  bool
 	)
 	if err := row.Scan(
 		&a.ID, &a.ProjectID, &a.BriefID, &a.MimeType, &a.ByteSize, &a.Checksum,
-		&createdBy, &a.CreatedAt,
+		&createdBy, &a.CreatedAt, &inserted,
 	); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	a.CreatedBy = createdBy
-	return &a, nil
+	return &a, inserted, nil
 }

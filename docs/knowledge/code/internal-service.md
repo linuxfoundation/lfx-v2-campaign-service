@@ -128,6 +128,130 @@ into the drain budget. Both run on every replica with no leader election.
   on the first transient error. See the postgres concept for why only terminal
   statuses are eligible and why they are an allow-list.
 
+
+## Creative asset upload (LFXV2-3295)
+
+`BriefService.UploadCreativeAsset` (backing `POST .../briefs/{briefId}/creative-assets`)
+validates and stores an uploaded image so a Meta ad creative can later reference it by id. It
+touches NO ad platform — the bytes are held until dispatch, where Meta's per-ad-account
+`image_hash` is resolved (see [internal/platform/meta](internal-platform-meta.md)).
+
+The generated validator enforces what the CONTRACT can express: `content_type` is one of the
+allowed MIME strings, and `bytes` is within `[1, 41,943,040]` CHARACTERS of base64.
+
+The unit is now consistent, and it was not always. `bytes` is declared a `String`, so both the
+published `maxLength` and the generated validator measure the ENCODED string — the same quantity.
+While it was a Goa `Bytes` attribute they disagreed: the schema counted characters while the
+validator applied that same figure to the DECODED slice (`len(body.Bytes)`), an effective ~40 MiB
+decoded bound matching neither the published number nor the real ceiling.
+
+What this handler ADDS is the decode itself — `decodeCreativeBytes`, which decodes the string,
+releases it (it is the ~40 MiB allocation the admission weight is derived without), and applies
+the true DECODED-size ceiling to the result (30 MiB, `maxCreativeStoredBytes`). Malformed base64
+is a **400**, never a panic or a 500,
+plus the proof that the BYTES are actually a decodable image of the DECLARED type. The encoded
+and decoded ceilings agree by construction: `base64.EncodedLen(31457280) == 41943040`.
+
+The `MaxLength` figure is the ENCODED ceiling on purpose, and the reason is a representation
+mismatch worth stating. Goa publishes that attribute as `type: string` and emits `MaxLength` as
+`maxLength` on the JSON string, where it counts CHARACTERS; base64 expands by 4/3, so declaring the
+decoded 30 MiB there published a constraint rejecting uploads at ~22.5 MiB decoded — inside what
+this endpoint accepts. Server and schema agreed only because the generated validator applied the
+same number to the decoded slice, so both were wrong together and nothing local disagreed. The
+design now declares `41943040` (= `base64.StdEncoding.EncodedLen(30 MiB)`), the unit that schema
+actually measures, and the DECODED 30 MiB ceiling is **stage 0** in this handler
+(`maxCreativeStoredBytes`) — a `len()` on an already-decoded slice, so it costs nothing and refuses
+an oversize upload before `DecodeConfig` reads its header.
+
+Note also what neither bound does: neither one bounds the bytes read off the WIRE, because both are
+applied after the JSON decoder has read the whole request body. That bound is a separate, inbound
+one — `constants.MaxRequestBodyBytes`, applied by `middleware.MaxBodyBytes` (see
+[internal/middleware](internal-middleware.md)). Validation then runs in three stages, and the ORDER is
+the security property. **Stage 1**, `image.DecodeConfig`, reads only the header — enough to name
+the format and read the declared dimensions — and rejects garbage a declared `content_type`
+alone would wave through. **Stage 2** refuses an image whose decoded pixel buffer would
+exceed `maxCreativeDecodedBytes` (80 MiB), or whose sides exceed `maxCreativeDimension`
+(10,000 each, which also rejects a degenerate 1x20,000,000 strip inside the byte budget). The
+budget is in BYTES, not pixels, because the pixels→bytes factor depends on bit depth: Go decodes
+a 16-bit colour-type-6 PNG to `*image.NRGBA64` at EIGHT bytes per pixel, so a pixel-only cap
+silently permits twice the memory it advertises. `bytesPerPixelFor` prices the image from
+`DecodeConfig`'s `ColorModel` — available before any allocation — and charges any unrecognised
+model the wide rate. 80 MiB admits ~21M pixels at 8-bit and ~10M at 16-bit, against a 4K UHD
+creative of 8.29M pixels, which is accepted at both depths. This is the decompression-bomb gate:
+PNG and JPEG
+both compress a flat image enormously, so a body well inside the 42-MiB request cap can declare
+dimensions decoding to gigabytes, and the check spends only the header read. **Stage 3** decodes
+in FULL and discards the result, because stage 1 proves only that a HEADER parses — a PNG
+truncated immediately after its IHDR passes `DecodeConfig` while carrying no recoverable pixel
+data, and storing it yields a corrupt asset that fails much later at dispatch. Stage 2 exists so
+that stage 3's allocation is bounded by the DECODED-BYTE budget rather than by whatever the
+header claims — a byte budget, not a pixel count, because a 16-bit image decodes at 8 bytes per
+pixel against an 8-bit image's 4, so a pixel-only cap silently admits twice the memory for a
+16-bit upload;
+running the decode first would make the gate worthless, since the allocation IS the attack.
+
+**Stage 2b** sits between them and bounds the AGGREGATE. Stage 2 bounds ONE image and says
+nothing about how many decode at once, and the upstream `middleware.UploadAdmission` cannot
+cover it: that permit is priced from `Content-Length`, and compression severs the link between
+wire bytes and decoded bytes (a flat 4000x4000 PNG is ~68 KiB on the wire and 61 MiB decoded, an
+amplification over 900x, admitted deliberately by the dimension gate). Wire-priced admission
+charges such an image the floor, so without a second bound enough of them decode concurrently to
+exhaust the pod while the upload budget still reads as unspent. `DecodeReserver` therefore
+reserves the DECLARED pixel cost — the same figure stage 2 computes from the header — against
+`constants.DecodeAdmissionBudgetBytes` (128 MiB, a quarter of the pod, sized like the upload
+budget and for the same reason). The two budgets are additive in the worst case and together cap
+uploads at half the pod. The wait is bounded by `DecodeAdmissionWait` rather than by the caller's
+context, because net/http gives a handler's `r.Context()` no deadline — `ReadTimeout`/
+`WriteTimeout` are SOCKET deadlines — so an unbounded acquisition would hold the request's outer
+upload permit until the client disconnected, converting a memory guard into permit exhaustion.
+Capacity that cannot be reserved answers the same retryable `503` the admission middleware sheds
+with. The reservation is released the moment `image.Decode` returns, on BOTH the success and the
+400 arm, and NOT deferred to the method's return: the decoded image is discarded there, so
+holding it across the checksum and the insert would shed concurrent uploads for memory already
+free. Stage 2b is not redundant with the wire admission — they bound different quantities with
+different worst cases, and neither subsumes the other.
+
+The set of registered decoders (`image/png`,
+`image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
+allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.
+That authority is TESTED rather than merely asserted: the service test package imports
+`image/gif` itself — registering the decoder for the test binary only, reproducing exactly the
+condition the claim must survive — feeds a real, decodable GIF, and requires the refusal. Without
+it, widening `mimeForImageFormat` to accept any recognised format changed no test result. The
+stored `mime_type` is the SNIFFED one, and a declared/sniffed mismatch is REFUSED (400), not
+silently corrected. Three distinct 400s are kept apart: bytes that do not decode at all, bytes
+that decode to a format outside the allow-list, and a declared type that disagrees with the
+sniff. Meta's creative POLICY (minimum dimensions, aspect ratio) is deliberately NOT checked
+here — it is Meta-specific and belongs at dispatch; this endpoint is storage integrity.
+
+Unlike `CreateCampaigns`/`AdoptCampaign` there is no `validateProjectSlug`: an asset's
+`project_id` is only a tenant-scoping predicate, never an attribution or connection-lookup key,
+so it stays UUID-or-slug like the other nested brief routes. The `checksum` is the
+lowercase-hex SHA-256 of the bytes (`sha256Hex`), which is the `(brief_id, checksum)` dedupe key
+— a repeat upload of the same image returns the existing asset, and the RESPONSE STATUS says so:
+**201** when this request stored the asset, **200** when it resolved to one that already existed.
+
+That distinction cannot be read off the returned row — it is fully populated and identical on both
+paths, carrying the same id and the FIRST upload's `created_at` — so it is recovered in SQL and
+carried up. `createCreativeAssetQuery`'s `RETURNING` includes `(xmax = 0) AS inserted`, true for
+exactly the rows the statement inserted (an INSERT leaves `xmax` 0; the `ON CONFLICT DO UPDATE` arm
+writes a row version whose `xmax` is the current transaction). `CreateAsset` returns it as its
+second value, and the handler renders it into the `created` attribute the generated encoder
+switches on. An unconditional 201 gave a retrying client false creation semantics.
+
+`created_by` is the attributed actor (NULL when none decodes, same as `CreateBrief`); on an
+idempotent re-upload the repo preserves the FIRST uploader, so this attributes creation, not
+re-sending. The `bytes` are
+deliberately NOT echoed in the result (`creativeAssetResult` returns metadata only — the caller
+already has the bytes it sent, and a multi-megabyte base64 body on every upload would be pure
+overhead). Like the other late-bound methods, an unwired repo returns a typed `503`
+(availability-neutral wording, since in the cold-start window the database is configured but the
+repo has not bound yet); `SetCreativeAssetRepo` is on `briefBackendSetter` so the cold-start path
+binds it in the same step as the brief repos, and BOTH startup paths bind through the single
+`bindBriefLiveBackends` helper — the interface forces the method to exist, only the shared helper
+forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
+no-database mode's, so a mis-wired live container cannot be detected from the outside.
+
 ## Campaign status toggle
 
 `BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`

@@ -689,6 +689,45 @@ var CampaignUpdateInput = Type("campaign-update-input", func() {
 	Required("campaign_name", "status")
 })
 
+// CreativeAsset is an uploaded image asset a Meta ad creative can reference by id.
+// It is insert-only (no version/ETag): the bytes are immutable once stored, and the
+// upload is idempotent per (brief, content checksum) — re-uploading identical bytes
+// returns the existing asset rather than creating a second row.
+var CreativeAsset = Type("creative-asset", func() {
+	Attribute("id", String, "Creative asset UUID", func() { Format(FormatUUID) })
+	Attribute("project_id", String, "Owning project")
+	Attribute("brief_id", String, "Parent brief")
+	Attribute("mime_type", String, "Stored image MIME type, as verified from the bytes (not merely the declared header)", func() {
+		Enum("image/png", "image/jpeg")
+	})
+	Attribute("byte_size", Int64, "Size of the stored image in bytes")
+	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
+	// created SELECTS the upload response status and is deliberately NOT Required, so it stays
+	// out of every other representation of this type (get/list responses never set it).
+	//
+	// The upload is idempotent on (brief_id, checksum), so a re-upload of identical bytes returns
+	// the EXISTING row — fully populated, same id, the FIRST upload's created_at. Nothing in the
+	// row distinguishes that from a genuine creation, so an unconditional 201 told a retrying
+	// client it had created a resource when nothing was created. This attribute carries the
+	// distinction to the transport, which renders it as 201 vs 200.
+	// The Example is PINNED rather than left to Goa, and the reason is a limitation worth
+	// recording. Both success arms $ref this one shared CreativeAsset schema, so the document
+	// carries ONE example for both 200 and 201 — there is no per-arm example to render. Left
+	// unpinned, Goa picks an enum member per rendering, which produced a document showing
+	// 201 with "false" and 200 with "true": exactly backwards, and more misleading than a
+	// single arm being unillustrated, because it inverts the mapping the Tag actually applies.
+	//
+	// "true" is the pinned value because it is the 201 arm, the one this endpoint's Tag
+	// SELECTS on; the 200 arm is the default. The status is authoritative either way — the
+	// Tag below drives selection at runtime and is pinned by tests at the service, encoder and
+	// wire layers — so this only fixes what a reader of the document sees.
+	Attribute("created", String, "\"true\" when this request stored the asset; \"false\" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.", func() {
+		Enum("true", "false")
+		Example("true")
+	})
+	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
+})
+
 // ─── Brief + campaign service ───
 
 var _ = Service("lfx-v2-campaign-service-briefs", func() {
@@ -866,6 +905,127 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// strings handle badly.
 			POST("/projects/{project_id}/fetch-event-url")
 			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("upload-creative-asset", func() {
+		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.")
+		Payload(func() {
+			bearerToken()
+			// Permissive project identifier (UUID or slug), matching the other brief
+			// sub-resources: project_id here only scopes ownership/authz. Unlike
+			// create-campaigns it is never stamped into a campaign name or used as the
+			// connection-lookup key — the asset is bound to a campaign later by its
+			// asset id, so the slug-only constraint does not apply.
+			projectIDAttr()
+			briefIDAttr()
+			Attribute("content_type", String, "Declared MIME type of the uploaded bytes. The bytes are re-sniffed server-side and must match; the stored mime_type is the verified one.", func() {
+				Enum("image/png", "image/jpeg")
+			})
+			// The image rides in the JSON body as a base64 STRING, declared as one rather
+			// than as a Goa Bytes attribute. This is the transport choice: Goa-native, no
+			// multipart machinery, and a contract that describes the wire truthfully — see
+			// the attribute's own comment for why Bytes could not.
+			//
+			// MinLength/MaxLength put the accepted size in the contract and the OpenAPI
+			// document, and the generated validator applies them before the handler runs.
+			// They bound the ENCODED string in characters, which is the unit that string is
+			// measured in at every layer that sees it. The DECODED 30 MiB ceiling is a
+			// separate constraint on a separate quantity, enforced after decoding by the
+			// handler (maxCreativeStoredBytes) and by a table CHECK on byte_size
+			// (migration 000029).
+			Attribute("bytes", String, "The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded server-side; the decoded image must not exceed 30 MiB.", func() {
+				// STRING, not Bytes, and the reason is that the published contract must
+				// describe the wire truthfully.
+				//
+				// Goa emits a Bytes attribute as `type: string, format: binary`, which in
+				// OAS3 means RAW OCTETS — while the transport here is application/json, so
+				// the field is unavoidably a base64 STRING. That mismatch is not cosmetic: a
+				// strict generator reading the document builds a client that sends raw bytes
+				// the server cannot decode. It is unconditional in the generator
+				// (goa v3.25.3 http/codegen/openapi/v3/types.go:179-180 sets
+				// `s.Format = "binary"` for every Bytes attribute, with no DSL or Meta
+				// override), so the field TYPE has to change; the generator cannot be told
+				// otherwise. Declared as String it publishes `type: string`, with a
+				// description and an example that state base64 explicitly.
+				//
+				// It does NOT publish `format: byte` (OAS3's spelling of base64), and not for
+				// want of trying: goa v3.25.3 validates Format() against a fixed whitelist
+				// (expr.IsSupportedValidationFormat, attribute.go:999) with no byte/base64
+				// member, and `openapi:extension:` meta can only add x- prefixed keys, never
+				// `format`. A plain string is nonetheless HONEST where `format: binary` was
+				// WRONG: an unformatted string tells a generator "a string, see the
+				// description", which it passes through untouched, whereas `format: binary`
+				// actively instructs it to send raw octets the server cannot decode.
+				//
+				// What this gives up: the generated payload carries a string, so the service
+				// decodes it (decodeCreativeBytes in internal/service) instead of receiving a
+				// []byte. That decode is where malformed base64 becomes a 400 rather than a
+				// panic or a 500. The media type is unchanged — this is still
+				// application/json, not multipart.
+				// MinLength/MaxLength now count CHARACTERS of the base64 string, which is the
+				// unit this attribute is actually measured in — and it is the same unit the
+				// figure below was always stated in, so the number does not move.
+				//
+				// This is the change that makes the constraint mean what it says. As a Bytes
+				// attribute the generated validator applied 41943040 to the DECODED slice
+				// (`len(body.Bytes)`), an effective ~40 MiB decoded bound that matched neither
+				// the published schema's character count nor the real 30 MiB ceiling. As a
+				// String it applies to the encoded characters, exactly as the OpenAPI
+				// `maxLength` does, so server and schema now bound the same quantity.
+				//
+				// MinLength(1) keeps its intent: reject an empty upload. One base64 character
+				// is not decodable on its own, but the point of the bound is "not empty" — a
+				// too-short-to-decode value is refused by the decode with a 400, not silently
+				// accepted.
+				MinLength(1)
+				// 41,943,040 = base64.StdEncoding.EncodedLen(31457280): the ENCODED ceiling of
+				// the 30 MiB decoded stored-file limit. Base64 expands by exactly 4/3 with
+				// padding, so this is the largest legal upload expressed in the unit the wire
+				// carries.
+				//
+				// It bounds the STRING, and it is deliberately NOT the decoded ceiling. The
+				// DECODED 30 MiB bound is a different constraint on a different quantity and is
+				// enforced after decoding by the handler (maxCreativeStoredBytes in
+				// internal/service, alongside maxCreativeDecodedBytes, the pixel budget) and by
+				// a table CHECK on byte_size (migration 000029), since byte_size is
+				// caller-supplied on the INSERT and a non-HTTP writer never reaches the handler.
+				// Declaring the decoded figure here would publish a schema rejecting uploads at
+				// ~22.5 MiB decoded (31,457,280 chars / 4 * 3), well inside what this endpoint
+				// accepts.
+				//
+				// MaxLength does not bound what the server reads off the WIRE either: the
+				// validator sees the string only after the JSON decoder has read the whole
+				// body. The inbound cap that does is constants.MaxRequestBodyBytes (42 MiB),
+				// applied by middleware.MaxBodyBytes; it is sized from the 30 MiB ceiling and
+				// must be raised alongside any increase here.
+				MaxLength(41943040)
+				Example("aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=")
+			})
+			Required("project_id", "brief_id", "content_type", "bytes")
+		})
+		Result(CreativeAsset)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/creative-assets")
+			Header("bearer_token:Authorization")
+			// TWO success statuses, selected by the `created` Tag, because this upload is
+			// idempotent on (brief_id, checksum) and the two outcomes are genuinely different
+			// events: 201 when this request stored the asset, 200 when an identical upload
+			// already existed and the stored row was returned unchanged. An unconditional 201
+			// told a retrying client it had created a resource when nothing was created.
+			//
+			// The body is the same CreativeAsset in both arms. The `created` attribute IS
+			// rendered (as an omitempty field), so it is an ADDITIVE body change, not a
+			// breaking one: every field an existing client reads keeps its name, type and
+			// meaning, and a client that ignores unknown fields sees no difference. The
+			// status is the part that changed, and only for the retry case.
+			//
+			// No ETag on either: creative assets are insert-only and carry no version, so there
+			// is no optimistic-concurrency handle to hand back.
+			Response(StatusCreated, func() { Tag("created", "true") })
 			Response(StatusOK)
 			briefErrorResponses()
 		})
@@ -1274,6 +1434,12 @@ func commonBriefErrors() {
 	Error("Conflict", ConflictError, "Conflict")
 	Error("InternalServerError", InternalServerError, "Internal server error")
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+	// PayloadTooLarge is produced by middleware.MaxBodyBytes, which sits outside the mux
+	// and so never reaches a Goa encoder — declaring it here is what gives the generated
+	// CLIENT a decode case for 413 (otherwise an oversized upload surfaces as
+	// ErrInvalidResponse) and what puts the status in the OpenAPI documents. It is on
+	// every method because the cap is global, not upload-specific.
+	Error("PayloadTooLarge", PayloadTooLargeError, "Payload too large")
 }
 
 // briefErrorResponses maps the standard errors to HTTP responses. Every error
@@ -1293,4 +1459,5 @@ func briefErrorResponses() {
 	Response("Conflict", StatusConflict)
 	Response("InternalServerError", StatusInternalServerError)
 	Response("ServiceUnavailable", StatusServiceUnavailable)
+	Response("PayloadTooLarge", StatusRequestEntityTooLarge)
 }
