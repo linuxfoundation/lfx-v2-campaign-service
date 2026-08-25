@@ -741,13 +741,16 @@ paid-ads policy. See internal-dispatch's Reversibility section for what the guar
 
 **The third parameter is the row's CURRENT `account_id`, and the guard fires on a CHANGE rather
 than on presence.** The distinction is the whole endpoint, not an edge of it. `account_id` is
-`Required` on LinkedIn, Reddit, X and Microsoft (`design/connection.go`, generated as a
+`Required` on LinkedIn, Reddit and Microsoft (`design/connection.go`, generated as a
 non-pointer `string`), and PUT is a full replace, so a caller editing only the label MUST resend
 the id already stored — the schema will not decode a body without it. A presence check therefore
-returned 400 for **every update those four providers can express**. Google Ads and Meta, whose
-`account_id` is optional, could satisfy it only by omitting the field — which, PUT being a full
-replace, CLEARS the column. So the presence check's single permitted way to rename a Google or
-Meta connection was to destroy the account selection a rollback depends on: the guard, obeyed,
+returned 400 for **every update those providers can express**. X left that group in LFXV2-3319 and
+is now credentials-first alongside Google Ads and Meta; the change-based check is what keeps
+re-sending a stored id a no-op for those three too, so it is not merely a concession to the
+Required ones. Google Ads, Meta and X, whose `account_id` is optional, could satisfy a presence
+check only by omitting the field — which, PUT being a full
+replace, CLEARS the column. So the presence check's single permitted way to rename any of those
+three connections was to destroy the account selection a rollback depends on: the guard, obeyed,
 caused the loss it exists to prevent.
 
 Re-sending the stored value persists nothing, so allowing it cannot violate the invariant. What
@@ -769,8 +772,10 @@ Two sub-decisions are load-bearing:
 
 `createConn` passes `""`, and that is the accurate answer rather than a placeholder: create has no
 prior row by construction, so every non-empty id on a create is newly set and stays refused. The
-consequence is deliberate — while the flag is on those four `Required("account_id")` providers
-cannot be CONNECTED at all. That is the invariant working, not a second instance of the update
+consequence is deliberate — while the flag is on those three `Required("account_id")` providers
+(LinkedIn, Reddit, Microsoft) cannot be CONNECTED at all. X is no longer among them: since
+LFXV2-3319 its `account_id` is optional, so an account-less X connection CAN be created under the
+flag, the guard being satisfied because `""` is not a newly-set id. That is the invariant working, not a second instance of the update
 defect: the id would be landing fresh on a project row, which is exactly the write that outlives
 the flag.
 

@@ -259,11 +259,13 @@ openssl rand -base64 32
   stored — the guard refuses a CHANGED id, not a present one. This is
   what keeps the rollout reversible by flipping the flag back.
 
-  One consequence to plan around: `linkedin-ads`, `reddit-ads`,
-  `twitter-ads` and `microsoft-ads` declare `account_id` as REQUIRED on
-  their create payloads, so a create body cannot omit it and those four
-  providers cannot be connected at all while the flag is on. `google-ads`
-  and `meta-ads` are credentials-first and can still be created. The
+  One consequence to plan around: `linkedin-ads`, `reddit-ads` and
+  `microsoft-ads` declare `account_id` as REQUIRED on their create
+  payloads, so a create body cannot omit it and those three providers
+  cannot be connected at all while the flag is on. `google-ads`,
+  `meta-ads` and — as of LFXV2-3319 — `twitter-ads` are credentials-first
+  and can still be created. (X's `funding_instrument_id` is still
+  required; credentials-first defers the ACCOUNT choice only.) The
   per-endpoint status contract is in
   [`docs/api-catalog.md`](docs/api-catalog.md) under Platform
   Connections.

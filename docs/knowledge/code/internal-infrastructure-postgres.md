@@ -1042,6 +1042,96 @@ pinned at the source only: reproducing the failure needs a wedged Postgres, and 
 helper to an unbounded context leaves the entire suite green (verified). That is weaker
 evidence than a rendered failure and should not be read as equivalent.
 
+### Brief and job repositories (`brief_repo_live_test.go`, `job_repo_live_test.go`)
+
+`CreateBrief`, `ReplaceBrief`, `GetBrief`, `Approve`, `ArchiveBrief`, `CreateJob`, `GetJob`,
+`UpdateJobStatus` and `FailStuckJobs` had never once been executed by PostgreSQL under test.
+That is the gap the two files close, and it is the ONLY thing all nine shared — what stood in
+for live coverage differed by repository, and neither substitute could have caught what the
+other missed:
+
+- **Briefs**: source-text assertions. `brief_repo_test.go` regexes the four write constants
+  (checking, for instance, that each stamps an actor column in the same statement as its
+  write) and exercises `scanBrief`. It never runs a statement.
+- **Jobs**: neither. `job_repo_test.go` covers only the retention surface — that
+  `terminalJobStatuses` matches the domain vocabulary, that `pruneTerminalJobsQuery` uses an
+  allow-list rather than a negative predicate, and that `DefaultJobRetention` is
+  conservative. Nothing in it touches `CreateJob`, `GetJob`, `UpdateJobStatus` or
+  `FailStuckJobs`, whose only prior exercise was through service-level fakes.
+
+So the brief statements were pinned as *text* and the job methods were pinned as *behaviour
+against a fake*, and in both cases the question "does PostgreSQL accept this, against this
+schema" went unasked.
+
+What makes these worth running live is that **the two VERSION-GATED writes — `ReplaceBrief`
+and `Approve` — have a failure mode invisible in their own statement text.** They are the only
+methods that call `classifyNoRowTx`, and they need it because their gate matches no row whether
+the brief is MISSING or merely STALE, both of which surface identically as `pgx.ErrNoRows`. The
+classifier re-reads the table through the SAME transaction to decide which, so a dropped
+`AND version=$n`, a transposed placeholder, or a classifier answering the wrong sentinel all
+leave the regexes green while telling a client holding a stale ETag that their brief was
+deleted.
+
+The other two writes are shaped differently and are worth distinguishing, because assuming the
+classifier is universal is how a reader ends up looking for it in the wrong place.
+`CreateBrief` is an INSERT: it has no gate at all, and its only error mapping is
+`isUniqueViolation` → `ErrConflict` on the partial unique `(project_id, event_slug)`.
+`ArchiveBrief` is a guarded UPDATE but is NOT version-gated — its guard is
+`status <> 'archived'` — so a no-row result has one meaning and it maps straight to
+`ErrNotFound` without consulting the classifier.
+
+`ReplaceBrief` additionally has a second error arm the version gate cannot reach: renaming a
+brief onto a slug another live brief holds raises 23505 rather than `ErrNoRows`, exiting
+through `isUniqueViolation` instead of the classifier. Both of its arms are now driven.
+
+Two further brief behaviours are pinned because nothing else could see them. `ReplaceBrief`
+resets `status='draft'` and clears the approver, so edited copy cannot inherit a prior sign-off
+and be dispatched as real spend — a replace that gated correctly but kept `status='approved'`
+passes every version-gate assertion. And the actor columns are only distinguishable once they
+DISAGREE: `CreateBrief` stamps the same actor into `created_by` and `updated_by` (`$11` twice),
+so the round-trip test approves the brief with a second actor before reading back. Transposing
+`&createdBy` and `&updatedBy` in `scanBrief` passes against a same-actor fixture and fails
+against this one.
+
+On the job side, `campaign_jobs.status` carries a CHECK constraint, so the status walk iterates
+`model.AllJobStatuses` rather than a hand-copied list — the drift it guards is a status added
+to the Go vocabulary but not to the constraint, which only the live column can reject. `GetJob`
+is tenant-scoped by a JOIN through `campaign_briefs` because `campaign_jobs` has no
+`project_id` of its own, so the join IS the tenant boundary. The two negative tests assert
+SQLSTATE (`23503`, `23514`) via `pgconn.PgError` rather than `err != nil`, which would
+otherwise be satisfied by a connection error and prove nothing about the constraint.
+
+**`CreateJobForApprovedBrief` is the method the dispatch path actually calls**
+(`orchestrator.go:921`), not the unconditional `CreateJob` the other fixtures use, and it is
+covered separately for that reason. It opens a transaction, takes `SELECT ... FOR UPDATE` on
+the brief, re-reads the CURRENT committed status and version, and refuses with
+`ErrStaleApproval` unless both still match — closing the approve→dispatch TOCTOU race in which
+a `ReplaceBrief` (back to `'draft'`, version+1) or `ArchiveBrief` commits between the
+approver's read and the dispatch. What it protects is real ad spend, and none of it is
+observable against a fake, which satisfies the check by construction. The live test drives the
+draft, stale-version, withdrawn-approval and absent-brief arms; each is revert-verified, and
+the status and version halves of the guard are pinned independently.
+
+**`FailStuckJobs` is table-wide, and that makes it a hazard to its neighbours.** It carries no
+tenant or brief predicate, so it rewrites every aged queued/running row in the shared schema —
+including the 72-hour queued and running rows `TestLivePruneTerminalJobsSparesEveryNonTerminalRow`
+seeds and asserts survive its prune. Flipping those to `failed` makes them terminal, and a
+terminal aged row is exactly what that test's prune then deletes. The two do not collide today
+because both run serially and each seeds and acts on its rows within its own body.
+
+Be precise about what does NOT make them collide, since the tempting version of that sentence
+is wrong in the same way an earlier claim in this bundle was: the `t.Parallel` calls already in
+this package (`migrate_down_live_test.go`) cannot cause the interleaving, because Go resumes
+top-level parallel tests only after every serial test has finished — the same semantics
+recorded for `connect_redaction_test.go` below. Parallelising the retention test alone would
+not do it either. BOTH tests would have to opt in.
+
+That is still a guarantee resting on a scheduling property neither test states, so the sweep
+test does not lean on it: it deletes every job it creates in a `t.Cleanup` registered BEFORE
+the first insert — before, so a `t.Fatalf` from any later insert cannot unwind past a cleanup
+that does not yet exist. Anything added here that ages a non-terminal row owes the same
+cleanup.
+
 ## Redacting a DSN-bearing error (`SafeDSNErr` / `SafeDSNErrFor`)
 
 Every failure in `dbtest` prints to a CI log, and pgx builds its errors out of the parsed

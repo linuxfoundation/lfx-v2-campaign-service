@@ -14506,7 +14506,6 @@ components:
                 funding_instrument_id: lygyi
                 label: Aspernatur quaerat accusamus suscipit quasi ab.
             required:
-                - account_id
                 - funding_instrument_id
         TwitterAdsCredentials:
             type: object

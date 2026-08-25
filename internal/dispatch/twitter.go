@@ -85,9 +85,11 @@ func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter
 // is refused by the caller exactly as before rather than being served a live client.
 func (d *TwitterDispatcher) cachedTwitterClient(projectID string, platform model.Provider, res *resolved, creds twitterCreds, accountID, fundingID string) *twitter.Client {
 	// ONE construction, called from both the cache closure and the fallback below, matching
-	// cachedRedditClient's and cachedMicrosoftClient's shape. Written twice, the two copies
-	// can drift: a later AccountConfig change has to be made in both, and the compiler
-	// cannot notice if it is not.
+	// the shape of cachedMicrosoftClient and of Reddit's equivalent, which is not a
+	// cached*Client at all but resolveRedditClientWithCreds (reddit.go) -- it does the
+	// resolve and the cached build in one function and returns the resolved alongside the
+	// client. Written twice, the two copies can drift: a later AccountConfig change has to
+	// be made in both, and the compiler cannot notice if it is not.
 	build := func() *twitter.Client {
 		return twitter.NewClient(
 			twitter.Credentials{

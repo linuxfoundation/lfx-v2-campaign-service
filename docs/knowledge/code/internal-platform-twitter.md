@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, and the campaign -> line_item -> promoted_tweet creation flow."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, and per-client write pacing toward X's 1-write/sec account limit."
 resource: "internal/platform/twitter"
 tags:
   - platform-client

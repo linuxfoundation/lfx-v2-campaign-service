@@ -92,7 +92,21 @@ type MetaDispatcher struct {
 	// reserves nothing (see AssetReserver). Without it maxVariantAssetBytes caps one
 	// dispatch while five run at once — the aggregate this closes.
 	assets *AssetReserver
-	opts   []meta.Option
+	// clients caches the built *meta.Client per connection, exactly as RedditDispatcher and
+	// MicrosoftDispatcher do. Wired by LFXV2-3033.
+	//
+	// The benefit here is ALLOCATION, not a saved token round-trip, and saying so precisely
+	// matters: Meta is handed an already-minted bearer token and performs NO exchange at
+	// construction, so unlike Google Ads/Reddit/Microsoft there is no token endpoint to count.
+	// That is why the wiring test asserts client IDENTITY rather than a token hit count.
+	//
+	// Sharing one instance across concurrent callers is safe for this client specifically: every
+	// field of meta.Client is written once at construction (NewClient plus its Options) and is
+	// read-only thereafter — there is no token cache, no in-flight refresh handle, and no method
+	// stores per-call state on the receiver. It is therefore immutable once built, which is a
+	// STRONGER property than the mutex-guarded safety Reddit and Microsoft rely on.
+	clients *clientCache
+	opts    []meta.Option
 }
 
 // NewMetaDispatcher builds the adapter from the connection repo + encryptor. The
@@ -100,7 +114,7 @@ type MetaDispatcher struct {
 // BriefService.SetCreativeAssetRepo for the same opt-in shape), so the existing
 // direct-construction tests that create no asset-backed variants stay unchanged.
 func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Option) *MetaDispatcher {
-	return &MetaDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &MetaDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
 }
 
 // SetCreativeAssetRepo binds the creative-asset read path so image-referencing variants
@@ -740,7 +754,7 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// neither page id nor account id (unlike Dispatch — see resolveMetaCredentials), so an
 	// account cleared via PUT after the campaign was created does not block pausing or
 	// resuming it.
-	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	client := d.cachedMetaClient(projectID, platform, res, creds)
 	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
 	// The ad set id is read from the persisted CampaignResult. The ads are DISCOVERED via
@@ -808,6 +822,47 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 	}
 }
 
+// cachedMetaClient returns the client for this connection, building it only when there is no live
+// entry for the row identity the credential just resolved from.
+//
+// Shared by the TOGGLE and METRICS paths, which build an IDENTICAL client: both target the
+// campaign node by id and need neither page id nor account id, so the account config reduces to
+// the connection's own account and label. Dispatch is deliberately NOT a caller — it builds from
+// a fuller AccountConfig (page id, and the account required for a create), so caching it under
+// this key would let a toggle and a create serve each other's client. That is the same split
+// Microsoft draws between dispatch and discovery.
+//
+// Entry validation is the credential's own (row id + version), so a rotation invalidates the
+// client in the same step that invalidates the credential; a stale client is a stale credential.
+// It takes the already-resolved creds and *resolved rather than re-deriving them, so the
+// status/decode/completeness rules still run on the FRESH row on every call: only construction is
+// cached.
+func (d *MetaDispatcher) cachedMetaClient(projectID string, platform model.Provider, res *resolved, creds metaCreds) *meta.Client {
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	build := func() *meta.Client {
+		return meta.NewClient(
+			meta.Credentials{AccessToken: creds.AccessToken},
+			meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label},
+			d.opts...,
+		)
+	}
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return build(), nil
+	})
+	if err != nil {
+		// Unreachable: the closure above never returns an error. Build directly rather than
+		// propagating, so this helper keeps its total signature.
+		return build()
+	}
+	client, isClient := built.(*meta.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return build()
+	}
+	return client
+}
+
 // ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
 // ToggleStatus does (no page id or account id required — a metrics read targets the
 // campaign node by id via GET /{campaignID}/insights, like the status update; see
@@ -823,7 +878,7 @@ func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, plat
 	if err != nil {
 		return nil, err
 	}
-	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	client := d.cachedMetaClient(projectID, platform, res, creds)
 	// Prove the persisted campaign belongs to the account this read is scoped to.
 	// resolveMetaCredentials returns the project's CURRENT connection, which can have been
 	// re-pointed since create; GET /{campaignID}/insights under a different account yields

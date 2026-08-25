@@ -1324,41 +1324,62 @@ per-customer path is `accountsInfoForCustomer`, whose `ListAccounts` client is b
 `AccountConfig` and deliberately bypasses this cache. A future provider whose client stashes
 MUTABLE per-call state must NOT be wired to this cache without changing the client first.
 
-**LinkedIn and Meta are not yet wired** — a deliberate partial rollout under LFXV2-3033, deferred
-only because open PRs owned those files at the time (cs#148, cs#152). They still rebuild a client
-per resolve — but "rebuilds a client" is not "re-mints a token", and neither re-mints one: both are
-handed an already-minted bearer token and do no exchange at construction. The win for them is
-allocation, not a saved token round-trip, and each needs its own safety and benefit analysis before
-wiring.
+**Meta and LinkedIn were wired in the second wave of LFXV2-3033**, on their TOGGLE and METRICS
+paths only. Their earlier deferral was procedural — open PRs owned those files at the time
+(cs#148, cs#152, cs#158) — and those PRs have since merged, so the stated reason was gone and each
+was wired after its own safety analysis (recorded on the `clients` field in `meta.go` and
+`linkedin.go`). Meta's client is IMMUTABLE once built, which is stronger than the mutex-guarded
+property Reddit and Microsoft rely on; LinkedIn's mutable token state is written exclusively under
+`c.tokenMu`, never held across the network call. Their `Dispatch` paths stay UNWIRED on purpose:
+Meta's create client carries a fuller `AccountConfig` and LinkedIn's a `RuntimeConfig` with
+per-request targeting, so the client VARIES per call under a cache key that does not.
 
-**X/Twitter IS now wired, and its entry corrects what this section used to claim.** The old wording
-said X "documents its client as safe for SEQUENTIAL use only, so it must not be shared across
-concurrent callers" — which reads as memory unsafety, and is the reason the wiring was deferred for
-weeks. It was a misreading of the package doc. `twitter.Client` had NO mutable receiver state:
-every field was written once at construction and only read afterwards, and the package contained no
-mutex because the struct never needed one. The real constraint was a RATE LIMIT — X enforces 1
-write-request/sec per ACCOUNT — and the hazard ran the OPPOSITE way to what the note implied. NOT
-sharing was the unsafe option: `pace` was a blind per-call sleep, so two concurrent dispatches
-holding separate clients each paced themselves and together issued ~2 writes/sec against a
-money-spending path. `twitter.Client.pace` now reserves write slots under the client's own
-`writeMu`, bounding the rate per instance, which makes SHARING the precondition for the budget
-being enforceable rather than a risk. Reads never call `pace` and stay concurrent, since they do not
-spend the WRITE budget — X's read endpoints have their own limit windows, which the shared 429
-backoff in `doRequestAbs` covers for GETs exactly as it does for writes. X still mints no token — it signs each request with stored OAuth 1.0a credentials
-— so the benefit is the shared pacer, not a saved round-trip. The bound is per CLIENT INSTANCE, which is narrower than per ACCOUNT: the cache is
-keyed by project + connection row, so two projects pointing at the same X ad account get separate
-pacers, as do separate replicas and a client replaced by rotation/TTL/LRU while a caller still
-holds its predecessor. It removes the common case — a burst of concurrent dispatches for one
-project — and leaves the residue to the 429 backoff in `doRequestAbs`. A limiter keyed by X
-account with a lifetime independent of the client cache, plus cross-replica coordination, remains
-LFXV2-2665. The pacer also covers the 429 RETRY path: a retried write takes a fresh slot, since
-the backoff sleep is not itself a reservation and a retry is by definition issued while already
-throttled. `TwitterDispatcher`'s create and
-toggle paths both resolve through `cachedTwitterClient` and share one entry; its `ListAccounts`
-discovery client keeps a ZERO `AccountConfig` and bypasses the cache for the same reason
-Microsoft's does, and being read-only it issues no write and needs no share of the write budget.
-The pacing bound is pinned by a CONCURRENT test — a sequential one cannot distinguish a per-call
-sleep from a rate bound, which is precisely how the original defect survived.
+**X/Twitter was wired in the same wave, and its entry RETIRES a reason this section used to state
+as technical.** The old wording said X "documents its client as safe for SEQUENTIAL use only, so it
+must not be shared across concurrent callers" — which reads as memory unsafety, and is why the
+wiring was deferred for weeks. It was a misreading of the package doc. `twitter.Client` had NO
+mutable receiver state: every field was written once at construction and only read afterwards, and
+the package contained no mutex because the struct never needed one. The real constraint is a RATE
+LIMIT — X enforces 1 write-request/sec per ACCOUNT — and the hazard ran the OPPOSITE way to what
+the note implied. NOT sharing was the unsafe option: `pace` was a blind per-call sleep, so two
+concurrent dispatches holding separate clients each paced themselves and together issued ~2
+writes/sec against a money-spending path. `twitter.Client.pace` now reserves write slots under the
+client's own `writeMu`, bounding the rate per instance, which makes SHARING the precondition for
+the budget being enforceable rather than a risk. Reads never call `pace` and stay concurrent, since
+they do not spend the WRITE budget — X's read endpoints have their own limit windows, which the
+shared 429 backoff in `doRequestAbs` covers for GETs exactly as it does for writes. The pacer also
+covers the 429 RETRY path: a retried write takes a fresh slot, since the backoff sleep is not
+itself a reservation and a retry is by definition issued while already throttled.
+
+`TwitterDispatcher`'s create AND toggle paths both resolve through `cachedTwitterClient` and share
+one entry — unlike Meta and LinkedIn, whose create paths are excluded, because X's create client
+carries the same `AccountConfig` as its toggle client and so does not vary per call. Its
+`ListAccounts` discovery client keeps a ZERO `AccountConfig` and bypasses the cache for the same
+reason Microsoft's does, and being read-only it issues no write and needs no share of the write
+budget.
+
+**The X bound is per CLIENT INSTANCE, not per ACCOUNT.** The cache is keyed by project +
+connection row, and migration 000001 makes a connection unique only WITHIN a project, so two
+projects pointing at the same X ad account get separate pacers — as do separate replicas, and a
+client replaced by rotation/TTL/LRU while a caller still holds its predecessor. It removes the
+common case — a burst of concurrent dispatches for one project — and leaves the residue to the 429
+backoff in `doRequestAbs`. A limiter keyed by X account with a lifetime independent of the client
+cache, plus cross-replica coordination, remains LFXV2-2665. The pacing bound is pinned by a
+CONCURRENT test asserting both admission spacing and real elapsed time — a sequential test cannot
+distinguish a per-call sleep from a rate bound, and a spacing-only test cannot distinguish a real
+wait from bookkeeping, which is precisely how the original defect survived.
+
+"Rebuilds a client" is still not "re-mints a token", but the two come apart per provider and, for
+LinkedIn, per CREDENTIAL SHAPE. **Meta** never exchanges — it holds an already-minted bearer token
+and mints nothing at construction or after — so its win is allocation only. **X** signs each
+request with stored OAuth 1.0a credentials and also mints nothing, so its win is neither allocation
+nor a token round-trip but the shared write pacer above. **LinkedIn depends on the shape**: a
+refresh-capable connection exchanges on the FIRST request of every new client, because no
+access-token expiry is persisted and the injected-token branch that would skip it is dead
+(`internal/platform/linkedin/token.go`), so caching saves a real token round-trip there exactly as
+it does for Google Ads and Reddit; only a bearer-only connection reduces to allocation. The wiring
+tests assert client IDENTITY rather than a token hit count because identity holds across all those
+shapes, whereas a count pins only the fixture's shape.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
@@ -1397,9 +1418,10 @@ rotation OR a reconnect cannot be served the other's plaintext — so
 N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
 receives its own clone and builds its own client, and the access token is cached on the client
 INSTANCE, so collapsing the token exchange is the separate job of the client cache above (wired
-into Google Ads, Reddit, Microsoft and X/Twitter; LinkedIn and Meta still rebuild a client per
-resolve, though rebuilding is not re-minting for those two — see the roster above, which is the
-single source of truth for who is wired).
+into Google Ads, Reddit, Microsoft, X/Twitter and — on their toggle/metrics paths — Meta and
+LinkedIn; what reuse SAVES still differs per provider, and rebuilding is not re-minting for Meta
+or X — see the roster above, which is the single source of truth for who is wired and on which
+paths).
 The version in that
 key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
 pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of

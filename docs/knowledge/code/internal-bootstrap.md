@@ -103,7 +103,7 @@ enforced on the system row:
 `accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
 whether the row already exists. On a FIRST install an omitted `-account-id` is the credentials-first
 state, legal only where the account can be chosen afterwards (`accountDiscoveryProviders`, Google
-Ads and — since LFXV2-3061 — Meta). Membership is narrower than "the dispatcher can discover
+Ads, Meta since LFXV2-3061 and X since LFXV2-3319). Membership is narrower than "the dispatcher can discover
 accounts": the other half of a completable lifecycle is that the path needing an account id fails
 in a way that NAMES the missing choice. Meta is the one provider where the halves ever came
 apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, because its
@@ -112,20 +112,27 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
 dispatch-failure LOG LINE rather than the polled job result, because `dispatchPlatform` collapses
 every dispatcher error into `"platform campaign creation failed"`; Meta's toggle and metrics need
-no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft, Reddit and X, both Microsoft (LFXV2-3064) and X (LFXV2-3319) have BOTH
+no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft and Reddit, only Microsoft (LFXV2-3064) has BOTH
 halves: Reddit still lacks discovery, and LinkedIn — which gained a discovery endpoint in the
-former ticket — is the one provider missing the OTHER half. `resolveLinkedInCredentials` does tag
+same ticket — is the one provider missing the OTHER half. X also holds both (LFXV2-3319) and,
+unlike Microsoft, has been admitted to the map. `resolveLinkedInCredentials` does tag
 a missing account with `domain.ErrAccountNotSelected`, but `LinkedInDispatcher.Dispatch` does not
 call it; the create path resolves inline and returns a bare `notCreated`, so the missing choice is
 never named. Microsoft, Reddit and X all tag it on a path create actually reaches — and for X
 specifically, `Dispatch` calls the shared `validateTwitterConnection` itself, so it had the second
 half all along and LFXV2-3319 supplied only the first. For Reddit and LinkedIn an account-less row
-would stay a DEAD row, which is why the map keeps them out. Microsoft and X are the exceptions and
-the distinction is worth keeping: they have both halves, so their absence from the map is a
-SEQUENCING decision rather than a missing capability — admitting either changes what the CLI
-accepts and belongs in its own change. Note also that this map is a different gate from
+would stay a DEAD row, which is why the map keeps them out. X was ADMITTED in LFXV2-3319, in the
+same change that dropped its `Required("account_id")`. Microsoft remains the standing exception
+and the distinction is worth keeping: it has both halves, so its absence from the map is a
+SEQUENCING decision rather than a missing capability — admitting it changes what the CLI accepts
+and belongs in its own change. Note also that this map is a different gate from
 `design/connection.go`'s `Required("account_id")`, which governs the public connection APIs; a
-provider can be behaviourally eligible for one and not yet admitted to the other. See the comment
+provider can be behaviourally eligible for one and not yet admitted to the other. The two gates
+are per-provider and must be relaxed TOGETHER to make a provider credentials-first — relaxing one
+alone leaves it credentials-first for the CLI and not over HTTP, or the reverse, which is why X
+was carried across both in one change. X's `funding_instrument_id` is unaffected and still
+required at both gates: it has no discovery endpoint, so credentials-first defers the ACCOUNT
+choice only. See the comment
 on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
 restate the whole row.
 

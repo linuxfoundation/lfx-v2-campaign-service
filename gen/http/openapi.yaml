@@ -10373,7 +10373,6 @@ definitions:
             funding_instrument_id: lygyi
             label: Rerum dolor.
         required:
-            - account_id
             - funding_instrument_id
     TwitterAdsCredentials:
         title: TwitterAdsCredentials
