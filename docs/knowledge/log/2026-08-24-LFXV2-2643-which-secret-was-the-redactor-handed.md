@@ -13,10 +13,20 @@ against `envDSN=.../campaign_test` and `scratchDSN=.../down_abc123`, the message
 `SafeDSNErr` **verbatim**, and from `SafeDSNErrFor(scratchDSN, …)` as the withhold
 sentinel. Now `SafeDSNErrFor(dsn, err)`.
 
-Enumerating the class rather than the line: of the seven `SafeDSNErr` call sites, only this
-one sits in a function holding an explicit DSN. The three others in `migrate_down_live_test.go`
-and all six in `invalid_index_live_test.go` operate on `dbtest.DSN()`, where the environment
-form is correct. One site was wrong; changing the others would have been wrong.
+Enumerating the class rather than the line: there were **ten** `dbtest.SafeDSNErr` call sites
+across the package at that commit — four in `migrate_down_live_test.go` and six in
+`invalid_index_live_test.go`. Only this one sits in a function holding an explicit DSN; the
+other nine operate on `dbtest.DSN()`, where the environment form is correct. One site was
+wrong; changing the others would have been wrong.
+
+(Corrected 2026-08-25: this paragraph originally said "seven" and then enumerated 1 + 3 + 6
+in the same sentence — the total and the enumeration contradicted each other, which is what
+review caught. Recounted from source at that commit: `migrate_down_live_test.go` has SEVEN
+occurrences of `dbtest.SafeDSNErr(`, but three of them (lines 598, 651, 1063) are assertions
+IN tests of the redactor itself, not error-rendering call sites in helpers. The four rendering
+sites are lines 63, 86, 132 and 149 — one wrong, three correctly on the environment — plus six
+in `invalid_index_live_test.go`, for ten. "Seven" came from counting the symbol rather than the
+class the sentence was about.)
 
 `dsnIdentifiersPresent` withheld on a raw `strings.Contains`. CI's user and password are both
 `postgres`, a substring of `postgresql`, so ordinary prose naming no credential —
@@ -106,10 +116,15 @@ hangs to its suite-level timeout and reports it against whatever test the runner
 naming neither the stall nor the stray database.
 
 Swept as a class rather than as the named line. Every `t.Cleanup` in the package was on an
-unbounded context: 13 sites across `migrate_down`, `invalid_index` (including
-`restoreRequiredIndex`, reached from cleanup in four tests and doing a drop, a create and a
-catalog verification), `list_campaigns` (3), `project_scope`, and `audience_lease`. All now
-take `dbtest.CleanupContext()`.
+unbounded context: **10** sites, counted from source — `migrate_down` (1), `invalid_index` (4,
+including `restoreRequiredIndex`, reached from cleanup in three tests and doing a drop, a
+create and a catalog verification), `list_campaigns` (3), `project_scope` (1) and
+`audience_lease` (1). All now take `dbtest.CleanupContext()`.
+
+(Corrected 2026-08-25 alongside the other counts: this said 13, and the per-file figures it
+listed did not add to it. Verified by `grep -n "cancel := .*CleanupContext()"` across the
+package: ten cleanup sites, plus one more inside `CleanupContext`'s own unit test, which is
+not a cleanup.)
 
 The root is `Background`, not the test's ctx, and that is the half worth stating: by the time
 `t.Cleanup` runs the test's context is cancelled, so deriving from it would fail every
@@ -440,3 +455,24 @@ Worth stating as the pattern this branch has now hit six times: **the prose next
 part of the change.** Every one of these was a comment that stayed true to a previous version of
 the code. The failure mode is not carelessness about facts; it is that editing the code and
 editing the sentence about it are separate acts, and only the first is enforced by the compiler.
+
+**Follow-up — three counts in these notes were wrong.** No code involved; all three were
+arithmetic in this branch's own review record, which is the part that is supposed to be
+checkable.
+
+- "of the **seven** `SafeDSNErr` call sites" then enumerated 1 + 3 + 6 in the same sentence.
+  The total came from `grep -c` on ONE file's symbol occurrences; the enumeration was about the
+  class across two files. Recounted: `migrate_down` has seven occurrences but only four are
+  error-rendering call sites (598, 651 and 1063 are assertions in tests OF the redactor), so
+  four there plus six in `invalid_index` is **ten**.
+- "`restoreRequiredIndex`, reached from cleanup in **four** tests" — it is **three**
+  (`invalid_index_live_test.go:111, 151, 210`), in both the log and the concept.
+- "**13** sites" for the unbounded-cleanup sweep, whose own per-file breakdown added to ten.
+  Verified by grepping the `CleanupContext()` call sites: **ten** cleanups, plus one in the
+  helper's unit test, which is not a cleanup.
+
+The shared cause is worth naming: each number came from a `grep -c` whose predicate was NARROWER
+or WIDER than the claim the sentence made — symbol occurrences standing in for call sites, one
+file standing in for a package. A count is a claim like any other, and `grep -c` answers the
+question you typed rather than the one you meant. Every count in these notes has now been
+re-derived from source, and the ones that changed say so.

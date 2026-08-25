@@ -1011,8 +1011,8 @@ this repo, where teardown hangs off a live request context, the same property is
 `context.WithTimeout(context.WithoutCancel(ctx), …)`; `Background` is that spelling for work
 with no parent.
 
-All 13 cleanup-reachable sites take their context from this one helper, including
-`restoreRequiredIndex`, which is reached from `t.Cleanup` in four tests and performs a drop,
+All 10 cleanup-reachable sites take their context from this one helper, including
+`restoreRequiredIndex`, which is reached from `t.Cleanup` in three tests and performs a drop,
 a create and a catalog verification.
 
 **One budget for the whole teardown, not one per database.** Per-database deadlines are
