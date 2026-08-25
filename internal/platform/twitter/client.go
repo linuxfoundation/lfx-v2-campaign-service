@@ -126,8 +126,10 @@ type AccountConfig struct {
 // windows, which the shared 429 backoff in doRequestAbs handles for GETs exactly as
 // it does for writes.
 //
-// The pacing bound is per-CLIENT, and therefore per-process. It does not span
-// replicas; see the note at pace for what that does and does not cover.
+// The pacing bound is per CLIENT INSTANCE, which is NOT the same as per process or
+// per account: one process can hold several clients for one ad account (two projects
+// pointing at it, or a cache replacement mid-flight), and replicas add more. See the
+// scope note at pace for what that does and does not cover.
 type Client struct {
 	creds   Credentials
 	account AccountConfig

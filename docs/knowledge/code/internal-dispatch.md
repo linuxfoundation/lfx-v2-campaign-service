@@ -1342,8 +1342,9 @@ sharing was the unsafe option: `pace` was a blind per-call sleep, so two concurr
 holding separate clients each paced themselves and together issued ~2 writes/sec against a
 money-spending path. `twitter.Client.pace` now reserves write slots under the client's own
 `writeMu`, bounding the rate per instance, which makes SHARING the precondition for the budget
-being enforceable rather than a risk. Reads never call `pace` and stay concurrent, since X does not
-rate-limit them. X still mints no token — it signs each request with stored OAuth 1.0a credentials
+being enforceable rather than a risk. Reads never call `pace` and stay concurrent, since they do not
+spend the WRITE budget — X's read endpoints have their own limit windows, which the shared 429
+backoff in `doRequestAbs` covers for GETs exactly as it does for writes. X still mints no token — it signs each request with stored OAuth 1.0a credentials
 — so the benefit is the shared pacer, not a saved round-trip. The bound is per CLIENT INSTANCE, which is narrower than per ACCOUNT: the cache is
 keyed by project + connection row, so two projects pointing at the same X ad account get separate
 pacers, as do separate replicas and a client replaced by rotation/TTL/LRU while a caller still
