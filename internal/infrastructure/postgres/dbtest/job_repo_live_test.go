@@ -76,12 +76,69 @@ func TestLiveCreateAndGetJobRoundTrip(t *testing.T) {
 		t.Errorf("new job error = %q, want empty", job.Error)
 	}
 
+	// The three time fields on the CREATE result. created_at and updated_at are NOT NULL
+	// column defaults, and a fresh job has no expires_at — the NULL arm of scanJob, which
+	// scans into a *time.Time and would fail loudly if the destination were not a pointer.
+	if job.CreatedAt.IsZero() || job.UpdatedAt.IsZero() {
+		t.Errorf("new job timestamps = created %v / updated %v, want both populated", job.CreatedAt, job.UpdatedAt)
+	}
+	if job.ExpiresAt != nil {
+		t.Errorf("new job expires_at = %v, want nil", job.ExpiresAt)
+	}
+
 	got, err := repo.GetJob(ctx, project, job.ID)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.ID != job.ID || got.BriefID != briefID || got.Status != model.JobQueued {
-		t.Errorf("GetJob = %+v, want the job just created (%s)", got, job.ID)
+	// Assert every field scanJob populates, not a three-field subset. GetJob and CreateJob
+	// are different statements — one a JOIN against campaign_briefs, the other an INSERT ...
+	// RETURNING — sharing one scan function, so a destination that drifted out of step with
+	// jobCols shows up as a disagreement between them rather than as an error.
+	if got.ID != job.ID {
+		t.Errorf("GetJob id = %q, want %q", got.ID, job.ID)
+	}
+	if got.BriefID != briefID {
+		t.Errorf("GetJob brief_id = %q, want %q", got.BriefID, briefID)
+	}
+	if got.Status != model.JobQueued {
+		t.Errorf("GetJob status = %q, want %q", got.Status, model.JobQueued)
+	}
+	if len(got.Result) != 0 {
+		t.Errorf("GetJob result = %s, want empty on a fresh job", got.Result)
+	}
+	if got.Error != "" {
+		t.Errorf("GetJob error = %q, want empty on a fresh job", got.Error)
+	}
+	if got.ExpiresAt != nil {
+		t.Errorf("GetJob expires_at = %v, want nil on a fresh job", got.ExpiresAt)
+	}
+	// Equality with the CREATE's timestamps, not merely non-zero.
+	if !got.CreatedAt.Equal(job.CreatedAt) {
+		t.Errorf("GetJob created_at = %v, want %v: the read disagrees with the write", got.CreatedAt, job.CreatedAt)
+	}
+	if !got.UpdatedAt.Equal(job.UpdatedAt) {
+		t.Errorf("GetJob updated_at = %v, want %v: the read disagrees with the write", got.UpdatedAt, job.UpdatedAt)
+	}
+
+	// The two timestamps are EQUAL on a fresh row — both default to the same now() — so
+	// every assertion above is satisfied by a scanJob that transposed their destinations, or
+	// fed both from one column. Verified: transposing them in scanJob passes against a fresh
+	// job. Driving one status update moves updated_at and leaves created_at alone, which is
+	// the only state in which the two are separable.
+	if err := repo.UpdateJobStatus(ctx, job.ID, model.JobRunning, nil, ""); err != nil {
+		t.Fatalf("UpdateJobStatus to diverge updated_at from created_at: %v", err)
+	}
+	moved, err := repo.GetJob(ctx, project, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after the status update: %v", err)
+	}
+	if !moved.CreatedAt.Equal(job.CreatedAt) {
+		t.Errorf("created_at = %v after an update, want %v unchanged: it is being fed from updated_at",
+			moved.CreatedAt, job.CreatedAt)
+	}
+	if !moved.UpdatedAt.After(moved.CreatedAt) {
+		t.Errorf("updated_at %v is not after created_at %v following an update: the two destinations may be transposed",
+			moved.UpdatedAt, moved.CreatedAt)
 	}
 }
 
@@ -276,7 +333,7 @@ func TestLiveUpdateJobStatusRejectsAStatusOutsideTheCheckConstraint(t *testing.T
 // own body, and the package runs sequentially. That is a property of the current schedule, not
 // a guarantee — this package already calls t.Parallel elsewhere (migrate_down_live_test.go).
 //
-// So this test cleans up after itself: every row it creates is deleted on exit, and the count
+// So this test cleans up after itself: every JOB it creates is deleted on exit, and the count
 // assertion is expressed as a delta over rows this test owns rather than as a table-wide
 // total. Both halves matter — the cleanup keeps this test from breaking others, and the delta
 // keeps others from breaking this one.
@@ -297,6 +354,13 @@ func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 	// it would appear only on a day something else was already broken. Registering against
 	// briefID alone is what makes this possible: the cleanup names the parent, so it does
 	// not need any of the job ids to exist.
+	//
+	// It deletes JOBS only. The campaign_briefs parent insertApprovedBrief created is left
+	// behind, deliberately: this package shares one schema and never cleans up rows (see the
+	// package doc), and a leftover brief is inert — it holds a slug scoped by a UniqueID
+	// project, and nothing sweeps campaign_briefs the way FailStuckJobs sweeps jobs. The
+	// jobs are the rows that need removing precisely because they are the ones a table-wide
+	// sweep can reach.
 	t.Cleanup(func() {
 		cctx, cancel := dbtest.CleanupContext()
 		defer cancel()
