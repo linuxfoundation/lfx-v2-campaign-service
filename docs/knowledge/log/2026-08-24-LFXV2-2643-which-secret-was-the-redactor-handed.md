@@ -476,3 +476,26 @@ or WIDER than the claim the sentence made — symbol occurrences standing in for
 file standing in for a package. A count is a claim like any other, and `grep -c` answers the
 question you typed rather than the one you meant. Every count in these notes has now been
 re-derived from source, and the ones that changed say so.
+
+**Follow-up — an unformatted bypass and a class-vs-value confusion.**
+
+*The guard matched only the `*f` methods.* `t.Fatal(err)` renders `err` through the same
+`Error()` call `%v` would make, so it leaks identically — and rewriting a protected
+`t.Fatalf` to `t.Fatal(err)` passed the guard, with the global `checked` counter held up by
+the other sites. A bypass that needs no new code, only the deletion of a format string. The
+matcher now covers `Fatal/Error/Log/Skip` alongside their `*f` forms; all four unformatted
+mutations fail it, and the inspected surface went 15 → 16.
+
+*"These error classes do not carry the credential" was false.* The comment on
+`TestSafeDSNErrKeepsDriverTextForNonURLErrors` said connection-refused, authentication-failure
+and missing-database errors cannot name a credential, and that the DSN reaches such causes only
+via `net/url`. Rendered against a DSN naming `leakuser`/`leakdb`, all three ARE withheld —
+because pgx formats "failed to connect to `user=%s database=%s`" and Postgres formats
+`password authentication failed for user "%s"` and `database "%s" does not exist`.
+
+What makes them survive in that test is the FIXTURE: its pinned DSN shares no identifier with
+the messages. That is a statement about the pairing, not about the class, and the comment now
+says so. `SafeDSNErr`'s godoc got the same treatment: it was correctly conditioned on "no
+configured identifier", but now states explicitly that the condition is the identifier and
+never the error class, since the neighbouring wrong version shows how easily the two are
+conflated.

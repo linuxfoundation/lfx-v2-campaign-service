@@ -339,8 +339,13 @@ const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the pa
 //
 // A message with NO configured identifier in it keeps its text in full, which is what preserves
 // diagnosability: `connection refused`, `password authentication failed`, `does not exist` and
-// the rest name the fault without naming the credential, and those are the errors an operator
-// actually meets. redact.URLUserinfo still runs on that text as the URL-shaped backstop.
+// the rest name the fault, and those are the errors an operator actually meets.
+//
+// The condition is the identifier, never the error class. Those same messages OFTEN do name a
+// configured value -- `password authentication failed for user "x"`, pgx's
+// "failed to connect to `user=%s database=%s`" -- and are withheld when they do. Nothing here
+// treats a class as inherently safe; the comparison decides every message on its own text.
+// redact.URLUserinfo still runs on the surviving text as the URL-shaped backstop.
 //
 // When the DSN cannot be parsed at all there are no identifiers to compare against, so no
 // message can be PROVEN clean and the sentinel applies unconditionally. That is the safe

@@ -1008,11 +1008,21 @@ func TestWithDatabaseRepointsTheDSN(t *testing.T) {
 // a fixed string leaks nothing and diagnoses nothing — the failure mode the whole helper
 // exists to avoid, arrived at from the opposite direction.
 //
-// A connection refused, an authentication failure and a missing database are the errors
-// an operator actually meets, and none of them is a *url.Error. Their text is what names
-// the problem, and it does not carry the credential: the DSN appears in these causes only
-// when net/url quoted the fragment it choked on, which is precisely the *url.Error case
-// handled above.
+// A connection refused, an authentication failure and a missing database are the errors an
+// operator actually meets, and none of them is a *url.Error, so all three reach the string
+// arm rather than the sentinel.
+//
+// Whether their text carries the credential depends on the DSN, NOT on the error class, and
+// an earlier version of this comment had that wrong -- it claimed these classes cannot carry
+// one. They can and routinely do: pgx formats "failed to connect to `user=%s database=%s`",
+// and Postgres formats `password authentication failed for user "%s"` and
+// `database "%s" does not exist`, each quoting a configured identifier. Rendered against a
+// DSN naming leakuser/leakdb, all three are WITHHELD, exactly as they should be.
+//
+// What makes them survive HERE is the fixture: the pinned DSN below shares no identifier
+// with these messages, so dsnIdentifiersPresent finds nothing to match and the driver's
+// words come through. That is the property under test -- a message naming no configured
+// value keeps its text -- and it is a statement about the pairing, not about the class.
 //
 // The assertion is therefore two-sided. It requires the driver's own words to survive AND
 // the credential to stay out, so neither a leak nor a silent constant can pass it.
@@ -1586,6 +1596,15 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		"Up": true, "Down": true, "Steps": true, "Migrate": true, "Version": true,
 		"Force": true,
 	}
+	// Every testing method that renders its arguments. Both the formatted and the
+	// unformatted forms are here: t.Fatal(err) and t.Fatalf("%v", err) put the same bytes
+	// in the log, so protecting only the *f names would pin nothing a one-character edit
+	// could not undo.
+	formatCalls := map[string]bool{
+		"t.Fatalf": true, "t.Errorf": true, "t.Logf": true, "t.Skipf": true,
+		"t.Fatal": true, "t.Error": true, "t.Log": true, "t.Skip": true,
+	}
+
 	// The only renderings that count as safe passage for an error value.
 	redactors := map[string]bool{"SafeDSNErr": true, "SafeDSNErrFor": true}
 
@@ -2060,7 +2079,13 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 						return true
 					}
 					name := selName(call.Fun)
-					if name != "t.Fatalf" && name != "t.Errorf" && name != "t.Logf" {
+					// The UNFORMATTED forms leak exactly as much as the formatted ones:
+					// t.Fatal(err) renders err with the same String()/Error() call that
+					// %v would make, so matching only the *f variants left a bypass that
+					// needed no new code -- deleting a format string was enough, and the
+					// global `checked` counter stayed nonzero from the other sites.
+					// Verified: rewriting a protected t.Fatalf to t.Fatal(err) passed.
+					if !formatCalls[name] {
 						return true
 					}
 					checked++
