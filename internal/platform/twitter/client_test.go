@@ -4197,20 +4197,26 @@ func TestFindByNameEmptyArrayDataIsGenuineNotFound(t *testing.T) {
 }
 
 // TestPaceBoundsWriteRateAcrossConcurrentCallers is the regression test for
-// LFXV2-3033: the write pacing must bound the rate PER CLIENT across all
-// callers, not per call site.
+// LFXV2-3033: the write pacing must bound the rate PER CLIENT across all callers,
+// not per call site.
 //
 // It is deliberately concurrent. The pre-fix implementation slept writeDelay
-// unconditionally before each write, which passes any sequential test while
-// letting N goroutines sharing a client sleep in parallel and then issue their
-// writes at the same instant. Only overlapping callers can distinguish the two.
+// unconditionally before each write, which passes any sequential test while letting N
+// goroutines sharing a client sleep in parallel and then issue their writes at the
+// same instant. Only overlapping callers can distinguish the two.
 //
-// Admissions are recorded by pace itself through onAdmit, while writeMu is still
-// held, NOT by sampling a clock after pace returns. That distinction is the whole
-// validity of the test: a goroutine preempted between pace returning and its own
-// clock read can record after a later caller, so post-return timestamps establish
-// no ordering and could show sub-delay gaps even when admission was correctly
-// spaced. What is asserted is therefore the spacing the pacer actually handed out.
+// TWO independent observations are asserted, because either alone can be satisfied by
+// a broken implementation:
+//
+//   - Admission SPACING, recorded by pace itself through onAdmit while writeMu is held.
+//     Sampling a clock after pace returns cannot establish order — a goroutine preempted
+//     between the return and its own read can record after a later caller.
+//   - Real ELAPSED time across the whole burst. Spacing alone is only bookkeeping: a pace
+//     that advanced nextWrite correctly but never actually waited would hand out perfectly
+//     spaced FUTURE reservations while every caller returned immediately, and a
+//     spacing-only assertion passes against it. Verified by mutation — removing the
+//     sleepCtx call while leaving the arithmetic intact passes the spacing checks and
+//     fails this one.
 func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 	const (
 		callers = 8
@@ -4224,11 +4230,11 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 	// timer, so this makes the SPACING deterministic, it does not skip wall-clock time.
 	var clockMu sync.Mutex
 	base := time.Unix(1600000000, 0)
-	start := time.Now()
+	clockStart := time.Now()
 	c.timeFn = func() time.Time {
 		clockMu.Lock()
 		defer clockMu.Unlock()
-		return base.Add(time.Since(start))
+		return base.Add(time.Since(clockStart))
 	}
 
 	// Recorded in admission order, under pace's own lock.
@@ -4252,8 +4258,11 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 			}
 		}()
 	}
+
+	wallStart := time.Now()
 	close(ready)
 	wg.Wait()
+	elapsed := time.Since(wallStart)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -4270,10 +4279,20 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 		}
 	}
 
-	// The whole burst must span at least (callers-1) delays: N writes cannot be
-	// squeezed into fewer slots than the rate allows.
+	// The burst must span at least (callers-1) delays on the reservation clock...
 	if span := cleared[len(cleared)-1].Sub(cleared[0]); span < time.Duration(callers-1)*delay {
-		t.Errorf("burst of %d writes spanned %v; want >= %v", callers, span, time.Duration(callers-1)*delay)
+		t.Errorf("burst of %d writes spanned %v on the reservation clock; want >= %v",
+			callers, span, time.Duration(callers-1)*delay)
+	}
+
+	// ...and the callers must actually have WAITED that long. A small tolerance absorbs
+	// timer granularity; the gap between a real pacer (~35ms here) and one that only does
+	// the arithmetic (~0) is three orders of magnitude, so this needs no precision.
+	minElapsed := time.Duration(callers-1)*delay - delay/2
+	if elapsed < minElapsed {
+		t.Errorf("the whole burst returned in %v of real time; want >= %v — pace is handing out "+
+			"correctly spaced reservations without actually waiting, so every caller issues "+
+			"immediately and the rate bound is bookkeeping only", elapsed, minElapsed)
 	}
 }
 

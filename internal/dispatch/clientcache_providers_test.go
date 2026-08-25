@@ -23,21 +23,30 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
-// This file covers the LFXV2-3033 extension of clientCache to Reddit and Microsoft. Google Ads
-// already had its own coverage in credcache_test.go; these are the two providers this change
-// wires, and each gets the same three properties the Google Ads client cache is held to:
+// This file covers the LFXV2-3033 extension of clientCache to Reddit, Microsoft and X/Twitter.
+// Google Ads already had its own coverage in credcache_test.go. Each provider here gets the same
+// three properties the Google Ads client cache is held to:
 //
-//  1. a warm key REUSES the client, so the OAuth token is minted once rather than per call;
+//  1. a warm key REUSES the client. For Reddit and Microsoft that means the OAuth token is minted
+//     once rather than per call; for X the payoff is different — it mints no token, and what
+//     reuse buys is a SHARED WRITE PACER, since X's 1-write/sec limit is per ad account and can
+//     only be enforced by an instance every caller for that account shares;
 //  2. a credential change (rotation, which bumps the version, and reconnect, which restarts it
 //     at 1 on a new row) FORCES reconstruction — the invalidation contract;
 //  3. a cold key under a concurrent burst builds ONE client, and the shared instance is safe
 //     under -race.
 //
-// Reddit and Microsoft need their own tests rather than inheriting the Google Ads ones because
-// the safety argument is per-client: each caches its access token on the instance behind its own
-// mutex, and a client that stashed per-call state on the receiver would be unsafe to share no
-// matter how correct the cache is. See the struct comments on RedditDispatcher.clients and
-// MicrosoftDispatcher.clients.
+// Each provider needs its own tests rather than inheriting the Google Ads ones because the safety
+// argument is per-client: Reddit and Microsoft cache an access token on the instance behind their
+// own mutex, X guards its pacer's next-slot instant behind writeMu, and a client that stashed
+// per-call state on the receiver would be unsafe to share no matter how correct the cache is. See
+// the struct comments on RedditDispatcher.clients, MicrosoftDispatcher.clients and
+// TwitterDispatcher.clients.
+//
+// X also adds a fourth case the others do not need: its CREATE path is pinned separately
+// (TestClientCache_TwitterDispatchUsesTheCachedClient), because "wired" is a claim about a
+// provider while the bypasses are per-PATH — Google Ads is wired on toggle/metrics yet builds
+// inline in Dispatch.
 
 // redditCacheConn builds a Reddit connection row with an explicit id and version, so a test can
 // model a rotation (same id, higher version) and a reconnect (new id, version back to 1) — the two
