@@ -180,6 +180,21 @@ func TestLiveCreateGetBriefRoundTripsEveryColumn(t *testing.T) {
 	if !got.CreatedAt.Equal(created.CreatedAt) {
 		t.Errorf("GetBrief created_at = %v, want %v: the read disagrees with the write", got.CreatedAt, created.CreatedAt)
 	}
+	// updated_at needs a claim of its own, or briefCols selecting created_at for BOTH
+	// timestamp destinations would satisfy every assertion above. The Approve already
+	// performed moved updated_at and left created_at alone, so the two are separable here
+	// exactly as they are in the job round trip below.
+	if !got.UpdatedAt.After(got.CreatedAt) {
+		t.Errorf("updated_at %v is not after created_at %v following an approve: the two "+
+			"timestamp destinations may be transposed or fed from one column", got.UpdatedAt, got.CreatedAt)
+	}
+	// approved_at and updated_at are written by the SAME statement from one now(), so they
+	// must agree to the microsecond. A destination reading approved_at off a different
+	// column would show up here and nowhere else.
+	if !got.ApprovedAt.Equal(got.UpdatedAt) {
+		t.Errorf("approved_at %v != updated_at %v, though approveBriefQuery sets both from one now()",
+			got.ApprovedAt, got.UpdatedAt)
+	}
 }
 
 // TestLiveCreateBriefConflictsOnTheLiveSlug pins the partial unique index through the real
