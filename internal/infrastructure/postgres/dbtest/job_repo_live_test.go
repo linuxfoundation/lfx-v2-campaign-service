@@ -432,9 +432,101 @@ func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 	if j := statusOf(freshRunning); j.Status != model.JobRunning {
 		t.Errorf("recent running job status = %q, want %q: the sweep failed a job that is still being worked", j.Status, model.JobRunning)
 	}
+
+	// updated_at must be RESET by the sweep, not merely left where it was.
+	//
+	// It is what starts the terminal retention window: pruneTerminalJobsQuery measures age
+	// on updated_at, so a job seeded two hours stale and recovered to 'failed' with its old
+	// timestamp intact is instantly eligible for deletion — the recovery would destroy the
+	// stuck-job record it exists to preserve, and every status/error assertion above would
+	// stay green. Dropping `updated_at=now()` from FailStuckJobs is a one-token edit.
+	for _, id := range []string{stuckQueued, stuckRunning} {
+		j := statusOf(id)
+		if !j.UpdatedAt.After(j.CreatedAt) {
+			t.Errorf("swept job %s updated_at %v is not after its seeded created_at %v: the sweep "+
+				"left the stale timestamp, so the recovered row is immediately prunable",
+				id, j.UpdatedAt, j.CreatedAt)
+		}
+	}
 	if j := statusOf(oldSucceeded); j.Status != model.JobSucceeded {
 		t.Errorf("old succeeded job status = %q, want %q: the sweep overwrote a terminal job and destroyed the record of a real dispatch",
 			j.Status, model.JobSucceeded)
+	}
+}
+
+// TestLiveCreateJobForApprovedBriefGuardsTheApproval covers the method the PRODUCTION
+// dispatch path actually calls — orchestrator.go:921 uses CreateJobForApprovedBrief, not the
+// unconditional CreateJob every other fixture here uses.
+//
+// The difference is the whole point of the method. It opens a transaction, takes
+// SELECT ... FOR UPDATE on the brief row, re-reads its committed status and version, and
+// refuses with ErrStaleApproval unless both still match — closing the approve→dispatch TOCTOU
+// race in which a ReplaceBrief (resets to 'draft', version+1) or ArchiveBrief commits between
+// the approver's read and the dispatch. What it protects is real ad spend: a job created
+// against a withdrawn approval dispatches campaigns nobody signed off on.
+//
+// None of that is observable without a live database. The row lock, the re-read of the
+// CURRENT committed row, and the classification all depend on PostgreSQL's behaviour, and a
+// fake satisfies the check by construction.
+func TestLiveCreateJobForApprovedBriefGuardsTheApproval(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	jobs := newJobRepo(pool)
+	briefs := newBriefRepo(pool)
+
+	project := dbtest.UniqueID(t, "project")
+	created, err := briefs.CreateBrief(ctx, draftBrief(project, dbtest.UniqueID(t, "slug")), nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	// A DRAFT brief is not dispatchable at any version: the guard checks status as well as
+	// version, and a draft that happens to sit at the expected version must still be refused.
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, created.ID, created.Version); !errors.Is(err, domain.ErrStaleApproval) {
+		t.Fatalf("CreateJobForApprovedBrief on a DRAFT brief = %v, want domain.ErrStaleApproval", err)
+	}
+
+	approved, err := briefs.Approve(ctx, project, created.ID, &model.Actor{Name: "Approver"}, created.Version, nil)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+
+	// The approved version dispatches, and the job lands queued against this brief.
+	job, err := jobs.CreateJobForApprovedBrief(ctx, approved.ID, approved.Version)
+	if err != nil {
+		t.Fatalf("CreateJobForApprovedBrief at the approved version: %v", err)
+	}
+	if job.Status != model.JobQueued {
+		t.Errorf("job status = %q, want %q", job.Status, model.JobQueued)
+	}
+	if job.BriefID != approved.ID {
+		t.Errorf("job brief_id = %q, want %q", job.BriefID, approved.ID)
+	}
+
+	// A STALE version is refused even though the brief is still approved — this is the arm
+	// that catches an approve→replace→approve cycle the dispatcher did not observe.
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, approved.ID, approved.Version-1); !errors.Is(err, domain.ErrStaleApproval) {
+		t.Errorf("CreateJobForApprovedBrief at a stale version = %v, want domain.ErrStaleApproval", err)
+	}
+
+	// The race the method exists for, driven for real: replacing the brief withdraws the
+	// approval (status back to 'draft', version+1), and a dispatch still holding the old
+	// version must now be refused rather than creating a job against unapproved content.
+	edit := draftBrief(project, approved.EventSlug)
+	edit.ID = approved.ID
+	edit.UpdatedBy = &model.Actor{Name: "Editor"}
+	if _, err := briefs.ReplaceBrief(ctx, edit, approved.Version, nil); err != nil {
+		t.Fatalf("ReplaceBrief to withdraw the approval: %v", err)
+	}
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, approved.ID, approved.Version); !errors.Is(err, domain.ErrStaleApproval) {
+		t.Errorf("CreateJobForApprovedBrief after the approval was withdrawn = %v, want domain.ErrStaleApproval: "+
+			"a dispatch is being created against content nobody approved", err)
+	}
+
+	// A brief that does not exist is ErrStaleApproval too, not ErrNotFound: there is nothing
+	// approved at the expected version to dispatch from, and the caller's remedy is the same.
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, "00000000-0000-4000-8000-00000000cafe", 1); !errors.Is(err, domain.ErrStaleApproval) {
+		t.Errorf("CreateJobForApprovedBrief on an absent brief = %v, want domain.ErrStaleApproval", err)
 	}
 }
 

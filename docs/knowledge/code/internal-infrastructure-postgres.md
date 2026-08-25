@@ -1101,6 +1101,17 @@ is tenant-scoped by a JOIN through `campaign_briefs` because `campaign_jobs` has
 SQLSTATE (`23503`, `23514`) via `pgconn.PgError` rather than `err != nil`, which would
 otherwise be satisfied by a connection error and prove nothing about the constraint.
 
+**`CreateJobForApprovedBrief` is the method the dispatch path actually calls**
+(`orchestrator.go:921`), not the unconditional `CreateJob` the other fixtures use, and it is
+covered separately for that reason. It opens a transaction, takes `SELECT ... FOR UPDATE` on
+the brief, re-reads the CURRENT committed status and version, and refuses with
+`ErrStaleApproval` unless both still match — closing the approve→dispatch TOCTOU race in which
+a `ReplaceBrief` (back to `'draft'`, version+1) or `ArchiveBrief` commits between the
+approver's read and the dispatch. What it protects is real ad spend, and none of it is
+observable against a fake, which satisfies the check by construction. The live test drives the
+draft, stale-version, withdrawn-approval and absent-brief arms; each is revert-verified, and
+the status and version halves of the guard are pinned independently.
+
 **`FailStuckJobs` is table-wide, and that makes it a hazard to its neighbours.** It carries no
 tenant or brief predicate, so it rewrites every aged queued/running row in the shared schema —
 including the 72-hour queued and running rows `TestLivePruneTerminalJobsSparesEveryNonTerminalRow`

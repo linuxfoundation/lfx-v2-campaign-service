@@ -4,8 +4,8 @@
 `CreateBrief`, `ReplaceBrief`, `GetBrief`, `Approve`, `ArchiveBrief`, `CreateJob`, `GetJob`,
 `UpdateJobStatus` and `FailStuckJobs` had never been executed by PostgreSQL under test.
 Campaign upsert-on-(brief,platform) was already live via
-`TestLiveClaimThenUpsertPersistsProvenance`, so it was not redone. 14 tests added; `dbtest/`
-goes 70 → 84 test functions with none modified.
+`TestLiveClaimThenUpsertPersistsProvenance`, so it was not redone. 15 tests added; `dbtest/`
+goes 70 → 85 test functions with none modified.
 
 **What stood in for live coverage differed by repository, and saying "regex over SQL text"
 for all nine would be wrong.** The briefs had exactly that — `brief_repo_test.go` regexes the
@@ -96,8 +96,8 @@ non-terminal row owes the same cleanup.**
 
 ## Mutation-verified
 
-27 mutations, each turning its covering test red; no survivors. The breakdown, so the total is
-reproducible rather than asserted: **23** to the repository implementations, **3** dropping or
+31 mutations, each turning its covering test red; no survivors. The breakdown, so the total is
+reproducible rather than asserted: **27** to the repository implementations, **3** dropping or
 narrowing live schema constraints, and **1** test-side ordering control (restoring the old
 cleanup placement to confirm it really leaked).
 
@@ -120,6 +120,9 @@ survives is the finding — in both cases the fixture, not the assertion, was wh
 | same, after driving one status update | FAIL at both assertions |
 | `created_at AS updated_at` in `briefCols` | FAIL — non-zero checks alone could not see it |
 | cleanup registered AFTER the inserts, 4th insert fails | 3 aged rows stranded (0 with the fix) |
+| drop `updated_at=now()` from `FailStuckJobs` | FAIL — a recovered orphan would be instantly prunable |
+| `CreateJobForApprovedBrief` drops its status/version check | FAIL — a draft brief dispatched |
+| same, checking version but not status | FAIL — a withdrawn approval slipped through |
 
 Two mutations were rejected as invalid before counting: replacing a version predicate with
 `$12 = $12` and a tenant predicate with `$2 IS NOT NULL` both failed on type inference (encode
