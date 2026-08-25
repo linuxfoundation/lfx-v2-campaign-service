@@ -38,17 +38,19 @@ import (
 // the upload and decode budgets.
 //
 // What it removes is the MULTIPLIER. Dispatch-side worst case goes from 5 x 270 MiB = 1.32 GiB
-// to 240 MiB + one materialised asset = 270 MiB, about 53% of the pod, a 5x reduction.
+// to 240 MiB, about 47% of the pod.
 //
-// # Why the charge is taken after the read
+// # Why the charge is taken BEFORE the read
 //
-// The reservation is charged from the bytes actually resolved, which is the same point
-// maxVariantAssetBytes is charged, and for the same reason: GetAsset loads the whole BYTEA, and
-// there is no size-only read on the repository to reserve against beforehand. The residual is
-// therefore the same single-asset overshoot the per-dispatch cap already documents — the asset
-// that trips a ceiling is resident when it is counted. Closing it needs a byte_size-only read
-// added to the port; that is a larger change than this bound and is noted where the overshoot is
-// described rather than silently rounded away here.
+// The reservation is priced from CreativeAssetRepository.GetAssetSize — one BIGINT, no BYTEA —
+// and taken before GetAsset materialises the blob. The ordering is the whole bound: charging
+// after the read means every concurrent dispatch has already allocated its full allowance by the
+// time it blocks on the semaphore, so the permit gates the /adimages phase and bounds resident
+// memory not at all. An earlier revision of this control did exactly that and was fixed.
+//
+// It also removes the overshoot the per-dispatch cap used to document. Because the ceiling is
+// now applied to the SIZE, the asset that trips it is never loaded, so the peak is
+// maxVariantAssetBytes rather than that plus one maximum-size asset.
 //
 // # Lifetime
 //

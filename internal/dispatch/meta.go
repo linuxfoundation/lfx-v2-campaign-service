@@ -176,9 +176,10 @@ func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != n
 // repeated N times would charge N times over, so the cheapest attack would exhaust the
 // budget using one stored image.
 //
-// The bound is on bytes RETAINED, and the check runs after the tripping asset has been read,
-// so the true peak is this value plus one maximum-size asset — 270 MiB, not 240. See the
-// check in resolveVariantAssets for why that overshoot is accepted rather than closed.
+// The bound is on bytes RETAINED and the peak IS this value. It used to be this value plus one
+// maximum-size asset, because the ceiling was checked only after GetAsset had already
+// materialised the tripping blob; resolveVariantAssets now prices each asset with GetAssetSize
+// first, so the asset that crosses the ceiling is refused on its size and never loaded.
 //
 // IT BOUNDS ONE DISPATCH ONLY. The aggregate across concurrent dispatches is
 // MaxConcurrentVariantAssetBytes below; this constant said nothing about how many dispatches
@@ -207,7 +208,7 @@ const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB
 // What it removes is the MULTIPLIER, which is where the 2.6x came from:
 //
 //	before: 5 x (240 MiB + 30 MiB materialised) = 1.32 GiB = 2.6x the pod
-//	after:      240 MiB + 30 MiB materialised   =  270 MiB = 53% of the pod
+//	after:      240 MiB                         =  240 MiB = 47% of the pod
 //
 // It is NOT derived from PodMemoryLimitBytes the way the upload and decode budgets are, and that
 // is deliberate: those bound HTTP-request memory and are sized as fractions of the pod, while

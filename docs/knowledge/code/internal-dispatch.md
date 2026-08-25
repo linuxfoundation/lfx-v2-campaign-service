@@ -58,9 +58,14 @@ revoked or deleted.
    **Meta additionally RESOLVES creative assets in this step.** A variant may name an
    `imageAssetId` — a creative image uploaded against the brief. `resolveVariantAssets`
    loads each referenced asset's bytes through a narrow read-only port
-   (`creativeAssetReader`, `GetAsset` only — a dispatcher must never create an asset),
-   scoped to the dispatching brief's project and id so one brief cannot reference
-   another's asset, and writes them into a COPY of the variants — for CALLER ISOLATION:
+   (`creativeAssetReader` — a dispatcher must never create an asset), scoped to the
+   dispatching brief's project and id so one brief cannot reference another's asset.
+   The port carries TWO reads and the ORDER matters: `GetAssetSize` returns `byte_size`
+   without touching the `BYTEA`, and the aggregate memory reservation is taken from that
+   figure BEFORE `GetAsset` materialises the blob. Reserving after the load would bound
+   nothing — every concurrent dispatch would already hold its full allowance by the time
+   it blocked on the semaphore. It also means the asset that trips the per-dispatch
+   ceiling is refused on its size and never loaded. The resolved bytes are written into a COPY of the variants — for CALLER ISOLATION:
    `cfg.Variants` is read again afterwards (by `campaignFromMeta` for the config
    snapshot and by `Dispatch` for the degraded-ad count), and those readers must see
    the config the caller sent. The copy is NOT what keeps bytes out of storage:
