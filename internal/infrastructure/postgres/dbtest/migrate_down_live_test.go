@@ -184,8 +184,14 @@ var scratchReapers sync.Map
 // An earlier version of this test was VACUOUS and review caught it: it built a local
 // scratchReaper, asserted on CleanupContext in isolation, and cleared r.names by
 // assignment, never calling scratchDatabases or reap. Reverting the aggregate fix left it
-// green, so it pinned nothing it claimed. This drives the REAL registration path through a
-// subtest and counts the cleanups that path installs -- the number the whole fix is about.
+// green, so it pinned nothing it claimed. A second version then COUNTED cleanup invocations
+// through a counter the test incremented itself, which was 1 by construction; that arm and
+// its comment were removed rather than weakened.
+//
+// Nothing here counts registrations, and this comment previously said it did. What the test
+// drives is the real registration path: it calls scratchDatabases, checks that a second call
+// returns the SAME reaper, that all 29 names accumulate in it, and that the reaper's map
+// entry is gone afterwards -- which only the helper's own cleanup can bring about.
 //
 // It is a unit test of the registration SHAPE, and the shape is all it reaches. Three
 // mutations were run against it, and the third SURVIVES -- recorded here rather than left
@@ -196,8 +202,9 @@ var scratchReapers sync.Map
 //   - the cleanup is registered but never calls reap()  -> PASSES, still uncaught
 //
 // The third survives because this test must drain the synthetic names before the reap can
-// dial a real server, so "the list is empty afterwards" cannot distinguish the reap having
-// run from the drain having run. Whether reap() actually DROPS anything is pinned by no
+// dial a real server. Emptiness of the list is therefore never asserted here at all -- the
+// test does the emptying -- so nothing in it can distinguish a reap that ran from one that
+// did not. Whether reap() actually DROPS anything is pinned by no
 // unit test; it needs a live database, and that is what the live down-migration test
 // exercises in CI. The stalled-server behaviour is likewise unreachable here.
 //
@@ -214,8 +221,10 @@ func TestScratchReaperRegistersOneCleanupForEveryDatabase(t *testing.T) {
 	// cleanup, many, or none -- review caught it, and removing the helper's registration
 	// entirely left that arm green.
 	//
-	// reap() drains the reaper, so "did the registered cleanup run?" is answered by
-	// whether the list is empty afterwards, which only the helper's own cleanup can do.
+	// "Did the registered cleanup run?" is answered by the MAP ENTRY, not by the list:
+	// reap() deletes the reaper from scratchReapers, and only the helper's own cleanup
+	// does that. Emptiness of the list would prove nothing here, because this test drains
+	// it itself before the reap can dial a real server.
 	var r *scratchReaper
 	var reaped []string
 	drained := -1

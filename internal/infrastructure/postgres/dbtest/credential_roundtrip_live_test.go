@@ -163,19 +163,24 @@ func sealTextHostile(t *testing.T, enc *crypto.AESGCM, plaintext []byte) []byte 
 // would pass against a TEXT column and silently miss the regression. sealTextHostile
 // asserts the precondition instead of trusting it.
 //
-// The assertions are in three parts, and dropping any one of them makes the test
-// vacuous:
+// The assertions are in three parts. They are COMPLEMENTARY rather than each
+// individually load-bearing, and an earlier version of this comment overstated that by
+// saying dropping any one makes the test vacuous. It does not: the AES-GCM length
+// identity below independently rejects a passthrough encryptor, since cleartext is 26
+// bytes and a sealed blob is 54, so (2) is not the only thing standing between this test
+// and a no-op. What each part adds:
 //
 //  1. The decrypted plaintext EQUALS the original bytes. Alone this passes for an
 //     encryptor that stores cleartext, since cleartext decrypts to itself.
-//  2. The STORED COLUMN is not the plaintext. This is the negative assertion, and it
-//     is the one that fails a passthrough encryptor. Without it the test cannot tell
-//     encryption from a no-op.
-//  3. The stored column is byte-identical to what Encrypt produced. This is what makes
-//     the round-trip a statement about the DATABASE rather than about crypto: if the
-//     column mangled a single byte, GCM authentication would fail, and the failure
-//     would arrive as ErrDecryptionFailed — an error this test would otherwise report
-//     as "decryption is broken" when the defect is in storage.
+//  2. The STORED COLUMN is not the plaintext. The negative assertion: it fails a
+//     passthrough encryptor directly, and does so on IDENTITY rather than on size, so
+//     it still holds for a hypothetical cleartext encoding that happened to match the
+//     sealed length. The length check below covers the same class from the other side.
+//  3. The stored column is byte-identical to what Encrypt produced. This LOCALISES a
+//     storage defect rather than being the only thing that detects one: if the column
+//     mangled a single byte, GCM authentication would fail anyway and (1) would go red
+//     — but as ErrDecryptionFailed, which reads as "decryption is broken" when the
+//     defect is in storage. Asserting the bytes names the real culprit.
 func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()

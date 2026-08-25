@@ -340,3 +340,22 @@ wrong word survived three readings.
 The pattern across all three is the one this branch keeps producing: the code was right and the
 sentence next to it claimed more than the code did. A comment is a claim, and "exact",
 "diagnosable" and "counts registrations" are each checkable.
+
+**Follow-up — two more comments describing code that had moved on.** Same class as the three
+above, and both were in comments this branch had already edited, which is the point: editing a
+line adopts every claim on it.
+
+The reaper test's godoc still said it "counts the cleanups that path installs". Nothing counts
+registrations — the self-incremented counter was deleted two commits earlier, and the same
+godoc said so a few lines further down. It now describes what the test actually drives: a
+second `scratchDatabases` call returning the SAME reaper, 29 names accumulating in it, and the
+map entry gone afterwards. The phrase "the list is empty afterwards" went too; the test does
+the emptying itself, so emptiness is never asserted.
+
+`TestLiveCredentialSurvivesTheRealByteaColumn`'s comment claimed its three assertions were each
+individually load-bearing — "dropping any one of them makes the test vacuous". False since the
+substring check became a length identity: cleartext is 26 bytes against a 54-byte sealed blob,
+so the length assertion independently rejects a passthrough and (2) is no longer the only thing
+between the test and a no-op. They are complementary. (2) catches a passthrough on IDENTITY
+rather than size; (3) LOCALISES a storage defect that (1) would also catch, but would report as
+ErrDecryptionFailed — "decryption is broken" when the defect is in the column.
