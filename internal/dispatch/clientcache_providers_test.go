@@ -1024,11 +1024,24 @@ func TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 func TestClientCache_TwitterDispatchUsesTheCachedClient(t *testing.T) {
 	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1)}
 
+	// A local stub, and WithBaseURL pointing at it, so this test can never reach the real
+	// X Ads origin. Without the override the client would default to
+	// twitter.DefaultBaseURL. Dispatch happens to fail budget validation before any
+	// request today, but relying on that would make the isolation of this test an
+	// accident of an unrelated validation order: a later change to the fixture or to
+	// where budget is checked would silently turn it into a live network call with the
+	// client's 30s timeout.
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer stub.Close()
+
 	// twitter.Option runs once per NewClient call, so it is an exact construction counter.
 	var builds atomic.Int64
 	countingOpt := func(*twitter.Client) { builds.Add(1) }
 
-	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0), countingOpt)
+	d := NewTwitterDispatcher(repo, identityEncryptor{},
+		twitter.WithBaseURL(stub.URL), twitter.WithWriteDelay(0), countingOpt)
 
 	// Prime the cache through the toggle-path resolver: one construction.
 	if _, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,

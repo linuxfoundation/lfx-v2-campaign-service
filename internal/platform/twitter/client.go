@@ -1193,8 +1193,10 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // jitter and backstopped by the 429 retry. It belongs with the account-scoped limiter
 // in LFXV2-2665, which has to solve the same problem across replicas anyway.
 //
-// The clock is c.timeFn, so tests drive pacing deterministically rather than by
-// sleeping in real time.
+// The injected clock (c.timeFn) governs the RESERVATION arithmetic only -- the
+// instants compared and stored in nextWrite. The wait itself is a real
+// time.NewTimer inside sleepCtx, so a test cannot skip wall-clock time by advancing
+// timeFn; what it gets is deterministic reservation SPACING, not a virtual sleep.
 func (c *Client) pace(ctx context.Context) error {
 	if c.writeDelay <= 0 {
 		return nil

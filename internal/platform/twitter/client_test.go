@@ -4219,8 +4219,9 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 
 	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(delay))
 
-	// A virtual clock driven off a real monotonic base, serialized so -race sees no
-	// data race on the clock itself.
+	// The reservation clock: a real monotonic base read through timeFn, serialized so
+	// -race sees no data race on it. NOT a virtual clock — sleepCtx still waits on a real
+	// timer, so this makes the SPACING deterministic, it does not skip wall-clock time.
 	var clockMu sync.Mutex
 	base := time.Unix(1600000000, 0)
 	start := time.Now()
