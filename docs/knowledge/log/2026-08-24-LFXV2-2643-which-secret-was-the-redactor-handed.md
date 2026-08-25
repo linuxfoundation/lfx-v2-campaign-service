@@ -381,3 +381,19 @@ otherwise — pgx's `ParseConfig` ACCEPTS the keyword form (which is why `dsnIde
 parses both), while the migration driver does not. It fails if production widens without
 `migrateURL` keeping pace; verified by making `pool.go` accept keyword DSNs and watching it go
 red.
+
+**Follow-up — a guarantee credited to the wrong mechanism.** Two comments on
+`TestLiveCredentialSurvivesTheRealByteaColumn` said the non-ASCII PLAINTEXT is what
+distinguishes a BYTEA column from a TEXT one. It is not: only `sealed` is ever written
+(the row assignment takes the ciphertext), and AES-GCM output is binary whichever bytes went
+in, so ASCII plaintext would exercise the schema regression identically. The property comes
+from `sealTextHostile`, which retries until the sample carries a NUL or is invalid UTF-8 —
+stated plainly two paragraphs above, which is what made the mis-attribution easy to miss.
+
+The plaintext's encoding still earns its place, for a different reason now stated instead of
+assumed: it covers Encrypt/Decrypt over arbitrary input — an embedded NUL, a lone 0xff/0xfe
+pair that is not valid UTF-8, and a multi-byte rune — where a realistic base64 refresh token
+would cover none of it. Corrected in both comments and in the PR description.
+
+This is the same failure as the "exact probability" and "counts the cleanups" corrections: the
+code was right, and the sentence beside it assigned the credit to the wrong part.

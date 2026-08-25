@@ -155,7 +155,13 @@ func sealTextHostile(t *testing.T, enc *crypto.AESGCM, plaintext []byte) []byte 
 // 54-byte sample obviously cannot contain every byte value, and it carries a NUL only
 // ~19% of the time; what it is essentially always is invalid UTF-8 (measured: 200,000 of
 // 200,000). That is exactly the input that distinguishes a column which stores bytes from
-// one that stores a string, and it is why the plaintext here is deliberately non-ASCII too.
+// one that stores a string.
+//
+// The COLUMN-TYPE guarantee rests entirely on that ciphertext, not on the plaintext's
+// encoding: only `sealed` is ever written, and sealTextHostile selects a sample a TEXT
+// column cannot hold. An earlier version of this comment credited the non-ASCII plaintext
+// for the same property, which is wrong -- AES-GCM output is binary whichever bytes went
+// in, so ASCII plaintext would exercise the schema regression just as well.
 //
 // "Ordinarily" is doing real work in that sentence, which is why the ciphertext comes from
 // sealTextHostile rather than a bare Encrypt. The nonce is random, so whether a given
@@ -187,8 +193,12 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 	repo := connectionRepo(pool)
 	enc := newAESGCM(t)
 
-	// Non-ASCII on purpose: a refresh token is base64 in practice, but a plaintext
-	// that is already safe ASCII cannot detect a column that silently transcodes.
+	// Non-ASCII on purpose, but NOT for the column type -- only `sealed` reaches the
+	// database, and sealTextHostile is what guarantees those bytes are text-hostile.
+	// What this buys is coverage of Encrypt/Decrypt over ARBITRARY input: an embedded
+	// NUL, a lone 0xff/0xfe pair that is not valid UTF-8, and a multi-byte rune, so the
+	// round-trip is pinned for a credential that is not printable ASCII. A refresh token
+	// is base64 in practice, which would exercise none of that.
 	plaintext := []byte("refresh-token\x00\xff\xfe-Ω-secret")
 
 	// Not a bare Encrypt: the round-trip's whole premise is that these bytes are bytes a
