@@ -134,3 +134,81 @@ func TestCampaignStatusDeletable(t *testing.T) {
 		t.Error(`CampaignStatusDeletable("something_new") = true, want false — an unknown status must not be treated as deletable`)
 	}
 }
+
+// TestCompareSettingsField_AbsentIsNeverAMatch is the rule the whole readback rests on: a
+// verdict of `match` requires BOTH sides to have been read. Absence on either side is
+// `unknown`, because agreement asserted from an observation nobody made is a fabricated
+// "they match" — the exact failure this capability exists to prevent.
+func TestCompareSettingsField_AbsentIsNeverAMatch(t *testing.T) {
+	v := "500.00"
+	cases := []struct {
+		name     string
+		recorded *string
+		upstream *string
+		want     SettingsComparison
+	}{
+		{"both absent", nil, nil, SettingsUnknown},
+		{"recorded only", &v, nil, SettingsUnknown},
+		{"upstream only", nil, &v, SettingsUnknown},
+		{"both present and equal", &v, &v, SettingsMatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CompareSettingsField("budget_amount", tc.recorded, tc.upstream)
+			if got.Comparison != tc.want {
+				t.Errorf("Comparison = %q, want %q", got.Comparison, tc.want)
+			}
+		})
+	}
+}
+
+// TestCompareSettingsField_DifferentValuesDiverge pins the positive case: two values that
+// were both read and differ is the finding an operator acts on.
+func TestCompareSettingsField_DifferentValuesDiverge(t *testing.T) {
+	a, b := "500.00", "750.00"
+	got := CompareSettingsField("budget_amount", &a, &b)
+	if got.Comparison != SettingsDiverged {
+		t.Errorf("Comparison = %q, want %q", got.Comparison, SettingsDiverged)
+	}
+	// Both sides must survive into the field: a report that says "diverged" without showing
+	// what differs is not actionable.
+	if got.Recorded == nil || *got.Recorded != a || got.Upstream == nil || *got.Upstream != b {
+		t.Errorf("field = %+v, want both sides preserved", got)
+	}
+}
+
+// TestSummariseSettings_UnknownIsNotCountedAsDivergedOrMatched pins that the two counts
+// stay separate. Folding `unknown` into either would report a number an operator would
+// act on as if it had been observed.
+func TestSummariseSettings_UnknownIsNotCountedAsDivergedOrMatched(t *testing.T) {
+	a, b := "500.00", "750.00"
+	rb := &CampaignSettingsReadback{Fields: []CampaignSettingsField{
+		CompareSettingsField("budget_amount", &a, &b),  // diverged
+		CompareSettingsField("budget_type", &a, &a),    // match
+		CompareSettingsField("campaign_name", &a, nil), // unknown
+		CompareSettingsField("status", nil, &b),        // unknown
+	}}
+	rb.SummariseSettings()
+	if rb.DivergedCount != 1 {
+		t.Errorf("DivergedCount = %d, want 1", rb.DivergedCount)
+	}
+	if rb.UnknownCount != 2 {
+		t.Errorf("UnknownCount = %d, want 2", rb.UnknownCount)
+	}
+}
+
+// TestSummariseSettings_IsIdempotent: the counts are derived from Fields, so summarising
+// twice must not double them. A caller cannot be expected to know it may only be called once.
+func TestSummariseSettings_IsIdempotent(t *testing.T) {
+	a, b := "1", "2"
+	rb := &CampaignSettingsReadback{Fields: []CampaignSettingsField{
+		CompareSettingsField("budget_amount", &a, &b),
+		CompareSettingsField("campaign_name", nil, nil),
+	}}
+	rb.SummariseSettings()
+	first := [2]int{rb.DivergedCount, rb.UnknownCount}
+	rb.SummariseSettings()
+	if second := [2]int{rb.DivergedCount, rb.UnknownCount}; first != second {
+		t.Errorf("counts changed on a second call: %v then %v", first, second)
+	}
+}

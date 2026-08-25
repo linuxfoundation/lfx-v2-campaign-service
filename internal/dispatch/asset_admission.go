@@ -117,11 +117,25 @@ func NewAssetReserver(budgetBytes int64, wait time.Duration) *AssetReserver {
 // dispatch that cannot get budget fails as a retryable dispatch error rather than hanging: it is
 // a background job with no caller waiting on a socket, and the orchestrator's own
 // providerCallTimeout would otherwise be the only thing to end it.
+//
+// A NON-POSITIVE want is admitted holding nothing, and is deliberately NOT refused. `false` here
+// means one thing to every caller — "the budget could not accommodate this" — and callers render
+// it as a retryable capacity shortage. A zero-size asset is the opposite: a permanent data defect
+// that no amount of freed budget will fix, and reporting it as capacity both told the caller to
+// retry something that can never succeed and made resolveVariantAssets' empty-bytes guard
+// unreachable, since the refusal happened before the bytes were ever read. Charging zero for zero
+// is also the arithmetically correct answer — it consumes none of the budget it is bounding — so
+// the caller proceeds to load the asset and refuses it on what is actually wrong with it.
+// A NEGATIVE want cannot come from a byte_size (migration 000029 CHECKs it non-negative); it is
+// treated the same way rather than acquired, since a negative weight would CREDIT the semaphore.
 func (a *AssetReserver) reserve(ctx context.Context, want int64) (func(), bool) {
 	if a == nil {
 		return func() {}, true
 	}
-	if want <= 0 || want > a.budget {
+	if want <= 0 {
+		return func() {}, true
+	}
+	if want > a.budget {
 		return func() {}, false
 	}
 	if a.wait > 0 {

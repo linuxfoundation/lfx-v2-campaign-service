@@ -31,7 +31,7 @@ const (
 // still, in the service method after authentication.)
 //
 // The value is derived, not guessed. Base64 expands by exactly 4/3 with padding
-// (encoding/json decodes a []byte field via base64.StdEncoding), so the largest
+// (RFC 4648 standard alphabet, the encoding the attribute documents), so the largest
 // LEGAL upload — 30 MiB of image — arrives as 41,943,040 base64 characters, which is
 // 40 MiB to the byte. Only two fields ride in the body — content_type and bytes;
 // project_id and brief_id are PATH parameters — so the JSON envelope adds just 39

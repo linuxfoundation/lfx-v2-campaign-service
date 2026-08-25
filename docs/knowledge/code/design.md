@@ -14,9 +14,15 @@ connections service (per-provider singleton credential CRUD), the briefs
 service, and the audiences service. The briefs service models the Project →
 Brief → Campaigns hierarchy: brief CRUD (the funnel unit, carrying
 `program_type`), asynchronous campaign creation (`POST .../campaigns` returns a
-job to poll), campaign read/update, and live campaign metrics reads (a pure
-read from the ad platform, never persisted — unlike campaign updates, which
-modify the stored row and require If-Match). The audiences service (`design/audience.go`,
+job to poll), campaign read/update, and the live reads that go straight to the
+ad platform — `get-campaign-metrics` for performance and
+`get-campaign-settings` for configuration divergence. Both are pure reads,
+never persisted, and so declare no If-Match, unlike campaign updates, which
+modify the stored row and require it. `get-campaign-settings` (LFXV2-3067)
+answers what the metrics read structurally cannot: impressions, clicks, cost
+and CTR do not describe a campaign's *configuration*, so divergence between
+what a dispatch recorded and what the campaign now is upstream needs its own
+method rather than another field on the metrics result. The audiences service (`design/audience.go`,
 LFXV2-2773) models built campaign audiences nested under a brief
 (`.../briefs/{briefId}/audiences`): create, get, list, and update-as-PATCH (a
 load-then-merge where a nil field is unchanged; suppression lists are cleared via an

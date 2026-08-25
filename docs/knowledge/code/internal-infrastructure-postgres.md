@@ -951,6 +951,272 @@ of the `dbtest` package at all. It duplicates `dbtest.UniqueID`'s shape (name pr
 `crypto/rand` suffix) for the same reason `dbtest` uses that shape: the schema is shared and
 never dropped between runs.
 
+**Down migrations are covered by `TestLiveMigrationsGoDownAndUpAgain`, and what makes it
+bind is the SNAPSHOT, not the walk.** The test steps down one version at a time and compares
+the schema against a reference built by migrating a FRESH database UP to that version — the
+strong form, pinning each down file as the exact inverse of its up rather than merely
+asserting it did not error. A down-driven reference would execute the very files under test
+and come back clean.
+
+The snapshot's reach is therefore the test's reach, and each arm was added because the
+previous shape could not see a real defect:
+
+- Columns read `pg_attribute` with `format_type(atttypid, atttypmod)`, not
+  `information_schema.columns`, whose `data_type` strips the modifier — `NUMERIC(14,2)` and
+  `NUMERIC(14,3)` both render as bare `numeric`. `campaigns.budget_amount` is `NUMERIC(14,2)`,
+  and a down restoring it at `(14,3)` once produced a byte-identical snapshot.
+- Defaults join in from `pg_attrdef`, because a dropped DEFAULT changes every subsequent
+  INSERT and the older query selected no default at all.
+- Sequences read `pg_sequences` for the defining parameters, since none of increment, bounds,
+  cache or cycle is observable through the table, column, index or constraint rows.
+  `last_value` is deliberately excluded — it is a runtime position advanced by whatever rows
+  a test inserted, so including it would make the snapshot depend on activity and fail on a
+  correct down file.
+- **Sequence OWNERSHIP joins in from `pg_depend` (`deptype = 'a'`), and the reasoning that
+  once omitted it was wrong in the direction that disarms the test.** The omission was
+  justified on the grounds that ownership is "carried by the column's DEFAULT expression",
+  which the column arm already renders as `nextval('index_outbox_id_seq'::regclass)`. It is
+  not. Postgres records `OWNED BY` as a separate `pg_depend` entry, wholly independent of the
+  DEFAULT: `ALTER SEQUENCE ... OWNED BY NONE` and `OWNED BY <other column>` both leave the
+  DEFAULT byte-identical, so the column arm renders the same string either way. Measured on
+  PG16 — a down file reassigning `index_outbox_id_seq` to `index_outbox.object_id` passed the
+  entire exact-inverse comparison. Ownership is what makes a serial sequence drop with its
+  table, so a down file that detaches one leaves an orphan behind after a rollback. The join
+  is a LEFT JOIN: a standalone `CREATE SEQUENCE` has no owning column, and an inner join
+  would drop it from the snapshot and make an unremoved standalone sequence invisible.
+
+The mutation site for this class is a DOWN file — `schemaAtVersion` builds its reference by
+migrating up, so mutating an UP file moves both sides equally and proves nothing. It must
+also be a down file that runs while the object still exists, and it must not perturb a LATER
+step: detaching `index_outbox_id_seq` outright makes 000010's `DROP TABLE` stop cascading to
+it, so the failure lands at version 10 for a different reason than the one under test.
+Reassigning ownership to another column of the same table keeps the cascade and isolates the
+property.
+
+### Teardown runs on a bounded context (`CleanupContext`)
+
+Every `t.Cleanup` in `dbtest` connects, drops or deletes, and each of those can block. On an
+unbounded context a teardown CANNOT fail: if Postgres goes unreachable, or a
+`DROP DATABASE ... WITH (FORCE)` waits behind another session, the cleanup blocks forever, its
+own `t.Errorf` is never reached, and the package hangs to the suite-level timeout — which
+reports a timeout in whatever test the runner happened to be in, naming neither the stall nor
+the database left behind. The contract that a green run leaves nothing behind then has no
+instrument.
+
+`dbtest.CleanupContext()` returns a context bounded by `CleanupTimeout` (30s, matching the
+pool-open budget). Its root is `context.Background()`, deliberately, and the reason is the
+mirror of the deadline: teardown must not inherit the TEST's context, which is already
+cancelled by the time `t.Cleanup` runs — a cleanup deriving from it would fail instantly
+without dropping anything, which looks like a fix while leaving the rows behind. Elsewhere in
+this repo, where teardown hangs off a live request context, the same property is spelled
+`context.WithTimeout(context.WithoutCancel(ctx), …)`; `Background` is that spelling for work
+with no parent.
+
+All 10 cleanup-reachable sites take their context from this one helper, including
+`restoreRequiredIndex`, which is reached from `t.Cleanup` in three tests and performs a drop,
+a create and a catalog verification.
+
+**One budget for the whole teardown, not one per database.** Per-database deadlines are
+correct per database and wrong in aggregate: `TestLiveMigrationsGoDownAndUpAgain` provisions
+one scratch database per migration version, so at 28 migrations a per-call cleanup allowed
+~29 x 30s serially — about 14.5 minutes, past `go test`'s 10-minute default (the Makefile
+sets no `-timeout`). The run then died at the opaque suite timeout, naming neither the
+unreachable server nor the databases left behind. Bounding each step did not bound the
+teardown. `scratchReaper` collects the names and drops them from ONE test-level cleanup under
+ONE `CleanupContext`, with one reconnect rather than one per database, and names the databases actually
+skipped (`names[i:]`, not the whole registered list) if the budget expires mid-reap.
+
+`TestScratchReaperRegistersOneCleanupForEveryDatabase` pins the registration shape: a second
+`scratchDatabases` call returns the SAME reaper, all 29 names accumulate in it, and its map
+entry is gone afterwards (which only the helper's own cleanup can achieve). It deliberately
+counts no cleanup invocations — an earlier arm did, through a counter the test incremented
+itself, and was 1 by construction. One mutation survives and is recorded in the test's godoc:
+registering the cleanup without calling `reap()` still passes, because the test drains the
+synthetic names before the reap can dial a real server. Whether `reap()` drops anything is
+pinned only by the live down-migration test.
+
+**How strongly this is pinned:** `TestCleanupContextIsBoundedAndUncancelled` binds the
+helper — reverting it to a bare `Background()` fails on the missing deadline, and deriving it
+from a cancelled parent fails on both the `Err()` and `Done()` assertions. The CALL SITES are
+pinned at the source only: reproducing the failure needs a wedged Postgres, and reverting the
+helper to an unbounded context leaves the entire suite green (verified). That is weaker
+evidence than a rendered failure and should not be read as equivalent.
+
+## Redacting a DSN-bearing error (`SafeDSNErr` / `SafeDSNErrFor`)
+
+Every failure in `dbtest` prints to a CI log, and pgx builds its errors out of the parsed
+DSN: `*pgconn.ConnectError` formats ``failed to connect to `user=%s database=%s` `` straight
+from the `Config`. A `%v` on any connect arm therefore puts the configured credential into
+the build log. The package renders those errors through one of two helpers instead.
+
+The two differ only in WHICH secret they compare against, and that is the whole of the
+contract:
+
+* `SafeDSNErr(err)` compares against the ENVIRONMENT's `DSN()`. Correct only where the
+  failing call used the environment's DSN.
+* `SafeDSNErrFor(dsn, err)` compares against an EXPLICIT DSN. Required wherever the calling
+  function was handed one.
+
+**A redactor call is not evidence of redaction.** The leak that opened LFXV2-2643 survived
+five review rounds with a redactor plainly present at the leaking line: `connectAndMigrate`
+called `SafeDSNErr` while holding an explicit `dsn`. On the scratch path those DSNs differ —
+`freshDatabase` rewrites `TEST_DATABASE_URL` with a new database name — so the comparison
+cleared the message against the wrong string and the scratch database name printed in full.
+The same seam recurred at `newMigrator`, which is likewise handed an explicit `dsn`. When
+reviewing one of these sites the question is never "is a redactor called", it is "which
+secret was it handed".
+
+`TestNoConnectSiteRendersItsErrorRaw` pins both questions from the AST. It asks (1) whether
+each DSN-bearing call's error reaches a `t.Fatalf`/`t.Errorf` through a redactor rather than
+raw, and (2) whether the redactor compares against the DSN that call actually USED. Question 2
+is what catches the wrong-DSN seam, which question 1 cannot see.
+
+The expected DSN in question 2 is read from the **call's own argument**, not from any
+parameter name. An earlier version keyed it on a parameter literally spelled `dsn`, which is a
+claim about spelling and failed the same way the spelling-based version of the raw-argument
+check had already failed: renaming `newMigrator`'s parameter to `databaseURL` and reverting its
+formatter to `SafeDSNErr` removed the function from consideration entirely, and the regression
+passed. Which argument carries the DSN is stated per callee — every entry in `dsnCalls` takes
+it last, `withDatabase` takes it first — because guessing "the last argument" resolved
+`withDatabase(dbtest.DSN(), name)` to the database *name* and reported a correct call as
+mispaired.
+
+A call that used the environment's `DSN()` is satisfied by either redactor; a call that used
+anything else requires `SafeDSNErrFor` handed that same value. Which identifiers hold a live DSN is likewise computed by DATA FLOW, not by spelling:
+`dsnCarriers` seeds from `DSN()` calls and from the string parameters of functions that
+themselves perform a DSN-bearing call, then propagates through assignment. The name-based
+version it replaces missed `databaseURL := dbtest.DSN()` aliased into `withDatabase`, and a
+raw `%v` of that call's error passed the guard.
+
+The whole guard is parsed rather than line-scanned because two earlier window-based versions
+each missed a site. Its mutation coverage is recorded in the test's own doc comment — six
+mutations, three of which turned on spelling, which is why nothing in this guard asks what an
+identifier is called.
+
+Its self-tests are counted separately, and the second exists because of a real bypass: a bare
+`pairChecked == 0` check stayed nonzero via `schemaObjects` while the explicit-DSN sites
+disappeared. `explicitPairs == 0` fails independently, so the sites the seam actually lives on
+cannot silently stop being inspected. A guard that checks nothing passes for the same reason a
+correct one does.
+
+Both instruments are honest about their strength. The source guard is **weaker** than a
+rendered-output assertion: the four `pgx.Connect` sites fire only when a live database dies
+mid-run, which no unit test can arrange, so reverting one to `%v` leaves every behavioural
+test green. It pins them at the source because that is the only option there — not because
+source-level evidence is equivalent.
+
+### The migrator's METHODS are DSN-bearing too
+
+`golang-migrate` holds the DSN inside its driver and reconnects through `database/sql`, so
+`m.Up()`, `m.Steps()`, `m.Migrate()` and `m.Version()` can each surface pgx's
+`*pgconn.ConnectError` — the same error the initial connect sites redact. Seven `%v` sites in
+`migrate_down_live_test.go` rendered those raw. Measured against a closed port, the driver
+produced:
+
+```
+failed to connect to `user=leakuser database=leakdb`: 127.0.0.1:1 (127.0.0.1): dial error: ...
+```
+
+so the credential this PR exists to withhold was being printed by the file that pins the
+withholding. All seven now use `SafeDSNErrFor(dsn, err)`.
+
+The original guard could not see them: its call set listed only functions that TAKE a DSN as
+an argument, and a migrator method takes none — the DSN is in the receiver. It now records the
+DSN each `newMigrator` call was handed alongside the variable it bound, so a method call on
+that receiver both counts as DSN-bearing AND has an expected DSN for the pairing question.
+
+Recording the DSN rather than a bare "this is a migrator" flag is the load-bearing part. A
+first version tracked only membership, so `want` stayed empty for every migrator site and the
+pairing check was skipped entirely — swapping `SafeDSNErrFor(dsn, err)` for `SafeDSNErr(err)`
+on `m.Up()` passed the guard even though it compares against the environment DSN instead of
+the scratch one. Inspected surface went from 6 formatting calls to 15, and pairings from 6
+(3 explicit) to 15 (12 explicit). This is the same lesson as the wrong-DSN
+seam one level up: **a redactor being present and abundant in a file says nothing about
+whether a specific site applies it.** There were 34 correct `SafeDSNErrFor` calls in that file
+while these seven leaked.
+
+By contrast, `Exec` failures on an ALREADY-ESTABLISHED connection carry no DSN — they are
+server-side `*pgconn.PgError` values. Verified by rendering: `CREATE DATABASE`, `DROP DATABASE`
+and syntax failures produce `ERROR: ... (SQLSTATE ...)` and nothing else. Those sites keep `%v`
+deliberately; redacting them would cost the diagnosis for no gain.
+
+### Withholding is bounded by word boundaries, not substrings
+
+`dsnIdentifiersPresent` withholds a message that reproduces the DSN's password, user,
+database or host. Matching that on a raw `strings.Contains` broke the other half of the
+contract — diagnosability — in exactly the configuration the helper protects. CI's
+`TEST_DATABASE_URL` uses the user and password `postgres`, which is a substring of
+`postgresql`, so ordinary protocol prose naming no credential at all
+(`unsupported postgresql wire protocol version 2`) was replaced wholesale by the withhold
+sentinel.
+
+A credential is reproduced when a message names it as a VALUE — `user=postgres`,
+`role "postgres"` — and in every such form the identifier is bounded by a non-word byte.
+An embedding inside a longer word is a different token and reproduces nothing. `namesIdentifier`
+matches on that boundary, case-insensitively because Postgres folds unquoted identifiers to
+lower case. It scans rather than compiling a regexp: the identifier is arbitrary
+operator-supplied text and a DSN field is exactly the kind of value that carries regexp
+metacharacters. The scan advances one byte per attempt, so an embedded occurrence cannot
+mask a genuine bounded echo later in the same message.
+
+`TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers` asserts both directions against the CI
+DSN — the driver's real message shapes must be withheld, the protocol prose must survive.
+Only asserting the first would be satisfied by a helper that withholds everything.
+
+### Every host in the DSN counts, not just the first
+
+`pgconn.ParseConfig` puts only the FIRST host in `Config.Host`; a comma-separated multi-host
+DSN parses its remaining hosts into `Config.Fallbacks`. pgx dials each in turn and names the
+one that failed, using `originalHostname` — the host as written in the DSN. Comparing against
+`Config.Host` alone therefore cleared any error naming only a secondary host, and it printed
+verbatim.
+
+`dsnIdentifiersPresent` appends every `fb.Host` to the compared set. The fallbacks also carry
+per-host user/password/database, but pgx copies those from the top-level config for each
+entry, so the host is the only field that adds anything.
+
+`TestSafeDSNErrWithholdsFallbackHosts` asserts the primary AND both fallbacks are withheld —
+asserting only the fallbacks would be satisfied by a fix that replaced `Config.Host` instead
+of adding to it — and that a message naming no host in the DSN still keeps its text.
+
+### A regression test must not pass for the wrong reason
+
+`TestConnectAndMigrateWithholdsTheExplicitDSN` renders a real failure and asserts the probe's
+identifiers are absent. Because the host is one of the four compared fields, a probe sharing
+a host with `TEST_DATABASE_URL` makes redaction fire on the host ALONE, and the test stays
+green with the fix reverted. Picking an unusual loopback address does not settle it: the
+harness contract constrains `TEST_DATABASE_URL` no further than "a database this package may
+freely modify", so a developer may legitimately point it at that address.
+
+The probe host is `dbtest-probe.invalid` (RFC 2606, permanently non-resolvable), but that
+alone was not enough and review caught why: an unresolvable host only rules out a harness that
+WORKS, and it says nothing about the other three compared fields. A harness legitimately using
+the user `probeuser` or the database `probedb` still made a reverted fix withhold on that
+shared field and pass for the wrong reason — verified by pointing `TEST_DATABASE_URL` at a real
+database owned by `probeuser`.
+
+So the test PINS `TEST_DATABASE_URL` with `t.Setenv` to a fixture sharing nothing with the
+probe. That removes the environment from the question rather than arguing about which values it
+could plausibly hold, and it retires the residual case this page previously recorded as a known
+limit. With the fix reverted the test now fails under every value tried: unset, a harness
+sharing the probe's user, one sharing its database, and the probe's own DSN verbatim.
+
+The cost is `t.Parallel`, and nothing else. Go runs top-level parallel tests only after every
+serial test finishes, so the `Setenv` window cannot overlap the parallel readers of `DSN()`.
+
+Two superseded arguments against that pin are on the record, and both are wrong — noted here
+so a later change does not undo the fix by reviving either:
+
+* *"Pinning the host is enough."* It is not. An unresolvable host only rules out a harness that
+  WORKS; user, password and database are compared too, and a harness legitimately using
+  `probeuser` or `probedb` still made a reverted fix pass for the wrong reason.
+* *"A serial `t.Setenv` races the parallel readers of `DSN()`."* It does not. Go runs top-level
+  parallel tests only after every serial test finishes — measured at zero overlaps, and the
+  reason `TestSafeDSNErrReadsTheConfiguredDSN` is correct under the same pattern.
+
+The pin costs that one test's parallelism and buys independence from every possible value of
+`TEST_DATABASE_URL`.
+
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 
 A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the

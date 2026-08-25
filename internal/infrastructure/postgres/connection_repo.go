@@ -220,7 +220,9 @@ func (r *ConnectionRepo) update(ctx context.Context, c *model.Connection, cipher
 }
 
 // SetCredential replaces only the encrypted credential blob and bumps version,
-// returning the updated connection so the handler can emit the new ETag.
+// returning the updated connection so the new version is available to the caller.
+// The set-credential handler does not currently emit it — that response is 204 —
+// but the bump is what invalidates ETags issued before the rotation.
 func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) (*model.Connection, error) {
 	if !provider.Valid() {
 		return nil, fmt.Errorf("unknown provider %q", provider)
@@ -229,9 +231,11 @@ func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, pr
 	if err != nil {
 		return nil, err
 	}
-	// RETURNING for the reason spelled out on update: the returned row becomes the caller's
-	// ETag, and this write is not even version-gated, so a re-read is MORE exposed here — any
-	// concurrent writer at all can land between the two statements.
+	// RETURNING for the reason spelled out on update: the row this hands back is the
+	// authoritative post-write version, and this write is not even version-gated, so a
+	// re-read is MORE exposed here — any concurrent writer at all can land between the two
+	// statements. (Unlike update, the handler discards it and answers 204; that makes
+	// RETURNING cheap insurance rather than a live ETag source.)
 	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
 		"UPDATE %s SET credentials = $1, updated_by = $2, version = version + 1, updated_at = now() "+

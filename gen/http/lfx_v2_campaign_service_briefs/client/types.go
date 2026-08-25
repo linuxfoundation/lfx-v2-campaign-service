@@ -413,6 +413,37 @@ type GetCampaignMetricsResponseBody struct {
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
+// GetCampaignSettingsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body.
+type GetCampaignSettingsResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The id the PLATFORM echoed back for this campaign, not the one requested.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// The channel that runs this campaign.
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// When the platform was read (RFC3339, UTC). A readback is a point-in-time
+	// observation and says nothing about the campaign after this instant.
+	ReadAt *string `form:"read_at,omitempty" json:"read_at,omitempty" xml:"read_at,omitempty"`
+	// Every setting compared, in a stable order, INCLUDING the ones that could not
+	// be compared — a field missing from this list would be indistinguishable from
+	// one this service does not know about.
+	Fields []*CampaignSettingsFieldResponseBody `form:"fields,omitempty" json:"fields,omitempty" xml:"fields,omitempty"`
+	// How many fields carry the `diverged` verdict.
+	DivergedCount *int `form:"diverged_count,omitempty" json:"diverged_count,omitempty" xml:"diverged_count,omitempty"`
+	// How many fields were NOT COMPARED — either because the field has no recorded
+	// counterpart (the upstream-only observations, plus `status`, which the row
+	// does record but which is deliberately never compared — a different axis from
+	// Google's delivery status) or because a side could not be read. Reported
+	// separately from diverged_count rather than folded into it: "2 differ" reads
+	// very differently next to "and 5 were not compared". NOT a read-failure
+	// count: on a fully healthy readback most fields are unknown by construction,
+	// so a consumer watching this for failures would see a constant floor. Use
+	// each field's `comparison` to see which is which.
+	UnknownCount *int `form:"unknown_count,omitempty" json:"unknown_count,omitempty" xml:"unknown_count,omitempty"`
+}
+
 // GetBriefMetricsResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body.
@@ -1438,6 +1469,79 @@ type GetCampaignMetricsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetCampaignSettingsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetCampaignSettingsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignSettingsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "Conflict" error.
+type GetCampaignSettingsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetCampaignSettingsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetCampaignSettingsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignSettingsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetCampaignSettingsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignSettingsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "NotFound" error.
+type GetCampaignSettingsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignSettingsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetCampaignSettingsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignSettingsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetCampaignSettingsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetBriefMetricsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -2053,6 +2157,48 @@ type EmailMetricsResponseBody struct {
 	Bounces *int64 `form:"bounces,omitempty" json:"bounces,omitempty" xml:"bounces,omitempty"`
 	// Unsubscribes, to date
 	Unsubscribes *int64 `form:"unsubscribes,omitempty" json:"unsubscribes,omitempty" xml:"unsubscribes,omitempty"`
+}
+
+// CampaignSettingsFieldResponseBody is used to define fields on response body
+// types.
+type CampaignSettingsFieldResponseBody struct {
+	// The setting's name in this service's own stable vocabulary rather than the
+	// platform's field names. Several names do coincide with a campaign-row
+	// column, but the vocabulary is NOT a column list and must not be read as one:
+	// `advertising_channel_type` has no column and is recovered from the
+	// campaign's config snapshot, and the upstream-only names below have no
+	// recorded side at all. On Google Ads the COMPARED settings are
+	// `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`,
+	// `start_date` and `end_date`. `budget_delivery_method`,
+	// `budget_explicitly_shared` and `bidding_strategy_type` are reported
+	// UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an
+	// `unknown` verdict, because nothing this service records expresses them.
+	// `status` is also reported with no `recorded` counterpart, but for a
+	// DIFFERENT reason: the campaign row DOES record a `status`, and it is
+	// deliberately never compared because the two are different axes. The column
+	// carries this service's own lifecycle vocabulary — mostly provisioning state
+	// (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes
+	// a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery
+	// state, so comparing them would report a permanent, meaningless divergence on
+	// nearly every campaign. The upstream value is still reported so an operator
+	// can see that a campaign is paused upstream. `advertising_channel_type` is
+	// compared rather than upstream-only because the dispatch config's channel IS
+	// persisted in the campaign's config snapshot; it still reads `unknown` on a
+	// legacy row that carries no snapshot, but for the ordinary reason that
+	// nothing was recorded there — not because the field has no recorded side. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
+	Field *string `form:"field,omitempty" json:"field,omitempty" xml:"field,omitempty"`
+	// What the campaign row records — what this dispatch ASKED FOR. Absent when
+	// the row records nothing for this field.
+	Recorded *string `form:"recorded,omitempty" json:"recorded,omitempty" xml:"recorded,omitempty"`
+	// What the platform currently holds, read live. Absent when the platform did
+	// not return the field — never a zero standing in for one.
+	Upstream *string `form:"upstream,omitempty" json:"upstream,omitempty" xml:"upstream,omitempty"`
+	// The verdict. `match` and `diverged` both require BOTH sides to have been
+	// read; `unknown` means the comparison could not be made and is deliberately
+	// NOT folded into `match`.
+	Comparison *string `form:"comparison,omitempty" json:"comparison,omitempty" xml:"comparison,omitempty"`
 }
 
 // BriefMetricsRowResponseBody is used to define fields on response body types.
@@ -3562,6 +3708,112 @@ func NewGetCampaignMetricsUnauthorized(body *GetCampaignMetricsUnauthorizedRespo
 	return v
 }
 
+// NewGetCampaignSettingsCampaignSettingsReadbackOK builds a
+// "lfx-v2-campaign-service-briefs" service "get-campaign-settings" endpoint
+// result from a HTTP "OK" response.
+func NewGetCampaignSettingsCampaignSettingsReadbackOK(body *GetCampaignSettingsResponseBody) *lfxv2campaignservicebriefs.CampaignSettingsReadback {
+	v := &lfxv2campaignservicebriefs.CampaignSettingsReadback{
+		CampaignID:         *body.CampaignID,
+		PlatformCampaignID: *body.PlatformCampaignID,
+		Platform:           *body.Platform,
+		ReadAt:             *body.ReadAt,
+		DivergedCount:      *body.DivergedCount,
+		UnknownCount:       *body.UnknownCount,
+	}
+	v.Fields = make([]*lfxv2campaignservicebriefs.CampaignSettingsField, len(body.Fields))
+	for i, val := range body.Fields {
+		if val == nil {
+			v.Fields[i] = nil
+			continue
+		}
+		v.Fields[i] = unmarshalCampaignSettingsFieldResponseBodyToLfxv2campaignservicebriefsCampaignSettingsField(val)
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsBadRequest builds a lfx-v2-campaign-service-briefs
+// service get-campaign-settings endpoint BadRequest error.
+func NewGetCampaignSettingsBadRequest(body *GetCampaignSettingsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsConflict builds a lfx-v2-campaign-service-briefs
+// service get-campaign-settings endpoint Conflict error.
+func NewGetCampaignSettingsConflict(body *GetCampaignSettingsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service get-campaign-settings endpoint
+// ServiceUnavailable error.
+func NewGetCampaignSettingsServiceUnavailable(body *GetCampaignSettingsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsInternalServerError builds a
+// lfx-v2-campaign-service-briefs service get-campaign-settings endpoint
+// InternalServerError error.
+func NewGetCampaignSettingsInternalServerError(body *GetCampaignSettingsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsNotFound builds a lfx-v2-campaign-service-briefs
+// service get-campaign-settings endpoint NotFound error.
+func NewGetCampaignSettingsNotFound(body *GetCampaignSettingsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service get-campaign-settings endpoint
+// PayloadTooLarge error.
+func NewGetCampaignSettingsPayloadTooLarge(body *GetCampaignSettingsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignSettingsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service get-campaign-settings endpoint Unauthorized error.
+func NewGetCampaignSettingsUnauthorized(body *GetCampaignSettingsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetBriefMetricsBriefMetricsOK builds a "lfx-v2-campaign-service-briefs"
 // service "get-brief-metrics" endpoint result from a HTTP "OK" response.
 func NewGetBriefMetricsBriefMetricsOK(body *GetBriefMetricsResponseBody) *lfxv2campaignservicebriefs.BriefMetrics {
@@ -4677,6 +4929,43 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	if body.Email != nil {
 		if err2 := ValidateEmailMetricsResponseBody(body.Email); err2 != nil {
 			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsResponseBody runs the validations defined on
+// Get-Campaign-SettingsResponseBody
+func ValidateGetCampaignSettingsResponseBody(body *GetCampaignSettingsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.ReadAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("read_at", "body"))
+	}
+	if body.Fields == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fields", "body"))
+	}
+	if body.DivergedCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("diverged_count", "body"))
+	}
+	if body.UnknownCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unknown_count", "body"))
+	}
+	if body.ReadAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.read_at", *body.ReadAt, goa.FormatDateTime))
+	}
+	for _, e := range body.Fields {
+		if e != nil {
+			if err2 := ValidateCampaignSettingsFieldResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return
@@ -5977,6 +6266,96 @@ func ValidateGetCampaignMetricsUnauthorizedResponseBody(body *GetCampaignMetrics
 	return
 }
 
+// ValidateGetCampaignSettingsBadRequestResponseBody runs the validations
+// defined on get-campaign-settings_BadRequest_response_body
+func ValidateGetCampaignSettingsBadRequestResponseBody(body *GetCampaignSettingsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsConflictResponseBody runs the validations defined
+// on get-campaign-settings_Conflict_response_body
+func ValidateGetCampaignSettingsConflictResponseBody(body *GetCampaignSettingsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsServiceUnavailableResponseBody runs the
+// validations defined on get-campaign-settings_ServiceUnavailable_response_body
+func ValidateGetCampaignSettingsServiceUnavailableResponseBody(body *GetCampaignSettingsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsInternalServerErrorResponseBody runs the
+// validations defined on
+// get-campaign-settings_InternalServerError_response_body
+func ValidateGetCampaignSettingsInternalServerErrorResponseBody(body *GetCampaignSettingsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsNotFoundResponseBody runs the validations defined
+// on get-campaign-settings_NotFound_response_body
+func ValidateGetCampaignSettingsNotFoundResponseBody(body *GetCampaignSettingsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsPayloadTooLargeResponseBody runs the validations
+// defined on get-campaign-settings_PayloadTooLarge_response_body
+func ValidateGetCampaignSettingsPayloadTooLargeResponseBody(body *GetCampaignSettingsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignSettingsUnauthorizedResponseBody runs the validations
+// defined on get-campaign-settings_Unauthorized_response_body
+func ValidateGetCampaignSettingsUnauthorizedResponseBody(body *GetCampaignSettingsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetBriefMetricsBadRequestResponseBody runs the validations defined
 // on get-brief-metrics_BadRequest_response_body
 func ValidateGetBriefMetricsBadRequestResponseBody(body *GetBriefMetricsBadRequestResponseBody) (err error) {
@@ -6726,6 +7105,23 @@ func ValidateEmailMetricsResponseBody(body *EmailMetricsResponseBody) (err error
 	}
 	if body.Unsubscribes == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("unsubscribes", "body"))
+	}
+	return
+}
+
+// ValidateCampaignSettingsFieldResponseBody runs the validations defined on
+// campaign-settings-fieldResponseBody
+func ValidateCampaignSettingsFieldResponseBody(body *CampaignSettingsFieldResponseBody) (err error) {
+	if body.Field == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("field", "body"))
+	}
+	if body.Comparison == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("comparison", "body"))
+	}
+	if body.Comparison != nil {
+		if !(*body.Comparison == "match" || *body.Comparison == "diverged" || *body.Comparison == "unknown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.comparison", *body.Comparison, []any{"match", "diverged", "unknown"}))
+		}
 	}
 	return
 }

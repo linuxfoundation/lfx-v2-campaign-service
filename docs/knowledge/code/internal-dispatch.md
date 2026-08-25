@@ -281,6 +281,237 @@ section: [reddit](internal-platform-reddit.md), [linkedin](internal-platform-lin
 platform wiring or changing its toggle behavior would otherwise mean editing
 this shared file too.
 
+## Settings readback (optional capability, LFXV2-3067)
+
+`SettingsReader` — `ReadSettings(ctx, projectID, platform, campaign *model.Campaign)
+(*model.CampaignSettingsReadback, error)` — reads a campaign's live configuration and
+compares it against what the campaign row recorded. Discovered by the same type assertion
+`MetricsReader` uses; a dispatcher without it yields
+`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads is the only implementation**
+today; the capability is wired per platform, and a dispatcher without it is a 400 rather
+than a silent empty readback.
+
+**Read-only in two senses, both load-bearing.** It issues no mutating call upstream, and it
+never writes back onto the campaign row. `budget_amount`/`budget_type`/`config_snapshot`
+record what a dispatch ASKED FOR; overwriting them with an observation would change their
+meaning from request to observation, break shape-consistency with every sibling adapter's
+rows, and let one transient bad read destroy the only record of the request. Divergence is
+information an operator acts on, not state this service reconciles.
+
+**The comparison is per field, and `unknown` is never folded into `match`.**
+`model.CompareSettingsField` is the single place the rule lives: `match` and `diverged` both
+require BOTH sides to have been read, so an absent side always yields `unknown`. Reporting a
+field nobody could read as a match would be a fabricated "they match" — agreement asserted
+from an observation that never happened.
+
+The Google Ads adapter compares `budget_amount`, `budget_type`, `campaign_name`,
+`advertising_channel_type`, `start_date` and `end_date`, and reports four settings
+**upstream-only** — `status`, `budget_delivery_method`, `budget_explicitly_shared` and
+`bidding_strategy_type`. Those four share a verdict but NOT a reason, and collapsing the two
+reasons into one is the mistake to avoid here. Nothing in a Google Ads dispatch config can
+express `budget_delivery_method`, `budget_explicitly_shared` or `bidding_strategy_type`, so
+those three have no recorded side at all; they are reported anyway because a budget that
+reads as expected while being `ACCELERATED` or shared across campaigns is exactly the state
+that explains a spend anomaly the compared fields cannot. **`status` is upstream-only for an
+entirely different reason: the campaign row HAS a `status` column.** It carries this
+service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`,
+`created_degraded`, `deleted`) and only sometimes a run state set by the status toggle —
+while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state. The two are different
+axes, exactly as `model.PlatformCampaignRef` documents, so comparing them would report a
+permanent, meaningless divergence on nearly every campaign. Writing "no column expresses it"
+here would be false, and would also imply that adding a column is the fix — it is not.
+
+**`advertising_channel_type` is COMPARED, not upstream-only, and that distinction is easy to
+get wrong** — it looks like the other platform observations and it is the only compared field
+whose recorded side comes from `config_snapshot` rather than from a column.
+`googleAdsConfig.Channel` is marshalled whole into `ConfigSnapshot` by `applyCampaignConfig`
+on both the create and the adoption path, so the row DOES record which channel was asked for.
+`googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
+`search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
+field existed), `demand-gen` maps to `DEMAND_GEN`. A campaign recorded as demand-gen and
+running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
+side made it permanently `unknown` — the finding could not be produced at all. The recorded
+side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
+a row with no snapshot, a snapshot that is not a JSON object, an object carrying no `"channel"`
+key at all (so not one `applyCampaignConfig` wrote — see the recognisability rule below), a
+`"channel"` that is not a JSON string, or a channel outside the closed set this service
+creates. Claiming `diverged` from a recorded value this
+code cannot interpret would be a fabricated finding rather than an observed one. The
+`campaign-settings-field` description in `design/brief.go` enumerates that compared list, so
+moving a field between compared and upstream-only is a CONTRACT change: the description is
+copied verbatim into the generated clients and into both OpenAPI copies, and a stale one
+keeps telling every consumer the field can only ever read `unknown`. Re-run `make apigen` and
+commit `gen/` plus `cmd/campaign-service/kodata/gen/http/openapi*` with the design edit.
+The count of permanently-unknown fields is a RANGE, not a constant — six on a row whose
+snapshot records a channel, seven on a legacy row without one — precisely because this field's
+recorded side depends on the snapshot; any prose stating one number is wrong for the other row. Flight dates
+are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
+returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings
+would report a divergence for every campaign that actually agrees. The parse is STRICT and a
+value that fails it yields an ABSENT upstream side rather than the raw string: a bare
+`2026-08-01` with the documented time component missing is byte-identical to the recorded
+side's own `YYYY-MM-DD` rendering, so passing it through reported `match` for a value the
+code could not validate. The recorded side of both
+dates is always NULL for Google Ads today — its config carries no dates — so they read
+`unknown` rather than diverged; they are wired through the comparison anyway so a future
+config that populates them starts diverging without anyone having to remember. It also
+translates Google's `campaign_budget.period` into `model.BudgetType` via
+`googleAdsBudgetTypeFromPeriod` — `DAILY` -> `daily`, `CUSTOM_PERIOD` -> `lifetime` (Google
+has no `LIFETIME` value), and `UNKNOWN`/anything else -> unmapped, which fails closed to an
+`unknown` verdict rather than manufacturing one.
+
+**Budget amounts are rendered to two decimals ONLY when the upstream value is a whole number
+of cents.** `googleAdsUpstreamBudgetAmount` is where the two sides are made comparable, and it
+deliberately does not run one uniform format over both. The row's column is `NUMERIC(14,2)`,
+so two decimals is the right rendering for a whole-cent budget and is what stops a row holding
+`500` and a platform holding `500.00` from being reported as diverging. A SUB-CENT upstream
+budget is the exception, and it is the whole point of that function's care: rounding an
+upstream `10.004` to `"10.00"` would make it compare EQUAL to a recorded `10.00` and report
+`match` for two budgets that genuinely differ. Sub-cent micros are therefore rendered at FULL
+precision, so they can only ever read as a divergence.
+
+**The PERIOD selects which budget amount is read, and an unnamed period reads none.**
+Google's two amount fields are different quantities — `amount_micros` is a DAILY rate,
+`total_amount_micros` a whole-flight CAP — so `googleAdsUpstreamBudgetAmount` picks by
+`BudgetPeriod` rather than by whichever field happens to be present. Taking "whichever is
+there" is not a reading of the budget but a guess at which question the number answers: a
+campaign recorded as a daily `500` against an upstream row carrying only
+`total_amount_micros=500000000` and NO period reported `match`, though a 500/day rate and a
+500 lifetime cap are different budgets and the equal digits were a coincidence of the units.
+
+The gate reuses `googleAdsBudgetTypeFromPeriod`, so one period cannot name a budget type for
+that field while failing to select an amount for this one, and it inherits that function's
+fail-closed default: an absent, `UNKNOWN`/`UNSPECIFIED`, or padded `" DAILY "` period selects
+nothing and the field reads `unknown`.
+
+**The client relies on this half being here.** `GetCampaignSettings` refuses an amount that
+contradicts a NAMED period, and deliberately passes an ABSENT one, because absence means
+"Google did not report this field" across all of `CampaignSettings` — pinned by
+`TestGetCampaignSettings_UnreadableFieldIsAbsentNotZero` — and cannot start signalling
+"inconsistent pair" without breaking that meaning everywhere else. Its comment states that the
+partial pair is safe to pass on precisely because the dispatcher yields `unknown`. That was a
+claim about behaviour the dispatcher did not yet have; the gate is what makes it true.
+
+**A REMOVED campaign must be REPORTED, and getting that requires an explicit status
+predicate.** GAQL excludes removed resources by default unless the filter names `REMOVED`, so
+a `FROM campaign WHERE campaign.id = N` query with no status clause silently returns nothing
+for a removed campaign — which `GetCampaignSettings` reads as a clean absence `(nil, nil)`,
+the dispatcher turns into `ErrPlatformCampaignAbsent`, and the API turns into a 404. That
+hides the most actionable divergence this endpoint has. The query names `ENABLED`, `PAUSED`
+and `REMOVED` explicitly; there is no "no filter" that includes removed rows. This is the
+inverse of `campaign_lookup.go`, which excludes them with `status != 'REMOVED'` so a
+tombstone cannot be adopted. Note that a stub-server test cannot catch a regression here: the
+stub returns whatever rows the test handed it and performs no filtering, so only the query
+TEXT can be asserted.
+
+**Decoding normalises absence, never the value.** `blankToNil` in `campaign_settings.go`
+maps a whitespace-only optional field to nil — a blank status or channel type is not a value a
+caller can interpret, and comparing `""` against a recorded value would report a divergence
+the platform never showed. It does NOT trim the value it keeps, and that half is the one
+that is easy to get wrong: it runs BEFORE every consumer that validates these strings, so
+trimming would hand them a well-formed value the platform never sent. `googleAdsDateOnly`
+parses with a strict layout and WITHHOLDS an unparseable value, returning nil so the field
+carries an `unknown` verdict; were it to pass the value through whole, an upstream
+`"2026-08-01 "` trimmed to `"2026-08-01"` would become byte-equal to a recorded `YYYY-MM-DD`
+and report `match` for a value that never parsed. `googleAdsBudgetTypeFromPeriod` has the same
+shape with `" DAILY "`. Normalisation upstream of validation manufactures exactly the
+agreement this readback exists to make impossible. Tests that call those helpers with a
+literal cannot catch it — they never exercise the decode step — so the guard is pinned at the
+client layer instead.
+
+**The consumers have to agree with that, and one of them did not.** Stopping the trim in
+`blankToNil` only buys anything if the code it feeds then declines to name the malformed
+value. `googleAdsBudgetTypeFromPeriod` was itself calling `strings.TrimSpace` on the period
+before matching, which reconstructed the well-formed `DAILY` the platform never sent and
+reported `match` against a recorded daily budget — reintroducing, one layer down, the exact
+fabrication the client-side change had just removed. It now matches the EXACT `DAILY` /
+`CUSTOM_PERIOD` spellings, so a padded value takes the same fail-closed path as `UNKNOWN`:
+absent upstream side, `unknown` verdict. `googleAdsDateOnly` now enforces the same
+discipline for dates, returning nil rather than the unparsed string — a passthrough is only
+safe where the raw value cannot share a spelling with the side it is compared against, and a
+date-only value shares it exactly. The general rule: when a decode step stops normalising so that
+malformed input stays malformed, every consumer downstream of it must be checked for a trim
+of its own — a single one is enough to undo the guarantee for its field.
+
+**And the RECORDED side is a consumer too.** The rule above was applied only downstream of the
+upstream decode, so `campaign_name` kept the same defect on the other side of the comparison:
+`recordedName` was built as `strPtr(strings.TrimSpace(campaign.CampaignName))` while
+`settings.Name` was carried verbatim, so a row holding `" name "` compared EQUAL to an
+upstream `"name"` and reported `match`. That row is reachable rather than theoretical —
+`UpdateCampaign` assigns `p.Campaign.CampaignName` verbatim with no whitespace validation in
+the service layer, in `design/`, or on the column.
+
+`TrimSpace` still has a job on the recorded side, and only one: DETECTING an all-blank legacy
+value, which means the row never captured a name and must read `unknown` rather than diverge
+against a real upstream one. The distinction to hold is **detect versus produce** — trim to
+decide whether a value exists, never to build the value you compare. Deleting the trim
+outright would swap one fabricated verdict for another, turning every blank column into a
+divergence. A test proving this needs PADDED recorded values: trimming a string with no
+surrounding whitespace is the identity, so an unpadded fixture passes against the bug.
+
+Symmetry is the actual invariant, not "never normalise". `budget_amount` runs both sides
+through the same numeric formatter, and `advertising_channel_type` trims and lowercases the
+recorded value onto a FIXED constant (`"SEARCH"`, `"DEMAND_GEN"`) rather than onto
+caller-derived text — neither can manufacture agreement. What must not happen is a
+normalisation applied to one side of a string comparison only.
+
+**A default may only be applied over the population it was reasoned about.**
+`googleAdsRecordedChannelType` decoded the snapshot into `googleAdsConfig`, whose
+`Channel string` cannot distinguish an omitted key, an explicit `"channel": null`, and a
+config object carrying no Google Ads fields at all: all three decode to `""` and all three
+were reported as a recorded `SEARCH`. Only the first is the legacy caller the default exists
+for, and `UpdateCampaign` persists arbitrary caller-supplied `config` JSON, so the other two
+arrive from an untrusted request — a fabricated match or divergence against a value nobody
+recorded, breaking the "both sides were read" rule.
+
+Recognisability is now decided BEFORE the default, on a property this adapter guarantees:
+`applyCampaignConfig` marshals the `googleAdsConfig` STRUCT VALUE whole and no field carries
+`omitempty`, so a snapshot this adapter wrote ALWAYS contains the `"channel"` key even when
+its value is `""`. Presence of the key is therefore equivalent to "written by this adapter".
+The snapshot is decoded into `map[string]json.RawMessage` first, because decoding straight
+into the struct is what collapses the three cases; a missing key, a value that is not a JSON
+string, and an explicit `null` each yield `nil`/`unknown`. **Absence still means exactly what
+it meant before**: the default was never "an empty string means Search", it was "a caller
+predating the field means Search", and such a caller's row was written by
+`applyCampaignConfig` and so HAS the key with an empty value. Those rows still read `SEARCH`.
+
+One trap worth recording: `json.Unmarshal` of `null` into a `string` SUCCEEDS in Go and leaves
+the zero value, so a decode error alone does not catch an explicit null — it needs its own
+check before the decode. That gap survived the first version of this fix and was caught only
+because the test table enumerated `null` separately from the wrong-typed values.
+
+**`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
+lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see
+`model.PlatformCampaignRef`). Comparing them would report a permanent, meaningless
+divergence on every campaign. The upstream value is carried with no recorded counterpart, so
+an operator can still SEE that a campaign is paused upstream.
+
+It enforces the account-identity invariant `ReadMetrics` does, and it matters more
+here: reading the stored id under a re-pointed connection could return ANOTHER campaign's
+configuration, which this endpoint would then report as a divergence of THIS campaign. An
+upstream campaign that no longer exists surfaces as `domain.ErrPlatformCampaignAbsent` (404)
+rather than an all-`unknown` readback, which would say "we could not read these" when the
+truth is far more specific.
+
+It enforces that invariant in TWO arms, and STRICTER than `ReadMetrics`/`ToggleStatus` do
+(LFXV2-3067). Absent provenance FAILS CLOSED rather than being waved through: a row recording
+no creating customer is not a row that MATCHES the current connection, it is a row nothing has
+established anything about, and `created != "" && created != current` read that absence as a
+match. Because Google Ads is the ONLY `SettingsReader`, that fallthrough also made the
+handler's documented `ErrCampaignProvenanceUnknown` 409 arm unreachable — a documented error
+nothing could produce. The empty case now returns
+`errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch)`, joined
+so existing `errors.Is(err, ErrCampaignAccountMismatch)` callers keep matching, and the
+RECORDED-but-different arm is retained unchanged beside it: the two have different remedies
+(re-dispatch versus reconnect the original account), and both are load-bearing. Checked BEFORE
+the client is consulted, for the reason `hubSpotCreationPortalID` records — absent provenance
+is a purely LOCAL fact, and no answer the platform could give would change it.
+
+The stricter posture is deliberate rather than an inconsistency: this endpoint's whole purpose
+is to report a comparison, so a confidently wrong report about another account's campaign is
+the precise outcome it exists to prevent, whereas the toggle and metrics paths weigh that risk
+against serving legacy rows at all.
+
 ## Metrics read (optional capability)
 
 `MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —

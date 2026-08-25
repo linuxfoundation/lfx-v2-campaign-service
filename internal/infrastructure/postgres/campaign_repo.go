@@ -915,7 +915,7 @@ type campaignLock struct {
 //
 // Contention on the SAME campaign costs nothing extra, and that is the point of the try-lock:
 // a loser returns its connection before it does any waiting, so a hot campaign cannot pile up
-// waiters each pinning a slot for the length of someone else'"'"'s platform call. The bound on pool
+// waiters each pinning a slot for the length of someone else's platform call. The bound on pool
 // consumption is therefore the number of campaigns being written concurrently, not the number
 // of in-flight requests.
 //

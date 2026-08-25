@@ -52,8 +52,10 @@ func TestLiveListProjectPlatformCampaignIDsIsTenantScoped(t *testing.T) {
 			t.Fatalf("seed brief for %s: %v", project, err)
 		}
 		t.Cleanup(func() {
-			_, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE brief_id=$1`, id)
-			if _, err := pool.Exec(context.Background(), `DELETE FROM campaign_briefs WHERE id=$1`, id); err != nil {
+			cleanupCtx, cancel := dbtest.CleanupContext()
+			defer cancel()
+			_, _ = pool.Exec(cleanupCtx, `DELETE FROM campaigns WHERE brief_id=$1`, id)
+			if _, err := pool.Exec(cleanupCtx, `DELETE FROM campaign_briefs WHERE id=$1`, id); err != nil {
 				t.Errorf("clean up brief %s: %v", id, err)
 			}
 		})

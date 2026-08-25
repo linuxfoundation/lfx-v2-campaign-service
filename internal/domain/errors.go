@@ -63,6 +63,18 @@ var (
 	// importing the orchestration layer.
 	ErrMetricsUnsupported = errors.New("metrics reads are not supported for this platform")
 
+	// ErrSettingsReadbackUnsupported indicates the campaign's platform has no
+	// settings-readback capability wired (no dispatcher, or the dispatcher is not a
+	// SettingsReader). The platform is never contacted. Maps to 400, exactly as
+	// ErrMetricsUnsupported and ErrAdoptionUnsupported do for their capabilities, and it
+	// lives here for the same reason: a platform dispatcher can return it directly without
+	// importing the orchestration layer.
+	//
+	// Google Ads is the only platform that implements the capability today. That is not a
+	// gap left open by accident: it is the platform whose campaigns this service reads back,
+	// and the capability is added per platform as each one's readback is wired.
+	ErrSettingsReadbackUnsupported = errors.New("settings readback is not supported for this platform")
+
 	// ErrMetricsWindowUnsupported indicates the requested window is one of the seven
 	// closed model.MetricsWindow values but this platform's MetricsReader does not
 	// support it (e.g. X Ads caps windows at 7 days and rejects last_30_days). This is

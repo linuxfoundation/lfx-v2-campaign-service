@@ -2066,6 +2066,54 @@ func TestMeta_DispatchBadAssetRefusesBeforeAnySpend(t *testing.T) {
 	}
 }
 
+// TestMeta_ZeroByteAssetRefusedOnItsBytesNotOnCapacity pins the message a zero-byte asset
+// produces WITH AN AGGREGATE RESERVER BOUND, which is the only configuration where the
+// reservation can answer first.
+//
+// The sibling table case ("asset resolves with no stored bytes") binds no reserver, so
+// AssetReserver.reserve takes its `a == nil` short-circuit and returns true without ever
+// pricing the asset. That arm therefore reached the empty-bytes guard for a reason
+// production does not share: registerDispatchers always binds a reserver. With one bound,
+// GetAssetSize prices the row at 0 and `want <= 0` refused the reservation, so
+// resolveVariantAssets returned the RETRYABLE capacity error and the empty-bytes guard
+// below it was unreachable.
+//
+// The distinction is not cosmetic. A zero-byte row is a permanent data defect; telling a
+// caller to "retry when other dispatches finish" invites it to retry something that can
+// never succeed, and hides the actual fault. This asserts the accurate message and, just
+// as importantly, that the capacity wording is ABSENT.
+func TestMeta_ZeroByteAssetRefusedOnItsBytesNotOnCapacity(t *testing.T) {
+	const validUUID = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+
+	var mutations int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			atomic.AddInt32(&mutations, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	// A zero-length Bytes makes the fake price the asset at 0, exactly as a row whose
+	// byte_size is 0 would.
+	d.SetCreativeAssetRepo(&fakeCreativeAssets{asset: &model.CreativeAsset{MimeType: model.MimeTypePNG}})
+	// The budget is ample: nothing here is a genuine capacity shortage, so any capacity
+	// wording in the result is necessarily the zero-size path masquerading as one.
+	d.SetAssetReserver(NewAssetReserver(maxVariantAssetBytes, 0))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, metaConfigWithVariant(`"imageAssetId":"`+validUUID+`"`))
+	assertPreSpendRefusal(t, camp, err, atomic.LoadInt32(&mutations), "no stored image bytes")
+	if strings.Contains(err.Error(), "exceeds the memory concurrently available") {
+		t.Fatalf("zero-byte asset reported as a retryable capacity shortage, not as a data defect: %v", err)
+	}
+}
+
 // TestMeta_DispatchResolvesAssetToImageHash is the by-STORED-BYTES happy path, end to
 // end through Dispatch: an imageAssetId is resolved to bytes, uploaded to /adimages,
 // and the returned hash lands on the creative as link_data.image_hash — with NO
