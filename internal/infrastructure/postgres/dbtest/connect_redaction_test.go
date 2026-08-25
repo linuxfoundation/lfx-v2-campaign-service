@@ -40,26 +40,29 @@ import (
 // may freely modify", so a developer may legitimately point it at that address and the
 // wrong-reason pass returns silently.
 //
-// The probe host is therefore one that CANNOT also be the harness's. A DSN whose host is an
-// .invalid name (RFC 2606 reserves the TLD as permanently non-resolvable) can never be a
-// working TEST_DATABASE_URL, because a database no one can resolve is not a database any
-// live test could have run against. So the host comparison cannot fire on a shared value --
-// no valid harness DSN shares this host -- and the assertion necessarily turns on the
-// user/password/database comparison it is about.
+// The probe host is therefore one that cannot be a WORKING harness host: an .invalid name
+// (RFC 2606 reserves the TLD as permanently non-resolvable). But an unresolvable host only
+// rules out a harness that WORKS -- it does not stop TEST_DATABASE_URL from being set to
+// anything at all, and it does nothing about the other three compared fields. A harness
+// legitimately using the user `probeuser`, or the database `probedb`, still makes a
+// regression to SafeDSNErr withhold on that shared field and pass for the wrong reason.
+// Verified: with the fix reverted and TEST_DATABASE_URL pointed at a real database owned by
+// `probeuser`, this test passed; likewise for a database named `probedb`.
+//
+// So the environment is PINNED here rather than dodged. t.Setenv puts a value under this
+// test's control that shares nothing with the probe, which removes the environment from the
+// question entirely instead of arguing about which values it could plausibly hold.
+//
+// That costs t.Parallel, and costs nothing else: Go runs top-level parallel tests only after
+// every serial test has finished, so this test's Setenv window cannot overlap the parallel
+// readers of DSN() -- measured at zero overlaps, and the reason
+// TestSafeDSNErrReadsTheConfiguredDSN uses the same pattern. Earlier comments in this branch
+// claimed such a window was a race; it is not, and that claim has been retired everywhere.
 //
 // assertUnrelatedDSNKeepsIt below closes the remaining half. The loop above only shows that
 // SOMETHING withheld the identifiers; it cannot show WHICH DSN was compared. Rendering the
 // same error against an unrelated pinned DSN must NOT withhold it -- if both withhold, the
 // first result carries no information about the redactor's argument.
-//
-// The residual case, stated rather than glossed: if TEST_DATABASE_URL were set to this
-// probe's OWN identifiers, the environment comparison would withhold and the mutation would
-// survive again. That value cannot arise from a working harness -- an .invalid host does not
-// resolve, so no live test in this package could ever have run against it -- but it is a
-// limit of the instrument, not something the instrument rules out. Verified by mutation:
-// with SafeDSNErr restored, this test fails under an unset TEST_DATABASE_URL, under CI's
-// 127.0.0.1 value, and under a 127.0.0.2 value; it passes only under that self-referential
-// DSN.
 //
 // Serializing the test and calling t.Setenv is a worse remedy than pinning the host, though
 // not an unsafe one -- and an earlier version of this comment overstated that. Go runs
@@ -69,7 +72,14 @@ import (
 // run in parallel, to re-introduce the one process-global input SafeDSNErrFor was added to
 // remove. Pinning the host keeps both the parallelism and the independence.
 func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel: t.Setenv forbids it, and pinning the environment is what makes this
+	// test independent of whatever TEST_DATABASE_URL happens to hold. See the note above
+	// on why the serial window is safe rather than a race.
+	//
+	// Every field here is disjoint from the probe's, so no comparison against the
+	// environment can withhold the probe's identifiers by accident.
+	t.Setenv(EnvDatabaseURL,
+		"postgres://harnessuser:harnesspw@harness.invalid:5432/harnessdb?sslmode=disable") // secretlint-disable-line -- synthetic pinned harness DSN
 
 	const (
 		user     = "probeuser"

@@ -1187,10 +1187,21 @@ green with the fix reverted. Picking an unusual loopback address does not settle
 harness contract constrains `TEST_DATABASE_URL` no further than "a database this package may
 freely modify", so a developer may legitimately point it at that address.
 
-The probe host is therefore `dbtest-probe.invalid`. RFC 2606 reserves the TLD as permanently
-non-resolvable, so no WORKING harness DSN can share it. A second assertion renders the same
-error against an unrelated pinned DSN and requires the text to SURVIVE — if an unrelated DSN
-withheld it too, withholding would say nothing about which DSN the redactor was handed.
+The probe host is `dbtest-probe.invalid` (RFC 2606, permanently non-resolvable), but that
+alone was not enough and review caught why: an unresolvable host only rules out a harness that
+WORKS, and it says nothing about the other three compared fields. A harness legitimately using
+the user `probeuser` or the database `probedb` still made a reverted fix withhold on that
+shared field and pass for the wrong reason — verified by pointing `TEST_DATABASE_URL` at a real
+database owned by `probeuser`.
+
+So the test PINS `TEST_DATABASE_URL` with `t.Setenv` to a fixture sharing nothing with the
+probe. That removes the environment from the question rather than arguing about which values it
+could plausibly hold, and it retires the residual case this page previously recorded as a known
+limit. With the fix reverted the test now fails under every value tried: unset, a harness
+sharing the probe's user, one sharing its database, and the probe's own DSN verbatim.
+
+The cost is `t.Parallel`, and nothing else. Go runs top-level parallel tests only after every
+serial test finishes, so the `Setenv` window cannot overlap the parallel readers of `DSN()`.
 
 Serializing the test and calling `t.Setenv` is a worse remedy than pinning the host, though
 not an unsafe one — an earlier version of this page overstated it as a race. Go runs top-level

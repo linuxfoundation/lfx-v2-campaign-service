@@ -397,3 +397,30 @@ would cover none of it. Corrected in both comments and in the PR description.
 
 This is the same failure as the "exact probability" and "counts the cleanups" corrections: the
 code was right, and the sentence beside it assigned the credit to the wrong part.
+
+**Follow-up — two guards that still asked about spelling or hoped about the environment.**
+
+*Shadowing defeated the pairing check.* `dsnRoot` reduced identifiers to their NAME, so a
+handler shadowing the outer `dsn` with an unrelated value and calling `SafeDSNErrFor(dsn, err)`
+compared equal to the correct call and passed — the exact regression question 2 exists to pin.
+Reproduced before fixing. Identifiers are now keyed by their BINDING: `parser.ParseFile`
+resolves each to an `*ast.Object`, one per declaration, so two `dsn` identifiers from different
+declarations are distinguishable. `go/types` would answer the same question and needs the whole
+package loaded; the file's own syntax settles it. The same fix was needed for `migratorVars`,
+which keyed migrators by name — both functions here call theirs `m`, so `schemaAtVersion`'s
+overwrote the other's, and the display form had to be split from the comparison key so failure
+messages stay readable.
+
+That is the fourth spelling-based heuristic this guard has shed, after `bareErrArgs` on `err`,
+the line-window scans, and `liveDSNArg`. The lesson has needed relearning at every level of the
+walk: **ask what a value IS, never what it is called.**
+
+*The probe test hoped about the environment instead of controlling it.* Making the probe HOST
+unshareable ruled out a harness that works — but not the other three compared fields. A harness
+using the user `probeuser` or the database `probedb` still made a reverted fix pass for the
+wrong reason; verified against a real database owned by `probeuser`. The environment is now
+PINNED with `t.Setenv` to a fixture disjoint from the probe, which retires the residual case
+this branch had recorded as a known limit rather than defended. With the fix reverted the test
+fails under every value tried, including the probe's own DSN verbatim, which previously
+survived. The cost is `t.Parallel` and nothing else — the serial window cannot overlap the
+parallel readers, which is the same fact this branch spent four corrections establishing.

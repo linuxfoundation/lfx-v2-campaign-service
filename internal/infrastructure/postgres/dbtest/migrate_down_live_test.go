@@ -1716,6 +1716,28 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 
 	// migratorVars holds identifiers bound by newMigrator, so a method call on one counts
 	// as DSN-bearing without needing the DSN to appear at that call site.
+	// identKey names an identifier by its BINDING, not by its spelling.
+	//
+	// parser.ParseFile resolves each identifier to an *ast.Object -- one object per
+	// declaration -- so two `dsn` identifiers from different declarations get different
+	// objects. Keying on the object's address distinguishes them; keying on the name
+	// cannot, and that was a real hole: an error handler could shadow the outer `dsn`
+	// with an unrelated value and call SafeDSNErrFor(dsn, err), and both roots compared
+	// equal as "dsn" so the guard passed while redacting against the wrong DSN.
+	// Reproduced before this was added.
+	//
+	// go/types would also answer this, and it is the heavier instrument: it needs the
+	// package loaded and every import resolved, for a question this file's own syntax
+	// already settles. Falling back to the name when Obj is nil is deliberate --
+	// unresolved identifiers are package-level or imported, and those are not the shadow
+	// case.
+	identKey := func(x *ast.Ident) string {
+		if x.Obj != nil {
+			return fmt.Sprintf("%s#%p", x.Name, x.Obj)
+		}
+		return x.Name
+	}
+
 	// The DSN each migrator was BUILT from, kept alongside the variable rather than as a
 	// bare bool. A method call carries its DSN in the receiver, so there is no argument for
 	// dsnArgOf to read -- without this the pairing question saw an empty `want` and skipped
@@ -1733,7 +1755,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		}
 		if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
 			// newMigrator(t, dsn): the DSN is the last argument.
-			migratorVars[id.Name] = c.Args[len(c.Args)-1]
+			migratorVars[identKey(id)] = c.Args[len(c.Args)-1]
 		}
 		return true
 	})
@@ -1753,7 +1775,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 				// m.Up(), m.Version(), ... on a migrator built from a DSN.
 				if se, ok := c.Fun.(*ast.SelectorExpr); ok && migratorMethods[se.Sel.Name] {
 					if id, ok := se.X.(*ast.Ident); ok {
-						if _, isMigrator := migratorVars[id.Name]; isMigrator {
+						if _, isMigrator := migratorVars[identKey(id)]; isMigrator {
 							found = true
 						}
 					}
@@ -1862,7 +1884,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			// the DSN newMigrator was handed rather than any argument at this call.
 			if se, ok := c.Fun.(*ast.SelectorExpr); ok && migratorMethods[se.Sel.Name] {
 				if id, ok := se.X.(*ast.Ident); ok {
-					if built, isMigrator := migratorVars[id.Name]; isMigrator {
+					if built, isMigrator := migratorVars[identKey(id)]; isMigrator {
 						arg = built
 						found = true
 						return false
@@ -1899,11 +1921,22 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	// wrapped in a rewrite still names its source. migrateURL(t, dsn) -> dsn;
 	// dbtest.DSN() -> the sentinel below.
 	const envDSNSentinel = "\x00env"
+	// displayRoot renders a root key for a failure message. The "#0x..." suffix exists
+	// only to separate bindings; printing it would make the message unreadable.
+	displayRoot := func(root string) string {
+		if i := strings.Index(root, "#"); i >= 0 {
+			return root[:i]
+		}
+		if root == envDSNSentinel {
+			return "the environment DSN()"
+		}
+		return root
+	}
 	var dsnRoot func(ast.Expr) string
 	dsnRoot = func(e ast.Expr) string {
 		switch x := e.(type) {
 		case *ast.Ident:
-			return x.Name
+			return identKey(x)
 		case *ast.CallExpr:
 			if strings.HasSuffix(selName(x.Fun), ".DSN") || selName(x.Fun) == "DSN" {
 				return envDSNSentinel
@@ -1960,14 +1993,15 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			}
 			if name != dsnRedactor {
 				bad = append(bad, name+" (redacts against the environment DSN(), but the "+
-					"call used "+want+")")
+					"call used "+displayRoot(want)+")")
 				return true
 			}
 			if len(c.Args) == 0 {
 				return true
 			}
 			if got := dsnRoot(c.Args[0]); got != want {
-				bad = append(bad, name+" handed "+exprText(fset, c.Args[0])+", but the call used "+want)
+				bad = append(bad, name+" handed "+exprText(fset, c.Args[0])+
+					", but the call used "+displayRoot(want))
 			}
 			return true
 		})
@@ -2040,10 +2074,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 						}
 						for _, bad := range mispairedRedactors(call, want) {
 							pos := fset.Position(call.Pos())
-							shown := want
-							if shown == envDSNSentinel {
-								shown = "the environment DSN()"
-							}
+							shown := displayRoot(want)
 							t.Errorf("line %d redacts against the WRONG DSN: %s\n  %s\nthe "+
 								"call used %s, and an explicit DSN differs from the "+
 								"environment's (the scratch database name above all), so "+
