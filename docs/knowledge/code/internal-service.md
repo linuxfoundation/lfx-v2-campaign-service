@@ -237,6 +237,14 @@ ambiguous mutation to protect, so there is no UNCONFIRMED classification here. T
 bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
 fail fast rather than hold a request open).
 
+Every synchronous call timeout is bounded ABOVE by `constants.DefaultWriteTimeout` (60s), the
+server's write timeout: a platform call permitted to outlive it cannot have its result written
+to the response it was issued for. That relationship is what the timeout tests assert against —
+NOT the call-timeout constant itself. A test that brackets the observed deadline against the
+same constant the code reads proves only that the deadline was derived from it, and stays green
+when that constant is widened past the write timeout; the bound has to be pinned against the
+independent constant the contract is actually defined in terms of.
+
 The `window` query parameter is a closed, platform-agnostic vocabulary
 (`model.MetricsWindow`: `today`, `yesterday`, `last_7_days`, `last_14_days`,
 `last_30_days` [default], `this_month`, `last_month`) — never a platform's own dialect
@@ -461,10 +469,12 @@ The handler passes `brief.Version` down for the second, and answers the first ah
 What adoption does NOT buy is activation. On Google Ads the toggle refuses `ACTIVATE` unless the
 row carries the ad-group, ad and keyword-criterion ids that prove targeting was provisioned, and
 adoption records only the campaign it was asked about — it does not walk that campaign's
-children. So an adopted row supports metrics, delete and pause, and answers
-`ErrCampaignNotProvisioned` on activate. That is the guard working, not a gap in it: this service
-has not verified the campaign can deliver, and reporting a successful activation of something
-that cannot serve is exactly what the sentinel exists to prevent.
+children. Activation is the ONLY thing adoption withholds: to every other handler an adopted
+row is an ordinary campaign row, so the reads (metrics, settings readback), delete and pause
+all work on it unchanged, and only activate answers `ErrCampaignNotProvisioned`. That is the
+guard working, not a gap in it: this service has not verified the campaign can deliver, and
+reporting a successful activation of something that cannot serve is exactly what the sentinel
+exists to prevent.
 
 ## Account discovery
 
@@ -771,6 +781,68 @@ Draft emails are RETURNED with their `state`, for the same reason Meta returns d
 hiding the row the user is looking for answers "your portal has no such email" about an email
 sitting right there. Archived rows are a different case and are simply absent — HubSpot models
 archival as a separate flag rather than a lifecycle state, so no `state` value can describe them.
+
+## Campaign settings readback
+
+`BriefService.GetCampaignSettings` (backing `GET .../campaigns/{id}/settings`) reads the
+campaign's CURRENT configuration from the ad platform and reports where it diverges from what
+the campaign row recorded. Like the metrics read it is pure — nothing is persisted, so there is
+no `If-Match`/version — and like it, `Orchestrator.ReadCampaignSettings` type-asserts the
+platform's dispatcher for an optional capability at call time, so a platform with no readback
+wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads is
+the only platform wired today.
+
+**It never writes back onto the row, and that is the point.** The row records what a dispatch
+ASKED FOR; writing an observation into those columns would change their meaning from request to
+observation and let one transient bad read destroy the only record of the request. There is
+likewise no stored status and no polling: a status that goes stale is worse than none, so
+divergence is answered on demand.
+
+**The handler's error switch is ordered, and the ordering carries the meaning** — the same
+discipline as `GetCampaignMetrics` and `ToggleCampaignStatus`, whose arms it mirrors. Three
+places it deliberately differs from its siblings:
+
+- `ErrPlatformCampaignAbsent` is a **404**, kept off the 503 default: the platform answered and
+  holds no such campaign (deleted upstream, most likely), and 503 would invite retrying a read
+  that will keep succeeding at reporting nothing.
+- `ErrCampaignProvenanceUnknown` is a **409**, and this endpoint is STRICTER than the metrics
+  read and the toggle, which wave an unstamped row through. `ReadSettings` fails closed BEFORE
+  the platform call when the row records no creating customer. The reason is specific to what
+  this endpoint returns: a stored platform campaign id is unique only WITHIN a customer, so
+  querying it under an unverified account can, on an id collision, return ANOTHER account's
+  campaign — and the response would then report a divergence between this campaign's recorded
+  budget and a different campaign's actual one. A confidently wrong report about somebody
+  else's account is precisely what a readback must not produce. It is returned joined with
+  `ErrCampaignAccountMismatch` so existing mismatch callers keep matching while this handler's
+  dedicated arm tells the two apart — the remedies differ (a mismatch has an original account
+  to reconnect; unknown provenance has none, so the row must be re-dispatched).
+- `ErrSystemConnectionNotUsable` and `ErrSystemConnectionMissing` sit ABOVE the plain
+  `ErrNotFound` arm because `systemScoped` WRAPS rather than replaces: a broad match would win
+  and tell the caller to repair "this project's connection", which they do not have.
+
+Per-field verdicts come back as `match`, `diverged` or `unknown`. **Both `match` and `diverged`
+require BOTH sides to have been read** — a side that could not be read is ABSENT from the
+response, never zero-filled, and its verdict is `unknown`, because agreement asserted from an
+observation nobody made is a fabricated match. `diverged_count` and `unknown_count` are reported
+separately so "2 differ" is not read without "and 5 were not compared", and `unknown_count` is
+NOT a read-failure count: the upstream-only fields plus the flight dates are permanently
+`unknown` by construction, a constant floor a consumer cannot distinguish from a real failure.
+The per-field `comparison` is what says which is which. `status` is reported upstream-only and
+never compared — not for want of a column, since the campaign row has one, but because that
+column holds this service's own lifecycle status (largely provisioning state) while Google's
+`ENABLED`/`PAUSED`/`REMOVED` is delivery state. They are different axes, and comparing them
+would flag a permanent, meaningless divergence on nearly every campaign.
+
+Everything else defaults to 503, and that arm answers a MIXED population: pre-contact failures
+(a refused dial, a timeout, a 5xx) alongside every response-validation refusal in the client —
+more than one row for a unique id, an id filter Google did not honour, mutually exclusive budget
+amounts, a period contradicting its amount, an unparseable budget. In the second class the
+platform WAS reached and DID answer; the answer could not be trusted. The client message is
+therefore deliberately generic — the settings could not be read — because naming connectivity
+would send an operator to check a network and credentials that are all fine. The specific
+refusal is preserved where it can be acted on: it reaches the LOG via `safeErrSummary`, not the
+caller, who can act on neither. A retry is the right advice for both, since a contradictory
+response can be transient as easily as a timeout.
 
 ## Campaign delete
 
