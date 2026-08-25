@@ -17,7 +17,9 @@ import (
 // line item + promotable_users + tweet + promoted_tweets create/list endpoints a
 // happy-path CreateCampaign run touches, recording each request it sees so tests
 // can assert on what was (or was not) sent. handleTweet overrides the /tweet
-// response when non-nil; otherwise it returns a fixed id "tw1".
+// response when non-nil; otherwise it returns a fixed numeric id with its
+// matching id_str, mirroring the real Ads API's legacy v1.1-shaped tweet
+// object (a NUMERIC "id" — extractTweetID reads "id_str" instead).
 func newAuthorTweetTestServer(t *testing.T, handleTweet http.HandlerFunc, promotableUsers string) (*httptest.Server, *int32, *url.Values) {
 	t.Helper()
 	var tweetCalls int32
@@ -43,7 +45,7 @@ func newAuthorTweetTestServer(t *testing.T, handleTweet http.HandlerFunc, promot
 				handleTweet(w, r)
 				return
 			}
-			_, _ = w.Write([]byte(`{"data":{"id":"tw1"}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":123456789,"id_str":"123456789"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
 			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
 		default:
@@ -106,8 +108,8 @@ func TestCreateCampaign_AuthorsAndPromotesTweet(t *testing.T) {
 	if !strings.Contains(tweetParams.Get("text"), "https://events.lf.org/kubecon") {
 		t.Errorf("text param = %q, want the destination URL appended", tweetParams.Get("text"))
 	}
-	if res.AuthoredTweetID != "tw1" {
-		t.Errorf("AuthoredTweetID = %q, want \"tw1\"", res.AuthoredTweetID)
+	if res.AuthoredTweetID != "123456789" {
+		t.Errorf("AuthoredTweetID = %q, want \"123456789\"", res.AuthoredTweetID)
 	}
 	if res.PromotedTweetID != "pt1" {
 		t.Errorf("PromotedTweetID = %q, want \"pt1\" (fall-through into the existing promote step)", res.PromotedTweetID)
