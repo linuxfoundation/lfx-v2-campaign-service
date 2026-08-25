@@ -308,11 +308,19 @@ func safeAssetIDForError(id string) string {
 //
 // A bad asset must NOT fall through to a link-only ad: the caller asked for an image, and
 // silently creating an imageless ad would spend budget on a creative nobody approved.
-// It returns a RELEASE func the caller must call when the resolved bytes are no longer held.
-// The aggregate reservation is not released here: resolveVariantAssets hands the bytes back in
-// the variant slice and the Meta client POSTs them to /adimages later in the same dispatch, so
-// releasing at this function's return would free budget that is still occupied. The release is
-// always non-nil, including on the error paths, so `defer release()` at the call site is safe.
+// It returns a RELEASE func, always non-nil, so `defer release()` at the call site is safe on
+// every path.
+//
+// ON SUCCESS the reservation is NOT released here and the returned func owns it: the resolved
+// bytes are handed back in the variant slice and the Meta client POSTs them to /adimages later
+// in the same dispatch, so releasing at this function's return would free budget that is still
+// occupied.
+//
+// ON FAILURE — any error, and any panic — this function releases everything it reserved before
+// returning, and the returned func is a no-op. The caller therefore cannot leak by forgetting,
+// and a caller that defers unconditionally cannot double-release either (releaseAll is
+// idempotent). That asymmetry is deliberate: it used to be the caller's job on both paths, and
+// the result was a leak on every error arm.
 func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, func(), error) {
 	out := make([]meta.AdVariant, len(variants))
 	copy(out, variants)
@@ -341,15 +349,39 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 	// be released with exactly the weights it was acquired with — releasing a different total
 	// silently corrupts its accounting rather than failing.
 	//
-	// releaseAll is returned on EVERY error path as well as on success, so a dispatch that fails
-	// part-way through the loop hands back the budget it already took. Returning a no-op there
-	// would leak the reservation for the life of the process.
+	// THE RELEASE IS STRUCTURAL, not a thing each return statement must remember.
+	//
+	// The previous shape returned releaseAll from every arm and relied on the author of each
+	// return — and on the CALLER's defer — to hand it back. That leaked twice over: two arms
+	// returned a no-op instead, and the caller's `defer releaseAssets()` sat BELOW its error
+	// check, so it never ran on failure at all. Both are the same bug, which is that a
+	// correctness property was spread across every exit rather than expressed once.
+	//
+	// The defer below owns it instead. On ANY error return — including ones added later, and
+	// including a panic — it unwinds every reservation taken so far. On success it does nothing
+	// and the caller receives the releaser, because the resolved bytes outlive this call: they
+	// go back in the variant slice and the Meta client POSTs them to /adimages later in the same
+	// dispatch. That is the one case the caller must still own, and it is now the ONLY one.
 	var releases []func()
 	releaseAll := func() {
-		for _, release := range releases {
-			release()
+		for _, rel := range releases {
+			rel()
 		}
+		releases = nil
 	}
+	//
+	// The flag asks "did this function hand the reservation to the caller", NOT "did it fail",
+	// and the difference is the panic path. An `if err != nil` defer (which needs a named error
+	// return) skips the release on a PANIC, because err is nil there too — and a panic is the
+	// one exit a defer exists to cover in the first place. A flag set immediately before the
+	// single successful return covers every other exit as a side effect: any return that is not
+	// that one, existing or added later, unwinds.
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			releaseAll()
+		}
+	}()
 	for i := range out {
 		assetID := strings.TrimSpace(out[i].ImageAssetID)
 		if assetID == "" {
@@ -357,7 +389,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		}
 		parsed, perr := uuid.Parse(assetID)
 		if perr != nil {
-			return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
 		}
 		// CANONICALIZE before the id is used as a cache key or a lookup value.
 		//
@@ -383,7 +415,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 			continue
 		}
 		if d.creatives == nil {
-			return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
 		}
 		// PRICE THE ASSET BEFORE LOADING IT.
 		//
@@ -404,7 +436,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// "peak is the cap plus one asset" overshoot is gone.
 		totalBytes += size
 		if totalBytes > maxVariantAssetBytes {
-			return nil, releaseAll, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+			return nil, func() {}, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
 				maxVariantAssetBytes, totalBytes, i+1)
 		}
 
@@ -412,16 +444,16 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// rather than once at the end for exactly the ordering reason above.
 		relOne, ok := d.assets.reserve(ctx, size)
 		if !ok {
-			return nil, releaseAll, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
+			return nil, func() {}, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
 		}
 		releases = append(releases, relOne)
 
 		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if gerr != nil {
 			if errors.Is(gerr, domain.ErrNotFound) {
-				return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
-			return nil, releaseAll, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+			return nil, func() {}, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
 		}
 		// The reservation was priced from byte_size; the CHECK on that column
 		// (migration 000029) ties it to octet_length(bytes), so the two agree by construction.
@@ -432,7 +464,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
 		// variant that asked for an image — a silent downgrade that spends money.
 		if len(asset.Bytes) == 0 {
-			return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
 		byID[assetID] = asset.Bytes
 		mimeByID[assetID] = asset.MimeType
@@ -444,6 +476,9 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 	//
 	// A config with no asset-backed variants took no reservation at all, so releaseAll is a
 	// no-op over an empty slice — such a dispatch never queues behind one that holds assets.
+	// Hand the reservation to the caller: the resolved bytes outlive this call, so the deferred
+	// unwind above must NOT fire.
+	succeeded = true
 	return out, releaseAll, nil
 }
 
@@ -615,12 +650,18 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// resolved bytes live in `variants` and the Meta client POSTs them to /adimages further
 	// down this same function. Releasing earlier would hand the budget back while the memory
 	// it accounts for is still resident, which is exactly the bound this reservation exists to
-	// provide. Deferring here also covers every error path below.
+	// provide.
+	//
+	// THE DEFER GOES ABOVE THE ERROR CHECK, and that ordering is the fix for a real leak: it
+	// used to sit below, so a failed resolve returned without ever running it. resolveVariantAssets
+	// now unwinds its own reservations on error and hands back a no-op, so this defer is
+	// harmless on the error path — but it is placed here so the two cannot disagree again.
+	// releaseAssets is never nil, on any path.
 	variants, releaseAssets, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
+	defer releaseAssets()
 	if verr != nil {
 		return nil, notCreated(verr)
 	}
-	defer releaseAssets()
 
 	in := meta.CampaignInput{
 		EventName: bf.EventName,

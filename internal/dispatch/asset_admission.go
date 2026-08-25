@@ -58,6 +58,12 @@ import (
 // budget that is still occupied, which is the mistake DecodeReserver's comment records in the
 // other direction (holding a pixel reservation across a database insert that no longer needs it).
 //
+// That is the SUCCESS path. On any failure — an error or a panic — resolveVariantAssets unwinds
+// its own reservations before returning, because the bytes never reach the caller and holding
+// budget for memory nobody has is a leak, not a bound. It is structural rather than per-return:
+// a permit leaked on a failure arm is never recovered, so repeated partial resolves would shrink
+// this budget until the process restarts.
+//
 // A nil *AssetReserver reserves nothing, so every construction that does not wire one — every
 // test dispatcher, and the no-database mode — keeps working unchanged.
 type AssetReserver struct {

@@ -2888,3 +2888,257 @@ func TestResolveVariantAssets_ReservesBeforeMaterialising(t *testing.T) {
 			"materialised and only then charged, so the reservation bounds nothing", n)
 	}
 }
+
+// TestResolveVariantAssets_ReleasesReservationsOnMidLoopFailure is the regression guard for a
+// LEAKED SEMAPHORE PERMIT — a defect that is invisible in a single dispatch and permanent once it
+// happens.
+//
+// The shape: reservations are taken per asset inside the loop, so by the time asset N fails,
+// assets 1..N-1 are already holding budget. Two separate bugs discarded them. The GetAssetSize
+// error arms returned a no-op releaser instead of the accumulated one, and — compounding it —
+// Dispatch's `defer releaseAssets()` sat BELOW its error check, so on a failed resolve it never
+// ran at all. Either alone leaks; together they leak on every failure arm in the loop.
+//
+// A leak here does not fail anything immediately: the dispatch reports its real error and the
+// caller sees the right message. The budget is simply smaller forever, and only a LATER dispatch
+// pays, by being shed for capacity nobody is using. That is why this is asserted directly on the
+// budget rather than on the returned error.
+//
+// The budget IS observable: reserving exactly MaxConcurrentVariantAssetBytes succeeds only if
+// every prior permit came back, so a single full-size acquire is an exact test for "the budget is
+// whole". No sleeps and no elapsed-time thresholds.
+func TestResolveVariantAssets_ReleasesReservationsOnMidLoopFailure(t *testing.T) {
+	const good = "11111111-1111-4111-8111-111111111111"
+	const missing = "22222222-2222-4222-8222-222222222222"
+
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		// Only the FIRST asset exists. The second fails its size read, mid-loop, after the
+		// first has already reserved.
+		good: {Bytes: make([]byte, 4<<20), MimeType: "image/png"},
+	}}
+
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	_, release, err := d.resolveVariantAssets(context.Background(), testBrief(), []meta.AdVariant{
+		{ImageAssetID: good},
+		{ImageAssetID: missing},
+	})
+	if err == nil {
+		t.Fatal("resolve succeeded although the second asset does not exist")
+	}
+	// The releaser handed back on an error path must be safe to call and must not double-release
+	// (a weighted semaphore panics on over-release, so this would fail loudly if it did).
+	release()
+
+	// THE ASSERTION. If the first asset's 4 MiB was leaked, the budget is short by that much and
+	// a full-size reservation cannot be taken.
+	whole, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("the budget did not return to full after a mid-loop failure: the reservations " +
+			"taken before the failing asset were leaked, permanently shrinking the process-wide " +
+			"dispatch budget")
+	}
+	whole()
+}
+
+// TestResolveVariantAssets_RepeatedFailuresDoNotExhaustTheBudget is the EXHAUSTION test, and it
+// is the one that matches how this defect actually surfaces.
+//
+// A single leaked permit is invisible: the budget is 240 MiB and one leak of a few MiB still
+// admits the next dispatch, so a single-shot test can pass while the leak is real. What the
+// finding describes is "repeated partial resolves permanently shrink the budget until restart",
+// so this runs the failing path enough times that the leaked total would exceed the entire budget
+// and then asserts a full-size dispatch is still admissible.
+//
+// The iteration count is derived, not guessed: enough repetitions that a leak of assetSize each
+// time sums past MaxConcurrentVariantAssetBytes, plus a margin.
+func TestResolveVariantAssets_RepeatedFailuresDoNotExhaustTheBudget(t *testing.T) {
+	const good = "11111111-1111-4111-8111-111111111111"
+	const missing = "22222222-2222-4222-8222-222222222222"
+	const assetSize = 8 << 20 // 8 MiB per leaked reservation
+
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		good: {Bytes: make([]byte, assetSize), MimeType: "image/png"},
+	}}
+
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	iterations := int(MaxConcurrentVariantAssetBytes/assetSize) + 2
+	for i := range iterations {
+		_, release, err := d.resolveVariantAssets(context.Background(), testBrief(), []meta.AdVariant{
+			{ImageAssetID: good},
+			{ImageAssetID: missing},
+		})
+		if err == nil {
+			t.Fatalf("iteration %d: resolve succeeded although the second asset does not exist", i)
+		}
+		release()
+	}
+
+	// After more leaked bytes than the budget holds, a full-size dispatch must still be
+	// admissible. If reservations leak, this is where a real deployment starts shedding
+	// dispatches for capacity nothing is using — and it never recovers without a restart.
+	whole, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatalf("after %d failed resolves the budget can no longer admit a full-size dispatch: "+
+			"each failure leaked its reservations, so the process-wide dispatch budget is "+
+			"permanently exhausted until restart", iterations)
+	}
+	whole()
+}
+
+// TestResolveVariantAssets_ReleaseIsIdempotent pins that the SUCCESS-path releaser is safe to
+// call more than once, because a weighted semaphore PANICS on over-release rather than failing
+// quietly — "semaphore: released more than held" would take the process down.
+//
+// The success path is the reachable case, and it is the only one. On an ERROR the callee's own
+// defer releases and hands back a no-op, so a second call there is free no matter what. On
+// SUCCESS the callee returns the real releaseAll and the caller owns it; anything that called it
+// twice — a future retry wrapper, a second defer added during a refactor — would over-release.
+// `releases = nil` inside releaseAll is what makes the second call a no-op.
+//
+// Stated plainly: on TODAY's code releaseAll cannot run twice, because exactly one deferred call
+// in Dispatch owns it. This guards the shape rather than a live bug, and it is cheap.
+func TestResolveVariantAssets_ReleaseIsIdempotent(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		id: {Bytes: make([]byte, 4<<20), MimeType: "image/png"},
+	}}
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	// SUCCESS, so the returned releaser is the real accumulated one, not a no-op.
+	_, release, err := d.resolveVariantAssets(context.Background(), testBrief(),
+		[]meta.AdVariant{{ImageAssetID: id}})
+	if err != nil {
+		t.Fatalf("resolveVariantAssets: %v", err)
+	}
+
+	// Both must be safe. Without `releases = nil` the second call panics the process.
+	release()
+	release()
+
+	// And the budget must be exactly whole — not over-released into a budget larger than real,
+	// which would silently raise the memory ceiling this bound exists to hold.
+	whole, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("budget not whole after a double release")
+	}
+	whole()
+}
+
+// TestResolveVariantAssets_SuccessPathReleasesExactlyOnce checks the OTHER half of the lifecycle:
+// on success the callee must NOT release (the bytes outlive the call and the caller owns them),
+// and the caller's single deferred call must return the whole reservation.
+//
+// Without this, a defer that released on every path — not just the error path — would look
+// correct in the leak tests above while handing budget back while the bytes were still resident,
+// which is the bound inverted rather than fixed.
+func TestResolveVariantAssets_SuccessPathReleasesExactlyOnce(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const size = 16 << 20
+
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+		id: {Bytes: make([]byte, size), MimeType: "image/png"},
+	}}
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	out, release, err := d.resolveVariantAssets(context.Background(), testBrief(),
+		[]meta.AdVariant{{ImageAssetID: id}})
+	if err != nil {
+		t.Fatalf("resolveVariantAssets: %v", err)
+	}
+	if len(out) != 1 || len(out[0].ImageBytes) != size {
+		t.Fatalf("resolved bytes = %d, want %d", len(out[0].ImageBytes), size)
+	}
+
+	// STILL HELD at this point: the caller has the bytes, so the budget must reflect them.
+	// Asking for the whole budget must fail while this dispatch holds its share.
+	if _, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes); ok {
+		t.Error("the full budget was available while a successful resolve still held its assets: " +
+			"the reservation was released before the bytes stopped being resident")
+	}
+
+	release()
+
+	whole, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("the budget did not return to full after the caller released")
+	}
+	whole()
+}
+
+// TestResolveVariantAssets_ReleasesReservationsOnPanic covers the exit a `defer` exists for and
+// that an error-keyed guard silently misses.
+//
+// The obvious shape for the unwind is `defer func(){ if err != nil { releaseAll() } }()` with a
+// named error return. It is wrong in one place: on a PANIC no return statement runs, so err is
+// still nil and the release is skipped — leaking every reservation taken so far, on the one path
+// where the process is already in trouble. Keying on "did this hand the reservation to the
+// caller" instead covers it, because the success flag is only set immediately before the single
+// successful return.
+//
+// The panic is injected through the repository fake rather than by editing the loop, so this
+// tests the real function. The reservation is asserted returned by taking the whole budget after
+// recovering.
+func TestResolveVariantAssets_ReleasesReservationsOnPanic(t *testing.T) {
+	const good = "11111111-1111-4111-8111-111111111111"
+	const boom = "22222222-2222-4222-8222-222222222222"
+
+	assets := &panickingCreativeAssets{
+		inner: &multiCreativeAssets{assets: map[string]*model.CreativeAsset{
+			good: {Bytes: make([]byte, 8<<20), MimeType: "image/png"},
+		}},
+		panicOn: boom,
+	}
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("the fixture did not panic, so this test proves nothing about the panic path")
+			}
+		}()
+		//nolint:errcheck // the call panics by construction; the recover above is the assertion
+		_, _, _ = d.resolveVariantAssets(context.Background(), testBrief(), []meta.AdVariant{
+			{ImageAssetID: good},
+			{ImageAssetID: boom},
+		})
+	}()
+
+	// The first asset reserved 8 MiB before the panic. If the unwind is keyed on the error
+	// return rather than on success, that reservation is gone for the life of the process.
+	whole, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("the budget did not return to full after a panic mid-resolve: reservations taken " +
+			"before the panic were leaked, because the unwind is keyed on the error return and a " +
+			"panic sets no error")
+	}
+	whole()
+}
+
+// panickingCreativeAssets panics on ONE asset id and delegates everything else, so a test can
+// reach the panic path of a real loop without editing the code under test.
+type panickingCreativeAssets struct {
+	inner   *multiCreativeAssets
+	panicOn string
+}
+
+func (p *panickingCreativeAssets) GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	if assetID == p.panicOn {
+		panic("creative-asset store exploded")
+	}
+	return p.inner.GetAsset(ctx, projectID, briefID, assetID)
+}
+
+func (p *panickingCreativeAssets) GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error) {
+	if assetID == p.panicOn {
+		panic("creative-asset store exploded")
+	}
+	return p.inner.GetAssetSize(ctx, projectID, briefID, assetID)
+}
