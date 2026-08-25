@@ -310,3 +310,33 @@ carried "global env mutation racing this file's parallel readers" a few lines be
 correction retiring exactly that claim. Two contradictory statements in one entry are worse
 than either alone. The note now states the real cost — the ordering constraint — and says why
 the racing phrasing was withdrawn.
+
+**Follow-up — three prose claims that outran their code.** None changed behaviour; all three
+were assertions in comments and docs that the code beside them did not support.
+
+*A "diagnosability" check that could not check diagnosability.* The last assertion in
+`TestConnectAndMigrateWithholdsTheExplicitDSN` compared `connectAndMigrate`'s output against
+`SafeDSNErrFor(dsn, rawErr)` under a comment claiming the operator still gets the fault. It
+cannot, on that input: the control immediately above proves `rawErr` names `user`, so the
+redactor necessarily takes the identifier-present branch and returns the fixed sentinel.
+Rendered — `hostname resolving error: lookup dbtest-probe.invalid: no such host` becomes the
+sentinel, and the fault is gone. Any non-empty constant would satisfy the comparison. The
+assertion is real but narrower than advertised: it pins that the arm emits the REDACTOR's
+rendering rather than a message of its own. Diagnosability is pinned where it is observable,
+on messages naming no configured identifier, by
+`TestSafeDSNErrKeepsDriverTextForNonURLErrors` and
+`TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers`. The comment now says which of those it is.
+
+*A union bound called an exact probability.* Three places stated the chance of GCM ciphertext
+containing `secret` as "exactly" `(54-6+1)/256^6`. `secret` having no proper self-overlap rules
+out OVERLAPPING placements, but two DISJOINT occurrences can coexist (`secretsecret`), and
+summing the 49 per-offset probabilities counts those twice — so the figure is an upper bound.
+Verified by exhaustive enumeration on a reduced alphabet: pattern `ab` in a 4-byte blob over
+`{a,b}` has exact probability 11/16 against an offset sum of 3/4, with `abab` the
+double-counted string. Corrected in the test comment, the log fragment and the PR description;
+the argument the number supports — that the risk is NONZERO — is unchanged, which is why the
+wrong word survived three readings.
+
+The pattern across all three is the one this branch keeps producing: the code was right and the
+sentence next to it claimed more than the code did. A comment is a claim, and "exact",
+"diagnosable" and "counts registrations" are each checkable.

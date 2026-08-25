@@ -241,8 +241,12 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 	// tag. This replaced a `bytes.Contains(blob, []byte("secret"))` search for a plaintext
 	// fragment, which was the wrong TOOL for the job in both directions. GCM ciphertext is
 	// pseudorandom, so it can legitimately contain the six bytes `secret` — for this
-	// 54-byte blob the exact probability is (54-6+1)/256^6 = 1.74e-13, about 1 in 5.7
-	// trillion — which is a nonzero chance of failing correct encryption. And its absence
+	// 54-byte blob that is at most (54-6+1)/256^6 = 1.74e-13, about 1 in 5.7 trillion —
+	// which is a nonzero chance of failing correct encryption. That figure is a UNION
+	// BOUND, not the exact probability: summing the 49 offsets double-counts blobs
+	// carrying two disjoint occurrences (`secretsecret`), so the true value is slightly
+	// lower. `secret` having no proper self-overlap rules out OVERLAPPING placements only.
+	// The bound is what the argument needs — the risk is nonzero either way. And its absence
 	// proved nothing either: an encryptor that stored ROT13 of the plaintext, or the
 	// plaintext with one byte flipped, contains no literal `secret` and passes.
 	//

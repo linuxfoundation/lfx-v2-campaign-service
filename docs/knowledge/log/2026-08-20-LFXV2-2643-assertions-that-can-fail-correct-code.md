@@ -12,12 +12,19 @@ negative arm ran
 
 and reported a hit as "the stored blob is not sealed". AES-GCM ciphertext is
 pseudorandom, so it can legitimately contain the six bytes `secret`. The blob
-here is 54 bytes (12-byte nonce + 26-byte ciphertext + 16-byte tag), and
-`secret` has no proper self-overlap, so the exact probability is
+here is 54 bytes (12-byte nonce + 26-byte ciphertext + 16-byte tag), so the
+probability is at most
 
     (54 - 6 + 1) / 256^6 = 49 / 281474976710656 = 1.74e-13
 
-about **1 in 5.7 trillion**. Small, and that is not the point: it is NONZERO, so
+about **1 in 5.7 trillion**. That is a UNION BOUND, not an exact figure, and an
+earlier version of this entry called it exact. `secret` has no proper
+self-overlap, which excludes OVERLAPPING placements — but two DISJOINT
+occurrences can still coexist (`secretsecret`), and summing the 49 per-offset
+probabilities counts those twice, so the true value is marginally lower.
+Verified by exhaustive enumeration on a reduced alphabet: for pattern `ab` in a
+4-byte blob over `{a,b}`, the exact probability is 11/16 while the offset sum
+gives 3/4, with `abab` as the double-counted string. Small, and that is not the point: it is NONZERO, so
 correct encryption has a random failure mode — which is precisely the class of
 flake `sealTextHostile` was added to this same file, one function away, to
 eliminate. The commit that retired a probabilistic precondition left a

@@ -130,10 +130,29 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 			"show WHICH dsn the redacting arm was handed", kept)
 	}
 
-	// Still diagnosable: a redactor that returned "" would pass the loop above. Assert on
-	// the REDACTOR's own output rather than on the wrapper's format string -- the wrapper
-	// always writes EnvDatabaseURL ("migrate %s: ..."), so asserting that substring is
-	// vacuous and would hold even if SafeDSNErrFor returned nothing at all.
+	// What this last pair checks is that connectAndMigrate WIRES THE REDACTOR IN -- that
+	// its output is the redactor's rendering rather than something the wrapper invented.
+	// It is deliberately NOT a diagnosability check, and an earlier comment here wrongly
+	// called it one.
+	//
+	// It cannot be one on this input. The control above proves rawErr names `user`, so
+	// SafeDSNErrFor necessarily takes the identifier-present branch and returns the fixed
+	// sentinel; the underlying fault ("no such host") is dropped with the rest of the
+	// text. Rendered, to be sure rather than to assume:
+	//
+	//   rawErr   = failed to connect to `user=probeuser database=probedb`: hostname
+	//              resolving error: lookup dbtest-probe.invalid: no such host
+	//   redacted = the driver's message names a value from TEST_DATABASE_URL (it is
+	//              withheld: the user, database and host are half of the credential)
+	//
+	// So any non-empty constant would satisfy the comparison, and asserting "the operator
+	// still gets the fault" here would be false. Diagnosability on messages that name NO
+	// configured identifier -- connection refused, authentication failed -- is pinned
+	// where it can actually be observed: TestSafeDSNErrKeepsDriverTextForNonURLErrors and
+	// TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers.
+	//
+	// The empty check still earns its place: a redactor returning "" would make the leak
+	// loop above vacuous, and Contains(got, "") is true for every string.
 	redacted := SafeDSNErrFor(dsn, rawErr)
 	if redacted == "" {
 		t.Fatal("SafeDSNErrFor returned an empty rendering; withholding everything is not " +
@@ -141,6 +160,7 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	}
 	if !strings.Contains(got, redacted) {
 		t.Errorf("connectAndMigrate = %q, want it to carry the redactor's rendering %q; "+
-			"the operator needs the fault, not just the name of the variable", got, redacted)
+			"the arm must emit what SafeDSNErrFor returned rather than a message of its "+
+			"own", got, redacted)
 	}
 }
