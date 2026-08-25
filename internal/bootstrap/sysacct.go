@@ -399,12 +399,15 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
 // internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
-// every dispatch. What differs is whether the operator can RECOVER. Reddit has no discovery
+// every dispatch. (X still guards on it at DISPATCH — being credentials-first relaxes what may
+// be INSTALLED, not what may be dispatched with; the guard is what names the missing choice.)
+// What differs is whether the operator can RECOVER. Reddit has no discovery
 // endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
 // does have one — call discovery, rerun bootstrap with the chosen id — so its row is
 // recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
-// the operator with no reason to go looking. Microsoft and X are excluded by neither: each has
-// both halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
+// the operator with no reason to go looking. Microsoft is excluded by neither: it has
+// both halves and its absence is sequencing alone. X held both too and was ADMITTED in
+// LFXV2-3319 (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
@@ -431,9 +434,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //
 // The bar for adding a provider here is those two halves together, not either alone.
 //
-// CURRENT STATE after LFXV2-3064, which added the LinkedIn and Microsoft discovery endpoints —
-// the four excluded providers are no longer excluded for the same reason, and the difference is
-// what tells you how far each is from qualifying:
+// CURRENT STATE after LFXV2-3064 (LinkedIn and Microsoft discovery endpoints) and LFXV2-3319
+// (X discovery, and X's admission to this map) — the providers outside this map are not outside
+// it for the same reason, and the difference is what tells you how far each is from qualifying:
 //
 //   - Reddit lacks the FIRST half. Its platform client has no ListAdAccounts, so no
 //     discovery endpoint exists and nothing inside this API could tell an operator what to put
@@ -448,11 +451,13 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //     stating which half is missing: X was excluded for the first half alone, so supplying
 //     it completed the pair without any change to the create path. X's toggle and metrics
 //     paths share the same validator and answer synchronously, so unlike Meta the naming is
-//     not log-only there. Its absence from this map is therefore a SEQUENCING decision, not
-//     a missing capability: adding it changes what this CLI accepts and belongs in its own
-//     commit. It is not the only member in that position — read the map for the current set
-//     rather than trusting this sentence to name the others, which is the mistake the note
-//     below is about.
+//     not log-only there. X was ADMITTED to this map in LFXV2-3319, in the same change that
+//     dropped Required("account_id") from TwitterAdsConnectionConfig — the two gates are
+//     separate and were relaxed together deliberately, because admitting only one leaves a
+//     provider credentials-first for the CLI and not over HTTP (or the reverse), which is
+//     half a flow. Eligibility is not admission, and members are not the only eligible
+//     providers — read the map for the current set rather than trusting this sentence to
+//     name the others, which is the mistake the note below is about.
 //   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
 //     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
 //     inline and answers an empty account id with a bare notCreated, so the create path names
@@ -486,8 +491,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // dispatcher including Reddit mentions that sentinel. Prefer adding a case to those tests over
 // correcting a member list here a fifth time.
 var accountDiscoveryProviders = map[model.Provider]bool{
-	model.ProviderGoogleAds: true,
-	model.ProviderMetaAds:   true,
+	model.ProviderGoogleAds:  true,
+	model.ProviderMetaAds:    true,
+	model.ProviderTwitterAds: true,
 }
 
 // requireAccountID checks the value about to be WRITTEN, for the same reason requireConfig

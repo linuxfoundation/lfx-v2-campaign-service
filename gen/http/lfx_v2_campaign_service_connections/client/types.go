@@ -4093,7 +4093,7 @@ type TwitterAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// X/Twitter Ads account ID (alphanumeric handle)
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID string `form:"funding_instrument_id" json:"funding_instrument_id" xml:"funding_instrument_id"`
 }
@@ -13596,9 +13596,13 @@ func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigReq
 // ValidateTwitterAdsConnectionConfigRequestBody runs the validations defined
 // on twitter-ads-connection-configRequestBody
 func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionConfigRequestBody) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[A-Za-z0-9]+$"))
-	if utf8.RuneCountInString(body.AccountID) > 64 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 64, false))
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[A-Za-z0-9]+$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("body.funding_instrument_id", body.FundingInstrumentID, "^[A-Za-z0-9]+$"))
 	if utf8.RuneCountInString(body.FundingInstrumentID) > 64 {

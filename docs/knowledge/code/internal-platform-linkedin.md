@@ -118,10 +118,13 @@ defers the 60-day access-token expiry but cannot remove the ~365-day deadline on
 the connection itself; the client logs a warning inside the final 30 days —
 **once per process per connection, not once per evaluation**. The dedupe is forced
 by the client's lifetime rather than chosen: `internal/dispatch` builds a Client
-PER OPERATION and no access-token expiry is persisted, so every client exchanges on
+PER DISPATCH and no access-token expiry is persisted, so every such client exchanges on
 its first request and re-evaluates the window. Un-deduped, a 30-day window emits one
-WARN per refresh-capable operation for a MONTH — a brief-level fan-out alone is one
-per campaign — and thousands of identical lines is not a louder signal than one, it
+WARN per refresh-capable dispatch for a MONTH — a brief-level fan-out alone is one
+per campaign. (Since LFXV2-3033 the toggle and metrics paths instead share a client
+cached per connection row+version, so they re-evaluate once per cached client rather
+than once per call; the fan-out is unaffected, and package scope is still required
+because it must cover the SHORTEST-lived caller) — and thousands of identical lines is not a louder signal than one, it
 is how the line gets filtered out and the credential dies silently anyway. State
 therefore lives at package scope (`refreshExpiryWarned`), keyed on the CONNECTION ROW
 ID (`Credentials.ConnectionID`, threaded from `resolved.connID`). The three fields

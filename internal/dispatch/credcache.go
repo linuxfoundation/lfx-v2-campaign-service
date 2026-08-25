@@ -371,25 +371,58 @@ func isComparable(v any) bool {
 // the client is what makes a polling dashboard perform ONE token exchange instead of one per read,
 // which is the reuse LFXV2-3036 asks for.
 //
-// THE ROSTER LIVES HERE. Wired today into GoogleAdsDispatcher, RedditDispatcher and
-// MicrosoftDispatcher. LinkedIn, Meta and X/Twitter are deliberately NOT wired yet — a partial
-// rollout under LFXV2-3033, deferred only because open PRs owned those files at the time (cs#148,
-// cs#152, cs#158); they still rebuild a client per resolve. "Rebuilds a client" is NOT the same
-// as "re-mints a token", and these three do not re-mint: Meta and LinkedIn are handed an
-// already-minted bearer token and perform no exchange at construction, and X signs each request
-// with stored OAuth 1.0a credentials. So the win for them is allocation, not a saved token
-// round-trip — and X in particular documents its client as safe for SEQUENTIAL use only, so it
-// must not be shared across concurrent callers on the strength of this pattern alone. Each needs
-// its own safety and benefit analysis before wiring.
+// THE ROSTER LIVES HERE. Wired today into GoogleAdsDispatcher, RedditDispatcher,
+// MicrosoftDispatcher and — as of LFXV2-3033 — MetaDispatcher and LinkedInDispatcher, on their
+// TOGGLE and METRICS paths (see the per-PATH bypass list below for which paths are excluded and
+// why). The earlier deferral of Meta and LinkedIn was procedural, not technical: open PRs owned
+// those files at the time (cs#148, cs#152, cs#158). Those PRs have since merged, so the stated
+// reason is gone and both have been wired after their own safety analysis, recorded on the
+// `clients` field in meta.go and linkedin.go.
+//
+// X/Twitter remains deliberately NOT wired, and its reason is TECHNICAL and still stands. The X
+// client documents itself as safe for SEQUENTIAL use only, and that is not a stale doc comment:
+// it paces its own writes with an inter-request sleep (twitter.Client.pace/writeDelay) to stay
+// under X's ~1 write-per-second limit, a scheme that assumes the instance is driving one dispatch
+// at a time. Sharing one across concurrent callers would interleave two dispatches through that
+// single pacing assumption and break it — on the money-spending create path. Wiring it needs a
+// concurrency argument this pattern does not supply, not merely a copy of the Meta/LinkedIn
+// analysis.
+//
+// "Rebuilds a client" is NOT the same as "re-mints a token", but the two come apart per PROVIDER
+// and, for LinkedIn, per CREDENTIAL SHAPE — so state it per case rather than as one blanket claim:
+//
+//   - META never exchanges: it is handed an already-minted bearer token and mints nothing at
+//     construction or after, so its win is allocation only.
+//   - LINKEDIN depends on the shape. A REFRESH-CAPABLE connection exchanges on the FIRST request
+//     of every new client, because no access-token expiry is persisted and the injected-token
+//     branch that would skip it is dead (internal/platform/linkedin/token.go). Caching therefore
+//     saves a real token round-trip for that shape, as it does for Google Ads and Reddit; only a
+//     bearer-only connection reduces to allocation.
+//   - X signs each request with stored OAuth 1.0a credentials and mints nothing.
+//
+// Their wiring tests assert client IDENTITY instead of counting hits on a token endpoint because
+// identity is the property that holds across every one of those shapes; a count would pin only
+// the fixture's shape and would read zero for a bearer-only connection with or without a cache.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
 // one-site edit.
 //
 // WIRED IS NOT THE SAME AS "every path on a wired provider". The bypasses below are per-PATH, and
 // this roster is the single source of truth for them, so enumerate them all:
 //
-//   - Google Ads' account-agnostic discovery client (empty CustomerID, resolveGoogleAdsDiscoveryClient)
-//     and Microsoft's ListAccounts client (ZERO AccountConfig) — see cachedMicrosoftClient for why
-//     sharing one key with dispatch would cross the two.
+//   - Google Ads' account-agnostic discovery client (empty CustomerID, resolveGoogleAdsDiscoveryClient),
+//     Microsoft's ListAccounts client (ZERO AccountConfig) and Meta's discovery client
+//     (resolveMetaDiscoveryClient, also a ZERO AccountConfig) — see cachedMicrosoftClient for why
+//     sharing one key with dispatch would cross the two. The rule is general: a discovery client
+//     names no account precisely so the answer is not narrowed, so it is a DIFFERENT object under
+//     the same connection identity.
+//   - **MetaDispatcher.Dispatch** and **LinkedInDispatcher.Dispatch**, for the same reason Google
+//     Ads' create path is excluded but arrived at deliberately rather than by omission. Meta's
+//     create client carries a fuller AccountConfig (page id, plus the account a create requires),
+//     and LinkedIn's carries a RuntimeConfig with DefaultOrgID and the per-request
+//     TargetingProfiles/EmployerExclusions read from the campaign config — so its client VARIES
+//     per call under a cache key that does not. Caching either would let one campaign's targeting,
+//     or one path's account config, serve another's. Neither re-mints a token at construction, so
+//     unlike Google Ads' create path the cost of the exclusion is allocation only.
 //   - Google Ads' adoption owned-connection path (resolveOwnedGoogleAdsClient → LookupCampaign): a
 //     rare one-shot rather than the polling loop this exists for.
 //   - **GoogleAdsDispatcher.Dispatch**, which builds its client inline via googleads.NewClient

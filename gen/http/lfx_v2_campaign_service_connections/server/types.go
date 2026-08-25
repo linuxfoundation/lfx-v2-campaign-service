@@ -9349,9 +9349,6 @@ func ValidateRedditAdsCredentialsRequestBody(body *RedditAdsCredentialsRequestBo
 // ValidateTwitterAdsConnectionConfigRequestBody runs the validations defined
 // on twitter-ads-connection-configRequestBody
 func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionConfigRequestBody) (err error) {
-	if body.AccountID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
-	}
 	if body.FundingInstrumentID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("funding_instrument_id", "body"))
 	}

@@ -575,7 +575,7 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 // not assert equality, so a provider moving between those two states is not a test failure.
 //
 // What this test actually exercises: LinkedIn's refusal directly (an empty account id must be
-// rejected), with Google Ads and Meta as the ALLOWED cases. The other excluded providers are
+// rejected), with Google Ads, Meta and — since LFXV2-3319 — X as the ALLOWED cases. The other excluded providers are
 // refused by the same map check but are not separately invoked here — the guard is one branch,
 // so covering it once covers them, but do not read this comment as a claim of per-provider
 // coverage.
@@ -619,6 +619,23 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 	}
 	if repo.created == nil {
 		t.Fatalf("an account-less meta row wrote nothing; calls = %v", repo.calls)
+	}
+	if repo.created.AccountID != "" {
+		t.Fatalf("created.AccountID = %q, want it left empty for the picker to fill", repo.created.AccountID)
+	}
+
+	// X joined the map in LFXV2-3319, in the same change that dropped Required("account_id")
+	// from TwitterAdsConnectionConfig. funding_instrument_id is still supplied because it is in
+	// requiredConfigKeys and has no discovery endpoint — credentials-first relaxes the ACCOUNT
+	// choice only, so a row that would still be installable-and-dead is refused as before.
+	repo = &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderTwitterAds, "", false, map[string]string{"funding_instrument_id": "lygyi"},
+		[]byte(`{"consumer_key":"ck","consumer_secret":"cs","access_token":"at","access_token_secret":"ats"}`)); err != nil {
+		t.Fatalf("x has discovery AND names the missing choice, so credentials-first must be legal: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatalf("an account-less x row wrote nothing; calls = %v", repo.calls)
 	}
 	if repo.created.AccountID != "" {
 		t.Fatalf("created.AccountID = %q, want it left empty for the picker to fill", repo.created.AccountID)

@@ -67,11 +67,15 @@ func nearExpiryTokenServer(t *testing.T, refreshTTL time.Duration) *httptest.Ser
 
 // A 30-day warning window must not produce one WARN per OPERATION for thirty days.
 //
-// internal/dispatch/linkedin.go constructs a Client PER OPERATION (four call sites), and no
-// access-token expiry is persisted, so every client exchanges on its first request and
-// re-evaluates this window — see the "EVERY refresh-capable client performs a token exchange
-// on its first request" note in accessTokenValue. A brief-level fan-out is therefore one
-// exchange, and one warning, PER CAMPAIGN. Over the final thirty days of a refresh token's
+// internal/dispatch/linkedin.go constructs a Client per DISPATCH, and no access-token expiry
+// is persisted, so every such client exchanges on its first request and re-evaluates this
+// window — see the "EVERY refresh-capable client performs a token exchange on its first
+// request" note in accessTokenValue. A brief-level fan-out is therefore one exchange, and one
+// warning, PER CAMPAIGN. (Since LFXV2-3033 the toggle and metrics paths instead share a client
+// cached per connection row+version, so they re-evaluate once per cached client rather than
+// once per call. The fan-out above is unaffected, and it is the volume this dedup was sized
+// for. A call-site COUNT is deliberately not stated here: it was "four", the wiring changed it,
+// and nothing failed — the property below does not depend on it.) Over the final thirty days of a refresh token's
 // life that is thousands of identical lines, which is how an operator learns to filter the
 // one line this feature exists to deliver.
 //
