@@ -639,8 +639,20 @@ var CreativeAsset = Type("creative-asset", func() {
 	// row distinguishes that from a genuine creation, so an unconditional 201 told a retrying
 	// client it had created a resource when nothing was created. This attribute carries the
 	// distinction to the transport, which renders it as 201 vs 200.
+	// The Example is PINNED rather than left to Goa, and the reason is a limitation worth
+	// recording. Both success arms $ref this one shared CreativeAsset schema, so the document
+	// carries ONE example for both 200 and 201 — there is no per-arm example to render. Left
+	// unpinned, Goa picks an enum member per rendering, which produced a document showing
+	// 201 with "false" and 200 with "true": exactly backwards, and more misleading than a
+	// single arm being unillustrated, because it inverts the mapping the Tag actually applies.
+	//
+	// "true" is the pinned value because it is the 201 arm, the one this endpoint's Tag
+	// SELECTS on; the 200 arm is the default. The status is authoritative either way — the
+	// Tag below drives selection at runtime and is pinned by tests at the service, encoder and
+	// wire layers — so this only fixes what a reader of the document sees.
 	Attribute("created", String, "\"true\" when this request stored the asset; \"false\" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.", func() {
 		Enum("true", "false")
+		Example("true")
 	})
 	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
 })
@@ -884,6 +896,22 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// maxCreativeDecodedBytes, the pixel budget — both in internal/service), which
 				// is the only layer that sees decoded bytes.
 				MaxLength(41943040) // 4/3 * 30 MiB: the ENCODED ceiling, the unit this schema constrains
+				// KNOWN DOCUMENT DEFECT, and not fixable from this DSL: Goa emits this
+				// attribute as `type: string, format: binary`, while the transport actually
+				// carries a BASE64 string (encoding/json marshals a Go []byte that way, and
+				// the generated example is base64 accordingly). `format: binary` in OAS3
+				// means raw octets, so a strict generator reading the document can produce a
+				// client that sends something the server will not decode.
+				//
+				// It is unconditional in the generator, not a missing option here:
+				// goa v3.25.3 http/codegen/openapi/v3/types.go:179-180 sets
+				// `s.Format = "binary"` for every Bytes attribute, with no DSL or Meta
+				// override. Changing it would mean declaring this String and hand-rolling the
+				// base64 decode, giving up the generated validator and the typed payload —
+				// a worse trade than a wrong format annotation on one field.
+				//
+				// The MaxLength above is stated in encoded characters precisely so the SIZE
+				// half of the contract is right even though the FORMAT half cannot be.
 			})
 			Required("project_id", "brief_id", "content_type", "bytes")
 		})

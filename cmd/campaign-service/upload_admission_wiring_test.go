@@ -52,16 +52,14 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker())
 
 	// The parked requests below stream a body of UNKNOWN length (blockingBody carries no
-	// Content-Length), which constants.UploadAdmissionWeightFor prices at the FLOOR — the
-	// same charge as the smallest declared upload, because omitting the header cannot buy
-	// more bytes than declaring them (MaxBodyBytes bounds the body, the decode reservation
-	// bounds the pixel buffer, and neither consults the declared length).
+	// Content-Length), which constants.UploadAdmissionWeightFor prices at the worst-case
+	// CEILING — the server cannot know what a chunked body will spend until it has read it,
+	// and the permit is taken before the read. That ceiling equals the whole budget, so ONE
+	// parked request saturates admission.
 	//
-	// The saturation count is therefore computed from that same pricing function rather than
-	// from the raw weight constant, so it tracks the rule the chain actually applies instead
-	// of restating an arithmetic the middleware no longer performs. That matters more now
-	// than it did when unknown length priced at the ceiling: saturating the budget takes as
-	// many parked requests as the floor admits, not one.
+	// The saturation count is nonetheless computed from that same pricing function rather
+	// than hardcoded to 1, so it tracks the rule the chain actually applies instead of
+	// restating an arithmetic the middleware may retune.
 	//
 	// DERIVING THE COUNT MEANS THIS TEST DOES NOT COVER THE PRICING RULE, and the distinction
 	// is worth stating because the line below reads as though it does. Because `admits` is
