@@ -540,10 +540,13 @@ func TestGoogleAds_ReadSettings_CustomPeriodMapsToLifetime(t *testing.T) {
 }
 
 // TestGoogleAds_ReadSettings_StatusIsReportedButNotCompared pins the deliberate
-// non-comparison: the row's Status is this service's lifecycle vocabulary and Google's is
-// ENABLED/PAUSED/REMOVED — different axes. Comparing them would report a permanent,
-// meaningless divergence on every campaign ever created, while still reporting the
-// upstream value lets an operator SEE that a campaign is paused upstream.
+// non-comparison. Note WHY, because the docs have twice drifted to the wrong reason: it is
+// NOT that the campaign row lacks a status column — it has one, and this test sets it. It
+// is that the row's Status is this service's lifecycle vocabulary (here the provisioning
+// state `created`) while Google's is the delivery state ENABLED/PAUSED/REMOVED — different
+// axes. Comparing them would report a permanent, meaningless divergence on nearly every
+// campaign ever created, while still reporting the upstream value lets an operator SEE
+// that a campaign is paused upstream.
 func TestGoogleAds_ReadSettings_StatusIsReportedButNotCompared(t *testing.T) {
 	d, _ := settingsDispatcher(t, `{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/777","id":"777","name":"n","status":"PAUSED"},"campaignBudget":{"amountMicros":"500000000","period":"DAILY"}}]}`)
 

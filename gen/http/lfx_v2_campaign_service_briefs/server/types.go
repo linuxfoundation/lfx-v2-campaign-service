@@ -372,14 +372,15 @@ type GetCampaignSettingsResponseBody struct {
 	Fields []*CampaignSettingsFieldResponseBody `form:"fields" json:"fields" xml:"fields"`
 	// How many fields carry the `diverged` verdict.
 	DivergedCount int `form:"diverged_count" json:"diverged_count" xml:"diverged_count"`
-	// How many fields were NOT COMPARED — either because the field has no
-	// counterpart on the campaign row (the upstream-only observations, and
-	// `status`, which is never compared) or because a side could not be read.
-	// Reported separately from diverged_count rather than folded into it: "2
-	// differ" reads very differently next to "and 5 were not compared". NOT a
-	// read-failure count: on a fully healthy readback most fields are unknown by
-	// construction, so a consumer watching this for failures would see a constant
-	// floor. Use each field's `comparison` to see which is which.
+	// How many fields were NOT COMPARED — either because the field has no recorded
+	// counterpart (the upstream-only observations, plus `status`, which the row
+	// does record but which is deliberately never compared — a different axis from
+	// Google's delivery status) or because a side could not be read. Reported
+	// separately from diverged_count rather than folded into it: "2 differ" reads
+	// very differently next to "and 5 were not compared". NOT a read-failure
+	// count: on a fully healthy readback most fields are unknown by construction,
+	// so a consumer watching this for failures would see a constant floor. Use
+	// each field's `comparison` to see which is which.
 	UnknownCount int `form:"unknown_count" json:"unknown_count" xml:"unknown_count"`
 }
 
@@ -1808,20 +1809,32 @@ type EmailMetricsResponseBody struct {
 // CampaignSettingsFieldResponseBody is used to define fields on response body
 // types.
 type CampaignSettingsFieldResponseBody struct {
-	// The setting's name in this service's own vocabulary, matching the campaign
-	// row's column names rather than the platform's field names. On Google Ads the
-	// COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`,
-	// `advertising_channel_type`, `start_date` and `end_date`; `status`,
-	// `budget_delivery_method`, `budget_explicitly_shared` and
-	// `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded`
-	// counterpart and therefore always an `unknown` verdict, because no column on
-	// the campaign row expresses them. `advertising_channel_type` is compared
-	// rather than upstream-only because the dispatch config's channel IS persisted
-	// in the campaign's config snapshot; it still reads `unknown` on a legacy row
-	// that carries no snapshot, but for the ordinary reason that nothing was
-	// recorded there — not because the field has no recorded side. The vocabulary
-	// is per-platform and may grow, so a consumer must render an unrecognised
-	// field name rather than dropping it.
+	// The setting's name in this service's own stable vocabulary rather than the
+	// platform's field names. Several names do coincide with a campaign-row
+	// column, but the vocabulary is NOT a column list and must not be read as one:
+	// `advertising_channel_type` has no column and is recovered from the
+	// campaign's config snapshot, and the upstream-only names below have no
+	// recorded side at all. On Google Ads the COMPARED settings are
+	// `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`,
+	// `start_date` and `end_date`. `budget_delivery_method`,
+	// `budget_explicitly_shared` and `bidding_strategy_type` are reported
+	// UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an
+	// `unknown` verdict, because nothing this service records expresses them.
+	// `status` is also reported with no `recorded` counterpart, but for a
+	// DIFFERENT reason: the campaign row DOES record a `status`, and it is
+	// deliberately never compared because the two are different axes. The column
+	// carries this service's own lifecycle vocabulary — mostly provisioning state
+	// (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes
+	// a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery
+	// state, so comparing them would report a permanent, meaningless divergence on
+	// nearly every campaign. The upstream value is still reported so an operator
+	// can see that a campaign is paused upstream. `advertising_channel_type` is
+	// compared rather than upstream-only because the dispatch config's channel IS
+	// persisted in the campaign's config snapshot; it still reads `unknown` on a
+	// legacy row that carries no snapshot, but for the ordinary reason that
+	// nothing was recorded there — not because the field has no recorded side. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

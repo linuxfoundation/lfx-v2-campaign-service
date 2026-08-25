@@ -283,10 +283,19 @@ from an observation that never happened.
 The Google Ads adapter compares `budget_amount`, `budget_type`, `campaign_name`,
 `advertising_channel_type`, `start_date` and `end_date`, and reports four settings
 **upstream-only** — `status`, `budget_delivery_method`, `budget_explicitly_shared` and
-`bidding_strategy_type`. Nothing in a Google Ads dispatch config can express those four, so
-they can never diverge and always carry an `unknown` verdict; they are reported anyway
-because a budget that reads as expected while being `ACCELERATED` or shared across campaigns
-is exactly the state that explains a spend anomaly the compared fields cannot.
+`bidding_strategy_type`. Those four share a verdict but NOT a reason, and collapsing the two
+reasons into one is the mistake to avoid here. Nothing in a Google Ads dispatch config can
+express `budget_delivery_method`, `budget_explicitly_shared` or `bidding_strategy_type`, so
+those three have no recorded side at all; they are reported anyway because a budget that
+reads as expected while being `ACCELERATED` or shared across campaigns is exactly the state
+that explains a spend anomaly the compared fields cannot. **`status` is upstream-only for an
+entirely different reason: the campaign row HAS a `status` column.** It carries this
+service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`,
+`created_degraded`, `deleted`) and only sometimes a run state set by the status toggle —
+while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state. The two are different
+axes, exactly as `model.PlatformCampaignRef` documents, so comparing them would report a
+permanent, meaningless divergence on nearly every campaign. Writing "no column expresses it"
+here would be false, and would also imply that adding a column is the fix — it is not.
 
 **`advertising_channel_type` is COMPARED, not upstream-only, and that distinction is easy to
 get wrong** — it looks like the other platform observations and it is the only compared field

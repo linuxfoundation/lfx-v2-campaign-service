@@ -1316,7 +1316,10 @@ const (
 	settingsFieldEndDate      = "end_date"
 	// Budget delivery method, explicit budget sharing and bidding strategy are OBSERVED but
 	// never compared: nothing in a Google Ads dispatch config expresses them, so each is
-	// reported with an absent recorded side and therefore an `unknown` verdict. They are
+	// reported with an absent recorded side and therefore an `unknown` verdict. Status also
+	// has an absent recorded side, but for an unrelated reason — the row records one, it is
+	// just a different axis from Google's delivery status — so do not fold it into this
+	// group's rationale. They are
 	// reported anyway because the operator's question is "what is this campaign actually set
 	// to upstream", and a budget that reads as expected while being ACCELERATED or shared
 	// across campaigns is exactly the state that explains a spend anomaly the compared fields
@@ -1705,18 +1708,24 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		model.CompareSettingsField(settingsFieldBudgetAmount, recordedBudget, googleAdsUpstreamBudgetAmount(settings)),
 		model.CompareSettingsField(settingsFieldBudgetType, recordedBudgetType, upstreamBudgetType),
 		model.CompareSettingsField(settingsFieldName, recordedName, settings.Name),
-		// Status is deliberately NOT compared. The row's Status is this service's own
-		// lifecycle vocabulary (created/failed/...) and Google's is ENABLED/PAUSED/REMOVED —
-		// a different axis, exactly as model.PlatformCampaignRef documents. Comparing them
-		// would report a permanent, meaningless divergence on every campaign ever created.
+		// Status is deliberately NOT compared, and NOT because the row lacks a column for
+		// it — campaigns.status exists. It carries this service's own lifecycle vocabulary,
+		// mostly provisioning state (pending / created / created_degraded / deleted) and
+		// only sometimes a run state, while Google's is the purely delivery-side
+		// ENABLED/PAUSED/REMOVED — a different axis, exactly as model.PlatformCampaignRef
+		// documents. Comparing them would report a permanent, meaningless divergence on
+		// nearly every campaign ever created.
 		// The upstream value is still reported, with no recorded counterpart, so an operator
 		// can SEE that the campaign is paused upstream without this service pretending the
 		// two are the same field.
 		model.CompareSettingsField(settingsFieldStatus, nil, settings.Status),
 		model.CompareSettingsField(settingsFieldStartDate, recordedStart, googleAdsDateOnly(settings.StartDateTime)),
 		model.CompareSettingsField(settingsFieldEndDate, recordedEnd, googleAdsDateOnly(settings.EndDateTime)),
-		// Upstream-only observations: no row column expresses these. advertising_channel_type
-		// is deliberately NOT among them — see recordedChannelType above.
+		// Upstream-only observations: nothing this service records expresses these three.
+		// Note this is NOT the reason status has no recorded side — the row has a status
+		// column; see the status entry above, where the reason is a different axis.
+		// advertising_channel_type is deliberately NOT among them — its recorded side comes
+		// from ConfigSnapshot rather than a column; see recordedChannelType above.
 		model.CompareSettingsField(settingsFieldBudgetDelivery, nil, settings.BudgetDeliveryMethod),
 		model.CompareSettingsField(settingsFieldBudgetShared, nil, boolToStrPtr(settings.BudgetExplicitlyShared)),
 		model.CompareSettingsField(settingsFieldChannelType, recordedChannelType, settings.AdvertisingChannelType),

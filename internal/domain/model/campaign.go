@@ -619,9 +619,10 @@ type CampaignSettingsReadback struct {
 	// `unknown` as agreement to get there.
 	DivergedCount int
 	// UnknownCount is how many fields were NOT COMPARED, for either of two reasons: the
-	// field has no counterpart on the campaign row (the upstream-only observations, and
-	// `status`, which is deliberately never compared), or a side genuinely could not be
-	// read. Reported alongside DivergedCount rather than folded into it, because "2 differ"
+	// field has no RECORDED counterpart (the upstream-only observations, plus `status`,
+	// which the row does record but which is deliberately never compared because this
+	// service's lifecycle status and the platform's delivery status are different axes),
+	// or a side genuinely could not be read. Reported alongside DivergedCount rather than folded into it, because "2 differ"
 	// reads very differently next to "and 5 were not compared" than it does alone.
 	//
 	// It is NOT a read-failure count, and must not be presented as one: on a completely

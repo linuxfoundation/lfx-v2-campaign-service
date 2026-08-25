@@ -828,9 +828,10 @@ separately so "2 differ" is not read without "and 5 were not compared", and `unk
 NOT a read-failure count: the upstream-only fields plus the flight dates are permanently
 `unknown` by construction, a constant floor a consumer cannot distinguish from a real failure.
 The per-field `comparison` is what says which is which. `status` is reported upstream-only and
-never compared: this service's lifecycle vocabulary and Google's `ENABLED`/`PAUSED`/`REMOVED`
-are different axes, and comparing them would flag a permanent, meaningless divergence on every
-campaign.
+never compared — not for want of a column, since the campaign row has one, but because that
+column holds this service's own lifecycle status (largely provisioning state) while Google's
+`ENABLED`/`PAUSED`/`REMOVED` is delivery state. They are different axes, and comparing them
+would flag a permanent, meaningless divergence on nearly every campaign.
 
 Everything else defaults to 503, and that arm answers a MIXED population: pre-contact failures
 (a refused dial, a timeout, a 5xx) alongside every response-validation refusal in the client —
