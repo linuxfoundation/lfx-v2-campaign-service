@@ -19,9 +19,13 @@
 -- DELETE clause to choose -- which also means an archived brief's images are retained forever.
 --
 -- Two things are therefore owed and are deliberately NOT in this migration, because both need
--- decisions this service has not made: a per-brief CAP (enforced by the upload endpoint, which
--- lands in the follow-on PR alongside the request-size limit) and a PRUNE (assets under briefs
--- archived beyond a retention window, which needs a retention policy that does not exist yet).
+-- decisions this service has not made: a per-brief CAP (enforced by the upload endpoint) and a
+-- PRUNE (assets under briefs archived beyond a retention window, which needs a retention policy
+-- that does not exist yet). NEITHER HAS LANDED. The upload endpoint shipped without the per-brief
+-- cap -- the cap VALUE and whether it is global or per-tier are product decisions, so it is
+-- tracked as linuxfoundation/lfx-v2-campaign-service#171 rather than guessed. What DID land with
+-- the endpoint is the PER-ROW size bound this file deferred separately below (000029); a per-row
+-- ceiling is not a per-brief cap, so the exposure named above still stands.
 -- They are written down here so the next reader finds the exposure already named rather than
 -- discovering it from a disk alert.
 --
@@ -65,6 +69,10 @@ CREATE TABLE IF NOT EXISTS creative_assets (
     -- An upper bound is deliberately NOT set here -- it has to equal the upload endpoint's request
     -- limit, and that endpoint does not exist yet, so it lands with it rather than being
     -- guessed now and silently disagreeing later.
+    --
+    -- IT LANDED: 000029 adds CHECK (byte_size <= 31457280), the DECODED 30 MiB ceiling that
+    -- internal/service enforces as maxCreativeStoredBytes. Read that migration for why the
+    -- decoded figure is the right one for this column rather than the design's base64 MaxLength.
     byte_size   BIGINT      NOT NULL CHECK (byte_size = octet_length(bytes)),
     -- checksum is the lowercase-hex SHA-256 of bytes. It is the dedupe key within a brief
     -- (the UNIQUE below) and the idempotency key the Meta client uses to avoid re-uploading

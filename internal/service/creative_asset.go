@@ -99,8 +99,13 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// validator. It moved here because Goa publishes MaxLength as `maxLength` on the base64
 	// STRING in the OpenAPI document, and base64 expands by 4/3 — so a 30 MiB decoded ceiling was
 	// published as a constraint that rejects at ~22.5 MiB decoded. The design now declares the
-	// encoded ceiling (the unit that schema measures) and the decoded ceiling is enforced at the
-	// only layer that sees decoded bytes.
+	// encoded ceiling (the unit that schema measures) and the decoded ceiling is enforced HERE,
+	// the only REQUEST layer that sees decoded bytes.
+	//
+	// It is not the only enforcement, and must not be described as such: byte_size is
+	// caller-supplied on the INSERT, so migration 000029 carries the same 30 MiB bound as a
+	// table CHECK for writers that never pass through this handler. This check is what turns an
+	// oversize UPLOAD into a clean 400 instead of a constraint violation.
 	//
 	// It is a len() on an already-decoded slice, so it costs nothing and it runs first: an
 	// oversized upload is refused before DecodeConfig reads its header.

@@ -108,7 +108,8 @@ document and the generated validator applies them before the handler runs — `M
 rejects an empty upload and `MaxLength` is the ENCODED ceiling, `base64.EncodedLen` of the 30 MiB
 stored-file limit, because OpenAPI `maxLength` counts characters of the JSON string. The 30-MiB
 decoded ceiling at Meta's documented single-image maximum is enforced in the handler
-(`maxCreativeStoredBytes`). `MaxLength` does not bound the wire either: the validator sees the
+(`maxCreativeStoredBytes`) and, for writers that never reach the handler, as a table CHECK on
+`byte_size` (migration `000029`). `MaxLength` does not bound the wire either: the validator sees the
 decoded slice only after the JSON decoder has read the entire body and base64-decoded it, so it
 alone leaves the server buffering whatever a caller chooses to send. The inbound bound is
 `constants.MaxRequestBodyBytes` (42 MiB), applied by `middleware.MaxBodyBytes` across every route

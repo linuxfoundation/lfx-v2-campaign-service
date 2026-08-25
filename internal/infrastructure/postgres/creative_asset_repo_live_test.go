@@ -460,6 +460,64 @@ func TestCreativeAssets_ByteSizeChecksBindSizeToPayload(t *testing.T) {
 	}
 }
 
+// TestCreativeAssets_ByteSizeUpperBoundIsEnforcedByTheTable pins the 30 MiB per-row ceiling at
+// the COLUMN, which is what migration 000029 added and what 000028 deferred to it.
+//
+// Why the table and not only the handler. internal/service refuses an oversize upload with a
+// len() on the decoded slice, but that guards the HTTP path alone: byte_size is caller-supplied
+// on the INSERT (createCreativeAssetQuery binds it as $4), so a repository caller, a backfill or
+// any future writer reaches the row without passing that check. The dispatcher then assumes a
+// tripping asset adds at most 30 MiB (maxVariantAssetBytes in internal/dispatch), an assumption
+// nothing below the handler enforced until this constraint existed.
+//
+// The write BYPASSES the repository deliberately, for the same reason the tenant-FK test does:
+// going through CreateAsset would test whichever value the caller set, while a direct insert
+// tests the COLUMN. Both edges are asserted, because a bound is only pinned if the test would
+// notice it moving in either direction — an off-by-one to `<` would still reject 30 MiB + 1 and
+// only the at-the-limit case catches it.
+//
+// The payload is built with repeat() in SQL rather than shipped from Go: a 30 MiB bytea in a
+// bind parameter is a 30 MiB round trip per case, and the CHECK reads the size from the varlena
+// header (byteaoctetlen does not detoast), so where the bytes are generated is irrelevant to
+// what is under test.
+func TestCreativeAssets_ByteSizeUpperBoundIsEnforcedByTheTable(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+
+	// maxCreativeStoredBytes in internal/service. Stated as a literal rather than imported: the
+	// point of this test is that the DATABASE agrees with that number, and deriving it from the
+	// same constant would make the test agree with itself if the constant moved.
+	const maxStored = 31457280
+
+	// ONE BYTE OVER must be refused. This is the case that was reachable before 000029.
+	_, err := pool.Exec(ctx, `
+		INSERT INTO creative_assets (project_id, brief_id, mime_type, byte_size, checksum, bytes)
+		VALUES ($1, $2, 'image/png', $4::bigint, $3, repeat('a', $5::int)::bytea)`,
+		projectID, briefID, creativeAssetUniqueID(t, "sum"), maxStored+1, maxStored+1)
+	if err == nil {
+		t.Fatal("a byte_size of 30 MiB + 1 was accepted — CHECK (byte_size <= 31457280) is " +
+			"missing, so a writer that bypasses the upload handler can persist an oversize blob")
+	}
+	// 23514 = check_violation. Asserting the code keeps this from passing on an unrelated error
+	// (an FK failure or a bad bind would otherwise read as success here).
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("err = %v, want a check_violation (SQLSTATE 23514) on the byte_size upper bound", err)
+	}
+
+	// EXACTLY AT the limit must be accepted. Without this the bound could be tightened to `<`
+	// (or to any smaller number) and the over-limit case above would still pass, while the
+	// endpoint's own ceiling — which admits exactly 30 MiB — started failing at the database.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO creative_assets (project_id, brief_id, mime_type, byte_size, checksum, bytes)
+		VALUES ($1, $2, 'image/png', $4::bigint, $3, repeat('a', $5::int)::bytea)`,
+		projectID, briefID, creativeAssetUniqueID(t, "sum"), maxStored, maxStored); err != nil {
+		t.Fatalf("byte_size = 31457280 (exactly the handler's ceiling) must be accepted, got: %v", err)
+	}
+}
+
 // TestCreativeAssets_CompositeTenantFKRejectsMismatchedProject pins the DATABASE-level
 // parent-tenant constraint, independently of CreateAsset's WHERE EXISTS gate.
 //

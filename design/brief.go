@@ -894,7 +894,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// is a different constraint on a different quantity and is enforced in the
 				// handler (maxCreativeStoredBytes, the stored-file ceiling, alongside
 				// maxCreativeDecodedBytes, the pixel budget — both in internal/service), which
-				// is the only layer that sees decoded bytes.
+				// is the only REQUEST layer that sees decoded bytes. The same 30 MiB bound is
+				// also a table CHECK (migration 000029), because byte_size is caller-supplied
+				// on the INSERT and a non-HTTP writer never reaches the handler.
 				MaxLength(41943040) // 4/3 * 30 MiB: the ENCODED ceiling, the unit this schema constrains
 				// KNOWN DOCUMENT DEFECT, and not fixable from this DSL: Goa emits this
 				// attribute as `type: string, format: binary`, while the transport actually
