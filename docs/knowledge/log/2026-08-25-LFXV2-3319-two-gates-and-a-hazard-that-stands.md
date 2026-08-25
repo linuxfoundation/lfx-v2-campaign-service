@@ -86,3 +86,28 @@ It was NOT wired here. `TestClientCache_GoogleAdsDispatchBypassesTheCache` pins 
 behaviour precisely so that wiring it fails that test and forces the rosters to be updated in the
 same change — it is a separate behaviour change on the paid create path, and folding it into a
 ticket about X account discovery would bury it. It stays recorded as the deliberate bypass it is.
+
+## A roster change is not done until every sentence that named the old state agrees
+
+Changing X's status in two rosters falsified claims in four other places, none of which the
+compiler or `okfvalidate` can see. They were found by grepping the CLAIM rather than the changed
+files — case-insensitively, in both directions ("X is excluded" AND "X is Required"):
+
+- `internal/service/connection.go` — the Google Ads `AccountID` comment said optionality belonged
+  to "Google Ads and, as of LFXV2-3061, Meta … the other four still require it".
+- `internal/service/connection_force_system_test.go` — a test comment asserting `account_id` is
+  Required on "LinkedIn, Reddit, X and Microsoft", used to explain why the force-system guard
+  fires on CHANGE rather than presence.
+- `docs/knowledge/code/internal-service.md` — the same four-provider claim about that guard.
+- `docs/knowledge/code/internal-bootstrap.md` — "Of LinkedIn, Microsoft, Reddit and X, both
+  Microsoft and X have BOTH halves", which still implied X was outside the map it had just joined.
+
+The force-system ones were the interesting pair, because the roster was doing load-bearing work in
+the argument: the comments justified the change-based check by pointing at providers that CANNOT
+omit the id. That reasoning survives X leaving the group, but it is no longer the whole reason —
+re-sending a stored id must stay a no-op for a credentials-first provider too. Both comments now
+say that, so the next provider to go credentials-first does not read the roster as the
+justification and conclude the check can be narrowed.
+
+Log fragments under `docs/knowledge/log/` were deliberately left alone: they are dated history of
+what was true when written, not statements about the current tree.

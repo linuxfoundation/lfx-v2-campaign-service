@@ -64,10 +64,11 @@ func (s *ConnectionService) CreateGoogleAds(ctx context.Context, p *conn.CreateG
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderGoogleAds,
 		Label:     strVal(cfg.Label),
-		// Optional for Google Ads and, as of LFXV2-3061, Meta — the two providers with an
-		// account-discovery endpoint to finish the bootstrap from (design/connection.go
-		// explains why the other four still require it; see CreateMetaAds below for the
-		// sibling). Omitting it stores "" and creates a credentials-only connection, which
+		// Optional for Google Ads, Meta (LFXV2-3061) and X (LFXV2-3319) — the providers that
+		// hold BOTH halves: an account-discovery endpoint to finish the bootstrap from, and a
+		// create path that names the missing choice (design/connection.go explains why the
+		// other three still require it; see CreateMetaAds below for the sibling).
+		// Omitting it stores "" and creates a credentials-only connection, which
 		// is the first step of the discovery bootstrap. The column is NOT NULL TEXT, so ""
 		// is a legal value and no migration is involved — "unfinished" is spelled as an
 		// empty string, not NULL.

@@ -741,11 +741,14 @@ paid-ads policy. See internal-dispatch's Reversibility section for what the guar
 
 **The third parameter is the row's CURRENT `account_id`, and the guard fires on a CHANGE rather
 than on presence.** The distinction is the whole endpoint, not an edge of it. `account_id` is
-`Required` on LinkedIn, Reddit, X and Microsoft (`design/connection.go`, generated as a
+`Required` on LinkedIn, Reddit and Microsoft (`design/connection.go`, generated as a
 non-pointer `string`), and PUT is a full replace, so a caller editing only the label MUST resend
 the id already stored — the schema will not decode a body without it. A presence check therefore
-returned 400 for **every update those four providers can express**. Google Ads and Meta, whose
-`account_id` is optional, could satisfy it only by omitting the field — which, PUT being a full
+returned 400 for **every update those providers can express**. X left that group in LFXV2-3319 and
+is now credentials-first alongside Google Ads and Meta; the change-based check is what keeps
+re-sending a stored id a no-op for those three too, so it is not merely a concession to the
+Required ones. Google Ads, Meta and X, whose `account_id` is optional, could satisfy a presence
+check only by omitting the field — which, PUT being a full
 replace, CLEARS the column. So the presence check's single permitted way to rename a Google or
 Meta connection was to destroy the account selection a rollback depends on: the guard, obeyed,
 caused the loss it exists to prevent.

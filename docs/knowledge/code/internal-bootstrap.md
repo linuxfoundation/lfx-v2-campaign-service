@@ -112,9 +112,10 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
 dispatch-failure LOG LINE rather than the polled job result, because `dispatchPlatform` collapses
 every dispatcher error into `"platform campaign creation failed"`; Meta's toggle and metrics need
-no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft, Reddit and X, both Microsoft (LFXV2-3064) and X (LFXV2-3319) have BOTH
+no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft and Reddit, only Microsoft (LFXV2-3064) has BOTH
 halves: Reddit still lacks discovery, and LinkedIn — which gained a discovery endpoint in the
-former ticket — is the one provider missing the OTHER half. `resolveLinkedInCredentials` does tag
+same ticket — is the one provider missing the OTHER half. X also holds both (LFXV2-3319) and,
+unlike Microsoft, has been admitted to the map. `resolveLinkedInCredentials` does tag
 a missing account with `domain.ErrAccountNotSelected`, but `LinkedInDispatcher.Dispatch` does not
 call it; the create path resolves inline and returns a bare `notCreated`, so the missing choice is
 never named. Microsoft, Reddit and X all tag it on a path create actually reaches — and for X
