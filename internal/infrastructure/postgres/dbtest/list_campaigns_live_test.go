@@ -48,7 +48,9 @@ func TestLiveListCampaignsForBriefOrdersAndExcludesDeleted(t *testing.T) {
 		t.Fatalf("seed brief: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM campaign_briefs WHERE id=$1`, briefID); err != nil {
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM campaign_briefs WHERE id=$1`, briefID); err != nil {
 			t.Errorf("clean up seeded brief: %v", err)
 		}
 	})
@@ -75,7 +77,9 @@ func TestLiveListCampaignsForBriefOrdersAndExcludesDeleted(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM campaigns WHERE brief_id=$1`, briefID); err != nil {
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM campaigns WHERE brief_id=$1`, briefID); err != nil {
 			t.Errorf("clean up seeded campaigns: %v", err)
 		}
 	})
@@ -127,8 +131,10 @@ func TestLiveListCampaignsForBriefExcludesAnotherProject(t *testing.T) {
 		t.Fatalf("seed brief: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE brief_id=$1`, briefID)
-		if _, err := pool.Exec(context.Background(), `DELETE FROM campaign_briefs WHERE id=$1`, briefID); err != nil {
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM campaigns WHERE brief_id=$1`, briefID)
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM campaign_briefs WHERE id=$1`, briefID); err != nil {
 			t.Errorf("clean up seeded brief: %v", err)
 		}
 	})

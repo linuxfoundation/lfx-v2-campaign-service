@@ -29,8 +29,10 @@ type ConnectionWriter interface {
 
 	// SetCredential replaces only the encrypted credential blob and bumps the
 	// version. Separate from Update so credential replacement is independently
-	// permissioned/audited. Returns the updated connection so the handler can
-	// emit the new ETag (otherwise the client's next If-Match would be stale).
+	// permissioned/audited. Returns the updated connection so the post-write
+	// version is available; the bump is what INVALIDATES ETags issued before the
+	// rotation, so a client's stale If-Match cannot succeed against a replaced
+	// row. (The set-credential handler answers 204 and does not emit it today.)
 	SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) (*model.Connection, error)
 
 	// UpdateWithCredential writes the config AND the credential in ONE version-gated

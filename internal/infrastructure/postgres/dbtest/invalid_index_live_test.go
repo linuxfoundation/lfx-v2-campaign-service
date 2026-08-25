@@ -46,7 +46,9 @@ func TestMigrateRefusesAnInvalidIndex(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		//nolint:gosec // same locally-built name.
-		if _, err := pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+table); err != nil {
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, "DROP TABLE IF EXISTS "+table); err != nil {
 			t.Errorf("drop scratch table: %v — it would fail every later Migrate in this database", err)
 		}
 	})
@@ -70,8 +72,8 @@ func TestMigrateRefusesAnInvalidIndex(t *testing.T) {
 
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrInvalidIndex) {
-		t.Fatalf("Migrate with an invalid index present: got %v, want ErrInvalidIndex — "+
-			"reporting success here is how a lost UNIQUE constraint goes unnoticed", err)
+		t.Fatalf("Migrate with an invalid index present: got %s, want ErrInvalidIndex — "+
+			"reporting success here is how a lost UNIQUE constraint goes unnoticed", dbtest.SafeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v — an operator has to know which index to drop", idx, err)
@@ -116,9 +118,9 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 	// message used to advise on its own. The version is clean, so this rebuilds nothing.
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-		t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+		t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
 			"succeeding here starts the service with the audience-build race wide open "+
-			"and nothing to report it", idx, err)
+			"and nothing to report it", idx, dbtest.SafeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v", idx, err)
@@ -154,9 +156,9 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-		t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+		t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
 			"succeeding here starts the service with (brief_id, platform) uniqueness gone "+
-			"and concurrent claims free to double-create paid campaigns", idx, err)
+			"and concurrent claims free to double-create paid campaigns", idx, dbtest.SafeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v", idx, err)
@@ -218,9 +220,9 @@ func TestMigrateRefusesARequiredIndexWithTheWrongDefinition(t *testing.T) {
 
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrRequiredIndexMismatch) {
-		t.Fatalf("Migrate with a same-named non-unique index: got %v, want "+
+		t.Fatalf("Migrate with a same-named non-unique index: got %s, want "+
 			"ErrRequiredIndexMismatch — the migration's IF NOT EXISTS skipped, so this "+
-			"schema arbitrates no lease at all while every name-based check passes", err)
+			"schema arbitrates no lease at all while every name-based check passes", dbtest.SafeDSNErr(err))
 	}
 	// The two defects must BOTH be named. A message that stops at the first one sends the
 	// operator to rebuild an index that would still be wrong.
@@ -296,7 +298,14 @@ func restoreRequiredIndex(t *testing.T, pool interface {
 }, idx, create string,
 ) {
 	t.Helper()
-	ctx := context.Background()
+	// Every caller reaches this from t.Cleanup, so the context is bounded rather than
+	// unbounded: a DROP or CREATE waiting on another session would otherwise block here
+	// forever and the Errorf paths below would never run, hanging the package at its
+	// suite-level timeout instead of reporting the index it failed to restore. It is not
+	// derived from the test's ctx either -- that one is cancelled by the time Cleanup
+	// runs, and inheriting it would fail instantly without restoring anything.
+	ctx, cancel := dbtest.CleanupContext()
+	defer cancel()
 
 	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
 		t.Errorf("restore %s: drop: %v", idx, err)
@@ -365,7 +374,9 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 				t.Fatalf("read the definition of %s (is it in the schema at all?): %v", idx, err)
 			}
 			t.Cleanup(func() {
-				if _, err := pool.Exec(context.Background(), def); err != nil {
+				cleanupCtx, cancel := dbtest.CleanupContext()
+				defer cancel()
+				if _, err := pool.Exec(cleanupCtx, def); err != nil {
 					t.Fatalf("restore %s: %v — later tests would run against a schema "+
 						"missing a constraint this test removed", idx, err)
 				}
@@ -380,9 +391,9 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 			// and a service that boots with the constraint gone.
 			err := postgres.Migrate(dbtest.DSN())
 			if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-				t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+				t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
 					"succeeding here boots the service against a schema where a second live "+
-					"row for the same key inserts cleanly and nothing reports it", idx, err)
+					"row for the same key inserts cleanly and nothing reports it", idx, dbtest.SafeDSNErr(err))
 			}
 			if !strings.Contains(err.Error(), idx) {
 				t.Errorf("the error does not name %s, so the operator cannot tell WHICH "+
@@ -433,10 +444,12 @@ func TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts(t *testing.T) {
 				t.Fatalf("read the definition of %s: %v", idx, err)
 			}
 			t.Cleanup(func() {
-				if _, err := pool.Exec(context.Background(), "DROP INDEX IF EXISTS "+idx); err != nil {
+				cleanupCtx, cancel := dbtest.CleanupContext()
+				defer cancel()
+				if _, err := pool.Exec(cleanupCtx, "DROP INDEX IF EXISTS "+idx); err != nil {
 					t.Fatalf("drop the rebuilt %s: %v", idx, err)
 				}
-				if _, err := pool.Exec(context.Background(), def); err != nil {
+				if _, err := pool.Exec(cleanupCtx, def); err != nil {
 					t.Fatalf("restore %s: %v — later tests would run against a schema "+
 						"missing a constraint this test removed", idx, err)
 				}
@@ -450,8 +463,8 @@ func TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts(t *testing.T) {
 					rebuild, err)
 			}
 			if err := postgres.Migrate(dbtest.DSN()); err != nil {
-				t.Fatalf("Migrate after following the printed remedy for %s: %v — an "+
-					"operator who does exactly what the error says is still down", idx, err)
+				t.Fatalf("Migrate after following the printed remedy for %s: %s — an "+
+					"operator who does exactly what the error says is still down", idx, dbtest.SafeDSNErr(err))
 			}
 		})
 	}
