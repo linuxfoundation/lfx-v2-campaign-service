@@ -376,14 +376,16 @@ interprets an OAuth1 4-tuple (consumer key/secret + access token/secret); Accoun
 comes from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in the
 ACCOUNT's currency (no FX). It surfaces a `Reused` reuse/config-drift flag and classifies
 an exhausted mutating 429 as UNCONFIRMED; it validates the destination URL (https/http,
-no embedded userinfo) up front. `validateTwitterConnection` holds the credential rules
-It maps `tweetText`/`asUserId` straight into `CampaignInput` alongside `tweetId` —
-see "Authoring a promoted tweet" above for the client-side precedence and
-classification rules. A fully authored + promoted tweet degrades exactly the
-same way an explicit-`tweetId` run does: the adapter's degrade check is keyed on
-`PromotedTweetID` being empty (regardless of whether the tweet was supplied or
-just authored), so authoring success collapses cleanly into the existing
-`created` vs `created_degraded` decision without a separate trigger. `validateTwitterConnection` holds the credential rules
+no embedded userinfo) up front. It maps `tweetText`/`asUserId` straight into
+`CampaignInput` alongside `tweetId` — see "Authoring a promoted tweet" above
+for the client-side precedence and classification rules. A fully authored +
+promoted tweet degrades exactly the same way an explicit-`tweetId` run does:
+the adapter's degrade check is keyed on `PromotedTweetID` being empty
+(regardless of whether the tweet was supplied or just authored), so authoring
+success collapses cleanly into the existing `created` vs `created_degraded`
+decision without a separate trigger.
+
+`validateTwitterConnection` holds the credential rules
 shared by `Dispatch` and `ToggleStatus`, with ONE intentional asymmetry:
 `funding_instrument_id` is required only by `Dispatch`. It is a create-time field that
 `UpdateCampaignAndChildrenStatus` never puts on the wire, so requiring it in the shared
