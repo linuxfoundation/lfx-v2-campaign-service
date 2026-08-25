@@ -161,6 +161,12 @@ type Client struct {
 	// the dispatch client cache.
 	writeMu   sync.Mutex
 	nextWrite time.Time
+
+	// onAdmit, when set, is called by pace with the instant a caller was cleared to
+	// write, while writeMu is still held. Test-only observation hook: it exists
+	// because a timestamp taken after pace RETURNS cannot establish admission order
+	// (see pace). Never set in production.
+	onAdmit func(time.Time)
 }
 
 // Option customizes a Client at construction time.
@@ -1207,10 +1213,20 @@ func (c *Client) pace(ctx context.Context) error {
 	// Reserve this caller's slot from the later of "now" and the previous
 	// reservation, so a burst that arrives while the pacer is idle cannot collapse
 	// into the same instant.
+	admitted := now
 	if c.nextWrite.After(now) {
+		admitted = c.nextWrite
 		c.nextWrite = c.nextWrite.Add(c.writeDelay)
 	} else {
 		c.nextWrite = now.Add(c.writeDelay)
+	}
+	// onAdmit reports the instant this caller was CLEARED to write, while writeMu is
+	// still held. Tests use it because sampling a clock after pace returns cannot
+	// order admissions: a goroutine preempted between the return and its own read can
+	// record after a later caller, so the observed sequence would not be the admitted
+	// one. nil in production.
+	if c.onAdmit != nil {
+		c.onAdmit(admitted)
 	}
 	return nil
 }

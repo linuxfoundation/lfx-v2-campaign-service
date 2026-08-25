@@ -4203,13 +4203,14 @@ func TestFindByNameEmptyArrayDataIsGenuineNotFound(t *testing.T) {
 // It is deliberately concurrent. The pre-fix implementation slept writeDelay
 // unconditionally before each write, which passes any sequential test while
 // letting N goroutines sharing a client sleep in parallel and then issue their
-// writes at the same instant. Only overlapping callers can distinguish the two,
-// so this test runs them.
+// writes at the same instant. Only overlapping callers can distinguish the two.
 //
-// The clock is virtual: timeFn reads a monotonically advancing fake, and the
-// real sleepCtx wait is kept tiny by using a small writeDelay. What is asserted
-// is the SPACING pace hands out, which is clock-driven and therefore exact,
-// rather than wall-clock timing that would be flaky under -race.
+// Admissions are recorded by pace itself through onAdmit, while writeMu is still
+// held, NOT by sampling a clock after pace returns. That distinction is the whole
+// validity of the test: a goroutine preempted between pace returning and its own
+// clock read can record after a later caller, so post-return timestamps establish
+// no ordering and could show sub-delay gaps even when admission was correctly
+// spaced. What is asserted is therefore the spacing the pacer actually handed out.
 func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 	const (
 		callers = 8
@@ -4218,8 +4219,8 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 
 	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(delay))
 
-	// A virtual clock driven off a real monotonic base. Reads are serialized so
-	// -race sees no data race on the clock itself.
+	// A virtual clock driven off a real monotonic base, serialized so -race sees no
+	// data race on the clock itself.
 	var clockMu sync.Mutex
 	base := time.Unix(1600000000, 0)
 	start := time.Now()
@@ -4229,48 +4230,47 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 		return base.Add(time.Since(start))
 	}
 
-	// Record the instant each caller is CLEARED to write, on the same clock pace
-	// reserves against.
+	// Recorded in admission order, under pace's own lock.
 	var mu sync.Mutex
 	cleared := make([]time.Time, 0, callers)
+	c.onAdmit = func(at time.Time) {
+		mu.Lock()
+		cleared = append(cleared, at)
+		mu.Unlock()
+	}
 
 	var wg sync.WaitGroup
 	ready := make(chan struct{})
-	for i := 0; i < callers; i++ {
+	for range callers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-ready // maximize overlap: all callers enter pace together
 			if err := c.pace(context.Background()); err != nil {
 				t.Errorf("pace returned error: %v", err)
-				return
 			}
-			now := c.timeFn()
-			mu.Lock()
-			cleared = append(cleared, now)
-			mu.Unlock()
 		}()
 	}
 	close(ready)
 	wg.Wait()
 
+	mu.Lock()
+	defer mu.Unlock()
 	if len(cleared) != callers {
 		t.Fatalf("got %d cleared writes, want %d", len(cleared), callers)
 	}
-	sort.Slice(cleared, func(i, j int) bool { return cleared[i].Before(cleared[j]) })
 
-	// Every ADJACENT pair must be at least writeDelay apart. A per-call-site
-	// sleep yields gaps near zero here because the callers wake together.
+	// onAdmit fires under writeMu, so `cleared` is already in admission order; sorting
+	// would MASK an out-of-order admission rather than reveal it.
 	for i := 1; i < len(cleared); i++ {
-		gap := cleared[i].Sub(cleared[i-1])
-		if gap < delay {
-			t.Errorf("writes %d and %d were %v apart; want >= %v (write rate exceeded X's 1/sec budget)",
-				i-1, i, gap, delay)
+		if gap := cleared[i].Sub(cleared[i-1]); gap < delay {
+			t.Errorf("writes %d and %d were admitted %v apart; want >= %v (write rate exceeded "+
+				"X's 1/sec budget)", i-1, i, gap, delay)
 		}
 	}
 
-	// And the whole burst must span at least (callers-1) delays: N writes cannot
-	// be squeezed into fewer slots than the rate allows.
+	// The whole burst must span at least (callers-1) delays: N writes cannot be
+	// squeezed into fewer slots than the rate allows.
 	if span := cleared[len(cleared)-1].Sub(cleared[0]); span < time.Duration(callers-1)*delay {
 		t.Errorf("burst of %d writes spanned %v; want >= %v", callers, span, time.Duration(callers-1)*delay)
 	}
