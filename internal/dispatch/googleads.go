@@ -1298,10 +1298,19 @@ func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 // Settings readback (LFXV2-3067)
 // ---------------------------------------------------------------------------
 
-// Field names used in the settings readback, in THIS SERVICE's vocabulary rather than
-// Google's. They match the campaign row's own column names, because the whole report is
-// "what this row records" against "what the platform holds", and naming the row's side in
-// Google's spelling would make the comparison harder to read, not easier.
+// Field names used in the settings readback, in THIS SERVICE's own stable vocabulary
+// rather than Google's. Naming the row's side in Google's spelling would make the report
+// harder to read, not easier, since the whole report is "what this row records" against
+// "what the platform holds".
+//
+// This vocabulary is NOT a column list, and must not be read as one — the Goa contract
+// (design/brief.go, campaign-settings-field) warns consumers of the same thing. Six of the
+// ten names do happen to coincide with a campaigns column (budget_amount, budget_type,
+// campaign_name, status, start_date, end_date), but advertising_channel_type has no column
+// and is recovered from ConfigSnapshot, and budget_delivery_method,
+// budget_explicitly_shared and bidding_strategy_type have neither a column nor a recorded
+// side. Treating the set as column names would send a reader looking for persistence
+// fields that do not exist.
 // googleAdsDateTimeLayout is the shape Google returns campaign.start_date_time /
 // end_date_time in: 'yyyy-MM-dd HH:mm:ss', in the ad account's timezone. Parsing against it
 // in full is what stops a malformed value being silently truncated into a plausible date.
@@ -1690,8 +1699,10 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		recordedEnd = strPtr(campaign.EndDate.UTC().Format(campaignDateLayout))
 	}
 
-	// Advertising channel type. This one IS recorded, unlike the four genuine upstream-only
-	// observations below: googleAdsConfig.Channel is marshalled whole into ConfigSnapshot by
+	// Advertising channel type. This one IS recorded, unlike the three upstream-only
+	// observations below that have no recorded side at all (status is also reported with a
+	// nil recorded side, but for the different-axis reason given at its entry, not for want
+	// of anything to record): googleAdsConfig.Channel is marshalled whole into ConfigSnapshot by
 	// applyCampaignConfig on BOTH the create and the adoption path. Passing nil here would
 	// discard a request this service holds and report `unknown` forever, so a campaign
 	// recorded as demand-gen could never be shown as diverging from an upstream SEARCH —
