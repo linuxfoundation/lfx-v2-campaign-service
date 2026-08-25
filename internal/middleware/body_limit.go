@@ -16,12 +16,12 @@ import (
 
 // MaxBodyBytes caps how much of a request body any handler can read.
 //
-// It closes a gap the design-level size bounds cannot: Goa's declared MaxLength on a
-// Bytes attribute is checked by the GENERATED VALIDATOR against the already-decoded
-// slice, which means goahttp.RequestDecoder's json.Decoder has already read the whole
-// body off the socket and base64-decoded it by the time any limit is consulted. A
-// caller that streams an oversized body therefore gets it buffered and decoded first,
-// and the declared limit only reports afterwards on whatever survived. This middleware
+// It closes a gap the design-level size bounds cannot: Goa's declared MaxLength on the
+// upload's base64 String attribute is checked by the GENERATED VALIDATOR, which runs
+// only after goahttp.RequestDecoder's json.Decoder has read the whole body off the
+// socket and materialised that string. A caller that streams an oversized body
+// therefore gets it buffered first, and the declared limit only reports afterwards on
+// whatever survived. This middleware
 // is the bound that applies BEFORE the body is read, so an oversized request costs a
 // fixed, bounded amount of memory no matter what it declares.
 //

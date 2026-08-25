@@ -1559,6 +1559,10 @@ func (fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model
 	return nil, domain.ErrNotFound
 }
 
+func (fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
+	return 0, domain.ErrNotFound
+}
+
 // TestRegisterDispatchers_BindsMetaCreativeAssetRepo pins the PRODUCTION wiring for the
 // creative-asset read path on the Meta dispatcher.
 //

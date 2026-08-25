@@ -53,11 +53,11 @@ const uploadRoute = "/projects/cncf/briefs/6ba7b810-9dad-11d1-80b4-00c04fd430c8/
 // TestUploadRoute_RejectsOversizeBodyBeforeDecoding is the test for the gap this PR closes.
 //
 // design/brief.go declares MaxLength(41943040) on the upload's `bytes` attribute, which reads
-// like a size limit but does not bound the wire: the generated validator tests len() on the
-// DECODED slice, and it only sees that slice after goahttp.RequestDecoder's json.Decoder has
-// read the entire body off the socket and base64-decoded it. Before the cap, a caller could
-// stream a body of any size and the server would buffer and decode all of it, then report the
-// declared limit on whatever it had built. There was no http.MaxBytesReader anywhere in cmd/ or
+// like a size limit but does not bound the wire: the generated validator counts CHARACTERS of
+// the base64 string, and it only sees that string after goahttp.RequestDecoder's json.Decoder
+// has read the entire body off the socket. Before the cap, a caller could stream a body of any
+// size and the server would buffer all of it, then report the declared limit on whatever it had
+// built. There was no http.MaxBytesReader anywhere in cmd/ or
 // internal/ — every LimitReader in the tree caps an OUTBOUND response.
 //
 // The request here declares a Content-Length past the cap, so the refusal must come before any

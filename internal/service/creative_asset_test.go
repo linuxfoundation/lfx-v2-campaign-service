@@ -98,6 +98,10 @@ func (f *fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*mo
 	return nil, domain.ErrNotFound
 }
 
+func (f *fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
+	return 0, domain.ErrNotFound
+}
+
 // pngBytes is the smallest real PNG that image.DecodeConfig accepts: signature + a complete IHDR.
 // A hand-rolled header would be rejected for the wrong reason and the test would pass vacuously.
 func pngBytes(t *testing.T) []byte {
@@ -852,6 +856,10 @@ func (f *deadlineObservingAssetRepo) GetAsset(_ context.Context, _, _, _ string)
 	return nil, domain.ErrNotFound
 }
 
+func (f *deadlineObservingAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
+	return 0, domain.ErrNotFound
+}
+
 // TestUploadCreativeAsset_BoundsTheInsertHeldUnderThePermit pins the availability property that
 // the UploadAdmission permit cannot be pinned by a stalled insert.
 //
@@ -1030,5 +1038,43 @@ func TestUploadCreativeAsset_EncodedAndDecodedCeilingsAgree(t *testing.T) {
 	}
 	if got := base64.StdEncoding.DecodedLen(designMaxLengthChars); got != maxCreativeStoredBytes {
 		t.Errorf("DecodedLen(MaxLength) = %d, want maxCreativeStoredBytes %d", got, maxCreativeStoredBytes)
+	}
+}
+
+// TestUploadCreativeAsset_ReleasesTheEncodedStringAfterDecoding pins a MEMORY bound, not a
+// cosmetic cleanup.
+//
+// The wire attribute is a base64 string, so the payload carries ~40 MiB for a maximum-size
+// upload — an allocation the older Goa `Bytes` attribute never materialised separately, because
+// goa decoded during JSON decoding. The payload struct keeps `p` reachable for the whole handler
+// (it is read again for ProjectID/BriefID), so unless the string is explicitly dropped it stays
+// resident THROUGH the 80 MiB pixel decode. That puts the coexisting peak at roughly
+// 42 + 40 + 30 + 80 = 192 MiB, past the ~128 MiB `UploadAdmissionWeightBytes` charges for one
+// upload — the admission bound would then under-count exactly when it matters.
+//
+// Asserting the field is cleared is the only observable proxy for "the string became
+// collectable": Go gives no way to assert reachability directly. It is a weaker signal than a
+// heap measurement would be, but it is exact about the thing that can regress — someone deleting
+// the assignment as pointless.
+func TestUploadCreativeAsset_ReleasesTheEncodedStringAfterDecoding(t *testing.T) {
+	repo := &fakeCreativeAssetRepo{}
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+
+	payload := &briefs.UploadCreativeAssetPayload{
+		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: b64(pngBytes(t)),
+	}
+	if payload.Bytes == "" {
+		t.Fatal("fixture is empty, so this test could pass without the release happening")
+	}
+
+	if _, err := s.UploadCreativeAsset(context.Background(), payload); err != nil {
+		t.Fatalf("UploadCreativeAsset: %v", err)
+	}
+
+	if payload.Bytes != "" {
+		t.Errorf("payload.Bytes is still set (%d chars) after a successful upload: the encoded "+
+			"string stays reachable across the pixel decode, so the coexisting peak exceeds what "+
+			"UploadAdmissionWeightBytes charges for one upload", len(payload.Bytes))
 	}
 }

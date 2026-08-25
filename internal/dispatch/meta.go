@@ -73,6 +73,10 @@ type metaConfig struct {
 // exactly as the HubSpot dispatcher's audienceReader narrows the audience repository.
 type creativeAssetReader interface {
 	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+	// GetAssetSize prices an asset before it is loaded, so the aggregate reservation can be
+	// taken BEFORE the blob is materialised. Reserving afterwards bounds nothing: the memory
+	// is already resident by the time the semaphore is consulted.
+	GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error)
 }
 
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
@@ -331,6 +335,21 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 	byID := make(map[string][]byte, len(out))
 	mimeByID := make(map[string]string, len(out))
 	var totalBytes int64
+
+	// Per-asset reservations, released together. Collected rather than folded into one weight
+	// because each is acquired separately (before its own load), and a weighted semaphore must
+	// be released with exactly the weights it was acquired with — releasing a different total
+	// silently corrupts its accounting rather than failing.
+	//
+	// releaseAll is returned on EVERY error path as well as on success, so a dispatch that fails
+	// part-way through the loop hands back the budget it already took. Returning a no-op there
+	// would leak the reservation for the life of the process.
+	var releases []func()
+	releaseAll := func() {
+		for _, release := range releases {
+			release()
+		}
+	}
 	for i := range out {
 		assetID := strings.TrimSpace(out[i].ImageAssetID)
 		if assetID == "" {
@@ -338,7 +357,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		}
 		parsed, perr := uuid.Parse(assetID)
 		if perr != nil {
-			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
+			return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
 		}
 		// CANONICALIZE before the id is used as a cache key or a lookup value.
 		//
@@ -364,67 +383,68 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 			continue
 		}
 		if d.creatives == nil {
-			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+			return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
 		}
+		// PRICE THE ASSET BEFORE LOADING IT.
+		//
+		// This read costs one BIGINT and no BYTEA. It exists because the aggregate reservation
+		// has to be taken BEFORE the blob is resident — charging afterwards bounds nothing, since
+		// every concurrent dispatch would already be holding its full allowance by the time it
+		// blocked on the semaphore. That was a real defect in the first version of this bound.
+		size, serr := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
+		if serr != nil {
+			if errors.Is(serr, domain.ErrNotFound) {
+				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+			}
+			return nil, func() {}, fmt.Errorf("meta variant %d: size creative asset %s: %w", i+1, assetID, serr)
+		}
+
+		// The PER-DISPATCH ceiling, now also applied before the read rather than after it. The
+		// asset that trips the ceiling is no longer materialised first, so the old
+		// "peak is the cap plus one asset" overshoot is gone.
+		totalBytes += size
+		if totalBytes > maxVariantAssetBytes {
+			return nil, releaseAll, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+				maxVariantAssetBytes, totalBytes, i+1)
+		}
+
+		// AGGREGATE reservation for THIS asset, taken before it is loaded. Charged incrementally
+		// rather than once at the end for exactly the ordering reason above.
+		relOne, ok := d.assets.reserve(ctx, size)
+		if !ok {
+			return nil, releaseAll, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
+		}
+		releases = append(releases, relOne)
+
 		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if gerr != nil {
 			if errors.Is(gerr, domain.ErrNotFound) {
-				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
-			return nil, func() {}, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+			return nil, releaseAll, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
 		}
+		// The reservation was priced from byte_size; the CHECK on that column
+		// (migration 000029) ties it to octet_length(bytes), so the two agree by construction.
+		// A mismatch would mean the row violates its own constraint, which is a data defect
+		// rather than something to silently re-charge for.
+		_ = size
 		// A resolved asset that carries no bytes cannot become a creative. Refuse rather
 		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
 		// variant that asked for an image — a silent downgrade that spends money.
 		if len(asset.Bytes) == 0 {
-			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
-		}
-		// Charged once per DISTINCT asset, and checked before the buffer is retained in
-		// byID/out — but NOT before GetAsset materialized it. The repo read scans the whole
-		// BYTEA, so the asset that TRIPS the ceiling is already resident when it is counted:
-		// the true peak is maxVariantAssetBytes plus one maximum-size asset (270 MiB), not
-		// 240 MiB. Stated rather than rounded off because a bound that under-reports its own
-		// worst case is the kind of number a later change gets sized against.
-		//
-		// Reading byte_size first and refusing before fetching the bytes would make the peak
-		// exact; it is not done here because it costs a second round trip per asset on the
-		// dispatch path, and the one-asset overshoot is bounded and small next to the pod
-		// budget. If the ceiling is ever raised toward the pod limit, close this gap first.
-		totalBytes += int64(len(asset.Bytes))
-		if totalBytes > maxVariantAssetBytes {
-			return nil, func() {}, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
-				maxVariantAssetBytes, totalBytes, i+1)
+			return nil, releaseAll, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
 		byID[assetID] = asset.Bytes
 		mimeByID[assetID] = asset.MimeType
 		out[i].ImageBytes = asset.Bytes
 		out[i].ImageMIME = asset.MimeType
 	}
-	// AGGREGATE reservation, charged from the bytes actually resolved.
+	// Every asset was reserved BEFORE it was loaded, so by here the aggregate budget already
+	// accounts for exactly what this dispatch holds. releaseAll returns all of it at once.
 	//
-	// maxVariantAssetBytes above capped THIS dispatch; nothing capped how many dispatches hold
-	// their assets at the same time, and the orchestrator's slots are process-wide with no
-	// per-provider split, so all of them can be Meta. This charges the resolved total against a
-	// budget shared by every concurrent dispatch.
-	//
-	// It is taken AFTER the loop rather than incrementally, because a partial reservation
-	// released on a later error is budget churn with no bound gained: the per-dispatch ceiling
-	// already refuses anything over maxVariantAssetBytes, so the total charged here is at most
-	// that, and taking it once keeps acquire/release paired at one site.
-	//
-	// Zero is not reserved: a config with no asset-backed variants holds no asset bytes and must
-	// not queue behind one that does.
-	if totalBytes == 0 {
-		return out, func() {}, nil
-	}
-	release, ok := d.assets.reserve(ctx, totalBytes)
-	if !ok {
-		// A refusal is an explicit, retryable dispatch failure — never a silent link-only ad.
-		// The bytes were resolved but must not be held: returning them without the reservation
-		// would defeat the bound it was just refused for.
-		return nil, func() {}, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
-	}
-	return out, release, nil
+	// A config with no asset-backed variants took no reservation at all, so releaseAll is a
+	// no-op over an empty slice — such a dispatch never queues behind one that holds assets.
+	return out, releaseAll, nil
 }
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable

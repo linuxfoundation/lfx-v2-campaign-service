@@ -15,9 +15,9 @@ Package middleware provides HTTP middleware for the service.
 `cmd/campaign-service` applies it on every route at `constants.MaxRequestBodyBytes` (42 MiB).
 
 It exists because the size bounds declared in `design/` do not bound the wire. A Goa `Bytes`
-attribute's `MaxLength` is checked by the GENERATED VALIDATOR against the already-decoded slice,
+attribute's `MaxLength` is checked by the GENERATED VALIDATOR against the encoded base64 string,
 and the validator only sees that slice after `goahttp.RequestDecoder`'s `json.Decoder` has read
-the entire body off the socket and base64-decoded it. (The upload declares that ceiling in base64
+the entire body off the socket and materialised that string. (The upload declares that ceiling in base64
 CHARACTERS — `MaxLength(41943040)` — because that is the unit the published schema measures; the
 30 MiB DECODED ceiling is enforced separately in the handler at `maxCreativeStoredBytes`.) Before this middleware there was no
 `http.MaxBytesReader` anywhere in the service — every `LimitReader` in the tree caps an OUTBOUND
@@ -69,7 +69,9 @@ different in kind.
 Placement is the security property, and it is why this is NOT a semaphore inside
 `UploadCreativeAsset`. Goa's generated handler calls `decodeRequest(r)` and only then
 `endpoint(...)`, and the generated endpoint calls `authJWTFn` as its first statement — so the
-body read and the base64 decode both complete BEFORE any JWT is examined. A guard in the service
+body read and the JSON unmarshal both complete BEFORE any JWT is examined (the base64 DECODE now
+happens in the service method, after auth — which moves ~30 MiB to the authenticated side but does
+not shrink the pre-auth half, since the encoded string is larger than the bytes it encodes). A guard in the service
 method would acquire after ~72 MiB had already been allocated for an unauthenticated caller,
 bounding only the decode tail while reading as though the problem were solved. Admission
 therefore sits immediately outside `MaxBodyBytes` and outside the mux, taking its permit before
@@ -81,7 +83,7 @@ It ensures such a read cannot happen without first taking a permit from a budget
 pod's real limit.
 
 What the weight accounts, precisely: the WIRE side of the inbound request — the buffered body
-and the base64-decoded slice for one upload. It does NOT account the decoded PIXEL buffer, and
+and the base64 STRING the JSON decoder materialises for one upload. It does NOT account the decoded PIXEL buffer, and
 the two must not be treated as one bound. The weight is priced from `Content-Length`, and image
 compression severs the link between wire bytes and decoded bytes: a flat 4000x4000 PNG is ~68 KiB
 on the wire and 61 MiB decoded, so it takes the minimum wire permit while allocating a pixel
@@ -129,9 +131,11 @@ defensible. Charging the floor bought concurrency for the only client that exist
 `RequestEncoder` never sets `ContentLength`, so the shipped briefs client streams this upload
 chunked and lands on this branch by default. But the permit is taken BEFORE the body is read, so a
 floor charge assumes "small" about a request that may be worst-case, and the aggregate that follows
-is not survivable: 16 admitted uploads each hold a base64-decoded slice of up to ~31.5 MiB live in
+is not survivable: 16 admitted uploads each hold a decoded slice of up to ~31.5 MiB live in
 `asset.Bytes` through `sha256Hex` and the whole `CreateAsset` insert — roughly 480 MiB on a 512 MiB
-pod, reachable pre-auth because this middleware sits outside the mux by design.
+pod. The body read that feeds it is reachable pre-auth because this middleware sits outside the mux
+by design; the decode itself now happens in the service method, after auth, but the permit is taken
+before either and must price both.
 
 Neither other control bounds that sum: `MaxBodyBytes` caps ONE body rather than the total, and the
 `DecodeReserver` budget covers only the PIXEL buffer and releases the moment `image.Decode`

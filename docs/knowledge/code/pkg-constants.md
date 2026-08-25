@@ -31,7 +31,7 @@ failure rather than a silently disabled feature.
 ceiling: it bounds how many bytes the server reads from ANY request body before answering
 `413`, and `middleware.MaxBodyBytes` applies it on every route (see
 [internal/middleware](internal-middleware.md)). It exists because a Goa `MaxLength` does
-not bound the wire — the generated validator tests the already-base64-DECODED slice, which
+not bound the wire — the generated validator counts CHARACTERS of the encoded string, which
 it sees only after the JSON decoder has read the whole body. The value is derived from the
 creative-asset upload's 30-MiB DECODED ceiling (`maxCreativeStoredBytes`, enforced in the
 handler): base64 expands by 4/3, so a maximum-size image is 40 MiB of base64 exactly — which

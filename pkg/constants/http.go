@@ -22,13 +22,13 @@ const (
 // body before refusing it with 413.
 //
 // It exists because the size bounds declared in design/ do NOT bound the wire. The
-// creative-asset upload declares MaxLength(41943040) on a Goa `Bytes` attribute --
+// creative-asset upload declares MaxLength(41943040) on a base64 `String` attribute --
 // the ENCODED ceiling, base64.EncodedLen of the 30 MiB stored-file limit -- but the
-// generated validator tests len() on the DECODED slice, and it only ever sees that
-// slice after goahttp.RequestDecoder's json.Decoder has read the entire request body
-// and base64-decoded it. Without an inbound cap an unauthenticated caller streams an
-// arbitrarily large body and the server buffers and decodes all of it before any
-// declared limit is consulted.
+// generated validator counts CHARACTERS of that string, and it only ever sees the string
+// after goahttp.RequestDecoder's json.Decoder has read the entire request body. Without an
+// inbound cap an unauthenticated caller streams an arbitrarily large body and the server
+// buffers all of it before any declared limit is consulted. (The base64 DECODE happens later
+// still, in the service method after authentication.)
 //
 // The value is derived, not guessed. Base64 expands by exactly 4/3 with padding
 // (encoding/json decodes a []byte field via base64.StdEncoding), so the largest
@@ -75,14 +75,28 @@ const UploadAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
 //
 // Priced at the peak that PROVABLY coexists, not at a steady state. An earlier revision charged
 // 64 MiB on the reasoning that the body buffer is released before the decode peaks. That was
-// wrong in a way the code contradicts directly: UploadCreativeAsset calls
-// image.Decode(bytes.NewReader(p.Bytes)), so the ~30 MiB decoded slice is live FOR THE WHOLE
-// decode — it is the decode's own input and cannot be collected while it runs. The 80 MiB pixel
-// buffer is allocated on top of it, so at least ~110 MiB necessarily coexists per upload.
+// wrong in a way the code contradicts directly: the ~30 MiB decoded slice is the decode's own
+// input and cannot be collected while it runs, and the 80 MiB pixel buffer is allocated on top
+// of it.
 //
-// 110 MiB is therefore the floor, and the Goa decoder's ~42 MiB body buffer may still be
-// unreclaimed on top of that (Go frees on GC, not on last use), so the honest figure is 128 MiB.
-// Charging less would let two permits admit ~220 MiB against a 128 MiB budget — a bound that
+// The tally, and what keeps it at three allocations rather than four. The wire attribute is a
+// base64 STRING (design/brief.go), so the request now carries a ~40 MiB string that the older
+// Goa Bytes attribute never materialised separately — goa decoded during JSON decoding. Left
+// reachable it would coexist with the pixel buffer and push the peak to ~192 MiB, past this
+// figure. UploadCreativeAsset therefore clears p.Bytes the moment the decode returns, which is
+// the only point it stops being needed, so what provably coexists is:
+//
+//	~42 MiB  the Goa decoder's body buffer (Go frees on GC, not on last use)
+//	~30 MiB  the decoded slice, live for the whole decode — it is the decode's own input
+//	~80 MiB  the pixel buffer, allocated on top of the decoded slice
+//	 = ~128 MiB
+//
+// That clearing is load-bearing, not tidiness: the payload struct keeps p reachable for the
+// whole handler (it is read again for ProjectID/BriefID), so without it the string outlives the
+// decode. TestUploadAdmissionWeightCoversTheCoexistingPeak pins this figure against the
+// per-image ceilings, and the service test pins the release.
+//
+// Charging less than the real peak lets two permits admit more than the budget — a bound that
 // under-counts precisely when it matters, which is worse than no bound because it reads as
 // protection.
 //
@@ -103,6 +117,10 @@ const UploadAdmissionWeightBytes int64 = 128 << 20 // 128 MiB
 // yet collected. 128/42 is just over 3, so 4 is the next whole ratio above the measured worst
 // case: it keeps a small upload's charge proportional while never pricing ANY request below
 // what the worst case proves it can cost.
+//
+// The ratio survives the base64-string wire attribute only because UploadCreativeAsset clears
+// p.Bytes once decoded (see UploadAdmissionWeightBytes). Were that string left reachable across
+// the pixel decode the peak would be ~192 MiB and this ratio would have to be 5.
 //
 // Deliberately a whole number, and deliberately an over-estimate. This multiplies a
 // CALLER-SUPPLIED length, so every source of error in it must round against the caller.
@@ -150,8 +168,9 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 // The floor was tried here and reverted. Charging the floor (8 MiB) admits 16 concurrent
 // undeclared uploads, and the aggregate that produces is not survivable:
 //
-//   - internal/service's UploadCreativeAsset holds the base64-DECODED slice (p.Bytes, up to
-//     ~31.5 MiB) live in asset.Bytes through sha256Hex AND the whole CreateAsset insert. So 16
+//   - internal/service's UploadCreativeAsset holds the base64-DECODED slice (the output of
+//     decodeCreativeBytes, up to ~31.5 MiB) live in asset.Bytes through sha256Hex AND the whole
+//     CreateAsset insert. So 16
 //     admitted uploads coexist holding ~480 MiB of decoded slices alone, on a 512 MiB pod,
 //     before any wire buffer.
 //   - Neither other control bounds that aggregate. MaxBodyBytes caps ONE body, not the sum.

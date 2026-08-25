@@ -78,4 +78,16 @@ type CreativeAssetRepository interface {
 	// The id is expected to be a well-formed asset id — the caller validates untrusted input
 	// before calling, as the sibling repositories' id lookups assume (see GetBrief/GetAudience).
 	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+
+	// GetAssetSize returns byte_size WITHOUT loading the bytes, under the same (project, brief)
+	// and active-parent scope as GetAsset.
+	//
+	// It exists so a caller can bound an allocation BEFORE making it. The Meta dispatcher
+	// reserves aggregate asset memory from this figure and only then calls GetAsset: reading the
+	// size off the row it is about to materialise would be too late, because the blob is already
+	// resident by the time its size is known. That ordering is the whole point — an aggregate
+	// budget charged after the memory is held bounds nothing.
+	//
+	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
+	GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error)
 }

@@ -145,8 +145,10 @@ While it was a Goa `Bytes` attribute they disagreed: the schema counted characte
 validator applied that same figure to the DECODED slice (`len(body.Bytes)`), an effective ~40 MiB
 decoded bound matching neither the published number nor the real ceiling.
 
-What this handler ADDS is the decode itself — malformed base64 is a **400**, never a panic or a
-500 — and the true DECODED-size ceiling applied to the result (30 MiB, `maxCreativeStoredBytes`),
+What this handler ADDS is the decode itself — `decodeCreativeBytes`, which decodes the string,
+releases it (it is the ~40 MiB allocation the admission weight is derived without), and applies
+the true DECODED-size ceiling to the result (30 MiB, `maxCreativeStoredBytes`). Malformed base64
+is a **400**, never a panic or a 500,
 plus the proof that the BYTES are actually a decodable image of the DECLARED type. The encoded
 and decoded ceilings agree by construction: `base64.EncodedLen(31457280) == 41943040`.
 

@@ -72,10 +72,12 @@ func (s *BriefService) creativeAssetRepo() domain.CreativeAssetRepository {
 // where Meta's per-ad-account image_hash is resolved.
 //
 // The generated decoder already enforces what the CONTRACT can express — content_type is one of
-// the allowed MIME strings, and the byte length is non-empty and within the design's
-// MaxLength(41943040). That ceiling is stated in base64 CHARACTERS (the unit the wire schema
-// measures), so as a bound on the decoded slice the generated validator applies it to, it admits
-// up to ~40 MiB; the real 30 MiB stored-file ceiling is Stage 0 below, at maxCreativeStoredBytes.
+// the allowed MIME strings, and the base64 string is non-empty and within the design's
+// MaxLength(41943040). That ceiling is stated in base64 CHARACTERS, which is both the unit the
+// wire schema measures and the unit the validator now counts, so the two agree. It bounds the
+// ENCODED form; the DECODED 30 MiB stored-file ceiling is Stage 0 below, in decodeCreativeBytes
+// at maxCreativeStoredBytes, and the two agree by construction
+// (base64.EncodedLen(31457280) == 41943040).
 // So a request reaching this handler has cleared those. What it cannot express, and what this handler adds,
 // is that the BYTES are actually a decodable image of the declared type: a client may send a
 // JPEG under a declared image/png, or arbitrary bytes under either. The stored mime_type is the
@@ -94,49 +96,12 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// predicate — never an attribution or lookup key — so it stays UUID-or-slug like the other
 	// nested brief routes (GetBrief, CreateAudience).
 
-	// Stage 0 — DECODE the base64 payload, then apply the STORED-FILE ceiling to the result.
-	//
-	// The wire attribute is a base64 STRING (design/brief.go), not a Goa Bytes attribute, so the
-	// decode happens here rather than in the generated decoder. That change made the published
-	// contract honest — Goa emits a Bytes attribute as `format: binary`, meaning raw octets,
-	// which is not what an application/json body carries — and it moves exactly one
-	// responsibility to this layer: turning the encoded string into the bytes everything below
-	// already expected.
-	//
-	// MALFORMED BASE64 IS A 400, never a panic and never a 500. It is caller input, and the only
-	// thing a caller can do about it is send it correctly.
-	//
-	// StdEncoding (padded, standard alphabet) is the same encoding the previous Goa Bytes
-	// attribute used, so the accepted wire format is unchanged by the type switch — a client
-	// that worked before works now.
-	decoded, b64err := base64.StdEncoding.DecodeString(p.Bytes)
-	if b64err != nil {
-		// The error text is deliberately fixed: a base64 decoder's message can quote the
-		// offending input, and this body is an image an operator uploaded.
-		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded bytes are not valid base64"}
-	}
-
-	// The STORED-FILE ceiling, applied to the DECODED length.
-	//
-	// The unit matters and it changed with the attribute type. The design's MaxLength(41943040)
-	// bounds the ENCODED string in characters — that is what the generated validator now
-	// enforces, and it is the right unit for a string. This is the DECODED bound, 30 MiB, and it
-	// is a different quantity: 41,943,040 base64 characters decode to exactly 31,457,280 bytes,
-	// so the two agree by construction rather than by coincidence.
-	//
-	// Checking len(p.Bytes) here instead would silently bound ENCODED characters and admit only
-	// ~22.5 MiB of image, which is the same unit confusion that moved MaxLength off the decoded
-	// slice in the first place.
-	//
-	// It is not the only enforcement, and must not be described as such: byte_size is
-	// caller-supplied on the INSERT, so migration 000029 carries the same 30 MiB bound as a
-	// table CHECK for writers that never pass through this handler. This check is what turns an
-	// oversize UPLOAD into a clean 400 instead of a constraint violation.
-	//
-	// It is a len() on an already-decoded slice, so it costs nothing and it runs before any
-	// header read: an oversized upload is refused before DecodeConfig touches it.
-	if len(decoded) > maxCreativeStoredBytes {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image exceeds the maximum accepted size for a creative asset"}
+	// Stage 0 — decode the base64 payload and apply the STORED-FILE ceiling to the result.
+	// decodeCreativeBytes owns both, plus releasing the encoded string; see its doc for why the
+	// three belong together.
+	decoded, decErr := decodeCreativeBytes(p)
+	if decErr != nil {
+		return nil, decErr
 	}
 
 	// Validation runs in three stages, and the ORDER is the security property: the cheap header
@@ -329,7 +294,7 @@ func createdTag(created bool) *string {
 const (
 	maxCreativeDecodedBytes = 80 << 20 // 80 MiB of decoded pixel data
 	maxCreativeDimension    = 10_000
-	// maxCreativeStoredBytes is the ceiling on the STORED IMAGE FILE — the base64-DECODED body
+	// maxCreativeStoredBytes is the ceiling on the STORED IMAGE FILE — the base64-DECODED payload
 	// bytes, which is what lands in the creative_assets.bytes column and what Meta caps at ~30 MB
 	// for a single-image creative.
 	//
@@ -438,4 +403,70 @@ func creativeAssetResult(a *model.CreativeAsset) *briefs.CreativeAsset {
 		ByteSize:  a.ByteSize,
 		Checksum:  a.Checksum,
 	}
+}
+
+// decodeCreativeBytes turns the upload payload's base64 string into the image bytes every stage
+// below expects, releases the encoded string, and enforces the stored-file ceiling on the
+// result. It returns a ready-to-return Goa error, never a bare error, so the caller cannot
+// accidentally map a caller-input fault onto a 500.
+//
+// THREE RESPONSIBILITIES, AND WHY THEY ARE ONE FUNCTION rather than three inline steps: they are
+// the same transition, and separating them is what lets them drift out of order. The decode
+// produces the bytes, the release is only safe once the decode has consumed the string, and the
+// ceiling is only meaningful once there is a decoded length to measure. Each depends on the one
+// before it.
+//
+// # The decode
+//
+// The wire attribute is a base64 STRING (design/brief.go), not a Goa Bytes attribute, so the
+// decode happens HERE rather than in the generated decoder. That change made the published
+// contract honest — Goa emits a Bytes attribute as `format: binary`, meaning raw octets, which
+// is not what an application/json body carries — and it moved exactly one responsibility to this
+// layer.
+//
+// MALFORMED BASE64 IS A 400, never a panic and never a 500: it is caller input, and sending it
+// correctly is the only remedy available to a caller. The message is a fixed string because a
+// base64 decoder's own error text can quote the offending input, and that input is an image an
+// operator uploaded.
+//
+// StdEncoding (padded, standard alphabet) is the same encoding the previous Goa Bytes attribute
+// used, so the accepted wire format is unchanged by the type switch — a client that worked
+// before works now.
+//
+// # The release
+//
+// Clearing p.Bytes is a MEMORY BOUND, not tidiness. It is the ~40 MiB base64 string for a
+// maximum-size upload, and the payload struct keeps it reachable for the whole handler (p is
+// read again for ProjectID/BriefID). Left set, it stays resident THROUGH the 80 MiB pixel
+// decode, putting the coexisting peak at roughly 42 + 40 + 30 + 80 = 192 MiB — past the
+// ~128 MiB constants.UploadAdmissionWeightBytes charges for one upload, so the admission bound
+// would under-count exactly when it matters. Clearing it at the only point it stops being needed
+// keeps the peak at the figure that constant is derived from.
+//
+// # The ceiling
+//
+// The unit matters, and it is not the unit the design declares. design's MaxLength(41943040)
+// bounds the ENCODED string in CHARACTERS — the right unit for a string, and what the generated
+// validator now enforces. This is the DECODED bound, 30 MiB: a different quantity that happens
+// to agree by construction, since 41,943,040 base64 characters decode to exactly 31,457,280
+// bytes. Measuring the string here instead would silently bound encoded characters and admit
+// only ~22.5 MiB of image — the same unit confusion that moved MaxLength off the decoded slice.
+//
+// It is not the only enforcement and must not be described as such: byte_size is caller-supplied
+// on the INSERT, so migration 000029 carries the same 30 MiB bound as a table CHECK for writers
+// that never pass through this handler. This check is what turns an oversize UPLOAD into a clean
+// 400 rather than a constraint violation.
+//
+// It is a len() on an already-decoded slice, so it costs nothing and it runs before any header
+// read: an oversized upload is refused before DecodeConfig touches it.
+func decodeCreativeBytes(p *briefs.UploadCreativeAssetPayload) ([]byte, error) {
+	decoded, err := base64.StdEncoding.DecodeString(p.Bytes)
+	if err != nil {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded bytes are not valid base64"}
+	}
+	p.Bytes = ""
+	if len(decoded) > maxCreativeStoredBytes {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image exceeds the maximum accepted size for a creative asset"}
+	}
+	return decoded, nil
 }

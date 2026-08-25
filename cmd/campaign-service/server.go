@@ -199,7 +199,7 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 // Order, innermost (applied first) to outermost (applied last):
 //
 //   - MaxBodyBytes wraps the mux directly. The Goa decoders live behind the mux and are
-//     exactly what would otherwise buffer and base64-decode an unbounded body, so the
+//     exactly what would otherwise buffer an unbounded body, so the
 //     cap has to be inside every other wrapper but outside the mux (see
 //     constants.MaxRequestBodyBytes).
 //   - UploadAdmission sits immediately OUTSIDE MaxBodyBytes, and that order is the point.

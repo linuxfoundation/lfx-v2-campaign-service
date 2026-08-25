@@ -24,11 +24,13 @@ func NewCreativeAssetRepo(pool *Pool) *CreativeAssetRepo { return &CreativeAsset
 
 var _ domain.CreativeAssetRepository = (*CreativeAssetRepo)(nil)
 
-// creativeAssetCols is the column list every creative-asset read scans, in the scanner
-// order. It deliberately OMITS bytes: no caller of this repo needs the image back yet (the
-// upload endpoint returns metadata only, and the byte-loading read used at dispatch lands with
-// the Meta image step), so shipping a multi-megabyte column out of every write would be pure
-// waste. A reader that needs the bytes selects them explicitly.
+// creativeAssetCols is the column list the METADATA-ONLY creative-asset reads scan, in the
+// scanner order. It deliberately OMITS bytes so a read that does not need the image never ships
+// a multi-megabyte column: the upload endpoint returns metadata only, and GetAssetSize reads
+// byte_size precisely so a caller can size an allocation WITHOUT materialising the blob.
+//
+// One read does need the image — GetAsset, called at Meta dispatch to upload the creative — and
+// it appends the column through creativeAssetColsWithBytes below rather than widening this list.
 const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 	mime_type, byte_size, checksum, created_by, created_at`
 
@@ -183,6 +185,40 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 		return nil, false, fmt.Errorf("create creative asset: commit: %w", cerr)
 	}
 	return stored, inserted, nil
+}
+
+// getCreativeAssetSizeQuery reads ONE column — byte_size — under exactly the same tenant and
+// active-parent scope as getCreativeAssetQuery below.
+//
+// It exists so a caller can learn what an asset WOULD cost before paying for it. The Meta
+// dispatcher reserves aggregate memory from this number and only then calls GetAsset; reading
+// the size from the row it is about to materialise would be too late, because the blob is
+// resident by the time the size is known.
+//
+// Cheap for the reason migration 000028 records about the byte_size CHECK: byte_size is a
+// stored BIGINT, so this never touches the BYTEA and never detoasts. The scope predicate is
+// duplicated rather than shared with getCreativeAssetQuery because the two must stay
+// identical — a size read that is scoped more loosely than the byte read would let a caller
+// probe the existence of another tenant's asset.
+const getCreativeAssetSizeQuery = `SELECT byte_size
+	FROM creative_assets ca
+	WHERE ca.id = $1 AND ca.project_id = $2 AND ca.brief_id = $3
+	AND EXISTS (
+		SELECT 1 FROM campaign_briefs b
+		WHERE b.id = ca.brief_id AND b.project_id = ca.project_id AND b.status <> 'archived'
+	)`
+
+// GetAssetSize returns a stored asset's byte_size WITHOUT loading its bytes, or ErrNotFound when
+// no such asset exists for that brief. Same scoping and same malformed-id caveat as GetAsset.
+func (r *CreativeAssetRepo) GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error) {
+	var size int64
+	if err := r.db.QueryRow(ctx, getCreativeAssetSizeQuery, assetID, projectID, briefID).Scan(&size); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, domain.ErrNotFound
+		}
+		return 0, fmt.Errorf("get creative asset size: %w", err)
+	}
+	return size, nil
 }
 
 // creativeAssetColsWithBytes is creativeAssetCols plus the bytes column, for the ONE read that

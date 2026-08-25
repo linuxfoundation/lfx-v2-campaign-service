@@ -29,9 +29,12 @@ import (
 // The placement is the security property, and it is why this is not a semaphore wrapped around
 // image.Decode in the service method. Goa's generated handler calls decodeRequest(r) and only
 // THEN endpoint(...), and the generated endpoint calls authJWTFn as its first statement — so the
-// request body is read off the socket and base64-decoded BEFORE any JWT is examined. A guard
-// inside UploadCreativeAsset therefore runs after roughly 72 MiB (the buffered body plus the
-// decoded byte slice) has already been allocated on behalf of a caller who has not authenticated.
+// request body is read off the socket and unmarshalled BEFORE any JWT is examined. A guard
+// inside UploadCreativeAsset therefore runs after roughly 82 MiB (the buffered body plus the
+// ~40 MiB base64 STRING the decoder materialises) has already been allocated on behalf of a
+// caller who has not authenticated. The base64 DECODE now happens in the service method, after
+// auth — but that moves ~30 MiB to the authenticated side, it does not shrink the pre-auth half,
+// because the encoded string is larger than the bytes it encodes.
 // It would bound the 80 MiB decode tail and leave the pre-auth half entirely unguarded, while
 // reading — to a maintainer, and to a reviewer — as though the finding had been fixed. Sitting
 // outside the mux, this middleware takes the permit before the decoder ever touches the body.
@@ -63,8 +66,10 @@ import (
 // WHAT THE WEIGHT ACCOUNTS, precisely — because a bound that silently under-counts reads as
 // protection while providing less than it appears to.
 //
-// It accounts the WIRE side of the inbound request: the buffered body and the base64-decoded
-// slice for ONE upload on this HTTP path.
+// It accounts the WIRE side of the inbound request: the buffered body and the base64 STRING the
+// JSON decoder materialises for ONE upload on this HTTP path. (The base64-DECODED slice is
+// allocated later, in the service method after auth; the weight covers it too, via the
+// amplification ratio, but it is not part of the pre-auth half.)
 //
 // It does NOT account the decoded PIXEL buffer, and that is a split, not a gap. The weight is
 // priced from Content-Length, and compression severs the link between wire bytes and decoded

@@ -318,6 +318,10 @@ func (r *observingCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string)
 	return nil, domain.ErrNotFound
 }
 
+func (r *observingCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
+	return 0, domain.ErrNotFound
+}
+
 // TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails covers the arm a
 // happy-path fix is most likely to skip.
 //

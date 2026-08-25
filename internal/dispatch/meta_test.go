@@ -1877,6 +1877,19 @@ func (f *fakeCreativeAssets) GetAsset(_ context.Context, projectID, briefID, ass
 	return f.asset, nil
 }
 
+// GetAssetSize answers from the SAME stored asset GetAsset would return, so the fake cannot
+// drift into pricing one size and serving another — a mismatch would be a fake-only bug that
+// the production CHECK on byte_size (migration 000029) makes impossible for a real row.
+func (f *fakeCreativeAssets) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	if f.asset == nil {
+		return 0, domain.ErrNotFound
+	}
+	return int64(len(f.asset.Bytes)), nil
+}
+
 func (f *fakeCreativeAssets) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -2009,11 +2022,16 @@ func TestMeta_DispatchBadAssetRefusesBeforeAnySpend(t *testing.T) {
 			wantMsg:  "no stored image bytes",
 		},
 		{
+			// The SIZE read is the first repository call now (it prices the asset so the
+			// aggregate reservation can be taken before the blob is resident), so a repo-level
+			// failure surfaces from there rather than from the byte read. Both arms refuse
+			// pre-spend, which is what this table asserts; the message names whichever read
+			// actually failed so an operator is not sent looking at the wrong query.
 			name:     "repository error other than not-found",
 			assets:   &fakeCreativeAssets{err: errors.New("connection refused")},
 			bindRepo: true,
 			variant:  `"imageAssetId":"` + validUUID + `"`,
-			wantMsg:  "load creative asset",
+			wantMsg:  "size creative asset",
 		},
 		{
 			// Meta forbids picture and image_hash on ONE creative. Supplying both has no
@@ -2293,6 +2311,17 @@ func (m *multiCreativeAssets) GetAsset(_ context.Context, _, _, assetID string) 
 	return a, nil
 }
 
+// GetAssetSize answers from the same map GetAsset serves, for the reason above. It deliberately
+// does NOT record into calls: callCount() asserts how many times the BYTES were fetched, which
+// is the dedupe property those tests pin, and counting the cheap size read would break it.
+func (m *multiCreativeAssets) GetAssetSize(_ context.Context, _, _, assetID string) (int64, error) {
+	a, ok := m.assets[assetID]
+	if !ok {
+		return 0, domain.ErrNotFound
+	}
+	return int64(len(a.Bytes)), nil
+}
+
 func (m *multiCreativeAssets) callCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2390,13 +2419,21 @@ func TestMeta_ResolveVariantAssetsBoundsAggregateBytes(t *testing.T) {
 	if !strings.Contains(err.Error(), "distinct creative assets") {
 		t.Errorf("error = %v, want the aggregate-bytes refusal", err)
 	}
-	// It must stop AT the ceiling rather than reading every asset first. Asserted as an
-	// EQUALITY: reading fewer than nine would mean it refused before the budget was actually
-	// exceeded, and reading ten means the check happens after the whole set is in memory —
-	// which is precisely the unbounded retention the ceiling exists to prevent.
-	if n := assets.callCount(); n != wantReads {
-		t.Errorf("GetAsset called %d times, want exactly %d — resolution must stop at the read that "+
-			"crosses the ceiling, not buffer every named asset first", n, wantReads)
+	// It must stop AT the ceiling, and the asset that TRIPS it must never be loaded.
+	//
+	// The expected count is wantReads-1, and that is the property this bound was changed to
+	// provide. The size is now read first (one BIGINT, no BYTEA), so the ceiling is crossed on
+	// asset N's SIZE and its bytes are never fetched: N-1 byte-reads. Previously the ceiling was
+	// checked after GetAsset had already materialised the tripping blob, which is why the peak
+	// used to be documented as "the cap plus one maximum-size asset".
+	//
+	// Asserted as an EQUALITY in both directions: reading fewer would mean it refused before the
+	// budget was actually exceeded, and reading wantReads (or more) means the tripping asset —
+	// or the whole set — was buffered before the check, the retention this ceiling exists to
+	// prevent.
+	if n := assets.callCount(); n != wantReads-1 {
+		t.Errorf("GetAsset called %d times, want exactly %d — the asset that crosses the ceiling "+
+			"must be refused on its SIZE, without its bytes ever being loaded", n, wantReads-1)
 	}
 }
 
@@ -2807,5 +2844,47 @@ func TestDispatchHoldsAssetReservationForTheWholeDispatch(t *testing.T) {
 			t.Error("found a bare `releaseAssets()` call: the release must be deferred to the " +
 				"end of Dispatch, not invoked as soon as the assets are resolved")
 		}
+	}
+}
+
+// TestResolveVariantAssets_ReservesBeforeMaterialising pins the ORDERING that makes the
+// aggregate bound real, and it is the property the first version of this bound did not have.
+//
+// The original implementation resolved every asset and reserved the total afterwards. Each
+// concurrent dispatch therefore materialised its full per-dispatch allowance and only THEN
+// blocked on the semaphore, so five dispatches held ~1.2 GiB while queueing politely — the
+// budget gated the /adimages phase and bounded resident memory not at all. A reservation taken
+// after the allocation it accounts for is not a bound.
+//
+// This asserts the fix directly: with the budget fully held by another dispatch, the resolve
+// must be refused WITHOUT ever calling GetAsset. The size read (one BIGINT, no BYTEA) is what
+// makes that possible.
+func TestResolveVariantAssets_ReservesBeforeMaterialising(t *testing.T) {
+	assets := &multiCreativeAssets{assets: map[string]*model.CreativeAsset{}}
+	const id = "11111111-1111-4111-8111-111111111111"
+	assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, 1<<20), MimeType: "image/png"}
+
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	// Another dispatch holds the entire budget.
+	release, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("could not take the initial reservation")
+	}
+	defer release()
+
+	_, _, err := d.resolveVariantAssets(context.Background(), testBrief(),
+		[]meta.AdVariant{{ImageAssetID: id}})
+	if err == nil {
+		t.Fatal("resolve succeeded while the aggregate budget was fully held")
+	}
+
+	// THE ASSERTION THAT MATTERS. GetAsset is the call that materialises the blob; callCount
+	// counts only that read (GetAssetSize deliberately does not record). Zero means the refusal
+	// happened before any image bytes entered the process.
+	if n := assets.callCount(); n != 0 {
+		t.Errorf("GetAsset was called %d times before the budget refusal, want 0 — the bytes were "+
+			"materialised and only then charged, so the reservation bounds nothing", n)
 	}
 }
