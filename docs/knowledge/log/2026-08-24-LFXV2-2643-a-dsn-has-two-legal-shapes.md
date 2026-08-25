@@ -107,8 +107,14 @@ All ten mutations are killed.
 **Note** — a reviewer's conclusion can be correct while its proof is not. The proof was
 checkable against `testing.go` in a minute, and checking it changed the fix: had the panic
 claim been taken at face value, the repair would have been "drop `t.Parallel()` from the
-subtests", which leaves the real hazard — global env mutation racing this file's parallel
-readers — untouched.
+subtests", which treats the symptom and leaves the actual cost in place — one process-global
+input that every test of the redaction had to serialise around.
+
+(That cost is the ORDERING CONSTRAINT, not a race. An earlier version of this note said
+"global env mutation racing this file's parallel readers", which is the same false claim the
+correction above disproves — `go test` runs top-level parallel tests only after the serial
+ones finish, measured at zero overlaps. Two contradictory statements in one entry are worse
+than either alone, so the claim is retired here as well as above.)
 
 **Fix** — a second review round found the redaction was correct and the CALL SITES were not.
 `migrate_down_live_test.go` connects with `pgx.Connect(ctx, DSN())` in four places and printed

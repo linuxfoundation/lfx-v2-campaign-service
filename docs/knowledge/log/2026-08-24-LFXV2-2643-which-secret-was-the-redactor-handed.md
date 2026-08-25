@@ -289,3 +289,24 @@ These sites remain pinned at the SOURCE only, and that is weaker evidence than a
 they fire when a live database dies mid-run, which no unit test can arrange. Reverting any of
 the seven leaves the behavioural suite green — confirmed by running it, not assumed — and only
 the AST guard goes red.
+
+**Follow-up — the migrator fix half-landed.** Extending the guard to migrator methods made
+them visible to question 1 (raw `%v`) but not to question 2 (which DSN). `dsnArgOf` reads the
+expected DSN from a call's ARGUMENTS, and a migrator method has none — the DSN is in the
+receiver — so `want` stayed empty and every migrator site skipped the pairing check.
+Reproduced: replacing `SafeDSNErrFor(dsn, err)` with `SafeDSNErr(err)` on `m.Up()` passed.
+
+`migratorVars` now maps each migrator variable to the DSN expression `newMigrator` was handed,
+rather than to a bare bool, and `dsnArgOf` yields that expression for a method call on the
+receiver. Pairings went from 6 (3 explicit) to 15 (12 explicit), and all three mutations now
+fail: `SafeDSNErr` on a migrator method, `SafeDSNErrFor` handed `dbtest.DSN()`, and raw `%v`.
+
+The shape of this miss is worth naming: the fix made the sites VISIBLE without making them
+CHECKED, and the counter went up (6→15 inspected) which read as progress. A coverage number
+rising is not evidence that the new coverage asks anything.
+
+**Also — a note that contradicted its own correction.** `a-dsn-has-two-legal-shapes.md` still
+carried "global env mutation racing this file's parallel readers" a few lines below the
+correction retiring exactly that claim. Two contradictory statements in one entry are worse
+than either alone. The note now states the real cost — the ordering constraint — and says why
+the racing phrasing was withdrawn.

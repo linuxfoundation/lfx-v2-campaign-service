@@ -1120,9 +1120,16 @@ so the credential this PR exists to withhold was being printed by the file that 
 withholding. All seven now use `SafeDSNErrFor(dsn, err)`.
 
 The original guard could not see them: its call set listed only functions that TAKE a DSN as
-an argument, and a migrator method takes none — the DSN is in the receiver. It now tracks
-identifiers bound by `newMigrator` and treats their method calls as DSN-bearing, which raised
-the inspected surface from 6 formatting calls to 15. This is the same lesson as the wrong-DSN
+an argument, and a migrator method takes none — the DSN is in the receiver. It now records the
+DSN each `newMigrator` call was handed alongside the variable it bound, so a method call on
+that receiver both counts as DSN-bearing AND has an expected DSN for the pairing question.
+
+Recording the DSN rather than a bare "this is a migrator" flag is the load-bearing part. A
+first version tracked only membership, so `want` stayed empty for every migrator site and the
+pairing check was skipped entirely — swapping `SafeDSNErrFor(dsn, err)` for `SafeDSNErr(err)`
+on `m.Up()` passed the guard even though it compares against the environment DSN instead of
+the scratch one. Inspected surface went from 6 formatting calls to 15, and pairings from 6
+(3 explicit) to 15 (12 explicit). This is the same lesson as the wrong-DSN
 seam one level up: **a redactor being present and abundant in a file says nothing about
 whether a specific site applies it.** There were 34 correct `SafeDSNErrFor` calls in that file
 while these seven leaked.

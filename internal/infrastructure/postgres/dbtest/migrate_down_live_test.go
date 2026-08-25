@@ -1658,16 +1658,24 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 
 	// migratorVars holds identifiers bound by newMigrator, so a method call on one counts
 	// as DSN-bearing without needing the DSN to appear at that call site.
-	migratorVars := map[string]bool{}
+	// The DSN each migrator was BUILT from, kept alongside the variable rather than as a
+	// bare bool. A method call carries its DSN in the receiver, so there is no argument for
+	// dsnArgOf to read -- without this the pairing question saw an empty `want` and skipped
+	// every migrator site, and swapping SafeDSNErrFor(dsn, err) for SafeDSNErr(err) on one
+	// of them passed the guard. Verified before this was added.
+	migratorVars := map[string]ast.Expr{}
 	ast.Inspect(file, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
 		if !ok || len(as.Rhs) != 1 || len(as.Lhs) == 0 {
 			return true
 		}
-		if c, ok := as.Rhs[0].(*ast.CallExpr); ok && selName(c.Fun) == "newMigrator" {
-			if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
-				migratorVars[id.Name] = true
-			}
+		c, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok || selName(c.Fun) != "newMigrator" || len(c.Args) == 0 {
+			return true
+		}
+		if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
+			// newMigrator(t, dsn): the DSN is the last argument.
+			migratorVars[id.Name] = c.Args[len(c.Args)-1]
 		}
 		return true
 	})
@@ -1686,8 +1694,10 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 				}
 				// m.Up(), m.Version(), ... on a migrator built from a DSN.
 				if se, ok := c.Fun.(*ast.SelectorExpr); ok && migratorMethods[se.Sel.Name] {
-					if id, ok := se.X.(*ast.Ident); ok && migratorVars[id.Name] {
-						found = true
+					if id, ok := se.X.(*ast.Ident); ok {
+						if _, isMigrator := migratorVars[id.Name]; isMigrator {
+							found = true
+						}
 					}
 				}
 			}
@@ -1789,6 +1799,17 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			c, ok := n.(*ast.CallExpr)
 			if !ok || found {
 				return !found
+			}
+			// A migrator METHOD carries its DSN in the receiver, so the expected value is
+			// the DSN newMigrator was handed rather than any argument at this call.
+			if se, ok := c.Fun.(*ast.SelectorExpr); ok && migratorMethods[se.Sel.Name] {
+				if id, ok := se.X.(*ast.Ident); ok {
+					if built, isMigrator := migratorVars[id.Name]; isMigrator {
+						arg = built
+						found = true
+						return false
+					}
+				}
 			}
 			name := selName(c.Fun)
 			if !dsnCalls[name] && (name != "withDatabase" || !liveDSNArg(c)) {
