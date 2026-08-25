@@ -71,6 +71,36 @@ var (
 // DSN returns the configured database URL, or "" when the harness is not opted in.
 func DSN() string { return strings.TrimSpace(os.Getenv(EnvDatabaseURL)) }
 
+// CleanupTimeout bounds a single teardown step.
+//
+// 30s matches the pool-open budget in connectAndMigrate: it is long enough for a loaded CI
+// runner to answer a DROP that is waiting on another session, and short enough that a wedged
+// one is reported rather than waited on.
+const CleanupTimeout = 30 * time.Second
+
+// CleanupContext returns a context for teardown work, bounded by CleanupTimeout.
+//
+// Teardown must not inherit the test's context. By the time t.Cleanup runs the test is over,
+// so a caller-derived context may already be cancelled or past its deadline, and the cleanup
+// would fail instantly WITHOUT dropping anything -- the failure mode this exists to avoid, and
+// the one that looks like a fix while leaving the rows behind. The root here is therefore
+// Background: it carries no cancellation to inherit. (Elsewhere in this repo, where teardown
+// hangs off a live request context, the same property is spelled context.WithoutCancel(ctx);
+// Background is that spelling for work with no parent.)
+//
+// The DEADLINE is the half this adds. Teardown that connects or drops on an unbounded context
+// cannot fail: if Postgres goes unreachable or a forced DROP DATABASE stalls behind another
+// session, the cleanup blocks forever, its own t.Errorf is never reached, and the whole
+// package waits for the suite-level timeout -- which reports a timeout in whatever test the
+// runner happened to be in, naming neither the stall nor the database left behind. With a
+// deadline the same stall surfaces as the cleanup's own error, against the right test, and the
+// stray database is named.
+//
+// Callers must defer the returned cancel.
+func CleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), CleanupTimeout)
+}
+
 // Pool returns a migrated pool against TEST_DATABASE_URL, skipping the test when the
 // variable is unset.
 //

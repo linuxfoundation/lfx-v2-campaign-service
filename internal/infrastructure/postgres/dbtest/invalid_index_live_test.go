@@ -46,7 +46,9 @@ func TestMigrateRefusesAnInvalidIndex(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		//nolint:gosec // same locally-built name.
-		if _, err := pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+table); err != nil {
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, "DROP TABLE IF EXISTS "+table); err != nil {
 			t.Errorf("drop scratch table: %v — it would fail every later Migrate in this database", err)
 		}
 	})
@@ -296,7 +298,14 @@ func restoreRequiredIndex(t *testing.T, pool interface {
 }, idx, create string,
 ) {
 	t.Helper()
-	ctx := context.Background()
+	// Every caller reaches this from t.Cleanup, so the context is bounded rather than
+	// unbounded: a DROP or CREATE waiting on another session would otherwise block here
+	// forever and the Errorf paths below would never run, hanging the package at its
+	// suite-level timeout instead of reporting the index it failed to restore. It is not
+	// derived from the test's ctx either -- that one is cancelled by the time Cleanup
+	// runs, and inheriting it would fail instantly without restoring anything.
+	ctx, cancel := dbtest.CleanupContext()
+	defer cancel()
 
 	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
 		t.Errorf("restore %s: drop: %v", idx, err)
@@ -365,7 +374,9 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 				t.Fatalf("read the definition of %s (is it in the schema at all?): %v", idx, err)
 			}
 			t.Cleanup(func() {
-				if _, err := pool.Exec(context.Background(), def); err != nil {
+				cleanupCtx, cancel := dbtest.CleanupContext()
+				defer cancel()
+				if _, err := pool.Exec(cleanupCtx, def); err != nil {
 					t.Fatalf("restore %s: %v — later tests would run against a schema "+
 						"missing a constraint this test removed", idx, err)
 				}
@@ -433,10 +444,12 @@ func TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts(t *testing.T) {
 				t.Fatalf("read the definition of %s: %v", idx, err)
 			}
 			t.Cleanup(func() {
-				if _, err := pool.Exec(context.Background(), "DROP INDEX IF EXISTS "+idx); err != nil {
+				cleanupCtx, cancel := dbtest.CleanupContext()
+				defer cancel()
+				if _, err := pool.Exec(cleanupCtx, "DROP INDEX IF EXISTS "+idx); err != nil {
 					t.Fatalf("drop the rebuilt %s: %v", idx, err)
 				}
-				if _, err := pool.Exec(context.Background(), def); err != nil {
+				if _, err := pool.Exec(cleanupCtx, def); err != nil {
 					t.Fatalf("restore %s: %v — later tests would run against a schema "+
 						"missing a constraint this test removed", idx, err)
 				}

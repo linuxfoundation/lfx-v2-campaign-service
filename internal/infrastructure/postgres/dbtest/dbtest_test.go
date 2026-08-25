@@ -4,8 +4,11 @@
 package dbtest
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestVerdict is the guard against a harness that quietly does nothing.
@@ -109,5 +112,55 @@ func TestConnectAndMigrateDoesNotEchoTheDSN(t *testing.T) {
 			t.Errorf("connectAndMigrate = %q, want no fragment of the input; it echoed %q",
 				got, frag)
 		}
+	}
+}
+
+// TestCleanupContextIsBoundedAndUncancelled pins the two properties teardown depends on.
+//
+// It is a UNIT test of the helper, and that is the honest limit of what can be bound here:
+// the failure it guards against -- a teardown blocking forever on an unreachable server or a
+// forced DROP waiting behind another session -- needs a wedged Postgres to reproduce, which
+// no test can arrange. Reverting CleanupContext to a bare context.Background() leaves the
+// whole suite green, verified. So the call sites are pinned at the SOURCE only (every
+// t.Cleanup in this package takes its context from here), which is weaker evidence than a
+// rendered failure and is not a substitute for one. What this test can do is ensure the
+// helper itself keeps the two properties the call sites rely on.
+func TestCleanupContextIsBoundedAndUncancelled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := CleanupContext()
+	defer cancel()
+
+	// BOUNDED. Without a deadline the cleanup cannot fail, so its own t.Errorf is
+	// unreachable and the package hangs to the suite-level timeout instead.
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("CleanupContext returned a context with no deadline; teardown that connects " +
+			"or drops on an unbounded context cannot fail, so a stalled server hangs the " +
+			"package instead of reporting the database it left behind")
+	}
+	if d := time.Until(deadline); d <= 0 || d > CleanupTimeout {
+		t.Errorf("CleanupContext deadline is %v away, want (0, %v]", d, CleanupTimeout)
+	}
+
+	// NOT ALREADY CANCELLED. Cleanup runs after the test finishes, so a context derived
+	// from the test'"'"'s own would already be done and every teardown statement would fail
+	// instantly WITHOUT dropping anything -- the failure that looks like a fix while
+	// leaving the rows behind.
+	if err := ctx.Err(); err != nil {
+		t.Errorf("CleanupContext returned an already-finished context (%v); teardown would "+
+			"fail instantly without cleaning up anything", err)
+	}
+	select {
+	case <-ctx.Done():
+		t.Error("CleanupContext returned a context that is already Done; it must not inherit " +
+			"cancellation from a test context that is over by the time Cleanup runs")
+	default:
+	}
+
+	// cancel() must release it, or every cleanup leaks a timer for CleanupTimeout.
+	cancel()
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Errorf("after cancel(), ctx.Err() = %v, want context.Canceled", ctx.Err())
 	}
 }

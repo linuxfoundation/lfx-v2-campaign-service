@@ -127,7 +127,14 @@ func freshDatabase(ctx context.Context, t *testing.T) string {
 		t.Fatalf("create scratch database: %v", err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx := context.Background()
+		// Bounded, and NOT derived from the test's ctx: by the time Cleanup runs the test
+		// is over and that context is cancelled, so a cleanup inheriting it would fail
+		// instantly without dropping anything. Unbounded is the other failure: a forced
+		// DROP waiting on another session, or an unreachable server, would block here
+		// forever, the Errorf paths below would never be reached, and the package would
+		// hang to its suite-level timeout in whatever test the runner was in.
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
 		// Errorf, not Logf. This test provisions a database per migration version, so a
 		// silently-skipped drop does not cost one stray database, it accumulates a whole
 		// run's worth against the persistent local harness — and a Logf leaves that

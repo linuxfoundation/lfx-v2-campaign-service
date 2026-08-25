@@ -91,3 +91,30 @@ that REPLACED `Config.Host` with the fallbacks would pass a fallback-only test. 
 fail it: dropping the fallback loop leaks `secondary`/`third`, and dropping `cfg.Host` from
 the set leaks `primary`. A message naming no host in the DSN still keeps its text, so the
 wider comparison did not buy safety with diagnosability.
+
+**Follow-up — unbounded teardown.** A suppressed review finding flagged `freshDatabase`'s
+cleanup as running both its reconnect and its `DROP DATABASE ... WITH (FORCE)` on
+`context.Background()`. Verified at head: true, and the consequence is that the cleanup cannot
+fail. A stalled drop or an unreachable server blocks before either `t.Errorf`, so the package
+hangs to its suite-level timeout and reports it against whatever test the runner was in —
+naming neither the stall nor the stray database.
+
+Swept as a class rather than as the named line. Every `t.Cleanup` in the package was on an
+unbounded context: 13 sites across `migrate_down`, `invalid_index` (including
+`restoreRequiredIndex`, reached from cleanup in four tests and doing a drop, a create and a
+catalog verification), `list_campaigns` (3), `project_scope`, and `audience_lease`. All now
+take `dbtest.CleanupContext()`.
+
+The root is `Background`, not the test's ctx, and that is the half worth stating: by the time
+`t.Cleanup` runs the test's context is cancelled, so deriving from it would fail every
+teardown statement instantly WITHOUT dropping anything — a change that reads as a fix while
+leaving the rows behind. `Background` carries no cancellation to inherit; the deadline is what
+this adds.
+
+**Verification and its limit.** `TestCleanupContextIsBoundedAndUncancelled` binds the helper:
+reverting it to a bare `Background()` fails on the absent deadline, and rooting it in a
+cancelled parent fails on both the `Err()` and `Done()` assertions. The CALL SITES are pinned
+at the source only. Reproducing the real failure needs a wedged Postgres, which no test can
+arrange, and reverting the helper to an unbounded context leaves the whole suite green —
+confirmed by running it, not assumed. Stated here because a source pin is weaker evidence
+than a rendered one and the next maintainer should not read it as equivalent.

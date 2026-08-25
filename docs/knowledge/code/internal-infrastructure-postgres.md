@@ -992,6 +992,36 @@ it, so the failure lands at version 10 for a different reason than the one under
 Reassigning ownership to another column of the same table keeps the cascade and isolates the
 property.
 
+### Teardown runs on a bounded context (`CleanupContext`)
+
+Every `t.Cleanup` in `dbtest` connects, drops or deletes, and each of those can block. On an
+unbounded context a teardown CANNOT fail: if Postgres goes unreachable, or a
+`DROP DATABASE ... WITH (FORCE)` waits behind another session, the cleanup blocks forever, its
+own `t.Errorf` is never reached, and the package hangs to the suite-level timeout — which
+reports a timeout in whatever test the runner happened to be in, naming neither the stall nor
+the database left behind. The contract that a green run leaves nothing behind then has no
+instrument.
+
+`dbtest.CleanupContext()` returns a context bounded by `CleanupTimeout` (30s, matching the
+pool-open budget). Its root is `context.Background()`, deliberately, and the reason is the
+mirror of the deadline: teardown must not inherit the TEST's context, which is already
+cancelled by the time `t.Cleanup` runs — a cleanup deriving from it would fail instantly
+without dropping anything, which looks like a fix while leaving the rows behind. Elsewhere in
+this repo, where teardown hangs off a live request context, the same property is spelled
+`context.WithTimeout(context.WithoutCancel(ctx), …)`; `Background` is that spelling for work
+with no parent.
+
+All 13 cleanup-reachable sites take their context from this one helper, including
+`restoreRequiredIndex`, which is reached from `t.Cleanup` in four tests and performs a drop,
+a create and a catalog verification.
+
+**How strongly this is pinned:** `TestCleanupContextIsBoundedAndUncancelled` binds the
+helper — reverting it to a bare `Background()` fails on the missing deadline, and deriving it
+from a cancelled parent fails on both the `Err()` and `Done()` assertions. The CALL SITES are
+pinned at the source only: reproducing the failure needs a wedged Postgres, and reverting the
+helper to an unbounded context leaves the entire suite green (verified). That is weaker
+evidence than a rendered failure and should not be read as equivalent.
+
 ## Redacting a DSN-bearing error (`SafeDSNErr` / `SafeDSNErrFor`)
 
 Every failure in `dbtest` prints to a CI log, and pgx builds its errors out of the parsed

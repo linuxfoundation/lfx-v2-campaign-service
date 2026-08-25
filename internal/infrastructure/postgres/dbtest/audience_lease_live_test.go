@@ -463,7 +463,9 @@ func audienceLeaseNarrowingProbe(
 		t.Fatalf("create the probe index: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DROP INDEX `+probeIndex); err != nil {
+		cleanupCtx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, `DROP INDEX `+probeIndex); err != nil {
 			t.Errorf("drop the probe index: %v — it is now visible to every later test "+
 				"in this package", err)
 		}
