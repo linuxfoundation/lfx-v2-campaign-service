@@ -1048,11 +1048,27 @@ secret was it handed".
 
 `TestNoConnectSiteRendersItsErrorRaw` pins both questions from the AST. It asks (1) whether
 each DSN-bearing call's error reaches a `t.Fatalf`/`t.Errorf` through a redactor rather than
-raw, and (2) whether, inside a function holding an explicit `dsn` parameter, the redactor is
-the DSN-taking form handed THAT parameter. Question 2 is what catches the wrong-DSN seam,
-which question 1 cannot see. It is parsed rather than line-scanned because two earlier
-window-based versions each missed a site, and each question carries its own
-`checked == 0` self-test — a guard that inspects nothing passes for the same reason a
+raw, and (2) whether the redactor compares against the DSN that call actually USED. Question 2
+is what catches the wrong-DSN seam, which question 1 cannot see.
+
+The expected DSN in question 2 is read from the **call's own argument**, not from any
+parameter name. An earlier version keyed it on a parameter literally spelled `dsn`, which is a
+claim about spelling and failed the same way the spelling-based version of the raw-argument
+check had already failed: renaming `newMigrator`'s parameter to `databaseURL` and reverting its
+formatter to `SafeDSNErr` removed the function from consideration entirely, and the regression
+passed. Which argument carries the DSN is stated per callee — every entry in `dsnCalls` takes
+it last, `withDatabase` takes it first — because guessing "the last argument" resolved
+`withDatabase(dbtest.DSN(), name)` to the database *name* and reported a correct call as
+mispaired.
+
+A call that used the environment's `DSN()` is satisfied by either redactor; a call that used
+anything else requires `SafeDSNErrFor` handed that same value. The whole guard is parsed rather
+than line-scanned because two earlier window-based versions each missed a site.
+
+Its self-tests are counted separately, and the second exists because of a real bypass: a bare
+`pairChecked == 0` check stayed nonzero via `schemaObjects` while the explicit-DSN sites
+disappeared. `explicitPairs == 0` fails independently, so the sites the seam actually lives on
+cannot silently stop being inspected. A guard that checks nothing passes for the same reason a
 correct one does.
 
 Both instruments are honest about their strength. The source guard is **weaker** than a

@@ -1261,9 +1261,12 @@ func TestSafeDSNErrWithholdsFallbackHosts(t *testing.T) {
 // explicit one. The identifier that differed was the one that leaked.
 //
 //  1. Is the error rendered through a redactor at all, rather than with %v?
-//  2. Where the enclosing function was handed an explicit DSN parameter, is the redactor
-//     the DSN-taking form, and is it handed THAT parameter? A bare SafeDSNErr inside such
-//     a function silently redacts against a different secret than the call used.
+//  2. Does the redactor compare against the DSN the failing call actually USED? The
+//     expected value is read from the DSN-bearing call's own argument, so it does not
+//     depend on what any parameter is spelled. A call that used the environment's DSN()
+//     is satisfied by either form; a call that used any other value requires
+//     SafeDSNErrFor handed THAT value. A bare SafeDSNErr on an explicit DSN silently
+//     redacts against a different secret than the call used.
 func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	t.Parallel()
 
@@ -1422,48 +1425,102 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		return bound
 	}
 
-	// dsnParams maps a function declaration to the names of its explicit `dsn string`
-	// parameters. A function with one has been handed a secret that is NOT necessarily
-	// the environment's, so redacting against DSN() there compares the wrong value.
-	dsnParams := map[*ast.FuncDecl][]string{}
-	for _, d := range file.Decls {
-		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Type.Params == nil {
-			continue
-		}
-		for _, f := range fn.Type.Params.List {
-			id, ok := f.Type.(*ast.Ident)
-			if !ok || id.Name != "string" {
-				continue
+	// dsnArgOf returns the SOURCE TEXT of the DSN argument a DSN-bearing call was handed.
+	//
+	// This is the question the guard actually needs answered, and an earlier version asked
+	// a proxy for it: it looked for a parameter literally spelled `dsn` on the enclosing
+	// function. That is a claim about SPELLING, and it failed exactly as the spelling-based
+	// version of bareErrArgs did before it -- renaming newMigrator's parameter to
+	// `databaseURL` and reverting its formatter to SafeDSNErr removed the function from the
+	// map entirely, and the wrong-DSN regression passed while another function kept the
+	// coverage counter nonzero. Verified against this file before the rewrite.
+	//
+	// The DSN a call used is not a property of any name: it is the argument at the call
+	// site. pgx.Connect(ctx, X) and migrate.NewWithSourceInstance(_, _, migrateURL(t, X))
+	// both USED X, so X is what their error must be redacted against. Reading it from the
+	// call is independent of how anything is spelled.
+	dsnArgOf := func(n ast.Node) (ast.Expr, bool) {
+		var arg ast.Expr
+		found := false
+		ast.Inspect(n, func(n ast.Node) bool {
+			c, ok := n.(*ast.CallExpr)
+			if !ok || found {
+				return !found
 			}
-			for _, n := range f.Names {
-				if n.Name == "dsn" {
-					dsnParams[fn] = append(dsnParams[fn], n.Name)
+			name := selName(c.Fun)
+			if !dsnCalls[name] && (name != "withDatabase" || !liveDSNArg(c)) {
+				return true
+			}
+			// WHICH argument carries the DSN is a property of each function's
+			// signature, so it is stated per call rather than guessed. Every entry in
+			// dsnCalls takes it LAST -- pgx.Connect(ctx, dsn), pgxpool.New(ctx, dsn),
+			// pgxpool.ParseConfig(dsn), postgres.NewPool(ctx, dsn),
+			// NewWithSourceInstance(name, src, url) -- but withDatabase takes it FIRST,
+			// as withDatabase(dsn, name). Reading the last argument there resolved to
+			// `name`, the scratch database name, and reported a correct
+			// SafeDSNErr(DSN()) call as mispaired.
+			idx := len(c.Args) - 1
+			if name == "withDatabase" {
+				idx = 0
+			}
+			if idx < 0 || idx >= len(c.Args) {
+				return true
+			}
+			arg = c.Args[idx]
+			found = true
+			return false
+		})
+		return arg, found
+	}
+
+	// dsnRoot reduces a DSN argument to the identifier it ultimately reads, so a call
+	// wrapped in a rewrite still names its source. migrateURL(t, dsn) -> dsn;
+	// dbtest.DSN() -> the sentinel below.
+	const envDSNSentinel = "\x00env"
+	var dsnRoot func(ast.Expr) string
+	dsnRoot = func(e ast.Expr) string {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return x.Name
+		case *ast.CallExpr:
+			if strings.HasSuffix(selName(x.Fun), ".DSN") || selName(x.Fun) == "DSN" {
+				return envDSNSentinel
+			}
+			// A rewrite like migrateURL(t, dsn) or withDatabase(dsn, name): the DSN it
+			// carries is the FIRST argument that resolves to a DSN, in source order.
+			//
+			// Order matters and the environment must not be demoted. withDatabase's
+			// signature is (dsn, name), so a "prefer any identifier over the sentinel"
+			// pass picked `name` -- the scratch database NAME, not a DSN at all -- and
+			// reported the correct SafeDSNErr(DSN()) call as mispaired. Taking the first
+			// resolving argument keeps withDatabase(dbtest.DSN(), name) reading as the
+			// environment and migrateURL(t, dsn) reading as dsn, because in each the DSN
+			// genuinely comes first among the arguments that resolve at all.
+			for _, a := range x.Args {
+				// `t` is threaded through these helpers as a *testing.T, never as a
+				// DSN: migrateURL(t, dsn) resolved to `t` on a first-argument scan and
+				// reported the fixed newMigrator call as mispaired. It is the only such
+				// value in this file, and skipping it by name is honest -- the
+				// alternative is type resolution, which needs go/types and a full
+				// package load for one identifier.
+				if id, ok := a.(*ast.Ident); ok && id.Name == "t" {
+					continue
+				}
+				if r := dsnRoot(a); r != "" {
+					return r
 				}
 			}
 		}
+		return ""
 	}
 
-	// enclosing finds the FuncDecl a position falls inside, so the pairing check can ask
-	// what DSN was in scope at the call rather than guessing from the file.
-	enclosing := func(pos token.Pos) *ast.FuncDecl {
-		for _, d := range file.Decls {
-			if fn, ok := d.(*ast.FuncDecl); ok && fn.Pos() <= pos && pos <= fn.End() {
-				return fn
-			}
-		}
-		return nil
-	}
-
-	// mispairedRedactors reports redactor calls that redact against the WRONG secret:
-	// inside a function holding an explicit dsn parameter, either the environment form
-	// SafeDSNErr, or SafeDSNErrFor handed something other than that parameter.
-	mispairedRedactors := func(call *ast.CallExpr, params []string) []string {
+	// mispairedRedactors reports redactor calls that redact against a DSN other than the
+	// one the failing call used.
+	//
+	//   - the call used the ENVIRONMENT's DSN()  -> either redactor is correct.
+	//   - the call used any other value          -> SafeDSNErrFor handed THAT value, only.
+	mispairedRedactors := func(call *ast.CallExpr, want string) []string {
 		var bad []string
-		inScope := map[string]bool{}
-		for _, p := range params {
-			inScope[p] = true
-		}
 		ast.Inspect(call, func(n ast.Node) bool {
 			c, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -1476,17 +1533,19 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			if !redactors[name] {
 				return true
 			}
+			if want == envDSNSentinel {
+				return true // the call read the environment; both forms compare it
+			}
 			if name != dsnRedactor {
-				bad = append(bad, name+" (redacts against the environment DSN())")
+				bad = append(bad, name+" (redacts against the environment DSN(), but the "+
+					"call used "+want+")")
 				return true
 			}
-			// SafeDSNErrFor's first argument must BE the in-scope dsn parameter.
 			if len(c.Args) == 0 {
 				return true
 			}
-			id, ok := c.Args[0].(*ast.Ident)
-			if !ok || !inScope[id.Name] {
-				bad = append(bad, name+" handed "+exprText(fset, c.Args[0]))
+			if got := dsnRoot(c.Args[0]); got != want {
+				bad = append(bad, name+" handed "+exprText(fset, c.Args[0])+", but the call used "+want)
 			}
 			return true
 		})
@@ -1495,6 +1554,7 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 
 	checked := 0
 	pairChecked := 0
+	explicitPairs := 0
 	// Walk every statement that performs a DSN-bearing call, then inspect the error
 	// handling that follows it in the same block.
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -1532,6 +1592,11 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 			if len(bound) == 0 {
 				continue
 			}
+			// The DSN this statement's call actually used, read from the call site.
+			want := ""
+			if arg, ok := dsnArgOf(stmt); ok {
+				want = dsnRoot(arg)
+			}
 			for _, h := range handlers {
 				ast.Inspect(h, func(n ast.Node) bool {
 					call, ok := n.(*ast.CallExpr)
@@ -1544,20 +1609,25 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 					}
 					checked++
 					// Question 2: the redactor is present -- is it aimed at the right
-					// secret? Only asked where the enclosing function was handed one.
-					if fn := enclosing(call.Pos()); fn != nil {
-						if params := dsnParams[fn]; len(params) > 0 {
-							pairChecked++
-							for _, bad := range mispairedRedactors(call, params) {
-								pos := fset.Position(call.Pos())
-								t.Errorf("line %d redacts against the WRONG DSN: %s, inside "+
-									"%s which was handed an explicit %q:\n  %s\nthe explicit "+
-									"DSN and the environment's differ (the scratch database "+
-									"name above all), so this clears the identifier that "+
-									"actually leaks; use dbtest.SafeDSNErrFor(%s, err)",
-									pos.Line, bad, fn.Name.Name, params[0],
-									exprText(fset, call), params[0])
+					// secret? `want` is read from the DSN-bearing call itself, so this
+					// does not depend on what any parameter is named.
+					if want != "" {
+						pairChecked++
+						if want != envDSNSentinel {
+							explicitPairs++
+						}
+						for _, bad := range mispairedRedactors(call, want) {
+							pos := fset.Position(call.Pos())
+							shown := want
+							if shown == envDSNSentinel {
+								shown = "the environment DSN()"
 							}
+							t.Errorf("line %d redacts against the WRONG DSN: %s\n  %s\nthe "+
+								"call used %s, and an explicit DSN differs from the "+
+								"environment's (the scratch database name above all), so "+
+								"redacting against the other one clears the identifier that "+
+								"actually leaks; use dbtest.SafeDSNErrFor(%s, err)",
+								pos.Line, bad, exprText(fset, call), shown, shown)
 						}
 					}
 					for _, bare := range bareErrArgs(call, bound) {
@@ -1587,12 +1657,22 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 	// refactor that renames that parameter would empty this walk silently, leaving a
 	// guard that passes because it asked nothing.
 	if pairChecked == 0 {
-		t.Fatal("guard checked no redactor/DSN pairing; no connect-error handler was found " +
-			"inside a function taking an explicit dsn parameter, so the wrong-DSN seam " +
-			"this file exists to pin is no longer being inspected")
+		t.Fatal("guard checked no redactor/DSN pairing; no DSN-bearing call's error handler " +
+			"was inspected, so the wrong-DSN seam this file exists to pin is not covered")
 	}
-	t.Logf("inspected %d formatting calls in connect-error handlers (%d redactor/DSN pairings)",
-		checked, pairChecked)
+	// A pairing on a call that read the ENVIRONMENT is trivially satisfied by either
+	// redactor, so counting only `pairChecked` would let the EXPLICIT-DSN sites disappear
+	// while a sibling kept the counter nonzero. That is not hypothetical: renaming
+	// newMigrator's parameter removed it from an earlier, spelling-based version of this
+	// guard, and schemaObjects alone held the count up while the regression passed. The
+	// explicit sites are the ones the seam lives on, so they are counted separately.
+	if explicitPairs == 0 {
+		t.Fatal("guard checked no pairing on a call that used an EXPLICIT DSN; every " +
+			"inspected site read the environment, so the wrong-DSN seam is not being " +
+			"pinned even though the walk found handlers")
+	}
+	t.Logf("inspected %d formatting calls in connect-error handlers "+
+		"(%d redactor/DSN pairings, %d on an explicit DSN)", checked, pairChecked, explicitPairs)
 }
 
 // exprText renders an AST node back to source for a failure message.

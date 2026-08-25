@@ -144,7 +144,7 @@ func TestCleanupContextIsBoundedAndUncancelled(t *testing.T) {
 	}
 
 	// NOT ALREADY CANCELLED. Cleanup runs after the test finishes, so a context derived
-	// from the test'"'"'s own would already be done and every teardown statement would fail
+	// from the test's own would already be done and every teardown statement would fail
 	// instantly WITHOUT dropping anything -- the failure that looks like a fix while
 	// leaving the rows behind.
 	if err := ctx.Err(); err != nil {

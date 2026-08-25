@@ -118,3 +118,36 @@ at the source only. Reproducing the real failure needs a wedged Postgres, which 
 arrange, and reverting the helper to an unbounded context leaves the whole suite green —
 confirmed by running it, not assumed. Stated here because a source pin is weaker evidence
 than a rendered one and the next maintainer should not read it as equivalent.
+
+**Follow-up — the guard was still spelling-based.** Review pointed out that question 2
+discovered explicit DSNs by looking for a parameter named `dsn`, and that `pairChecked` was
+only a global nonzero check. Both halves were true, and the bypass was reproduced before
+fixing: renaming `newMigrator`'s parameter to `databaseURL` and reverting its formatter to
+`SafeDSNErr` removed the function from the map, `schemaObjects` alone held `pairChecked` above
+zero, and the wrong-DSN regression **passed**.
+
+This is the third time in this file that asking about a NAME rather than about a VALUE has
+produced a guard that agrees with itself — after `bareErrArgs` keyed on identifiers spelled
+`err`, and the window-based scans that keyed on line proximity.
+
+The expected DSN is now read from the DSN-bearing call's own argument. Which argument that is
+is stated per callee rather than guessed: every entry in `dsnCalls` takes it last, but
+`withDatabase(dsn, name)` takes it first, and a "last argument" rule resolved that to the
+scratch database NAME and reported a correct `SafeDSNErr(DSN())` call as mispaired. `t` is
+skipped by name where helpers thread a `*testing.T`; that is honest about being a shortcut —
+the alternative is `go/types` and a full package load to resolve one identifier.
+
+A call that used the environment's `DSN()` is satisfied by either redactor, since both compare
+that value; anything else requires `SafeDSNErrFor` handed the same value. `explicitPairs` is
+counted separately from `pairChecked` so the environment-only sites cannot hold the counter up
+while the explicit ones vanish — the exact shape of the reported bypass.
+
+Verified: the rename-plus-revert mutation now fails (`the call used databaseURL`), the plain
+revert still fails, and forcing every pairing to the environment branch trips the new
+`explicitPairs == 0` self-test. The guard reports 6 pairings, 3 on an explicit DSN.
+
+**Also — shell quoting leaked into a comment.** A `'"'"'` escape from the heredoc that wrote
+the file landed verbatim in `TestCleanupContextIsBoundedAndUncancelled`'s comment. Fixed, and
+swept repo-wide rather than at the reported line: the same sequence was also sitting in
+`campaign_repo.go:918`, from an earlier change. Both are now plain apostrophes and
+`git grep` for the sequence is empty.
