@@ -4233,7 +4233,7 @@ func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
 	// Recorded in admission order, under pace's own lock.
 	var mu sync.Mutex
 	cleared := make([]time.Time, 0, callers)
-	c.onAdmit = func(at time.Time) {
+	c.onAdmit = func(_ context.Context, at time.Time) {
 		mu.Lock()
 		cleared = append(cleared, at)
 		mu.Unlock()
@@ -4385,5 +4385,82 @@ func TestWriteRetryRePacesButReadRetryDoesNot(t *testing.T) {
 				t.Errorf("%s reached the server %d times; want %d", tc.method, got, tc.wantCalls)
 			}
 		})
+	}
+}
+
+// TestPaceCancelAtWaitExpiryReservesNothing covers the TIE: a caller whose context is
+// cancelled at the same instant its pacing wait ends.
+//
+// sleepCtx selects between the timer and ctx.Done(), and Go chooses uniformly at
+// random when both are ready, so such a caller can be handed the TIMER arm and return
+// nil even though its context is dead. Without a post-wait re-check pace then reserves
+// a slot for a write the caller can no longer issue, pushing the next real writer back
+// by writeDelay.
+//
+// This asserts a RATE, not zero, and the reason is worth stating because a
+// zero-tolerance version of this test is unstable against correct code. A context can
+// always be cancelled in the instant AFTER any check, so there is an irreducible window
+// between the re-check and the reservation. What the fix changes is the SIZE of that
+// window: unfixed it is the entire pacing wait (~2ms here), fixed it is the few
+// nanoseconds between the check and the reserve. Measured over 500 trials: 488/500
+// unfixed versus 0/500 fixed, and over 4000 trials the fixed rate was 18 (~0.45%).
+// The threshold below sits far under the unfixed rate and far above the residual one,
+// so it fails loudly on a regression without flaking on correct code.
+//
+// Getting to this fixture took discarding two weaker ones: cancelling MID-wait leaves
+// ctx.Done() the only ready case, which the pre-existing error arm already covers
+// (passes either way), and an already-dead context with a tiny wait never reproduced
+// the tie at all (0/200 unfixed). Liveness is observed INSIDE pace via onAdmit, at the
+// reservation itself, because ctx.Err() read after pace returns cannot distinguish a
+// caller admitted while live whose context died a moment later from a real violation.
+func TestPaceCancelAtWaitExpiryReservesNothing(t *testing.T) {
+	const (
+		trials = 400
+		delay  = 2 * time.Millisecond
+		// Unfixed sits near 98%; the residual race sits near 0.5%.
+		maxViolationRate = 0.10
+	)
+
+	violations := 0
+	for i := range trials {
+		c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(delay))
+
+		var mu sync.Mutex
+		admittedDead := false
+		c.onAdmit = func(ctx context.Context, _ time.Time) {
+			// Sampled while writeMu is held, at the moment the slot is taken.
+			if ctx.Err() != nil {
+				mu.Lock()
+				admittedDead = true
+				mu.Unlock()
+			}
+		}
+
+		if err := c.pace(context.Background()); err != nil {
+			t.Fatalf("trial %d: seeding pace: %v", i, err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel concurrently, timed to collide with the pacing timer, so sleepCtx sees
+		// both cases ready and its choice between them is a genuine coin flip.
+		go func() {
+			time.Sleep(delay)
+			cancel()
+		}()
+		_ = c.pace(ctx)
+		cancel()
+
+		mu.Lock()
+		if admittedDead {
+			violations++
+		}
+		mu.Unlock()
+	}
+
+	if rate := float64(violations) / float64(trials); rate > maxViolationRate {
+		t.Errorf("%d/%d (%.1f%%) of tied callers reserved a slot with an already-cancelled "+
+			"context, want <= %.0f%% — pace is not re-checking cancellation after its wait, so a "+
+			"write that can never be issued is delaying the next real writer",
+			violations, trials, rate*100, maxViolationRate*100)
 	}
 }
