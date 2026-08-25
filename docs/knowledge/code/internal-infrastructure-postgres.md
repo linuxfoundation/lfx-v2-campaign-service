@@ -1022,8 +1022,8 @@ one scratch database per migration version, so at 28 migrations a per-call clean
 sets no `-timeout`). The run then died at the opaque suite timeout, naming neither the
 unreachable server nor the databases left behind. Bounding each step did not bound the
 teardown. `scratchReaper` collects the names and drops them from ONE test-level cleanup under
-ONE `CleanupContext`, with one reconnect rather than one per database, and reports how many
-were skipped if the budget expires mid-reap.
+ONE `CleanupContext`, with one reconnect rather than one per database, and names the databases actually
+skipped (`names[i:]`, not the whole registered list) if the budget expires mid-reap.
 
 **How strongly this is pinned:** `TestCleanupContextIsBoundedAndUncancelled` binds the
 helper — reverting it to a bare `Background()` fails on the missing deadline, and deriving it

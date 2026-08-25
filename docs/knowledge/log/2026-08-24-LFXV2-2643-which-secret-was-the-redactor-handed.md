@@ -209,9 +209,24 @@ caused it. If the budget does expire mid-reap it says how many databases were le
 than reporting only the drop that hung. The reaper is keyed by `*testing.T` so a helper called
 from several tests cannot merge their databases into another's teardown.
 
-Same honesty as before: `TestScratchReaperUsesOneBudgetForEveryDatabase` pins the SHAPE — 29
-names, one registration, one deadline — which is what a unit test can reach. The
-stalled-server behaviour itself still needs a wedged Postgres and is not behaviourally bound.
+Same honesty as before: `TestScratchReaperRegistersOneCleanupForEveryDatabase` pins the
+SHAPE — 29 names registered through the real `scratchDatabases` path into ONE reaper under one
+deadline — which is what a unit test can reach. The stalled-server behaviour itself still
+needs a wedged Postgres and is not behaviourally bound.
+
+**Correction (2026-08-25).** The first version of that test was VACUOUS, and review caught it
+where I did not. It built a local `scratchReaper`, asserted on `CleanupContext` in isolation,
+and cleared `r.names` by assignment — never calling `scratchDatabases` or `reap`. Reverting the
+aggregate fix to per-database cleanups left it **green**, so it pinned none of what its own
+godoc and this entry claimed. It now drives the real registration path through a subtest and
+fails on exactly that mutation: `scratchDatabases returned a different reaper on the second
+call`. Writing the claim into the doc did not make the test true, and the entry asserted the
+pin before the mutation had been run against it.
+
+The expiry message had the same shape of error: it reported `len(names)` — the full registered
+list — so databases the loop had already dropped were counted as still present and none of the
+skipped ones were named, contradicting the sentence directly above it. It now reports
+`names[i:]`, the databases actually skipped, and names them.
 
 **Also — the PR description outlived its test.** It claimed assertion (2) of
 `TestLiveCredentialSurvivesTheRealByteaColumn` verified the stored column "contains no
