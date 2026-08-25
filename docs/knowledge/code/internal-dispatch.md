@@ -1339,10 +1339,16 @@ Sharing it across concurrent callers would interleave two dispatches through tha
 assumption and break it, on the money-spending create path. Wiring it needs a concurrency argument
 this pattern does not supply.
 
-"Rebuilds a client" is still not "re-mints a token": Meta and LinkedIn are handed an
-already-minted bearer token and do no exchange at construction, and X signs each request with
-stored OAuth 1.0a credentials. So the Meta/LinkedIn win is allocation rather than a saved token
-round-trip, which is why their wiring tests assert client IDENTITY instead of a token hit count.
+"Rebuilds a client" is still not "re-mints a token", but the two come apart per provider and, for
+LinkedIn, per CREDENTIAL SHAPE. **Meta** never exchanges — it holds an already-minted bearer token
+and mints nothing at construction or after — so its win is allocation only. **X** signs each
+request with stored OAuth 1.0a credentials and also mints nothing. **LinkedIn depends on the
+shape**: a refresh-capable connection exchanges on the FIRST request of every new client, because
+no access-token expiry is persisted and the injected-token branch that would skip it is dead
+(`internal/platform/linkedin/token.go`), so caching saves a real token round-trip there exactly as
+it does for Google Ads and Reddit; only a bearer-only connection reduces to allocation. The wiring
+tests assert client IDENTITY rather than a token hit count because identity holds across all those
+shapes, whereas a count pins only the fixture's shape.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each

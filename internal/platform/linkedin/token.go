@@ -277,8 +277,12 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 	//
 	// The consequence is real and worth stating: EVERY refresh-capable client performs a
 	// token exchange on its first request, because this is the only branch that could
-	// have reused an injected token. internal/dispatch/linkedin.go builds a fresh client
-	// per operation, so a brief-level fan-out is one OAuth exchange per campaign.
+	// have reused an injected token. What that costs depends on how long the client lives.
+	// internal/dispatch/linkedin.go builds a fresh client per DISPATCH, so a brief-level
+	// fan-out is still one OAuth exchange per campaign. Its TOGGLE and METRICS paths reuse
+	// a client cached per connection row+version (LFXV2-3033), so there the exchange happens
+	// once per cached client rather than once per request — which is precisely the saving
+	// that cache exists for, and it is only available because this branch is dead.
 	//
 	// Retained rather than deleted because it is the correct behaviour the moment an
 	// expiry IS persisted, and deleting it would read as a decision that reuse is wrong.
@@ -828,10 +832,12 @@ func (c *Client) expiredCredentialsError(statusCode int, body, method string) *c
 // recoverable state into one needing a human re-authorization.
 //
 // "The next caller" means a SUBSEQUENT OPERATION, not the failing one. Both 401 arms
-// (doRequest and doAdAnalyticsAttempt) return immediately after calling this, and
-// dispatch constructs a fresh Client per operation — so the caller that hit the 401
-// still surfaces ErrCredentialsExpired, and the self-heal happens on the next
-// dispatch, whose empty cache forces an exchange.
+// (doRequest and doAdAnalyticsAttempt) return immediately after calling this, so the caller
+// that hit the 401 still surfaces ErrCredentialsExpired. The self-heal then happens on the
+// next operation, and it does so under BOTH client lifetimes: dispatch constructs a fresh
+// Client whose empty cache forces an exchange, while on the cached toggle/metrics paths
+// (LFXV2-3033) this function has just CLEARED c.accessToken/c.tokenExpiry on the shared
+// instance, so the next request through that same client takes the exchange path too.
 //
 // A refresh-and-replay INSIDE the failing operation is deliberately not done, even
 // when CanRefresh() is true. doRequest's retry rule (see the `idempotent` predicate)

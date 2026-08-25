@@ -388,11 +388,21 @@ func isComparable(v any) bool {
 // concurrency argument this pattern does not supply, not merely a copy of the Meta/LinkedIn
 // analysis.
 //
-// "Rebuilds a client" is NOT the same as "re-mints a token", and that distinction survives the
-// wiring: Meta and LinkedIn are handed an already-minted bearer token and perform no exchange at
-// construction, and X signs each request with stored OAuth 1.0a credentials. So the win for Meta
-// and LinkedIn is allocation rather than a saved token round-trip, which is why their wiring
-// tests assert client IDENTITY instead of counting hits on a token endpoint.
+// "Rebuilds a client" is NOT the same as "re-mints a token", but the two come apart per PROVIDER
+// and, for LinkedIn, per CREDENTIAL SHAPE — so state it per case rather than as one blanket claim:
+//
+//   - META never exchanges: it is handed an already-minted bearer token and mints nothing at
+//     construction or after, so its win is allocation only.
+//   - LINKEDIN depends on the shape. A REFRESH-CAPABLE connection exchanges on the FIRST request
+//     of every new client, because no access-token expiry is persisted and the injected-token
+//     branch that would skip it is dead (internal/platform/linkedin/token.go). Caching therefore
+//     saves a real token round-trip for that shape, as it does for Google Ads and Reddit; only a
+//     bearer-only connection reduces to allocation.
+//   - X signs each request with stored OAuth 1.0a credentials and mints nothing.
+//
+// Their wiring tests assert client IDENTITY instead of counting hits on a token endpoint because
+// identity is the property that holds across every one of those shapes; a count would pin only
+// the fixture's shape and would read zero for a bearer-only connection with or without a cache.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
 // one-site edit.
 //

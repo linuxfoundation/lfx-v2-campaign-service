@@ -321,12 +321,12 @@ func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *t
 }
 
 // TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate covers the other half of the same
-// defect, on the two providers whose account_id is OPTIONAL (Google Ads, Meta —
-// design/connection.go leaves both out of Required, generated as *string).
+// defect, on the providers whose account_id is OPTIONAL (Google Ads, Meta and — since
+// LFXV2-3319 — X; design/connection.go leaves all three out of Required, generated as *string).
 //
-// These two could technically satisfy a presence check, but only by sending account_id absent —
+// These could technically satisfy a presence check, but only by sending account_id absent —
 // and because PUT is a full replace, absent CLEARS the column. So the presence check did not
-// merely inconvenience them: the single way to rename a Google or Meta connection while the flag
+// merely inconvenience them: the single way to rename such a connection while the flag
 // was on was to DESTROY its account selection. That is the exact loss the guard exists to
 // prevent, reached by obeying the guard.
 func TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate(t *testing.T) {
@@ -377,6 +377,58 @@ func TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate(t *testing.T) 
 		}
 		if got := repo.store[repoKey("cncf", model.ProviderMetaAds)].AccountID; got != "act_8666746580" {
 			t.Fatalf("account id on the row after a label-only update = %q, want %q", got, "act_8666746580")
+		}
+	})
+
+	// X joined this group in LFXV2-3319. It gets BOTH arms, because becoming credentials-first
+	// created a request shape it could not previously express: a body that OMITS account_id.
+	t.Run("twitter-ads-resend-preserves", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderTwitterAds)] = &model.Connection{
+			Version: 1, AccountID: "8r7gb",
+			ProviderConfig: map[string]string{"funding_instrument_id": "lygyi"},
+		}
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateTwitterAds(context.Background(), &conn.UpdateTwitterAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.TwitterAdsConnectionConfig{
+				Label: strPtr("CNCF X"), AccountID: strPtr("8r7gb"), FundingInstrumentID: "lygyi",
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("an X label edit must not require clearing the account id: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderTwitterAds)].AccountID; got != "8r7gb" {
+			t.Fatalf("account id on the row after a label-only update = %q, want %q", got, "8r7gb")
+		}
+	})
+
+	// The arm that only became reachable with the Required drop: account_id ABSENT. PUT is a
+	// full replace, so this is the explicit CLEAR, and the guard permits it deliberately —
+	// refusing would trap the connection in whatever state the flag found it in, the opposite
+	// of reversible. Asserted as a VALUE reaching the row rather than as a bare no-error,
+	// because "accepted" and "actually cleared" are different outcomes and only one is correct.
+	t.Run("twitter-ads-omitted-id-clears", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderTwitterAds)] = &model.Connection{
+			Version: 1, AccountID: "8r7gb",
+			ProviderConfig: map[string]string{"funding_instrument_id": "lygyi"},
+		}
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateTwitterAds(context.Background(), &conn.UpdateTwitterAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.TwitterAdsConnectionConfig{
+				Label: strPtr("CNCF X"), AccountID: nil, FundingInstrumentID: "lygyi",
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("clearing an X selection must stay allowed while the flag is on: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderTwitterAds)].AccountID; got != "" {
+			t.Fatalf("account id after an omitted-id PUT = %q, want \"\" — PUT is a full "+
+				"replace, so an absent account_id must CLEAR the selection", got)
 		}
 	})
 }

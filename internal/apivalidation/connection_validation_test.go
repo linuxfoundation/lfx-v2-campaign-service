@@ -167,6 +167,12 @@ func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 	}{
 		{name: "valid alphanumeric ids", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("lygyi")}},
 		{name: "missing account_id is the credentials-first state", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi")}},
+		// An explicit JSON null decodes to the same nil *string as an absent key, so it is
+		// accepted for the same reason. This is pinned rather than left implicit because the
+		// two are indistinguishable AFTER decoding: only a test written at the decoded-body
+		// level records that the equivalence was a decision. PUT is a full replace, so an
+		// absent id already means "clear", and null therefore introduces no new intent.
+		{name: "explicit null account_id decodes as absence", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: nil, FundingInstrumentID: strp("lygyi")}},
 		{name: "missing funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb")}, wantErr: true, errSubstr: "funding_instrument_id"},
 		{name: "empty account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp(""), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
 		{name: "empty funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("")}, wantErr: true, errSubstr: "funding_instrument_id"},

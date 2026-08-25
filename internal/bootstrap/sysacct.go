@@ -399,12 +399,15 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
 // internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
-// every dispatch. What differs is whether the operator can RECOVER. Reddit has no discovery
+// every dispatch. (X still guards on it at DISPATCH — being credentials-first relaxes what may
+// be INSTALLED, not what may be dispatched with; the guard is what names the missing choice.)
+// What differs is whether the operator can RECOVER. Reddit has no discovery
 // endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
 // does have one — call discovery, rerun bootstrap with the chosen id — so its row is
 // recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
-// the operator with no reason to go looking. Microsoft and X are excluded by neither: each has
-// both halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
+// the operator with no reason to go looking. Microsoft is excluded by neither: it has
+// both halves and its absence is sequencing alone. X held both too and was ADMITTED in
+// LFXV2-3319 (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
@@ -431,9 +434,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //
 // The bar for adding a provider here is those two halves together, not either alone.
 //
-// CURRENT STATE after LFXV2-3064, which added the LinkedIn and Microsoft discovery endpoints —
-// the four excluded providers are no longer excluded for the same reason, and the difference is
-// what tells you how far each is from qualifying:
+// CURRENT STATE after LFXV2-3064 (LinkedIn and Microsoft discovery endpoints) and LFXV2-3319
+// (X discovery, and X's admission to this map) — the providers outside this map are not outside
+// it for the same reason, and the difference is what tells you how far each is from qualifying:
 //
 //   - Reddit lacks the FIRST half. Its platform client has no ListAdAccounts, so no
 //     discovery endpoint exists and nothing inside this API could tell an operator what to put

@@ -559,8 +559,10 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // too and remains excluded from both gates — that exclusion is a sequencing decision, not a
 // missing capability. Relaxing either gate without both halves is what the next rule forbids.
 //
-// Add the requirement back for Google Ads or Meta, or drop it for another provider, only
-// together with that provider's discovery endpoint AND its account_not_selected tagging.
+// Add the requirement back for any credentials-first provider — Google Ads, Meta or X — or drop
+// it for another provider, only together with that provider's discovery endpoint AND its
+// account_not_selected tagging. Stated as the CLASS rather than a roster: the membership grows,
+// and a fixed list is what sends a later edit to treat the newest member as unrelated.
 // Discovery capability and credentials-first bootstrap are not the same thing, and shipping
 // one without the other hides which half is missing.
 //
@@ -838,6 +840,17 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 		Pattern(`^[A-Za-z0-9]+$`)
 		MaxLength(64)
 	})
+	// An explicit JSON `null` decodes identically to an ABSENT key (both yield a nil *string,
+	// which strVal renders as ""), and that conflation is deliberate rather than overlooked.
+	// It is not a new state: on these endpoints PUT is a FULL REPLACE, so an absent account_id
+	// ALREADY means "clear the selection" (see rejectForcedSystemAccountWrite, which permits
+	// exactly that) — there is no separate "not chosen yet" intent for null to collide with, and
+	// a create has no prior selection to lose. Google Ads and Meta have behaved this way since
+	// LFXV2-3061/3062 and X now matches them rather than inventing a third convention. Note
+	// what is NOT relaxed: an explicit "" is a PRESENT value, so it still fails the Pattern
+	// below — only the missing/null key is accepted, which is why the apivalidation table keeps
+	// its empty-string case as a rejection.
+	//
 	// account_id is deliberately NOT required (LFXV2-3319), making X credentials-first:
 	// a connection may be created with credentials only and pointed at an account after
 	// GET .../connection-twitter-ads/accounts enumerates the choices. X earned this by

@@ -33,9 +33,14 @@ import (
 // dedicated fields below, never back into creds, because creds is also read WITHOUT
 // tokenMu (validateCredentialShape, the CanRefresh fast path).
 //
-// Lifetime: callers construct a Client per dispatch, so the token cache is per-
-// operation. It coalesces the many calls one dispatch makes; cross-request caching is
-// deliberately out of scope and would belong in a shared token store, not here.
+// Lifetime: this depends on the CALLER, and since LFXV2-3033 the two differ. Dispatch still
+// constructs a Client per operation, so its token cache is per-dispatch and coalesces only the
+// many calls one dispatch makes. The TOGGLE and METRICS paths instead reuse a client cached per
+// connection row+version (internal/dispatch's clientCache, via cachedLinkedInClient), so on
+// those paths the token cache legitimately spans requests and outlives a single operation.
+// Sharing is safe because every mutable field here is written under tokenMu, which is never held
+// across the network call. What remains out of scope is a token store shared across PROCESSES;
+// that would still belong elsewhere, not here.
 type Client struct {
 	creds      Credentials
 	cfg        RuntimeConfig

@@ -575,7 +575,7 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 // not assert equality, so a provider moving between those two states is not a test failure.
 //
 // What this test actually exercises: LinkedIn's refusal directly (an empty account id must be
-// rejected), with Google Ads and Meta as the ALLOWED cases. The other excluded providers are
+// rejected), with Google Ads, Meta and — since LFXV2-3319 — X as the ALLOWED cases. The other excluded providers are
 // refused by the same map check but are not separately invoked here — the guard is one branch,
 // so covering it once covers them, but do not read this comment as a claim of per-provider
 // coverage.

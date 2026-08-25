@@ -201,12 +201,21 @@ type LinkedInDispatcher struct {
 	// clients caches the built *linkedin.Client per connection, exactly as RedditDispatcher and
 	// MicrosoftDispatcher do. Wired by LFXV2-3033.
 	//
-	// The benefit is primarily ALLOCATION rather than a saved token round-trip on the common
-	// path: LinkedIn is handed an already-minted bearer token and performs no exchange at
-	// construction. It is not purely allocation either — the client DOES own a token cache and
-	// refreshes when a refresh token is configured (token.go accessTokenValue/fetchToken), so a
-	// rebuilt client discards that cache. The wiring test therefore asserts client IDENTITY,
-	// which holds either way, rather than a token hit count that would depend on the fixture.
+	// The benefit depends on the CREDENTIAL SHAPE, and for the shape real connections use it is
+	// a saved token round-trip, not merely allocation:
+	//
+	//   - A REFRESH-CAPABLE connection (one storing a refresh token, which linkedinCredentials
+	//     passes through) performs an OAuth exchange on the FIRST request of every new client.
+	//     No access-token expiry is persisted, so the injected-token branch in token.go is dead
+	//     and cannot short-circuit it — see the "EVERY refresh-capable client performs a token
+	//     exchange on its first request" note there. A client rebuilt per resolve therefore
+	//     re-mints per resolve, exactly as Google Ads and Reddit do, and caching removes that.
+	//   - A BEARER-ONLY connection performs no exchange at construction or after, so for that
+	//     shape the win really is allocation only.
+	//
+	// The wiring test asserts client IDENTITY rather than a token hit count because identity
+	// holds for BOTH shapes; a count would pin only whichever fixture the test happens to use
+	// (the bearer-only one counts zero either way, and would prove nothing).
 	//
 	// Sharing one instance across concurrent callers is safe for this client specifically: every
 	// field written after construction — the cached access token and its expiry, the adopted

@@ -749,8 +749,8 @@ is now credentials-first alongside Google Ads and Meta; the change-based check i
 re-sending a stored id a no-op for those three too, so it is not merely a concession to the
 Required ones. Google Ads, Meta and X, whose `account_id` is optional, could satisfy a presence
 check only by omitting the field — which, PUT being a full
-replace, CLEARS the column. So the presence check's single permitted way to rename a Google or
-Meta connection was to destroy the account selection a rollback depends on: the guard, obeyed,
+replace, CLEARS the column. So the presence check's single permitted way to rename any of those
+three connections was to destroy the account selection a rollback depends on: the guard, obeyed,
 caused the loss it exists to prevent.
 
 Re-sending the stored value persists nothing, so allowing it cannot violate the invariant. What

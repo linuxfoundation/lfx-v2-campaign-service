@@ -68,9 +68,15 @@ dispatches through that single pacing assumption and break it, on the money-spen
 Wiring it needs a concurrency argument this pattern does not supply.
 
 The wiring tests assert client IDENTITY rather than a token hit count, and the difference is a
-property of the provider rather than a weaker test: Meta and LinkedIn are handed an already-minted
-bearer token and perform no exchange at construction, so a count-based test would read 0 with and
-without the cache and prove nothing. A mutation forcing an unconditional rebuild fails both reuse
+property of the provider rather than a weaker test. Meta holds an already-minted bearer token and
+mints nothing, so a count-based test reads 0 with and without the cache and proves nothing.
+LinkedIn is subtler, and the first draft of this entry got it wrong by generalising from Meta: a
+REFRESH-CAPABLE LinkedIn connection exchanges on the FIRST request of every new client, because no
+access-token expiry is persisted and the injected-token branch that would skip it is dead
+(`internal/platform/linkedin/token.go`). So caching LinkedIn does save real token round-trips for
+the shape real connections use, and only a bearer-only connection reduces to allocation. Identity
+is asserted because it is the one property that holds across BOTH shapes; a count would pin only
+whichever fixture the test happened to use. A mutation forcing an unconditional rebuild fails both reuse
 tests. Rotation tests pin the other half — a client built from credential version N must not
 survive a bump to N+1, or the cache would serve a revoked credential through a live client.
 
@@ -111,3 +117,40 @@ justification and conclude the check can be narrowed.
 
 Log fragments under `docs/knowledge/log/` were deliberately left alone: they are dated history of
 what was true when written, not statements about the current tree.
+
+## `null` and an absent `account_id` are the same request, deliberately
+
+Review asked whether dropping `Required` admits a new state, since the generated field is a
+`*string` and both an absent key and an explicit `"account_id": null` decode to `nil`. The
+mechanism is real — verified by decoding all three forms — but it is not a new state, and the
+reason is that PUT on these endpoints is a **full replace**. An absent `account_id` ALREADY means
+"clear the selection" (`rejectForcedSystemAccountWrite` permits exactly that, and refusing would
+trap a connection in whatever state the force-system flag found it in), so there is no separate
+"not chosen yet" intent for `null` to collide with. On create there is no prior selection to lose.
+Google Ads and Meta have behaved this way since LFXV2-3061/3062; X now matches them rather than
+inventing a third convention.
+
+What did NOT relax is worth stating, because it is the part a reader is likely to assume moved
+with it: an explicit `""` is a PRESENT value and still fails the `Pattern`, as do the
+path-injection and overlong forms. Only the missing-or-null key is accepted. Both halves are
+pinned in the `apivalidation` table.
+
+## A cold-key test that passed under its own mutation
+
+The first version of the Meta and LinkedIn cold-key concurrency tests resolved credentials per
+goroutine, mirroring the Reddit and Microsoft tests. It passed — and it still passed with
+`singleflight` deleted from `buildOnce`, which means it was pinning nothing about this cache.
+
+The cause is that the two caches coalesce at different layers. A per-goroutine resolve is
+collapsed by `decryptOnce` FIRST, so the leader completes its build and `put` before the followers
+reach `buildOnce`, which then serves them a warm entry. Sixteen callers agreeing on one client
+therefore demonstrated the CREDENTIAL cache, not the client cache. The fix is to resolve once up
+front and align the goroutines on `buildOnce` itself with a start channel; the barrier is then
+removed, because one shared resolve makes exactly one repo read and would deadlock a 16-party
+barrier.
+
+Both now fail with coalescing removed, naming the caller that received a different instance. The
+general lesson is the one worth keeping: **copying a sibling test's shape does not copy its
+binding.** The Reddit test builds its client inside the same call that resolves, so its barrier
+lands in the right window; the Meta and LinkedIn helpers are invoked separately, and the same
+shape lands in the wrong one.
