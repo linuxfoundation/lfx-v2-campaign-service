@@ -64,13 +64,18 @@ import (
 // same error against an unrelated pinned DSN must NOT withhold it -- if both withhold, the
 // first result carries no information about the redactor's argument.
 //
-// Serializing the test and calling t.Setenv is a worse remedy than pinning the host, though
-// not an unsafe one -- and an earlier version of this comment overstated that. Go runs
-// top-level parallel tests only after the serial ones finish, so a serial Setenv window does
-// not overlap the parallel readers of DSN(); TestSafeDSNErrReadsTheConfiguredDSN uses that
-// pattern correctly. What Setenv costs is the ordering constraint: this test could no longer
-// run in parallel, to re-introduce the one process-global input SafeDSNErrFor was added to
-// remove. Pinning the host keeps both the parallelism and the independence.
+// Do NOT remove the t.Setenv below to make this test parallel again. Two superseded
+// arguments for that are on the record and both are wrong:
+//
+//   - "pinning the host is enough" -- it is not. An unresolvable host only rules out a
+//     harness that WORKS; the user, password and database are compared too, and a harness
+//     legitimately using `probeuser` or `probedb` still made a reverted fix pass.
+//   - "a serial Setenv races the parallel readers of DSN()" -- it does not. Go runs
+//     top-level parallel tests only after every serial test finishes, measured at zero
+//     overlaps. TestSafeDSNErrReadsTheConfiguredDSN relies on the same fact.
+//
+// So the pin costs this one test's parallelism and buys independence from every possible
+// value of TEST_DATABASE_URL. That is the trade, and it is deliberate.
 func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	// No t.Parallel: t.Setenv forbids it, and pinning the environment is what makes this
 	// test independent of whatever TEST_DATABASE_URL happens to hold. See the note above

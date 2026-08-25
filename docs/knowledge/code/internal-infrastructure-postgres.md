@@ -1203,13 +1203,18 @@ sharing the probe's user, one sharing its database, and the probe's own DSN verb
 The cost is `t.Parallel`, and nothing else. Go runs top-level parallel tests only after every
 serial test finishes, so the `Setenv` window cannot overlap the parallel readers of `DSN()`.
 
-Serializing the test and calling `t.Setenv` is a worse remedy than pinning the host, though
-not an unsafe one — an earlier version of this page overstated it as a race. Go runs top-level
-parallel tests only after the serial ones finish, so a serial `Setenv` window does not overlap
-the parallel readers of `DSN()`; `TestSafeDSNErrReadsTheConfiguredDSN` uses that pattern and is
-correct. What `Setenv` costs is the ordering constraint: the test could no longer run in
-parallel, in order to re-introduce the one process-global input `SafeDSNErrFor` exists to
-remove. Pinning the host keeps both.
+Two superseded arguments against that pin are on the record, and both are wrong — noted here
+so a later change does not undo the fix by reviving either:
+
+* *"Pinning the host is enough."* It is not. An unresolvable host only rules out a harness that
+  WORKS; user, password and database are compared too, and a harness legitimately using
+  `probeuser` or `probedb` still made a reverted fix pass for the wrong reason.
+* *"A serial `t.Setenv` races the parallel readers of `DSN()`."* It does not. Go runs top-level
+  parallel tests only after every serial test finishes — measured at zero overlaps, and the
+  reason `TestSafeDSNErrReadsTheConfiguredDSN` is correct under the same pattern.
+
+The pin costs that one test's parallelism and buys independence from every possible value of
+`TEST_DATABASE_URL`.
 
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 

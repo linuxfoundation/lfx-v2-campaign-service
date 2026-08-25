@@ -424,3 +424,19 @@ this branch had recorded as a known limit rather than defended. With the fix rev
 fails under every value tried, including the probe's own DSN verbatim, which previously
 survived. The cost is `t.Parallel` and nothing else — the serial window cannot overlap the
 parallel readers, which is the same fact this branch spent four corrections establishing.
+
+**Follow-up — the fix left its own counter-argument standing.** Pinning `TEST_DATABASE_URL`
+with `t.Setenv` changed the code but not the two paragraphs recommending against it: the test's
+doc comment and the concept both still said "pinning the host keeps both the parallelism and
+the independence", directly above a test that now deliberately does the opposite. A maintainer
+reading either would have removed the pin believing the host approach sufficed.
+
+Both now record the two superseded arguments and why each is wrong — the host rules out only a
+WORKING harness while user/password/database are compared too, and the serial `Setenv` window
+cannot overlap the parallel readers — so reviving either requires contradicting the note rather
+than merely not knowing about it.
+
+Worth stating as the pattern this branch has now hit six times: **the prose next to a change is
+part of the change.** Every one of these was a comment that stayed true to a previous version of
+the code. The failure mode is not carelessness about facts; it is that editing the code and
+editing the sentence about it are separate acts, and only the first is enforced by the compiler.
