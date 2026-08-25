@@ -2002,7 +2002,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				promotedTweetWarning = fmt.Sprintf("tweet authoring failed: %s — post one manually, then add it as a promoted tweet in X Ads Manager", authorErr.Error())
 				steps = append(steps, fmt.Sprintf("Tweet authoring failed: %s", authorErr.Error()))
 			default:
-				authoredTweetID = extractID(resp)
+				authoredTweetID = extractTweetID(resp)
 				if authoredTweetID == "" {
 					// A 2xx with no id is a malformed SUCCESS: a tweet may have been
 					// published without a usable id returned. UNCONFIRMED, not a clean
@@ -2152,6 +2152,27 @@ func extractID(resp *apiResponse) string {
 	}
 	if err := json.Unmarshal(resp.Data, &obj); err == nil {
 		return obj.ID
+	}
+	return ""
+}
+
+// extractTweetID returns the id of a tweet created via accounts/:id/tweet.
+// The response is wrapped in {"data": ...} like every other endpoint, but the
+// tweet object inside carries a NUMERIC "id" (a legacy v1.1-shaped tweet
+// object, unlike every other Ads API entity's string id) — extractID's
+// string-typed "id" field silently fails to unmarshal against it, returning
+// "" even though Data holds a valid tweet. Read id_str instead: X's own
+// string-typed escape hatch for the same value, present on every tweet object
+// specifically because the numeric id can exceed float64's exact-integer range.
+func extractTweetID(resp *apiResponse) string {
+	if resp == nil || len(resp.Data) == 0 {
+		return ""
+	}
+	var obj struct {
+		IDStr string `json:"id_str"`
+	}
+	if err := json.Unmarshal(resp.Data, &obj); err == nil {
+		return obj.IDStr
 	}
 	return ""
 }

@@ -263,7 +263,7 @@ func TestTwitter_TweetTextIsMappedAndAuthorsCleanCreated(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "tweet"):
 			tweetHit = true
 			tweetParams = r.URL.RawQuery
-			_, _ = w.Write([]byte(`{"data":{"id":"tw1"}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":123456789,"id_str":"123456789"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
 			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
 		default:
