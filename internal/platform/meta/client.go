@@ -1421,6 +1421,31 @@ func (c *Client) doCreate(ctx context.Context, path string, body map[string]any,
 	return c.do(ctx, http.MethodPost, path, body, out, false)
 }
 
+// readCappedBody reads at most maxResponseBody+1 bytes (one past the cap, so a truncation is
+// detectable: io.LimitReader signals EOF, not an error, at its limit), then DRAINS whatever
+// remains — bounded — before closing.
+//
+// The drain is what lets net/http return the connection to the idle pool. A body that is
+// closed with bytes still unread cannot be reused, so the transport opens a fresh TCP+TLS
+// connection for the next call. On the RETRY path that is precisely backwards: an oversized
+// or throttled response is followed by another request to the same host, so each retry would
+// pay a new handshake at the moment Meta is already rate-limiting the service — more load on
+// the endpoint asking us to slow down. The sibling clients (googleads, linkedin, reddit,
+// twitter, hubspot, microsoft) all drain-then-close for this reason; this client did not.
+//
+// The drain is BOUNDED by the same cap rather than an unbounded io.Copy: a hostile or
+// runaway body must not be read into the process just to be discarded, which is the memory
+// problem this service bounds everywhere else. A body larger than the drain limit simply
+// does not get connection reuse — the correct trade, since the alternative is unbounded read.
+func readCappedBody(body io.ReadCloser) ([]byte, error) {
+	raw, readErr := io.ReadAll(io.LimitReader(body, maxResponseBody+1))
+	// Drain regardless of readErr: a read error still leaves bytes buffered, and discarding
+	// them costs nothing when there are none.
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxResponseBody))
+	_ = body.Close()
+	return raw, readErr
+}
+
 // do is the shared workhorse. retryThrottle=false suppresses ONLY the throttle retry;
 // every other classification (transport ambiguity, oversized/unreadable bodies, the
 // Retry-After abort) is identical, so a create and a read disagree about repeating a
@@ -1469,10 +1494,11 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 		// Read one byte past the cap so a truncation is detectable: io.LimitReader
 		// returns EOF (not an error) at the limit, so an oversized body would
 		// otherwise be silently truncated and mis-parsed as a valid short response.
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
-		_ = resp.Body.Close()
+		// Reads capped, then drains bounded before closing so the connection can be reused
+		// on the retry below rather than forcing a new handshake while throttled.
+		raw, readErr := readCappedBody(resp.Body)
 
 		if readErr == nil && int64(len(raw)) > maxResponseBody {
 			// Oversized body: we can't trust the payload, but the STATUS must still be
@@ -3885,10 +3911,11 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, prefix, im
 		}
 		return "", final, &transportError{Method: http.MethodPost, Path: path, Err: derr}
 	}
-	// One byte past the cap so truncation is detectable, exactly as do() reads.
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	// One byte past the cap so truncation is detectable, exactly as do() reads — and drained
+	// bounded before closing, so an over-cap or throttled upload response does not cost a new
+	// TCP/TLS connection on the retry.
 	status := resp.StatusCode
-	_ = resp.Body.Close()
+	raw, readErr := readCappedBody(resp.Body)
 
 	if status < 200 || status >= 300 {
 		apiErr := &APIError{StatusCode: status, Method: http.MethodPost, Path: path}

@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
@@ -38,17 +39,25 @@ type uploadedPart struct {
 }
 
 // captureUpload parses an /adimages request the way Meta's server does and records
-// the single image part. A body a real multipart reader cannot walk fails the test
-// here rather than silently producing an empty capture.
-func captureUpload(t *testing.T, r *http.Request) uploadedPart {
-	t.Helper()
+// the single image part. A body a real multipart reader cannot walk is reported as an
+// ERROR rather than silently producing an empty capture.
+//
+// It returns an error instead of calling t.Fatalf because both call sites run it INSIDE an
+// httptest.Server handler goroutine. t.Fatalf calls FailNow, which the testing package
+// requires to run on the test goroutine only: from a handler it exits just that goroutine
+// without failing the test, leaving the client blocked on a response that is never written
+// and the test hanging until the suite timeout — a timeout naming the wrong test. Handlers
+// pair this with t.Errorf (which IS safe off-goroutine) and an HTTP error response, so a
+// malformed body fails loudly and promptly. Mirrors decodeRequest in the googleads client
+// tests; see docs/reviews/knowledge-base/test-hygiene.md:httptest-handler-state-needs-synchronized-handoff.
+func captureUpload(r *http.Request) (uploadedPart, error) {
 	ct := r.Header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil {
-		t.Fatalf("upload Content-Type %q is not parseable: %v", ct, err)
+		return uploadedPart{}, fmt.Errorf("upload Content-Type %q is not parseable: %w", ct, err)
 	}
 	if !strings.HasPrefix(mediaType, "multipart/") {
-		t.Fatalf("upload Content-Type = %q, want multipart/form-data", mediaType)
+		return uploadedPart{}, fmt.Errorf("upload Content-Type = %q, want multipart/form-data", mediaType)
 	}
 	mr := multipart.NewReader(r.Body, params["boundary"])
 	var got uploadedPart
@@ -58,11 +67,11 @@ func captureUpload(t *testing.T, r *http.Request) uploadedPart {
 			break
 		}
 		if perr != nil {
-			t.Fatalf("walking multipart body: %v", perr)
+			return uploadedPart{}, fmt.Errorf("walking multipart body: %w", perr)
 		}
 		b, rerr := io.ReadAll(p)
 		if rerr != nil {
-			t.Fatalf("reading multipart part: %v", rerr)
+			return uploadedPart{}, fmt.Errorf("reading multipart part: %w", rerr)
 		}
 		got.partCount++
 		got.fieldName = p.FormName()
@@ -70,7 +79,7 @@ func captureUpload(t *testing.T, r *http.Request) uploadedPart {
 		got.contentType = p.Header.Get("Content-Type")
 		got.body = b
 	}
-	return got
+	return got, nil
 }
 
 // TestUploadImageSendsOneNamedFilePart pins the SHAPE of the /adimages upload
@@ -96,6 +105,9 @@ func captureUpload(t *testing.T, r *http.Request) uploadedPart {
 // Graph treat the part as a file upload rather than a scalar field), with the caller's
 // bytes verbatim.
 func TestUploadImageSendsOneNamedFilePart(t *testing.T) {
+	// Guarded by mu: the handler writes `got` on the server goroutine and the assertions
+	// read it on the test goroutine (see the test-hygiene KB entry cited on captureUpload).
+	var mu sync.Mutex
 	var got uploadedPart
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/adimages") {
@@ -103,11 +115,21 @@ func TestUploadImageSendsOneNamedFilePart(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		got = captureUpload(t, r)
+		part, cerr := captureUpload(r)
+		if cerr != nil {
+			// t.Errorf is goroutine-safe where t.Fatalf is not; answering 400 also unblocks
+			// the client so the test reports this failure instead of hanging on it.
+			t.Errorf("capturing upload: %v", cerr)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		got = part
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		// Meta keys the response map by the BASENAME of the filename we sent (the PHP
 		// SDK reads images[basename(filename)]), so the fake echoes that contract.
-		_, _ = io.WriteString(w, `{"images":{"`+path.Base(got.filename)+`":{"hash":"HASH_OK","url":"https://x/y.png"}}}`)
+		_, _ = io.WriteString(w, `{"images":{"`+path.Base(part.filename)+`":{"hash":"HASH_OK","url":"https://x/y.png"}}}`)
 	}))
 	defer srv.Close()
 
@@ -119,12 +141,19 @@ func TestUploadImageSendsOneNamedFilePart(t *testing.T) {
 		t.Fatalf("hash = %q, want HASH_OK", hash)
 	}
 
+	// Snapshot the capture under the lock ONCE, then assert on the copy. uploadImage has
+	// returned, so the handler has finished, but taking the lock is what establishes the
+	// happens-before edge the race detector needs rather than relying on that ordering.
+	mu.Lock()
+	part := got
+	mu.Unlock()
+
 	// Exactly one part: one image per call is the invariant the response guard below
 	// depends on.
-	if got.partCount != 1 {
-		t.Errorf("part count = %d, want exactly 1 — one image per call", got.partCount)
+	if part.partCount != 1 {
+		t.Errorf("part count = %d, want exactly 1 — one image per call", part.partCount)
 	}
-	if strings.TrimSpace(got.fieldName) == "" {
+	if strings.TrimSpace(part.fieldName) == "" {
 		t.Errorf("multipart part carries no field name")
 	}
 	// The part must NOT be named `bytes`, and that exclusion is the assertion worth
@@ -141,31 +170,31 @@ func TestUploadImageSendsOneNamedFilePart(t *testing.T) {
 	// SDKs disagree (Python uploads under `source0`, PHP under a filename param), so
 	// pinning one literal would encode a choice Meta has not published. Excluding the
 	// name that is known-wrong is the claim the evidence actually supports.
-	if got.fieldName == "bytes" {
+	if part.fieldName == "bytes" {
 		t.Errorf("multipart file part is named %q — that is the DOCUMENTED SCALAR parameter "+
 			"(Base64 UTF-8 string), not a multipart file field. A raw file part under that "+
 			"name is neither the documented transport nor the one the official SDKs use",
-			got.fieldName)
+			part.fieldName)
 	}
 	// A filename must be present. NOTE ON THE EXTENSION: no Meta documentation states
 	// that the filename must carry a real extension, and no authoritative source was
 	// found either way — Meta sniffs image content for format and validation. This
 	// asserts only PRESENCE, deliberately: asserting an extension rule would pin a
 	// claim that is undocumented in both directions.
-	if strings.TrimSpace(got.filename) == "" {
+	if strings.TrimSpace(part.filename) == "" {
 		t.Errorf("multipart part carries no filename; Graph needs one to treat the part as a file upload")
 	}
-	if got.contentType != "image/png" {
-		t.Errorf("part Content-Type = %q, want image/png", got.contentType)
+	if part.contentType != "image/png" {
+		t.Errorf("part Content-Type = %q, want image/png", part.contentType)
 	}
 	// The bytes must arrive VERBATIM. `bytes` is documented as a base64 string, but a
 	// multipart file part carries raw content and Graph decodes the part itself;
 	// double-encoding would corrupt every image.
-	if string(got.body) != "PNGBYTES" {
-		t.Errorf("uploaded bytes = %q, want the caller's bytes verbatim", got.body)
+	if string(part.body) != "PNGBYTES" {
+		t.Errorf("uploaded bytes = %q, want the caller's bytes verbatim", part.body)
 	}
-	if enc := base64.StdEncoding.EncodeToString([]byte("PNGBYTES")); string(got.body) == enc {
-		t.Errorf("bytes were base64-encoded into the file part (%q); a multipart file part carries raw content", got.body)
+	if enc := base64.StdEncoding.EncodeToString([]byte("PNGBYTES")); string(part.body) == enc {
+		t.Errorf("bytes were base64-encoded into the file part (%q); a multipart file part carries raw content", part.body)
 	}
 }
 
@@ -582,7 +611,14 @@ func TestUploadImageRetriesThrottleAndSucceeds(t *testing.T) {
 				// Every attempt must carry the FULL multipart body. A replayed request
 				// that reused a consumed reader would arrive empty, so parsing it here is
 				// what catches that.
-				got := captureUpload(t, r)
+				got, cerr := captureUpload(r)
+				if cerr != nil {
+					// t.Errorf, not t.Fatalf: this runs on the server goroutine. Answering
+					// 400 unblocks the client so the failure is reported, not hung on.
+					t.Errorf("attempt %d: capturing upload: %v", n, cerr)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				if len(got.body) == 0 {
 					t.Errorf("attempt %d carried an EMPTY image part; the multipart body must be replayed per attempt", n)
 				}
@@ -1354,5 +1390,66 @@ func TestUploadImageRetrySendsTheFullBodyEveryAttempt(t *testing.T) {
 			t.Errorf("attempt %d does not contain the full image: a consumed reader was reused, "+
 				"so the retry posted a truncated or empty body", i+1)
 		}
+	}
+}
+
+// TestUploadRetryReusesTheConnectionAfterAnOverCapThrottle pins the connection-reuse
+// property of the throttle retry path, which is the whole point of draining a capped body
+// before closing it.
+//
+// THE DEFECT IT CLOSES. The over-cap read stopped at maxResponseBody+1 and closed the body
+// with the remainder unread. net/http can only return a connection to the idle pool once its
+// body is read to EOF, so closing early forced a NEW TCP+TLS connection for the retry — at
+// the exact moment Meta is rate-limiting the service. The sibling clients all drain first.
+//
+// WHY IT COUNTS CONNECTIONS RATHER THAN INSPECTING THE POOL. There is no exported way to ask
+// a Transport how many idle connections it holds, so the observable that actually matters is
+// counted directly: httptest.Server's ConnState fires per accepted connection, so a reused
+// connection produces ONE StateNew for two requests and a non-reused one produces two.
+func TestUploadRetryReusesTheConnectionAfterAnOverCapThrottle(t *testing.T) {
+	var conns int32
+	var attempts int32
+
+	// A throttle body LARGER than the cap, so the first response takes the over-cap arm.
+	oversized := `{"error":{"message":"` + strings.Repeat("x", int(maxResponseBody)+1024) +
+		`","code":4}}`
+
+	// NewUnstartedServer, not NewServer: ConnState must be installed BEFORE the serve loop
+	// starts. Setting it on an already-started server is a write racing the accept goroutine's
+	// read — which -race catches, and which is the same class of defect this round is fixing.
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, oversized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"images":{"creative":{"hash":"AFTER_RETRY"}}}`)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			atomic.AddInt32(&conns, 1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	hash, err := uploadRetryClient(srv.URL).uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
+	if err != nil {
+		t.Fatalf("an over-cap 429 must be retried, not returned as final: %v", err)
+	}
+	if hash != "AFTER_RETRY" {
+		t.Errorf("hash = %q, want AFTER_RETRY", hash)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 2 {
+		t.Fatalf("attempts = %d, want 2 (the premise of the reuse assertion)", got)
+	}
+	// The assertion: both attempts rode ONE connection. Without the bounded drain this is 2.
+	if got := atomic.LoadInt32(&conns); got != 1 {
+		t.Errorf("the retry opened a NEW connection (%d total) instead of reusing the first: "+
+			"an over-cap body closed without draining cannot be pooled, so every retry pays a "+
+			"fresh TCP/TLS handshake while Meta is already rate-limiting us", got)
 	}
 }

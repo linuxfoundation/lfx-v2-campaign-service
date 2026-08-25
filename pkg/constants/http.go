@@ -176,8 +176,14 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 //   - Neither other control bounds that aggregate. MaxBodyBytes caps ONE body, not the sum.
 //     DecodeAdmissionBudgetBytes reserves only the PIXEL buffer and releases the instant
 //     image.Decode returns — it never covers p.Bytes.
-//   - The decode happens before authJWTFn, because this middleware sits outside the mux by
-//     design, so the whole thing is reachable PRE-AUTH.
+//   - What is reachable PRE-AUTH is the buffered body plus the ~40 MiB base64 STRING goa
+//     materialises, because the generated handler decodes the request before the endpoint
+//     calls authJWTFn. The base64 DECODE is NOT pre-auth: decodeCreativeBytes runs inside
+//     UploadCreativeAsset, which the generated endpoint reaches only after authJWTFn returns
+//     (gen/.../endpoints.go). The aggregate above is therefore what 16 AUTHENTICATED uploads
+//     hold, and it is still the reason the floor was reverted — the decoded slices coexist on
+//     one pod whether or not their callers authenticated, and the permit is taken before the
+//     read, which is the only point any of it can be bounded.
 //
 // Both positions were defensible, which is why this comment records the trade rather than just
 // the outcome: the floor bought concurrency for the real client and cost the memory bound; the

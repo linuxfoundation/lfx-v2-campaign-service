@@ -6174,21 +6174,27 @@ func TestCreateCampaignAdSetLookupConflictIsCleanFailure(t *testing.T) {
 // terminal created_degraded campaign and never reaches /adimages again, which
 // TestAmbiguousUploadStepDoesNotPromiseRedispatchRecovery pins directly.
 func TestCreateCampaignUploadStageFailureDoesNotClaimTheAdMayExist(t *testing.T) {
-	var uploadHits, creativeHits, adHits int
+	// Counted with atomics, not plain ints: httptest.Server runs each handler in its own
+	// goroutine and the assertions below read from the test goroutine, so a plain int is an
+	// unsynchronised handoff. `make test` runs -race always (Makefile:95), which makes that a
+	// detected failure rather than a theoretical one — and it would surface as an unrelated
+	// test flaking on a loaded runner. See
+	// docs/reviews/knowledge-base/test-hygiene.md:httptest-handler-state-needs-synchronized-handoff.
+	var uploadHits, creativeHits, adHits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/adimages"):
-			uploadHits++
+			atomic.AddInt32(&uploadHits, 1)
 			// A 5xx is ambiguous for a MUTATING call in general, which is exactly why the
 			// upload arm reaches createOutcomeAmbiguous today.
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `{"error":{"message":"upstream unavailable","type":"OAuthException","code":2}}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
-			creativeHits++
+			atomic.AddInt32(&creativeHits, 1)
 			_, _ = io.WriteString(w, `{"id":"120300000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
-			adHits++
+			atomic.AddInt32(&adHits, 1)
 			_, _ = io.WriteString(w, `{"id":"120400000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
@@ -6226,12 +6232,12 @@ func TestCreateCampaignUploadStageFailureDoesNotClaimTheAdMayExist(t *testing.T)
 	}
 
 	// The premise of the assertion: the run really did stop at the upload.
-	if uploadHits == 0 {
+	if atomic.LoadInt32(&uploadHits) == 0 {
 		t.Fatalf("the upload was never attempted; this test cannot say anything about upload-stage classification")
 	}
-	if creativeHits != 0 || adHits != 0 {
+	if gotCreative, gotAd := atomic.LoadInt32(&creativeHits), atomic.LoadInt32(&adHits); gotCreative != 0 || gotAd != 0 {
 		t.Fatalf("creative/ad requests were made (%d/%d); the failure did not stop at the upload stage",
-			creativeHits, adHits)
+			gotCreative, gotAd)
 	}
 	if res.AdCount != 0 {
 		t.Errorf("ad count = %d, want 0", res.AdCount)
