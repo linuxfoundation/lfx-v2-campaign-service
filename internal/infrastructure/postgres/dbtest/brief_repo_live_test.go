@@ -567,6 +567,15 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 // reorders object keys and strips insignificant whitespace, so a byte comparison against
 // the literal that was inserted fails for reasons that have nothing to do with the code
 // under test.
+//
+// It lives here rather than in a shared helpers file because that is this package's
+// established shape: helpers sit in the file whose subject they belong to and are used
+// across files as needed -- insertApprovedBrief is declared in audience_lease_live_test.go
+// and consumed by six files, insertBrief in schema_live_test.go by five, insertJobAged in
+// job_retention_live_test.go, newGoogleAdsConn in connection_live_test.go. jsonb columns are
+// a brief-repo concern (platforms, event_details, copy, keywords, targeting all live on
+// campaign_briefs); job_repo_live_test.go borrows it for the single `result` column.
+// Introducing a helpers file for one function would break the pattern rather than follow it.
 func assertJSONEqual(t *testing.T, column string, got json.RawMessage, want string) {
 	t.Helper()
 	var gotVal, wantVal any

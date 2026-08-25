@@ -96,10 +96,15 @@ non-terminal row owes the same cleanup.**
 
 ## Mutation-verified
 
-31 mutations, each turning its covering test red; no survivors. The breakdown, so the total is
-reproducible rather than asserted: **27** to the repository implementations, **3** dropping or
-narrowing live schema constraints, and **1** test-side ordering control (restoring the old
-cleanup placement to confirm it really leaked).
+33 mutations, each turning its covering test red; no survivors. The breakdown, so the total is
+reproducible rather than asserted: **29** to the repository implementations, **3** dropping or
+narrowing live schema constraints (`campaign_jobs_status_check`, `campaign_jobs_brief_id_fkey`,
+and `'partial'` removed from the status CHECK), and **1** test-side ordering control (restoring
+the old cleanup placement to confirm it really leaked).
+
+The table below is the SELECTED subset worth reading, not the full ledger — it lists the
+mutations whose outcome taught something, so its row count is deliberately smaller than the
+total above.
 
 The ones worth recording are the two that **passed** on first attempt, because a mutation that
 survives is the finding — in both cases the fixture, not the assertion, was what needed fixing:
@@ -110,7 +115,8 @@ survives is the finding — in both cases the fixture, not the assertion, was wh
 | same, against the diverged-actor fixture | FAIL, naming both columns |
 | drop `'partial'` from the status CHECK constraint | FAIL — the drift the hand-copied list missed |
 | `result=COALESCE($2, result)` in `UpdateJobStatus` | FAIL — a nil result must CLEAR the prior document |
-| `CreateJob("not-a-uuid")` → SQLSTATE 22P02 | FAIL — proves the 23503 check binds, not just `err != nil` |
+| drop `campaign_jobs_brief_id_fkey` | FAIL — `CreateJob accepted a brief_id with no such brief` |
+| `CreateJob` inserts `status='bogus'` (a non-FK error) | FAIL — `SQLSTATE 23514 ... want SQLSTATE 23503`; the code check binds, not just `err != nil` |
 | neutralise the `ReplaceBrief` / `Approve` version gates | FAIL — stale replay silently succeeded |
 | `classifyNoRowTx` always precondition-failed | FAIL at 4 sites across 3 tests |
 | `ReplaceBrief` stops clearing approval | FAIL — edited copy retained its sign-off |
@@ -131,6 +137,6 @@ wrong reason is not evidence, so each was reworked to keep the parameter's type
 (`version >= $12 - 9223372036854775807`, `$2::text = $2::text`) before being counted.
 
 Live tests confirmed to RUN rather than skip, under `-v` — a non-verbose run prints no SKIP
-lines at all, so a "0 skips" reading from one is meaningless: **14 SKIP / 0 PASS** without
-`TEST_DATABASE_URL`, **0 SKIP / 14 PASS** with it. Green under `-count=2` and on a pristine
+lines at all, so a "0 skips" reading from one is meaningless: **15 SKIP / 0 PASS** without
+`TEST_DATABASE_URL`, **0 SKIP / 15 PASS** with it. Green under `-count=2` and on a pristine
 database.
