@@ -1230,7 +1230,9 @@ func TestClientCache_LinkedInColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 			mu.Unlock()
 
 			// Concurrent traffic through the SHARED instance, outside the bookkeeping lock, so
-			// -race observes overlapping reads/writes of the client's token state.
+			// -race observes real overlap rather than construction alone. Per the SCOPE note
+			// above, this fixture makes that overlapping READS of an effectively immutable
+			// client — the token-state writes are covered in internal/platform/linkedin.
 			_, _ = d.ReadMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, camp, model.MetricsWindowLast30Days)
 		}()
 	}
