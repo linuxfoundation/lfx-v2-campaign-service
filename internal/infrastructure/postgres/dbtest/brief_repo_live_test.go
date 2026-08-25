@@ -155,6 +155,13 @@ func TestLiveCreateGetBriefRoundTripsEveryColumn(t *testing.T) {
 	// created_by still names the AUTHOR while updated_by and approved_by name the APPROVER.
 	// Asserting the distinct values is what makes a transposed pair of scan destinations
 	// visible; comparing both against one actor could not.
+	//
+	// The limitation is worth stating rather than leaving to be discovered: this splits the
+	// three columns into TWO values, not three. approveBriefQuery binds $1 to both
+	// approved_by and updated_by, so they are equal by construction and a transposition
+	// BETWEEN THOSE TWO is invisible here — no fixture built on Approve alone can separate
+	// them. What this does bind is the created_by/updated_by pair, which is the adjacent
+	// one in briefCols and so the transposition actually at risk.
 	if got.CreatedBy == nil || got.CreatedBy.Name != "Ada Lovelace" || got.CreatedBy.Email != "ada@example.test" {
 		t.Errorf("GetBrief created_by = %+v, want the authoring actor (Ada Lovelace)", got.CreatedBy)
 	}

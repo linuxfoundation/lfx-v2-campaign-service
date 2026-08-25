@@ -51,9 +51,17 @@ itself**.
 destinations is a live risk. It was undetectable, because `CreateBrief` stamps the same actor
 into both (`$11` twice): the assertions compared both against one value and could not tell which
 column they had read. Transposing `&createdBy` and `&updatedBy` in `scanBrief` **passed**. The
-test now approves with a second actor first, so the three actor fields hold distinct values, and
-the same transposition fails. The round trip had also claimed "every column" while leaving
-status, version, the actor blobs and the timestamps unasserted on the read.
+test now approves with a second actor first, which splits the three actor columns into TWO
+distinct values — `created_by` stays Ada while `updated_by` and `approved_by` both become Grace,
+because `approveBriefQuery` binds `$1` to both. That is enough to catch the
+`created_by`/`updated_by` transposition, which is the adjacent pair in `briefCols`; it does NOT
+distinguish `approved_by` from `updated_by`, and no fixture built on `Approve` alone can, since
+the statement writes one actor to both. Saying so is the point: a note claiming three distinct
+values would imply coverage the fixture does not have. With the split in place, the same
+`&createdBy`/`&updatedBy` transposition now fails, naming both columns.
+
+The round trip had also claimed "every column" while leaving status, version, the actor blobs
+and the timestamps unasserted on the read.
 
 The status walk hand-copied the job vocabulary. `model.AllJobStatuses` exists precisely so tests
 do not, and its doc says why: a test carrying its own list keeps agreeing with that list while a
