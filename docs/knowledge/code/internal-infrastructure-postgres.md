@@ -1104,6 +1104,34 @@ mid-run, which no unit test can arrange, so reverting one to `%v` leaves every b
 test green. It pins them at the source because that is the only option there — not because
 source-level evidence is equivalent.
 
+### The migrator's METHODS are DSN-bearing too
+
+`golang-migrate` holds the DSN inside its driver and reconnects through `database/sql`, so
+`m.Up()`, `m.Steps()`, `m.Migrate()` and `m.Version()` can each surface pgx's
+`*pgconn.ConnectError` — the same error the initial connect sites redact. Seven `%v` sites in
+`migrate_down_live_test.go` rendered those raw. Measured against a closed port, the driver
+produced:
+
+```
+failed to connect to `user=leakuser database=leakdb`: 127.0.0.1:1 (127.0.0.1): dial error: ...
+```
+
+so the credential this PR exists to withhold was being printed by the file that pins the
+withholding. All seven now use `SafeDSNErrFor(dsn, err)`.
+
+The original guard could not see them: its call set listed only functions that TAKE a DSN as
+an argument, and a migrator method takes none — the DSN is in the receiver. It now tracks
+identifiers bound by `newMigrator` and treats their method calls as DSN-bearing, which raised
+the inspected surface from 6 formatting calls to 15. This is the same lesson as the wrong-DSN
+seam one level up: **a redactor being present and abundant in a file says nothing about
+whether a specific site applies it.** There were 34 correct `SafeDSNErrFor` calls in that file
+while these seven leaked.
+
+By contrast, `Exec` failures on an ALREADY-ESTABLISHED connection carry no DSN — they are
+server-side `*pgconn.PgError` values. Verified by rendering: `CREATE DATABASE`, `DROP DATABASE`
+and syntax failures produce `ERROR: ... (SQLSTATE ...)` and nothing else. Those sites keep `%v`
+deliberately; redacting them would cost the diagnosis for no gain.
+
 ### Withholding is bounded by word boundaries, not substrings
 
 `dsnIdentifiersPresent` withholds a message that reproduces the DSN's password, user,

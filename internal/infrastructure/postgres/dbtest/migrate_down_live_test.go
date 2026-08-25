@@ -431,11 +431,11 @@ func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 	defer func() { _, _ = m.Close() }()
 
 	if err := m.Up(); err != nil {
-		t.Fatalf("Up on a fresh database: %v", err)
+		t.Fatalf("Up on a fresh database: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	topVersion, dirty, err := m.Version()
 	if err != nil {
-		t.Fatalf("read version after Up: %v", err)
+		t.Fatalf("read version after Up: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	if dirty {
 		t.Fatalf("schema is dirty at version %d after a clean Up", topVersion)
@@ -459,9 +459,9 @@ func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 	// it did not error. See schemaAtVersion for why the upward construction is required.
 	for version := topVersion; version > 0; version-- {
 		if err := m.Steps(-1); err != nil {
-			t.Fatalf("Down one step from version %d: %v — a down migration that cannot "+
+			t.Fatalf("Down one step from version %d: %s — a down migration that cannot "+
 				"run is a rollback that fails during an incident, and nothing else in the "+
-				"suite executes these files", version, err)
+				"suite executes these files", version, dbtest.SafeDSNErrFor(dsn, err))
 		}
 
 		// What the schema SHOULD look like now: the up set applied through version-1.
@@ -475,8 +475,9 @@ func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 		}
 	}
 	if _, _, err := m.Version(); err != migrate.ErrNilVersion {
-		t.Fatalf("after Down the version is not nil (err = %v); the schema did not return "+
-			"to zero, so at least one down migration left state behind", err)
+		t.Fatalf("after Down the version is not nil (err = %s); the schema did not return "+
+			"to zero, so at least one down migration left state behind",
+			dbtest.SafeDSNErrFor(dsn, err))
 	}
 
 	// Every object the up set created is gone. Checking the version alone would pass for a
@@ -494,12 +495,13 @@ func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 	// schemaObjects does not enumerate — invisible to the emptiness check above — that a
 	// later CREATE then collides with.
 	if err := m.Up(); err != nil {
-		t.Fatalf("Up after a full Down: %v — the down set left the database in a state "+
-			"the up set cannot be re-applied to, so a rollback would be one-way", err)
+		t.Fatalf("Up after a full Down: %s — the down set left the database in a state "+
+			"the up set cannot be re-applied to, so a rollback would be one-way",
+			dbtest.SafeDSNErrFor(dsn, err))
 	}
 	reVersion, dirty, err := m.Version()
 	if err != nil {
-		t.Fatalf("read version after the second Up: %v", err)
+		t.Fatalf("read version after the second Up: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	if dirty {
 		t.Fatalf("schema is dirty at version %d after re-applying", reVersion)
@@ -538,7 +540,8 @@ func schemaAtVersion(ctx context.Context, t *testing.T, version uint) []string {
 	defer func() { _, _ = m.Close() }()
 
 	if err := m.Migrate(version); err != nil && err != migrate.ErrNoChange {
-		t.Fatalf("reference database: migrate up to version %d: %v", version, err)
+		t.Fatalf("reference database: migrate up to version %d: %s", version,
+			dbtest.SafeDSNErrFor(dsn, err))
 	}
 	return schemaObjects(ctx, t, dsn)
 }
@@ -1511,6 +1514,20 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		"postgres.NewPool":              true,
 		"migrate.NewWithSourceInstance": true,
 	}
+	// The migrator's METHODS are DSN-bearing too, which the original call set missed
+	// because it only listed things that take a DSN as an argument. golang-migrate holds
+	// the DSN inside the driver and reconnects through database/sql, so Up/Steps/Migrate/
+	// Version can each surface pgx's *pgconn.ConnectError -- the same error the connect
+	// sites redact. Rendered against a closed port, the driver produced
+	// "failed to connect to `user=leakuser database=leakdb`" verbatim, so seven %v sites
+	// here were printing the credential the rest of this file exists to withhold.
+	//
+	// Matched on the METHOD name against the migrator receiver, since the value is bound
+	// as `m` by newMigrator rather than produced by a call this map could name.
+	migratorMethods := map[string]bool{
+		"Up": true, "Down": true, "Steps": true, "Migrate": true, "Version": true,
+		"Force": true,
+	}
 	// The only renderings that count as safe passage for an error value.
 	redactors := map[string]bool{"SafeDSNErr": true, "SafeDSNErrFor": true}
 
@@ -1639,6 +1656,22 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 		return false
 	}
 
+	// migratorVars holds identifiers bound by newMigrator, so a method call on one counts
+	// as DSN-bearing without needing the DSN to appear at that call site.
+	migratorVars := map[string]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Rhs) != 1 || len(as.Lhs) == 0 {
+			return true
+		}
+		if c, ok := as.Rhs[0].(*ast.CallExpr); ok && selName(c.Fun) == "newMigrator" {
+			if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
+				migratorVars[id.Name] = true
+			}
+		}
+		return true
+	})
+
 	// isDSNCall reports whether an expression contains a call that takes a DSN.
 	isDSNCall := func(n ast.Node) bool {
 		found := false
@@ -1650,6 +1683,12 @@ func TestNoConnectSiteRendersItsErrorRaw(t *testing.T) {
 				}
 				if name == "withDatabase" && liveDSNArg(c) {
 					found = true
+				}
+				// m.Up(), m.Version(), ... on a migrator built from a DSN.
+				if se, ok := c.Fun.(*ast.SelectorExpr); ok && migratorMethods[se.Sel.Name] {
+					if id, ok := se.X.(*ast.Ident); ok && migratorVars[id.Name] {
+						found = true
+					}
 				}
 			}
 			return !found

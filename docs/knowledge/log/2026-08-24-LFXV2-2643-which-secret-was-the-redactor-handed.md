@@ -254,3 +254,38 @@ recognizable fragment" of the plaintext. That `bytes.Contains` search was delibe
 removed in favour of exact inequality plus the deterministic AES-GCM length identity, and the
 description had not caught up. Corrected to state the shipped guarantees, with the reason the
 substring check was wrong in both directions kept on the record.
+
+**Follow-up — a fresh leak, in the file that pins the redaction.** Review found that
+`golang-migrate` holds the DSN inside its driver and reconnects through `database/sql`, so
+`m.Up()`, `m.Steps()`, `m.Migrate()` and `m.Version()` can surface pgx's
+`*pgconn.ConnectError` just as the initial connect does. Seven sites rendered those with `%v`.
+
+Rendered before fixing, against a closed port with a known-secret DSN:
+
+    failed to connect to `user=leakuser database=leakdb`: 127.0.0.1:1 (127.0.0.1): dial error:
+    dial tcp 127.0.0.1:1: connect: connection refused
+
+and through the redactor:
+
+    the driver's message names a value from TEST_DATABASE_URL (it is withheld: the user,
+    database and host are half of the credential)
+
+The ratio is the lesson, and it is the same one that let the original bug survive five rounds:
+the file contained **34 correct `SafeDSNErrFor` calls** alongside these **7 raw ones**. Any
+grep for the redactor looked satisfied. Presence of a mitigation is not application of it.
+
+The AST guard could not see them either, because its call set listed only functions that TAKE
+a DSN as an argument — a migrator method takes none, the DSN is in the receiver. It now tracks
+identifiers bound by `newMigrator` and treats their method calls as DSN-bearing; the inspected
+surface went from 6 formatting calls to 15, and reverting either the `m.Up()` or the
+`m.Version()` site now fails it by line number.
+
+The rest of the class was checked rather than assumed. `Exec` failures on an already-established
+connection carry no DSN: rendered, `CREATE DATABASE`/`DROP DATABASE`/syntax errors produce
+`ERROR: ... (SQLSTATE ...)` and nothing more, so those sites keep `%v` deliberately. `iofs.New`
+touches no DSN at all.
+
+These sites remain pinned at the SOURCE only, and that is weaker evidence than a rendered one:
+they fire when a live database dies mid-run, which no unit test can arrange. Reverting any of
+the seven leaves the behavioural suite green — confirmed by running it, not assumed — and only
+the AST guard goes red.
