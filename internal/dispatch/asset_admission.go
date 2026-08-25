@@ -40,6 +40,25 @@ import (
 // What it removes is the MULTIPLIER. Dispatch-side worst case goes from 5 x 270 MiB = 1.32 GiB
 // to 240 MiB, about 47% of the pod.
 //
+// # What the budget covers, enumerated
+//
+// A bound is only worth its number if every copy of the image is inside it, so the sites are
+// listed rather than implied. Per dispatch:
+//
+//   - the resolved asset slices — CHARGED here. Variants naming the same asset alias one buffer,
+//     so the charge is per DISTINCT asset.
+//   - the multipart request body — ZERO. internal/platform/meta frames the body AROUND the image
+//     (a small fixed prefix and suffix, with the payload referenced in place) rather than copying
+//     it into a buffer. It used to copy, which put a second full copy of every in-flight image
+//     outside this budget: five concurrent dispatches added ~150 MiB nothing accounted for.
+//     Measured at ~0.5% of the payload by TestUploadImageDoesNotCopyTheImage.
+//   - the per-attempt HTTP body reader — ZERO. bytes.NewReader is a view over a slice, not a copy,
+//     and a fresh one per retry attempt copies nothing.
+//   - the per-campaign uploadCache — ZERO. It stores sha256 keys and hash strings, never bytes.
+//
+// So the dispatch-side figure above is the whole of it, and it does not scale with the number of
+// concurrent dispatches: this semaphore is the only thing that admits asset bytes.
+//
 // # Why the charge is taken BEFORE the read
 //
 // The reservation is priced from CreativeAssetRepository.GetAssetSize — one BIGINT, no BYTEA —

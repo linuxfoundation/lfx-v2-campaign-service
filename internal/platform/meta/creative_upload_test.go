@@ -4,6 +4,7 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -13,8 +14,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"path"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1146,5 +1150,209 @@ func TestUploadImageTruncatedEnvelopeIsMarkedUnreadable(t *testing.T) {
 	// A non-rate-limit code is final: no retry.
 	if n := atomic.LoadInt32(&attempts); n != 1 {
 		t.Errorf("attempts = %d, want 1 — code 100 is not a throttle", n)
+	}
+}
+
+// TestMultipartFramingMatchesBufferedEncoding is the equivalence proof the zero-copy upload
+// rests on: prefix + image + suffix must be byte-for-byte what a buffered multipart.Writer
+// produces for the same part.
+//
+// This is the assertion that makes the change safe rather than plausible. If the framing were
+// off by a CRLF, a boundary, or a header, Meta would reject a body that LOOKS correct, and the
+// failure would surface as an opaque upload error far from this code.
+func TestMultipartFramingMatchesBufferedEncoding(t *testing.T) {
+	for _, contentType := range []string{"image/png", "image/jpeg", ""} {
+		t.Run("contentType="+contentType, func(t *testing.T) {
+			image := []byte("\x89PNG\r\n\x1a\nNOT-A-REAL-IMAGE-BUT-EXACT-BYTES-MATTER")
+
+			prefix, suffix, headerValue, err := multipartFraming(contentType)
+			if err != nil {
+				t.Fatalf("multipartFraming: %v", err)
+			}
+
+			// The reference encoding: what the code did before, on the SAME boundary. The
+			// boundary is random per writer, so it is read back out of the header value and
+			// pinned onto the reference writer — otherwise the two could never match and the
+			// test would be comparing noise.
+			_, params, perr := mime.ParseMediaType(headerValue)
+			if perr != nil {
+				t.Fatalf("parse Content-Type %q: %v", headerValue, perr)
+			}
+			boundary := params["boundary"]
+			if boundary == "" {
+				t.Fatal("framing returned no boundary in its Content-Type")
+			}
+
+			var ref bytes.Buffer
+			mw := multipart.NewWriter(&ref)
+			if berr := mw.SetBoundary(boundary); berr != nil {
+				t.Fatalf("SetBoundary: %v", berr)
+			}
+			h := textproto.MIMEHeader{}
+			h.Set("Content-Disposition", `form-data; name="source"; filename="creative"`)
+			if strings.TrimSpace(contentType) != "" {
+				h.Set("Content-Type", contentType)
+			}
+			part, cerr := mw.CreatePart(h)
+			if cerr != nil {
+				t.Fatalf("CreatePart: %v", cerr)
+			}
+			if _, werr := part.Write(image); werr != nil {
+				t.Fatalf("part.Write: %v", werr)
+			}
+			if clerr := mw.Close(); clerr != nil {
+				t.Fatalf("Close: %v", clerr)
+			}
+
+			got := make([]byte, 0, len(prefix)+len(image)+len(suffix))
+			got = append(append(append(got, prefix...), image...), suffix...)
+
+			if !bytes.Equal(got, ref.Bytes()) {
+				t.Errorf("framed body differs from the buffered encoding\n got: %q\nwant: %q",
+					got, ref.Bytes())
+			}
+			// And it must still PARSE as multipart, which is the property Meta actually cares
+			// about — equality with our own reference would not catch both sides being wrong.
+			mr := multipart.NewReader(bytes.NewReader(got), boundary)
+			p, nerr := mr.NextPart()
+			if nerr != nil {
+				t.Fatalf("framed body does not parse as multipart: %v", nerr)
+			}
+			readBack, rerr := io.ReadAll(p)
+			if rerr != nil {
+				t.Fatalf("read part: %v", rerr)
+			}
+			if !bytes.Equal(readBack, image) {
+				t.Errorf("round-tripped part = %q, want the original image bytes", readBack)
+			}
+		})
+	}
+}
+
+// TestUploadImageDoesNotCopyTheImage is the MEMORY assertion, and it is the one that fails on
+// the previous implementation.
+//
+// The defect: multipart.Writer copied every image into a second buffer held for the whole retry
+// sequence, outside dispatch.AssetReserver's budget. Five concurrent dispatches therefore added
+// ~150 MiB the aggregate bound did not account for.
+//
+// MEASURED, not derived. testing.AllocsPerRun is not usable here (the upload does I/O), so this
+// reads TotalAlloc across a real upload against a local server. TotalAlloc only ever grows, so it
+// is cumulative bytes allocated during the call and immune to whether the GC happened to run —
+// which HeapAlloc is not.
+//
+// The same measurement against the previous buffered shape allocates ~100% of the payload
+// (33,703,328 bytes for this 32 MiB fixture); framing it allocates ~0.5% (169,560 bytes), which
+// is the prefix, the suffix and the HTTP machinery. The budget below sits between the two by a
+// wide margin, so ordinary allocation noise cannot trip it and a reintroduced copy cannot pass it.
+func TestUploadImageDoesNotCopyTheImage(t *testing.T) {
+	const imageSize = 32 << 20 // large enough that a copy is unmistakable
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Drain the body so the send completes, without retaining it.
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("server: drain body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":{"creative":{"hash":"abc123"}}}`))
+	}))
+	defer srv.Close()
+
+	c := uploadRetryClient(srv.URL)
+	image := make([]byte, imageSize)
+
+	// Settle the heap first so the baseline is not carrying warm-up garbage.
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	if _, err := c.uploadImage(context.Background(), image, "image/png"); err != nil {
+		t.Fatalf("uploadImage: %v", err)
+	}
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+
+	allocated := after.TotalAlloc - before.TotalAlloc
+	const budget = imageSize / 2
+
+	if allocated > budget {
+		t.Errorf("uploadImage allocated %d bytes for a %d-byte image (budget %d): the payload is "+
+			"being copied into the multipart body instead of framed around, which puts a second "+
+			"copy of every image outside dispatch.AssetReserver's budget",
+			allocated, imageSize, budget)
+	}
+	t.Logf("allocated %d bytes uploading a %d-byte image (%.2f%% of payload)",
+		allocated, imageSize, 100*float64(allocated)/float64(imageSize))
+}
+
+// TestUploadImageRetrySendsTheFullBodyEveryAttempt is the correctness guard for the zero-copy
+// change, and it protects against a defect that would be WORSE than the memory it saves.
+//
+// An io.Reader is consumed by the send. If the same reader were reused across attempts, the
+// retry would post an EMPTY or TRUNCATED body — and Meta would reject it for a reason that has
+// nothing to do with the throttle that caused the retry, so the failure would be misdiagnosed.
+// The previous implementation avoided this by keeping a full encoded COPY and wrapping a fresh
+// bytes.Reader per attempt; this one builds a fresh io.MultiReader over the same three slices,
+// which is the same guarantee without the copy.
+//
+// Asserted by capturing every attempt's body server-side and requiring them to be BYTE-IDENTICAL
+// and to contain the whole image. Comparing lengths alone would miss a body that is the right
+// size but framed differently on the second attempt.
+func TestUploadImageRetrySendsTheFullBodyEveryAttempt(t *testing.T) {
+	image := []byte("\x89PNG\r\n\x1a\n" + strings.Repeat("IMAGE-PAYLOAD-", 4096))
+
+	var mu sync.Mutex
+	var bodies [][]byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("server: read body: %v", err)
+		}
+		mu.Lock()
+		bodies = append(bodies, got)
+		n := len(bodies)
+		mu.Unlock()
+
+		if n == 1 {
+			// Throttle the first attempt so the client retries.
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"calls to this api have exceeded the rate limit","code":4}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":{"creative":{"hash":"deadbeef"}}}`))
+	}))
+	defer srv.Close()
+
+	c := uploadRetryClient(srv.URL)
+	hash, err := c.uploadImage(context.Background(), image, "image/png")
+	if err != nil {
+		t.Fatalf("uploadImage: %v", err)
+	}
+	if hash != "deadbeef" {
+		t.Errorf("hash = %q, want deadbeef", hash)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) < 2 {
+		t.Fatalf("the server saw %d attempt(s), want at least 2 — the retry never happened, so "+
+			"this test proves nothing about replay", len(bodies))
+	}
+	// The retry must be byte-identical to the first attempt: same framing, same payload.
+	if !bytes.Equal(bodies[0], bodies[1]) {
+		t.Errorf("attempt 2 body differs from attempt 1 (%d vs %d bytes): the body is not being "+
+			"replayed faithfully, so a retry sends something other than the original image",
+			len(bodies[0]), len(bodies[1]))
+	}
+	// And every attempt must actually carry the image, not an empty part.
+	for i, body := range bodies {
+		if !bytes.Contains(body, image) {
+			t.Errorf("attempt %d does not contain the full image: a consumed reader was reused, "+
+				"so the retry posted a truncated or empty body", i+1)
+		}
 	}
 }

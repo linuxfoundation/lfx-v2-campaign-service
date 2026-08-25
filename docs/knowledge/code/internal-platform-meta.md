@@ -75,6 +75,21 @@ was uploaded.
 `image_hash` comes from `POST /act_<id>/adimages`, with the image sent as a
 multipart FILE part.
 
+The body is FRAMED AROUND the image, never copied around it. Multipart framing for a
+single part is a small fixed prefix (boundary + headers) and suffix (closing boundary),
+both independent of the payload, so `multipartFraming` generates them once with an empty
+part and the request body becomes prefix + image + suffix with the payload referenced in
+place. Each retry attempt builds a FRESH `io.MultiReader` over the same three slices —
+a reader is consumed by its send, so reusing one would post a truncated body and the
+failure would be misread as a rejection rather than a replay bug — and `ContentLength` is
+set explicitly, because `net/http` cannot infer it from a `MultiReader` and would
+otherwise send the upload chunked.
+
+This matters beyond tidiness: the earlier version buffered the whole encoded body, so
+every in-flight image was resident twice and the second copy sat OUTSIDE
+`dispatch.AssetReserver`'s process-wide budget — five concurrent dispatches added ~150 MiB
+that no bound accounted for. Measured at ~0.5% of the payload now, against ~100% before.
+
 ON THE PART'S FIELD NAME — the docs do not settle it, and an earlier version of
 this entry claimed they did. The reference documents exactly two CREATE
 parameters, `bytes` ("Image file", typed "Base64 UTF-8 string") and `copy_from`,
