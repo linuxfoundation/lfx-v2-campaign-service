@@ -40,8 +40,9 @@ type UploadCreativeAssetRequestBody struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType *string `form:"content_type,omitempty" json:"content_type,omitempty" xml:"content_type,omitempty"`
-	// Raw image bytes, base64-encoded in the JSON request body.
-	Bytes []byte `form:"bytes,omitempty" json:"bytes,omitempty" xml:"bytes,omitempty"`
+	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
+	// server-side; the decoded image must not exceed 30 MiB.
+	Bytes *string `form:"bytes,omitempty" json:"bytes,omitempty" xml:"bytes,omitempty"`
 }
 
 // CreateCampaignsRequestBody is the type of the
@@ -4249,7 +4250,7 @@ func NewFetchEventURLPayload(body *FetchEventURLRequestBody, projectID string, b
 func NewUploadCreativeAssetPayload(body *UploadCreativeAssetRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.UploadCreativeAssetPayload {
 	v := &lfxv2campaignservicebriefs.UploadCreativeAssetPayload{
 		ContentType: *body.ContentType,
-		Bytes:       body.Bytes,
+		Bytes:       *body.Bytes,
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID
@@ -4457,11 +4458,13 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		}
 	}
 	if body.Bytes != nil {
-		if len(body.Bytes) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 1, true))
+		if utf8.RuneCountInString(*body.Bytes) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", *body.Bytes, utf8.RuneCountInString(*body.Bytes), 1, true))
 		}
-		if len(body.Bytes) > 41943040 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 41943040, false))
+	}
+	if body.Bytes != nil {
+		if utf8.RuneCountInString(*body.Bytes) > 41943040 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", *body.Bytes, utf8.RuneCountInString(*body.Bytes), 41943040, false))
 		}
 	}
 	return

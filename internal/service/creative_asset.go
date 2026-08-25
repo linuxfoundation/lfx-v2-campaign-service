@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"image"
@@ -93,23 +94,48 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// predicate — never an attribution or lookup key — so it stays UUID-or-slug like the other
 	// nested brief routes (GetBrief, CreateAudience).
 
-	// Stage 0 — the STORED-FILE ceiling, checked before anything reads the bytes.
+	// Stage 0 — DECODE the base64 payload, then apply the STORED-FILE ceiling to the result.
 	//
-	// This used to be the design's MaxLength on the bytes attribute, applied by the generated
-	// validator. It moved here because Goa publishes MaxLength as `maxLength` on the base64
-	// STRING in the OpenAPI document, and base64 expands by 4/3 — so a 30 MiB decoded ceiling was
-	// published as a constraint that rejects at ~22.5 MiB decoded. The design now declares the
-	// encoded ceiling (the unit that schema measures) and the decoded ceiling is enforced HERE,
-	// the only REQUEST layer that sees decoded bytes.
+	// The wire attribute is a base64 STRING (design/brief.go), not a Goa Bytes attribute, so the
+	// decode happens here rather than in the generated decoder. That change made the published
+	// contract honest — Goa emits a Bytes attribute as `format: binary`, meaning raw octets,
+	// which is not what an application/json body carries — and it moves exactly one
+	// responsibility to this layer: turning the encoded string into the bytes everything below
+	// already expected.
+	//
+	// MALFORMED BASE64 IS A 400, never a panic and never a 500. It is caller input, and the only
+	// thing a caller can do about it is send it correctly.
+	//
+	// StdEncoding (padded, standard alphabet) is the same encoding the previous Goa Bytes
+	// attribute used, so the accepted wire format is unchanged by the type switch — a client
+	// that worked before works now.
+	decoded, b64err := base64.StdEncoding.DecodeString(p.Bytes)
+	if b64err != nil {
+		// The error text is deliberately fixed: a base64 decoder's message can quote the
+		// offending input, and this body is an image an operator uploaded.
+		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded bytes are not valid base64"}
+	}
+
+	// The STORED-FILE ceiling, applied to the DECODED length.
+	//
+	// The unit matters and it changed with the attribute type. The design's MaxLength(41943040)
+	// bounds the ENCODED string in characters — that is what the generated validator now
+	// enforces, and it is the right unit for a string. This is the DECODED bound, 30 MiB, and it
+	// is a different quantity: 41,943,040 base64 characters decode to exactly 31,457,280 bytes,
+	// so the two agree by construction rather than by coincidence.
+	//
+	// Checking len(p.Bytes) here instead would silently bound ENCODED characters and admit only
+	// ~22.5 MiB of image, which is the same unit confusion that moved MaxLength off the decoded
+	// slice in the first place.
 	//
 	// It is not the only enforcement, and must not be described as such: byte_size is
 	// caller-supplied on the INSERT, so migration 000029 carries the same 30 MiB bound as a
 	// table CHECK for writers that never pass through this handler. This check is what turns an
 	// oversize UPLOAD into a clean 400 instead of a constraint violation.
 	//
-	// It is a len() on an already-decoded slice, so it costs nothing and it runs first: an
-	// oversized upload is refused before DecodeConfig reads its header.
-	if len(p.Bytes) > maxCreativeStoredBytes {
+	// It is a len() on an already-decoded slice, so it costs nothing and it runs before any
+	// header read: an oversized upload is refused before DecodeConfig touches it.
+	if len(decoded) > maxCreativeStoredBytes {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image exceeds the maximum accepted size for a creative asset"}
 	}
 
@@ -122,7 +148,7 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// pixel buffer exists. Meta's creative POLICY (minimum dimensions, aspect ratio) is not
 	// checked anywhere here: it is Meta-specific and belongs at dispatch, where Meta's API is the
 	// authority — this endpoint is storage integrity, not platform policy.
-	cfg, format, derr := image.DecodeConfig(bytes.NewReader(p.Bytes))
+	cfg, format, derr := image.DecodeConfig(bytes.NewReader(decoded))
 	if derr != nil {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded bytes are not a decodable PNG or JPEG image"}
 	}
@@ -188,7 +214,7 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	// would leak the budget for the rest of the request.
 	decodeErr := func() error {
 		defer release()
-		_, _, err := image.Decode(bytes.NewReader(p.Bytes))
+		_, _, err := image.Decode(bytes.NewReader(decoded))
 		return err
 	}()
 	if decodeErr != nil {
@@ -203,11 +229,11 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		MimeType: sniffed,
 		// Derived here, never trusted from the client (the payload carries no size): the stored
 		// size is exactly what was received.
-		ByteSize: int64(len(p.Bytes)),
+		ByteSize: int64(len(decoded)),
 		// The dedupe/idempotency key. Content-derived, so a repeat upload of the same image
 		// collides on (brief_id, checksum) and returns the existing asset.
-		Checksum: sha256Hex(p.Bytes),
-		Bytes:    p.Bytes,
+		Checksum: sha256Hex(decoded),
+		Bytes:    decoded,
 		// Same nil handling as CreateBrief: a request with no decodable actor stores NULL rather
 		// than refusing the write. On an idempotent re-upload the repo preserves the FIRST
 		// uploader, so this attributes creation, not re-sending.

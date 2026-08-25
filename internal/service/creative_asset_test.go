@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -31,6 +32,15 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
+// b64 encodes raw image bytes the way the wire carries them.
+//
+// The upload payload's `bytes` field is a base64 STRING (design/brief.go declares it String so
+// the published OpenAPI does not claim `format: binary` for an application/json body), so every
+// test that used to hand []byte straight to the payload now encodes it here. The tests' INTENT
+// is unchanged — they still describe raw image bytes — and routing them through one helper keeps
+// the encoding identical to the server's decoder (StdEncoding, padded).
+func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
 // TestBriefService_UploadCreativeAsset_UnavailableWithoutRepo pins that a BriefService with no
 // creative-asset repository bound — the no-database and cold-start-pending modes — reports 503
 // rather than nil-panicking, mirroring how GenerateEmailCopy / FetchEventURL check their own
@@ -49,7 +59,7 @@ func TestBriefService_UploadCreativeAsset_UnavailableWithoutRepo(t *testing.T) {
 		ProjectID:   "cncf",
 		BriefID:     "b1",
 		ContentType: "image/png",
-		Bytes:       []byte{0x89, 0x50, 0x4e, 0x47}, // PNG magic, enough to look like an upload
+		Bytes:       b64([]byte{0x89, 0x50, 0x4e, 0x47}), // PNG magic, enough to look like an upload
 	})
 
 	var svcErr *briefs.ConnServiceUnavailableError
@@ -163,7 +173,7 @@ func TestBriefService_UploadCreativeAsset_ValidationGuards(t *testing.T) {
 				ProjectID:   "cncf",
 				BriefID:     "b1",
 				ContentType: tc.contentType,
-				Bytes:       tc.payload,
+				Bytes:       b64(tc.payload),
 			})
 
 			var badReq *briefs.BadRequestError
@@ -202,7 +212,7 @@ func TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum(t *testin
 				ProjectID:   "cncf",
 				BriefID:     "b1",
 				ContentType: tc.wantMIME,
-				Bytes:       tc.bytes,
+				Bytes:       b64(tc.bytes),
 			})
 			if err != nil {
 				t.Fatalf("UploadCreativeAsset: %v", err)
@@ -298,7 +308,7 @@ func TestBriefService_UploadCreativeAsset_RefusesDecodableFormatOutsideAllowList
 				ProjectID:   "cncf",
 				BriefID:     "b1",
 				ContentType: declared,
-				Bytes:       raw,
+				Bytes:       b64(raw),
 			})
 
 			var badReq *briefs.BadRequestError
@@ -403,7 +413,7 @@ func TestBriefService_UploadCreativeAsset_RefusesTruncatedImageData(t *testing.T
 		ProjectID:   "cncf",
 		BriefID:     "b1",
 		ContentType: "image/png",
-		Bytes:       raw,
+		Bytes:       b64(raw),
 	})
 
 	var badReq *briefs.BadRequestError
@@ -452,7 +462,7 @@ func TestBriefService_UploadCreativeAsset_RefusesOversizeDimensionsWithoutDecodi
 		ProjectID:   "cncf",
 		BriefID:     "b1",
 		ContentType: "image/png",
-		Bytes:       raw,
+		Bytes:       b64(raw),
 	})
 
 	var badReq *briefs.BadRequestError
@@ -600,7 +610,7 @@ func TestBriefService_UploadCreativeAsset_RefusesWideBitDepthBomb(t *testing.T) 
 		ProjectID:   "cncf",
 		BriefID:     "b1",
 		ContentType: "image/png",
-		Bytes:       raw,
+		Bytes:       b64(raw),
 	})
 
 	var badReq *briefs.BadRequestError
@@ -695,7 +705,7 @@ func TestBriefService_UploadCreativeAsset_MapsRepoError(t *testing.T) {
 				ProjectID:   "cncf",
 				BriefID:     "b1",
 				ContentType: "image/png",
-				Bytes:       pngBytes(t),
+				Bytes:       b64(pngBytes(t)),
 			})
 			if err == nil {
 				t.Fatalf("UploadCreativeAsset returned no error for a failed insert; "+
@@ -744,7 +754,7 @@ func TestBriefService_UploadCreativeAsset_ReportsCreationHonestly(t *testing.T) 
 			s.SetCreativeAssetRepo(repo)
 
 			got, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
-				ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: img,
+				ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: b64(img),
 			})
 			if err != nil {
 				t.Fatalf("UploadCreativeAsset: %v", err)
@@ -790,7 +800,7 @@ func TestBriefService_UploadCreativeAsset_RefusesOversizeStoredFile(t *testing.T
 	s.SetCreativeAssetRepo(repo)
 
 	_, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
-		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: oversize,
+		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: b64(oversize),
 	})
 	if err == nil {
 		t.Fatalf("a %d-byte image was accepted against a %d-byte stored-file ceiling; the design's "+
@@ -873,7 +883,7 @@ func TestUploadCreativeAsset_BoundsTheInsertHeldUnderThePermit(t *testing.T) {
 			ProjectID:   "cncf",
 			BriefID:     "b1",
 			ContentType: "image/png",
-			Bytes:       pngBytes(t),
+			Bytes:       b64(pngBytes(t)),
 		})
 		done <- err
 	}()
@@ -910,5 +920,115 @@ func TestUploadCreativeAsset_BoundsTheInsertHeldUnderThePermit(t *testing.T) {
 	}
 	if unavail.Code != "503" {
 		t.Errorf("code = %q, want %q", unavail.Code, "503")
+	}
+}
+
+// TestUploadCreativeAsset_MalformedBase64Is400 pins the failure mode introduced when the wire
+// attribute became a base64 STRING.
+//
+// Before that change the generated Goa decoder produced a []byte and malformed base64 never
+// reached this method. Now the decode happens HERE, which means this method owns the answer for
+// input that cannot be decoded — and the answer must be a 400. It is caller input, and the only
+// thing a caller can do about it is send it correctly; a 500 would blame the server, and a panic
+// would take the process down on a value any client can send.
+//
+// The subtests are the distinct ways base64 goes wrong, not one representative: a stray
+// character, bad padding, and the URL-safe alphabet the standard decoder must reject. The last
+// matters most — it is the plausible client bug, since a caller reaching for base64url gets a
+// value that looks correct and decodes to different bytes under a different decoder.
+func TestUploadCreativeAsset_MalformedBase64Is400(t *testing.T) {
+	png := pngBytes(t)
+
+	cases := []struct {
+		name  string
+		bytes string
+		why   string
+	}{
+		{
+			name:  "not base64 at all",
+			bytes: "this is not base64!!",
+			why:   "a caller that sent raw text must be told its input is wrong, not handed a 500",
+		},
+		{
+			name:  "illegal character mid-string",
+			bytes: base64.StdEncoding.EncodeToString(png)[:8] + "*" + base64.StdEncoding.EncodeToString(png)[9:],
+			why:   "one corrupt character is the shape a truncated or mangled transfer takes",
+		},
+		{
+			name: "bad padding",
+			// A literal, not derived from png: trimming the padding off an encoded value only
+			// yields an INVALID string when the input length needs padding at all, so deriving
+			// it makes the case silently depend on the fixture's length. "QUJD=" is
+			// unambiguous — 4 data characters need no padding, so the trailing = is excess.
+			bytes: "QUJD=",
+			why:   "StdEncoding is padded; excess padding is a decode error, not a short read",
+		},
+		{
+			name:  "url-safe alphabet",
+			bytes: base64.URLEncoding.EncodeToString([]byte{0xfb, 0xff, 0xbe, 0xff}),
+			why:   "base64url uses - and _ where StdEncoding uses + and /; the contract says standard alphabet",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeCreativeAssetRepo{}
+			svc := NewBriefService(nil, nil, nil, nil)
+			svc.SetCreativeAssetRepo(repo)
+			_, err := svc.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+				ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: tc.bytes,
+			})
+			if err == nil {
+				t.Fatalf("malformed base64 was accepted — %s", tc.why)
+			}
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("err = %T (%v), want *briefs.BadRequestError (400) — %s", err, err, tc.why)
+			}
+			// Assert the SPECIFIC message, not merely that some 400 came back.
+			//
+			// This is load-bearing rather than fussy. base64.DecodeString returns the bytes it
+			// managed to decode ALONGSIDE its error, so deleting the error check does not make
+			// this input succeed — the partial bytes fall through to the image decode, which
+			// also answers 400. A status-only assertion therefore passes against a build that
+			// ignores the base64 error entirely (confirmed by running exactly that mutation),
+			// while the caller is told "not a decodable PNG or JPEG image" for what is really a
+			// base64 problem, and truncated bytes reach every stage below.
+			const want = "the uploaded bytes are not valid base64"
+			if bad.Message != want {
+				t.Errorf("message = %q, want %q — a 400 raised by a LATER stage means the base64 "+
+					"error was not handled where it occurred, and partially decoded bytes were "+
+					"passed on", bad.Message, want)
+			}
+			// The message must not quote the offending input: a base64 decoder's own error
+			// text can echo the value, and this body is an operator's image.
+			if strings.Contains(bad.Message, tc.bytes) {
+				t.Errorf("the 400 message quotes the caller's payload back: %q", bad.Message)
+			}
+		})
+	}
+}
+
+// TestUploadCreativeAsset_EncodedAndDecodedCeilingsAgree is the unit check that the type change
+// did not move the size bound by a third in either direction.
+//
+// Three numbers must describe ONE quantity after the switch to a string attribute:
+// design's MaxLength (41,943,040 base64 CHARACTERS), maxCreativeStoredBytes (31,457,280 DECODED
+// bytes), and migration 000029's CHECK (byte_size <= 31457280, DECODED octets). Base64 expands
+// by exactly 4/3 with padding, so the encoded ceiling decodes to precisely the decoded ceiling —
+// they agree by construction, and this asserts that rather than trusting the arithmetic.
+//
+// If MaxLength were ever restated in decoded units the endpoint would silently start rejecting
+// at ~22.5 MiB; if maxCreativeStoredBytes were restated in encoded units it would admit ~40 MiB.
+func TestUploadCreativeAsset_EncodedAndDecodedCeilingsAgree(t *testing.T) {
+	const designMaxLengthChars = 41943040 // design/brief.go MaxLength on the base64 string
+
+	if got := base64.StdEncoding.EncodedLen(maxCreativeStoredBytes); got != designMaxLengthChars {
+		t.Errorf("base64.EncodedLen(maxCreativeStoredBytes) = %d, but design declares MaxLength(%d): "+
+			"the wire ceiling and the stored-file ceiling describe different sizes, so one layer "+
+			"accepts what another refuses", got, designMaxLengthChars)
+	}
+	if got := base64.StdEncoding.DecodedLen(designMaxLengthChars); got != maxCreativeStoredBytes {
+		t.Errorf("DecodedLen(MaxLength) = %d, want maxCreativeStoredBytes %d", got, maxCreativeStoredBytes)
 	}
 }

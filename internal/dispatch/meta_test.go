@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -2258,7 +2259,7 @@ func TestMeta_ResolveVariantAssetsDoesNotMutateCallerConfig(t *testing.T) {
 	}})
 
 	original := []meta.AdVariant{{Headline: "h1", ImageAssetID: validUUID}}
-	resolved, err := d.resolveVariantAssets(context.Background(), testBrief(), original)
+	resolved, _, err := d.resolveVariantAssets(context.Background(), testBrief(), original)
 	if err != nil {
 		t.Fatalf("resolveVariantAssets: %v", err)
 	}
@@ -2319,7 +2320,7 @@ func TestMeta_ResolveVariantAssetsDedupesByAssetID(t *testing.T) {
 		{ImageAssetID: id}, {ImageAssetID: id}, {ImageAssetID: id},
 		{ImageAssetID: id}, {ImageAssetID: id},
 	}
-	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	out, _, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
 	if err != nil {
 		t.Fatalf("resolveVariantAssets error: %v", err)
 	}
@@ -2379,7 +2380,7 @@ func TestMeta_ResolveVariantAssetsBoundsAggregateBytes(t *testing.T) {
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
 	d.SetCreativeAssetRepo(assets)
 
-	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	out, _, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
 	if err == nil {
 		t.Fatalf("resolveVariantAssets accepted %d distinct maximum-size assets; the aggregate bound must refuse", len(out))
 	}
@@ -2415,7 +2416,7 @@ func TestMeta_ResolveVariantAssetsAcceptsRealisticCampaign(t *testing.T) {
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
 	d.SetCreativeAssetRepo(assets)
 
-	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	out, _, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
 	if err != nil {
 		t.Fatalf("50 realistic (400 KiB) creatives were refused, but the bound must not reject a legitimate campaign: %v", err)
 	}
@@ -2543,7 +2544,7 @@ func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
 	t.Run("length is bounded", func(t *testing.T) {
 		// 100 KiB of caller-chosen text in a field whose valid form is a 36-char UUID.
 		huge := strings.Repeat("A", 100<<10)
-		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+		_, _, err := d.resolveVariantAssets(context.Background(), testBrief(),
 			[]meta.AdVariant{{ImageAssetID: huge}})
 		if err == nil {
 			t.Fatal("a malformed asset id must be refused")
@@ -2570,7 +2571,7 @@ func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
 		// A newline plus a plausible-looking forged record. If this reaches a line-oriented
 		// log sink intact, the caller has written a second entry.
 		inject := "aaa\nlevel=INFO msg=\"campaign created successfully\"\rmore"
-		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+		_, _, err := d.resolveVariantAssets(context.Background(), testBrief(),
 			[]meta.AdVariant{{ImageAssetID: inject}})
 		if err == nil {
 			t.Fatal("a malformed asset id must be refused")
@@ -2589,7 +2590,7 @@ func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
 		// The sanitiser must not become a new rejection path: a well-formed id must still
 		// reach the repo lookup (and fail there as "does not exist"), not be refused as
 		// malformed.
-		_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+		_, _, err := d.resolveVariantAssets(context.Background(), testBrief(),
 			[]meta.AdVariant{{ImageAssetID: "11111111-2222-3333-4444-555555555555"}})
 		if err == nil {
 			t.Fatal("an absent asset must still be refused")
@@ -2638,7 +2639,7 @@ func TestMeta_AssetIDAliasesResolveAsOneAsset(t *testing.T) {
 		in = append(in, meta.AdVariant{ImageAssetID: a})
 	}
 
-	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	out, _, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
 	if err != nil {
 		t.Fatalf("resolveVariantAssets error: %v", err)
 	}
@@ -2657,6 +2658,154 @@ func TestMeta_AssetIDAliasesResolveAsOneAsset(t *testing.T) {
 		if &out[0].ImageBytes[0] != &out[i].ImageBytes[0] {
 			t.Errorf("variant %d (alias %q) holds a distinct buffer; aliases must share the single resolved copy",
 				i+1, aliases[i])
+		}
+	}
+}
+
+// TestAssetReserver_ConcurrentDispatchesShareOneBudget is the behavioural proof that the
+// aggregate bound actually blocks, not just that a constant exists.
+//
+// The defect it guards: maxVariantAssetBytes caps ONE dispatch, while maxParallelDispatch
+// allows five concurrent provider dispatches from a process-wide semaphore with no
+// per-provider partition — so five Meta dispatches each held up to their own cap. This
+// asserts the property that was missing: a SECOND dispatch cannot hold assets while a first
+// one already holds the whole budget.
+//
+// The proof does not use sleeps or elapsed time. The first reservation is taken and HELD, so
+// while it is outstanding the budget is provably exhausted; a second acquire of any non-zero
+// size must therefore be refused. Releasing the first must then let the same request through,
+// which is what distinguishes a working budget from one that refuses everything.
+func TestAssetReserver_ConcurrentDispatchesShareOneBudget(t *testing.T) {
+	r := NewAssetReserver(MaxConcurrentVariantAssetBytes, 50*time.Millisecond)
+
+	// A full-size dispatch: the whole budget, which is exactly one maximum config.
+	release1, ok := r.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatalf("a dispatch of exactly MaxConcurrentVariantAssetBytes (%d) was refused — "+
+			"the budget must admit one maximum-size config or it rejects legal work",
+			MaxConcurrentVariantAssetBytes)
+	}
+
+	// While that one is held the budget is exhausted, so a second dispatch — even a small
+	// one — must be refused rather than admitted alongside it. Before this bound existed,
+	// five of these ran together.
+	if _, ok := r.reserve(context.Background(), 1); ok {
+		t.Error("a second dispatch was admitted while the whole budget was held: " +
+			"concurrent dispatches are not sharing one bound, which is the 1.32 GiB defect")
+	}
+
+	// Releasing must actually return the capacity. Without this the test would pass against a
+	// reserver that refuses everything after the first acquire, which is not a bound but a
+	// deadlock.
+	release1()
+	release2, ok := r.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("after releasing the first reservation the budget did not come back: " +
+			"the release is not returning capacity")
+	}
+	release2()
+}
+
+// TestAssetReserver_AdmitsConcurrentSmallDispatchesTogether pins the other half of the
+// property, and it is the half that catches a bound "fixed" by simply refusing more.
+//
+// A budget that serialized ALL dispatches would pass the test above while making every
+// ordinary campaign wait on every other. Real Meta creatives are a few hundred KiB, so the
+// common case must still run concurrently: the budget is priced for the worst legal input and
+// shared by everything smaller.
+func TestAssetReserver_AdmitsConcurrentSmallDispatchesTogether(t *testing.T) {
+	r := NewAssetReserver(MaxConcurrentVariantAssetBytes, 50*time.Millisecond)
+
+	// A realistic creative, not a maximum-size one.
+	const realistic int64 = 512 << 10 // 512 KiB
+
+	const want = 8
+	releases := make([]func(), 0, want)
+	for i := range want {
+		release, ok := r.reserve(context.Background(), realistic)
+		if !ok {
+			t.Fatalf("only %d realistic dispatches (%d bytes each) were admitted concurrently, "+
+				"want %d — the budget is serializing ordinary campaigns", i, realistic, want)
+		}
+		releases = append(releases, release)
+	}
+	for _, release := range releases {
+		release()
+	}
+}
+
+// TestResolveVariantAssets_RefusesWhenAggregateBudgetIsExhausted proves the reserver is
+// actually CONSULTED by the dispatch path, which the unit tests above cannot show.
+//
+// A reserver that is constructed, wired and never called would keep every test above green
+// while providing no bound at all. This drains the budget out-of-band and then drives the real
+// resolve, so a pass requires resolveVariantAssets to have asked for capacity and honoured the
+// refusal.
+func TestResolveVariantAssets_RefusesWhenAggregateBudgetIsExhausted(t *testing.T) {
+	assets := &fakeCreativeAssets{asset: &model.CreativeAsset{
+		Bytes: []byte("IMAGE_BYTES"), MimeType: "image/png",
+	}}
+	d := &MetaDispatcher{creatives: assets}
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+
+	// Hold the ENTIRE budget, standing in for another dispatch already running.
+	release, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("could not take the initial reservation")
+	}
+	defer release()
+
+	in := []meta.AdVariant{{ImageAssetID: "11111111-1111-4111-8111-111111111111"}}
+	out, _, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err == nil {
+		t.Fatal("resolveVariantAssets succeeded while the aggregate budget was fully held: " +
+			"the reservation is not being taken on the dispatch path")
+	}
+	// It must fail CLOSED — no bytes handed back — or the refusal would be cosmetic while the
+	// memory it was refused for is still resident.
+	if out != nil {
+		t.Errorf("a refused resolve returned %d variants, want none: bytes must not be retained "+
+			"when the budget that accounts for them was refused", len(out))
+	}
+}
+
+// TestDispatchHoldsAssetReservationForTheWholeDispatch pins the reservation LIFETIME.
+//
+// WEAKER EVIDENCE THAN THE TESTS ABOVE, and deliberately labelled as such rather than folded
+// into a pass count. This is a SOURCE assertion, not a behavioural one: it reads the call site
+// instead of observing a release happening too early.
+//
+// The reason is a real limit, not laziness. The reservation must be held until the Meta client
+// has POSTed the bytes to /adimages, which happens deep inside Dispatch — and reaching that
+// point requires a decryptable stored connection, a credentials source, and an HTTP round trip
+// to Meta. A test that drove it would be asserting the lifetime through several layers that can
+// each fail for their own reasons, so a failure would not localise to the lifetime.
+//
+// It matters because the mutation IS survivable: changing `defer releaseAssets()` to an
+// immediate `releaseAssets()` leaves every behavioural test in this file green while handing
+// the budget back before the bytes are gone — the exact error DecodeReserver's comment records
+// in the opposite direction. Until the lifetime can be observed end to end, this guard is what
+// stands between that mutation and a silent regression.
+func TestDispatchHoldsAssetReservationForTheWholeDispatch(t *testing.T) {
+	src, err := os.ReadFile("meta.go")
+	if err != nil {
+		t.Fatalf("read meta.go: %v", err)
+	}
+	body := string(src)
+
+	if !strings.Contains(body, "defer releaseAssets()") {
+		t.Error("Dispatch does not `defer releaseAssets()`: the aggregate asset reservation " +
+			"must be held until the dispatch returns, because the resolved bytes are POSTed to " +
+			"/adimages later in that same call. Releasing at the resolve hands back budget for " +
+			"memory that is still resident.")
+	}
+	// An immediate release is the specific mutation this guards, so name it rather than only
+	// checking the defer is present: both could coexist and the bound would still be defeated.
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "releaseAssets()" {
+			t.Error("found a bare `releaseAssets()` call: the release must be deferred to the " +
+				"end of Dispatch, not invoked as soon as the assets are resolved")
 		}
 	}
 }

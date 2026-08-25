@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -82,7 +83,12 @@ type MetaDispatcher struct {
 	// tests that create no image-by-asset variants, where it is never read
 	// (resolveVariantAssets touches it only for a variant that references an asset).
 	creatives creativeAssetReader
-	opts      []meta.Option
+	// assets bounds the creative-asset bytes CONCURRENT dispatches may hold. Bound by
+	// registerDispatchers alongside creatives; nil in direct-construction tests, where it
+	// reserves nothing (see AssetReserver). Without it maxVariantAssetBytes caps one
+	// dispatch while five run at once — the aggregate this closes.
+	assets *AssetReserver
+	opts   []meta.Option
 }
 
 // NewMetaDispatcher builds the adapter from the connection repo + encryptor. The
@@ -104,6 +110,26 @@ func (d *MetaDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
 		return
 	}
 	d.creatives = r
+}
+
+// SetAssetReserver late-binds the PROCESS-WIDE creative-asset memory budget, mirroring
+// SetCreativeAssetRepo's opt-in shape. A nil reserver reserves nothing, so the
+// direct-construction tests are unaffected.
+func (d *MetaDispatcher) SetAssetReserver(a *AssetReserver) {
+	if a == nil {
+		return
+	}
+	d.assets = a
+}
+
+// AssetReserverIsSet reports whether the aggregate asset budget was bound.
+//
+// Exported for exactly the reason CreativeAssetRepoIsSet is: the container's wiring tests
+// construct dispatchers with all-nil arguments, so deleting registerDispatchers' bind
+// COMPILES and leaves the suite green while production loses the aggregate bound. Only an
+// assertion on the bound state itself holds the wiring.
+func (d *MetaDispatcher) AssetReserverIsSet() bool {
+	return d.assets != nil
 }
 
 // CreativeAssetRepoIsSet reports whether the creative-asset read path was bound.
@@ -149,7 +175,52 @@ func (d *MetaDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives != n
 // The bound is on bytes RETAINED, and the check runs after the tripping asset has been read,
 // so the true peak is this value plus one maximum-size asset — 270 MiB, not 240. See the
 // check in resolveVariantAssets for why that overshoot is accepted rather than closed.
+//
+// IT BOUNDS ONE DISPATCH ONLY. The aggregate across concurrent dispatches is
+// MaxConcurrentVariantAssetBytes below; this constant said nothing about how many dispatches
+// run at once, and five of them did.
 const maxVariantAssetBytes int64 = 240 << 20 // 240 MiB = 8 maximum-size (30 MiB) assets
+
+// MaxConcurrentVariantAssetBytes is the total creative-asset memory ALL concurrent dispatches
+// may hold at once, the aggregate companion to maxVariantAssetBytes.
+//
+// THE DEFECT IT CLOSES. maxParallelDispatch (internal/service/orchestrator.go) is 5, and that
+// semaphore is process-wide across all jobs with NO per-provider partition, so every slot can be
+// a Meta dispatch. Five at the per-dispatch peak is 5 x 270 MiB = 1.32 GiB against a 512 MiB
+// pod — 2.6x. It does not take the worst case: TWO asset-heavy dispatches already exceed the
+// pod before multipart copies and ordinary process memory.
+//
+// WHY IT EQUALS maxVariantAssetBytes RATHER THAN A SMALLER NUMBER THAT MAKES 5 FIT. Sizing this
+// to satisfy the five-way arithmetic would put it below the per-dispatch cap, and then a single
+// config carrying eight maximum-size assets — legal today, and accepted by the per-dispatch
+// ceiling — could never acquire and would be refused. A bound that meets its arithmetic by
+// rejecting work the contract accepts is not a fix; it is the same error shape as pricing a
+// permit so cheaply that nothing legal fits, which this service has already made once.
+//
+// Equal to the per-dispatch cap is the SMALLEST value that refuses no legal config: exactly one
+// maximum-size dispatch fits, and every smaller one shares the remainder — the same "priced for
+// the worst legal input, shared by everything smaller" shape as the upload and decode budgets.
+// What it removes is the MULTIPLIER, which is where the 2.6x came from:
+//
+//	before: 5 x (240 MiB + 30 MiB materialised) = 1.32 GiB = 2.6x the pod
+//	after:      240 MiB + 30 MiB materialised   =  270 MiB = 53% of the pod
+//
+// It is NOT derived from PodMemoryLimitBytes the way the upload and decode budgets are, and that
+// is deliberate: those bound HTTP-request memory and are sized as fractions of the pod, while
+// this one is pinned to the per-dispatch contract because the binding constraint is "one legal
+// dispatch must always fit", not a share of the pod. Lowering maxVariantAssetBytes lowers this
+// in step, which is the intended coupling.
+const MaxConcurrentVariantAssetBytes int64 = maxVariantAssetBytes
+
+// VariantAssetReserveWait bounds how long a dispatch waits for asset budget before it is
+// refused.
+//
+// Longer than the HTTP-side admission waits (250ms) because the trade is different: a dispatch is
+// a background job with no client on a socket, so a short wait buys nothing and a queued dispatch
+// is cheaper than a failed one. It is bounded rather than open-ended so a dispatch cannot sit
+// behind another's assets indefinitely — without it, providerCallTimeout would be the only thing
+// ending the wait, and it would spend that whole budget queueing instead of dispatching.
+const VariantAssetReserveWait = 30 * time.Second
 
 // maxAssetIDInError bounds how much of a REJECTED imageAssetId is quoted back. A valid
 // id is a 36-character UUID, so this is generous for anything legitimate while keeping a
@@ -233,7 +304,12 @@ func safeAssetIDForError(id string) string {
 //
 // A bad asset must NOT fall through to a link-only ad: the caller asked for an image, and
 // silently creating an imageless ad would spend budget on a creative nobody approved.
-func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, error) {
+// It returns a RELEASE func the caller must call when the resolved bytes are no longer held.
+// The aggregate reservation is not released here: resolveVariantAssets hands the bytes back in
+// the variant slice and the Meta client POSTs them to /adimages later in the same dispatch, so
+// releasing at this function's return would free budget that is still occupied. The release is
+// always non-nil, including on the error paths, so `defer release()` at the call site is safe.
+func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, func(), error) {
 	out := make([]meta.AdVariant, len(variants))
 	copy(out, variants)
 	// Resolved assets are CACHED BY ID for the duration of this call, which is what makes
@@ -262,7 +338,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		}
 		parsed, perr := uuid.Parse(assetID)
 		if perr != nil {
-			return nil, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
 		}
 		// CANONICALIZE before the id is used as a cache key or a lookup value.
 		//
@@ -288,20 +364,20 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 			continue
 		}
 		if d.creatives == nil {
-			return nil, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
 		}
 		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if gerr != nil {
 			if errors.Is(gerr, domain.ErrNotFound) {
-				return nil, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
-			return nil, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+			return nil, func() {}, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
 		}
 		// A resolved asset that carries no bytes cannot become a creative. Refuse rather
 		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
 		// variant that asked for an image — a silent downgrade that spends money.
 		if len(asset.Bytes) == 0 {
-			return nil, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
 		// Charged once per DISTINCT asset, and checked before the buffer is retained in
 		// byID/out — but NOT before GetAsset materialized it. The repo read scans the whole
@@ -316,7 +392,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// budget. If the ceiling is ever raised toward the pod limit, close this gap first.
 		totalBytes += int64(len(asset.Bytes))
 		if totalBytes > maxVariantAssetBytes {
-			return nil, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+			return nil, func() {}, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
 				maxVariantAssetBytes, totalBytes, i+1)
 		}
 		byID[assetID] = asset.Bytes
@@ -324,7 +400,31 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		out[i].ImageBytes = asset.Bytes
 		out[i].ImageMIME = asset.MimeType
 	}
-	return out, nil
+	// AGGREGATE reservation, charged from the bytes actually resolved.
+	//
+	// maxVariantAssetBytes above capped THIS dispatch; nothing capped how many dispatches hold
+	// their assets at the same time, and the orchestrator's slots are process-wide with no
+	// per-provider split, so all of them can be Meta. This charges the resolved total against a
+	// budget shared by every concurrent dispatch.
+	//
+	// It is taken AFTER the loop rather than incrementally, because a partial reservation
+	// released on a later error is budget churn with no bound gained: the per-dispatch ceiling
+	// already refuses anything over maxVariantAssetBytes, so the total charged here is at most
+	// that, and taking it once keeps acquire/release paired at one site.
+	//
+	// Zero is not reserved: a config with no asset-backed variants holds no asset bytes and must
+	// not queue behind one that does.
+	if totalBytes == 0 {
+		return out, func() {}, nil
+	}
+	release, ok := d.assets.reserve(ctx, totalBytes)
+	if !ok {
+		// A refusal is an explicit, retryable dispatch failure — never a silent link-only ad.
+		// The bytes were resolved but must not be held: returning them without the reservation
+		// would defeat the bound it was just refused for.
+		return nil, func() {}, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
+	}
+	return out, release, nil
 }
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
@@ -491,10 +591,16 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// A variant that carries an image URL instead resolves to nothing here and is
 	// attached by the client as link_data.picture; the two are mutually exclusive per
 	// variant and the client refuses a variant supplying both.
-	variants, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
+	// The release is deferred to the END OF THE DISPATCH, not to the resolve, because the
+	// resolved bytes live in `variants` and the Meta client POSTs them to /adimages further
+	// down this same function. Releasing earlier would hand the budget back while the memory
+	// it accounts for is still resident, which is exactly the bound this reservation exists to
+	// provide. Deferring here also covers every error path below.
+	variants, releaseAssets, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
 	if verr != nil {
 		return nil, notCreated(verr)
 	}
+	defer releaseAssets()
 
 	in := meta.CampaignInput{
 		EventName: bf.EventName,

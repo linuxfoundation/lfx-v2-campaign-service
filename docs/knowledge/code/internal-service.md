@@ -137,16 +137,18 @@ touches NO ad platform — the bytes are held until dispatch, where Meta's per-a
 `image_hash` is resolved (see [internal/platform/meta](internal-platform-meta.md)).
 
 The generated validator enforces what the CONTRACT can express: `content_type` is one of the
-allowed MIME strings, and `bytes` is within `[1, 41,943,040]`. Note the unit carefully, because
-the two ends of that number differ and this is the whole point of the section below. The
-PUBLISHED schema states 41,943,040 as a `maxLength` on a JSON string, where it counts base64
-CHARACTERS. The generated SERVER validator runs after JSON decoding, against a `[]byte`
-(`gen/http/.../server/types.go`: `if len(body.Bytes) > 41943040`), so it compares DECODED bytes
-against that same figure — an effective ~40 MiB decoded bound, not the 30 MiB one.
+allowed MIME strings, and `bytes` is within `[1, 41,943,040]` CHARACTERS of base64.
 
-So the validator does not enforce the real stored-file ceiling at all. What this handler ADDS is
-the true DECODED-size ceiling (30 MiB, `maxCreativeStoredBytes`) and the proof that the BYTES are
-actually a decodable image of the DECLARED type.
+The unit is now consistent, and it was not always. `bytes` is declared a `String`, so both the
+published `maxLength` and the generated validator measure the ENCODED string — the same quantity.
+While it was a Goa `Bytes` attribute they disagreed: the schema counted characters while the
+validator applied that same figure to the DECODED slice (`len(body.Bytes)`), an effective ~40 MiB
+decoded bound matching neither the published number nor the real ceiling.
+
+What this handler ADDS is the decode itself — malformed base64 is a **400**, never a panic or a
+500 — and the true DECODED-size ceiling applied to the result (30 MiB, `maxCreativeStoredBytes`),
+plus the proof that the BYTES are actually a decodable image of the DECLARED type. The encoded
+and decoded ceilings agree by construction: `base64.EncodedLen(31457280) == 41943040`.
 
 The `MaxLength` figure is the ENCODED ceiling on purpose, and the reason is a representation
 mismatch worth stating. Goa publishes that attribute as `type: string` and emits `MaxLength` as

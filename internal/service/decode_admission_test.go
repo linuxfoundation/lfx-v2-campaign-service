@@ -161,7 +161,7 @@ func TestUploadCreativeAsset_CompressedImagesCannotExhaustTheDecodeBudget(t *tes
 	defer occupied()
 
 	_, err = s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
-		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: img,
+		ProjectID: "cncf", BriefID: "b1", ContentType: "image/png", Bytes: b64(img),
 	})
 
 	if err == nil {
@@ -286,7 +286,7 @@ func TestUploadCreativeAsset_DecodeReservationIsReleasedBeforeThePersist(t *test
 		ProjectID:   "cncf",
 		BriefID:     "b1",
 		ContentType: "image/png",
-		Bytes:       compressiblePNG(t, 1000),
+		Bytes:       b64(compressiblePNG(t, 1000)),
 	}); err != nil {
 		t.Fatalf("UploadCreativeAsset: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails(t *te
 		ProjectID:   "cncf",
 		BriefID:     "b1",
 		ContentType: "image/png",
-		Bytes:       truncated,
+		Bytes:       b64(truncated),
 	}); err == nil {
 		t.Fatal("a truncated PNG was accepted; this test needs the decode-failure arm")
 	}

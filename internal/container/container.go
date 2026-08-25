@@ -432,6 +432,14 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	if creatives != nil {
 		metaDispatcher.SetCreativeAssetRepo(creatives)
 	}
+	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
+	// guard above. The two are independent: that guard exists because a nil concrete pointer
+	// in an interface is not a nil interface, whereas this takes a concrete *AssetReserver
+	// whose nil case is already a documented no-op. Binding it here means every dispatcher the
+	// live and cold-start paths build shares ONE budget — which is the point, since the bound
+	// is across concurrent dispatches rather than within one.
+	metaDispatcher.SetAssetReserver(dispatch.NewAssetReserver(
+		dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait))
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),

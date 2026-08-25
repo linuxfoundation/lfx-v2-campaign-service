@@ -40,8 +40,9 @@ type UploadCreativeAssetRequestBody struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType string `form:"content_type" json:"content_type" xml:"content_type"`
-	// Raw image bytes, base64-encoded in the JSON request body.
-	Bytes []byte `form:"bytes" json:"bytes" xml:"bytes"`
+	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
+	// server-side; the decoded image must not exceed 30 MiB.
+	Bytes string `form:"bytes" json:"bytes" xml:"bytes"`
 }
 
 // CreateCampaignsRequestBody is the type of the

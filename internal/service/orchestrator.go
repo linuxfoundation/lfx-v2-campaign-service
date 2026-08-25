@@ -21,7 +21,15 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 )
 
-// maxParallelDispatch bounds concurrent per-platform campaign creation.
+// maxParallelDispatch bounds concurrent provider dispatches ACROSS THE PROCESS.
+//
+// Not "per-platform", which an earlier version of this comment said and which is wrong in the
+// direction that matters: the semaphore below is a single process-wide channel with NO
+// per-provider partition, so all five slots can be the SAME provider. Reading it as a
+// per-platform limit understates the concurrency by a factor of five, and a memory bound was
+// once sized against that misreading — five simultaneous Meta dispatches each holding their
+// creative assets, against a per-dispatch cap that assumed it was the only one.
+// dispatch.MaxConcurrentVariantAssetBytes is the aggregate that now covers it.
 const maxParallelDispatch = 5
 
 // CancelGracePeriod is how long Shutdown waits, after cancelling in-flight runs

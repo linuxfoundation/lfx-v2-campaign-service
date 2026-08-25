@@ -101,17 +101,30 @@ as a body parameter it does not. That outweighs the idempotency `GET` would adve
 `upload-creative-asset` (`POST .../briefs/{brief_id}/creative-assets`, LFXV2-3295) is the
 briefs service's image-upload method, backing the Meta single-image creative. It is
 SYNCHRONOUS — unlike `create-campaigns`, which returns a job — because it only validates and
-stores bytes and touches no ad platform. The `bytes` attribute is Goa's `Bytes` type (`[]byte`
-in Go, a base64 string in the JSON body): the transport choice is Goa-native with no multipart
-machinery, and `MinLength(1)`/`MaxLength(41943040)` put the accepted size in the OpenAPI
-document and the generated validator applies them before the handler runs — `MinLength(1)`
-rejects an empty upload and `MaxLength` is the ENCODED ceiling, `base64.EncodedLen` of the 30 MiB
-stored-file limit, because OpenAPI `maxLength` counts characters of the JSON string. The 30-MiB
-decoded ceiling at Meta's documented single-image maximum is enforced in the handler
-(`maxCreativeStoredBytes`) and, for writers that never reach the handler, as a table CHECK on
-`byte_size` (migration `000029`). `MaxLength` does not bound the wire either: the validator sees the
-decoded slice only after the JSON decoder has read the entire body and base64-decoded it, so it
-alone leaves the server buffering whatever a caller chooses to send. The inbound bound is
+stores bytes and touches no ad platform. The `bytes` attribute is a base64 **`String`**, not Goa's
+`Bytes` type, and the reason is that the published contract has to describe the wire. Goa emits a
+`Bytes` attribute as `type: string, format: binary`, which in OAS3 means RAW OCTETS — while an
+`application/json` body can only carry base64 — so a strict generator built a client this server
+cannot decode. That is unconditional in the generator (`goa v3.25.3`
+`http/codegen/openapi/v3/types.go:179-180`), `Format()` is validated against a whitelist with no
+byte/base64 member, and `openapi:extension:` meta cannot set `format`; so the field TYPE changes
+rather than the generator. It publishes `type: string` with a description and a base64 example.
+The media type is unchanged — still `application/json`, no multipart machinery.
+
+`MinLength(1)`/`MaxLength(41943040)` put the accepted size in the OpenAPI document and the
+generated validator applies them before the handler runs. They bound the ENCODED string in
+CHARACTERS, which is both what OpenAPI `maxLength` means and what the validator now compares —
+those were different quantities under `Bytes`, where goa applied the encoded figure to the
+decoded slice. `MinLength(1)` rejects an empty upload.
+
+The service decodes the string at the boundary (`base64.StdEncoding`, padded), and malformed
+base64 is a **400**, never a panic or a 500. The 30-MiB DECODED ceiling at Meta's documented
+single-image maximum is then enforced on `len(decoded)` in the handler (`maxCreativeStoredBytes`)
+and, for writers that never reach the handler, as a table CHECK on `byte_size`
+(migration `000029`). The encoded and decoded ceilings agree by construction:
+`base64.EncodedLen(31457280) == 41943040`. `MaxLength` does not bound the wire either: the
+validator sees the string only after the JSON decoder has read the entire body, so it alone
+leaves the server buffering whatever a caller chooses to send. The inbound bound is
 `constants.MaxRequestBodyBytes` (42 MiB), applied by `middleware.MaxBodyBytes` across every route
 and sized from this ceiling: base64 expands by 4/3, so a maximum-size 30-MiB image is 40 MiB of
 base64 exactly, plus the JSON envelope — which is why the cap is not 40 MiB, and why raising

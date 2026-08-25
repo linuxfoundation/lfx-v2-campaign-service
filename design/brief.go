@@ -853,67 +853,85 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Attribute("content_type", String, "Declared MIME type of the uploaded bytes. The bytes are re-sniffed server-side and must match; the stored mime_type is the verified one.", func() {
 				Enum("image/png", "image/jpeg")
 			})
-			// Goa Bytes -> []byte in Go, base64-encoded string in the JSON body. This is
-			// the transport choice: Goa-native, no multipart machinery. MinLength/MaxLength put the accepted size in the contract and in
-			// the OpenAPI document, and the generated validator applies them before the
-			// handler runs: MinLength(1) rejects an empty upload.
+			// The image rides in the JSON body as a base64 STRING, declared as one rather
+			// than as a Goa Bytes attribute. This is the transport choice: Goa-native, no
+			// multipart machinery, and a contract that describes the wire truthfully — see
+			// the attribute's own comment for why Bytes could not.
 			//
-			// MaxLength is NOT Meta's 30 MiB single-image limit, and must not be described
-			// as one. The figure below (41943040) is the base64-ENCODED ceiling, which is
-			// the unit the published schema measures. But the generated Go validator runs
-			// after goahttp.RequestDecoder's json.Decoder has read the body and
-			// base64-decoded it, so it compares that same figure against the DECODED slice
-			// (len(body.Bytes) in gen/http/.../server/types.go) — an effective ~40 MiB
-			// decoded bound. Neither end of it is the real stored-file ceiling: that is
-			// maxCreativeStoredBytes (30 MiB) in internal/service, and the handler is the
-			// only layer that enforces it. See the MaxLength comment below for why the
-			// declaration is stated in encoded units anyway.
-			//
-			// MaxLength also does not bound what the server reads off the WIRE, since the
-			// validator only ever sees a slice the decoder has already fully materialised.
-			// The inbound byte cap that does is constants.MaxRequestBodyBytes, applied by
-			// middleware.MaxBodyBytes in the server's handler chain; it is sized from the
-			// 30 MiB ceiling (see that constant) and must be raised alongside any increase
-			// here.
-			Attribute("bytes", Bytes, "Raw image bytes, base64-encoded in the JSON request body.", func() {
-				MinLength(1)
-				// MaxLength is published into the OpenAPI document as `maxLength` on the JSON
-				// STRING, not on the decoded bytes — Goa emits this attribute as
-				// `type: string, format: binary`. The two are not the same quantity: base64
-				// expands by 4/3, so a 30 MiB image is 41,943,040 encoded characters.
+			// MinLength/MaxLength put the accepted size in the contract and the OpenAPI
+			// document, and the generated validator applies them before the handler runs.
+			// They bound the ENCODED string in characters, which is the unit that string is
+			// measured in at every layer that sees it. The DECODED 30 MiB ceiling is a
+			// separate constraint on a separate quantity, enforced after decoding by the
+			// handler (maxCreativeStoredBytes) and by a table CHECK on byte_size
+			// (migration 000029).
+			Attribute("bytes", String, "The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded server-side; the decoded image must not exceed 30 MiB.", func() {
+				// STRING, not Bytes, and the reason is that the published contract must
+				// describe the wire truthfully.
 				//
-				// Declaring the DECODED ceiling here therefore published a constraint that
-				// rejects at ~22.5 MiB decoded (31,457,280 chars / 4 * 3) — well inside what
-				// this endpoint intends to accept and what the 42 MiB wire cap allows. A
-				// standards-compliant validator or a generated client would refuse an upload
-				// the server would have honoured, and the server-side generated validator would
-				// never disagree because it applies the same number to the decoded slice.
-				//
-				// So the wire bound is stated on the wire representation, in the unit that
-				// representation is measured in: base64 characters. The DECODED 30 MiB ceiling
-				// is a different constraint on a different quantity and is enforced in the
-				// handler (maxCreativeStoredBytes, the stored-file ceiling, alongside
-				// maxCreativeDecodedBytes, the pixel budget — both in internal/service), which
-				// is the only REQUEST layer that sees decoded bytes. The same 30 MiB bound is
-				// also a table CHECK (migration 000029), because byte_size is caller-supplied
-				// on the INSERT and a non-HTTP writer never reaches the handler.
-				MaxLength(41943040) // 4/3 * 30 MiB: the ENCODED ceiling, the unit this schema constrains
-				// KNOWN DOCUMENT DEFECT, and not fixable from this DSL: Goa emits this
-				// attribute as `type: string, format: binary`, while the transport actually
-				// carries a BASE64 string (encoding/json marshals a Go []byte that way, and
-				// the generated example is base64 accordingly). `format: binary` in OAS3
-				// means raw octets, so a strict generator reading the document can produce a
-				// client that sends something the server will not decode.
-				//
-				// It is unconditional in the generator, not a missing option here:
-				// goa v3.25.3 http/codegen/openapi/v3/types.go:179-180 sets
+				// Goa emits a Bytes attribute as `type: string, format: binary`, which in
+				// OAS3 means RAW OCTETS — while the transport here is application/json, so
+				// the field is unavoidably a base64 STRING. That mismatch is not cosmetic: a
+				// strict generator reading the document builds a client that sends raw bytes
+				// the server cannot decode. It is unconditional in the generator
+				// (goa v3.25.3 http/codegen/openapi/v3/types.go:179-180 sets
 				// `s.Format = "binary"` for every Bytes attribute, with no DSL or Meta
-				// override. Changing it would mean declaring this String and hand-rolling the
-				// base64 decode, giving up the generated validator and the typed payload —
-				// a worse trade than a wrong format annotation on one field.
+				// override), so the field TYPE has to change; the generator cannot be told
+				// otherwise. Declared as String it publishes `type: string`, with a
+				// description and an example that state base64 explicitly.
 				//
-				// The MaxLength above is stated in encoded characters precisely so the SIZE
-				// half of the contract is right even though the FORMAT half cannot be.
+				// It does NOT publish `format: byte` (OAS3's spelling of base64), and not for
+				// want of trying: goa v3.25.3 validates Format() against a fixed whitelist
+				// (expr.IsSupportedValidationFormat, attribute.go:999) with no byte/base64
+				// member, and `openapi:extension:` meta can only add x- prefixed keys, never
+				// `format`. A plain string is nonetheless HONEST where `format: binary` was
+				// WRONG: an unformatted string tells a generator "a string, see the
+				// description", which it passes through untouched, whereas `format: binary`
+				// actively instructs it to send raw octets the server cannot decode.
+				//
+				// What this gives up: the generated payload carries a string, so the service
+				// decodes it (decodeCreativeBytes in internal/service) instead of receiving a
+				// []byte. That decode is where malformed base64 becomes a 400 rather than a
+				// panic or a 500. The media type is unchanged — this is still
+				// application/json, not multipart.
+				// MinLength/MaxLength now count CHARACTERS of the base64 string, which is the
+				// unit this attribute is actually measured in — and it is the same unit the
+				// figure below was always stated in, so the number does not move.
+				//
+				// This is the change that makes the constraint mean what it says. As a Bytes
+				// attribute the generated validator applied 41943040 to the DECODED slice
+				// (`len(body.Bytes)`), an effective ~40 MiB decoded bound that matched neither
+				// the published schema's character count nor the real 30 MiB ceiling. As a
+				// String it applies to the encoded characters, exactly as the OpenAPI
+				// `maxLength` does, so server and schema now bound the same quantity.
+				//
+				// MinLength(1) keeps its intent: reject an empty upload. One base64 character
+				// is not decodable on its own, but the point of the bound is "not empty" — a
+				// too-short-to-decode value is refused by the decode with a 400, not silently
+				// accepted.
+				MinLength(1)
+				// 41,943,040 = base64.StdEncoding.EncodedLen(31457280): the ENCODED ceiling of
+				// the 30 MiB decoded stored-file limit. Base64 expands by exactly 4/3 with
+				// padding, so this is the largest legal upload expressed in the unit the wire
+				// carries.
+				//
+				// It bounds the STRING, and it is deliberately NOT the decoded ceiling. The
+				// DECODED 30 MiB bound is a different constraint on a different quantity and is
+				// enforced after decoding by the handler (maxCreativeStoredBytes in
+				// internal/service, alongside maxCreativeDecodedBytes, the pixel budget) and by
+				// a table CHECK on byte_size (migration 000029), since byte_size is
+				// caller-supplied on the INSERT and a non-HTTP writer never reaches the handler.
+				// Declaring the decoded figure here would publish a schema rejecting uploads at
+				// ~22.5 MiB decoded (31,457,280 chars / 4 * 3), well inside what this endpoint
+				// accepts.
+				//
+				// MaxLength does not bound what the server reads off the WIRE either: the
+				// validator sees the string only after the JSON decoder has read the whole
+				// body. The inbound cap that does is constants.MaxRequestBodyBytes (42 MiB),
+				// applied by middleware.MaxBodyBytes; it is sized from the 30 MiB ceiling and
+				// must be raised alongside any increase here.
+				MaxLength(41943040)
+				Example("aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=")
 			})
 			Required("project_id", "brief_id", "content_type", "bytes")
 		})
