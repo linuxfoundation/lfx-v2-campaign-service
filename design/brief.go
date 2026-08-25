@@ -844,16 +844,25 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// Goa Bytes -> []byte in Go, base64-encoded string in the JSON body. This is
 			// the transport choice: Goa-native, no multipart machinery. MinLength/MaxLength put the accepted size in the contract and in
 			// the OpenAPI document, and the generated validator applies them before the
-			// handler runs: MinLength(1) rejects an empty upload; MaxLength is a hard
-			// ceiling at Meta's documented single-image maximum.
+			// handler runs: MinLength(1) rejects an empty upload.
 			//
-			// These bound the DECODED image, and the generated validator sees that slice
-			// only AFTER goahttp.RequestDecoder's json.Decoder has read the whole request
-			// body and base64-decoded it — so MaxLength alone does not bound what the
-			// server reads off the wire. The inbound byte cap that does is
-			// constants.MaxRequestBodyBytes, applied by middleware.MaxBodyBytes in the
-			// server's handler chain; it is sized from this ceiling (see that constant) and
-			// must be raised alongside any increase here.
+			// MaxLength is NOT Meta's 30 MiB single-image limit, and must not be described
+			// as one. The figure below (41943040) is the base64-ENCODED ceiling, which is
+			// the unit the published schema measures. But the generated Go validator runs
+			// after goahttp.RequestDecoder's json.Decoder has read the body and
+			// base64-decoded it, so it compares that same figure against the DECODED slice
+			// (len(body.Bytes) in gen/http/.../server/types.go) — an effective ~40 MiB
+			// decoded bound. Neither end of it is the real stored-file ceiling: that is
+			// maxCreativeStoredBytes (30 MiB) in internal/service, and the handler is the
+			// only layer that enforces it. See the MaxLength comment below for why the
+			// declaration is stated in encoded units anyway.
+			//
+			// MaxLength also does not bound what the server reads off the WIRE, since the
+			// validator only ever sees a slice the decoder has already fully materialised.
+			// The inbound byte cap that does is constants.MaxRequestBodyBytes, applied by
+			// middleware.MaxBodyBytes in the server's handler chain; it is sized from the
+			// 30 MiB ceiling (see that constant) and must be raised alongside any increase
+			// here.
 			Attribute("bytes", Bytes, "Raw image bytes, base64-encoded in the JSON request body.", func() {
 				MinLength(1)
 				// MaxLength is published into the OpenAPI document as `maxLength` on the JSON

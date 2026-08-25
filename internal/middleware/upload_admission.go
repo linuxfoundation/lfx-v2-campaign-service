@@ -75,6 +75,23 @@ import (
 // quantities with different worst cases; treating this middleware as covering both would make
 // that reservation read as redundant.
 //
+// It does NOT account bodies sent to OTHER routes. isUploadRequest gates this middleware to the
+// creative-asset POST, so every other body-bearing endpoint decodes without taking a permit,
+// bounded only by MaxBodyBytes' per-request 42 MiB cap. That cap is per request, not aggregate,
+// and Goa decodes before endpoint authentication on those routes too, so concurrent oversized
+// JSON to any other POST can allocate pre-auth without touching this semaphore. The retention is
+// real rather than theoretical: encoding/json materialises a string field in full before the
+// generated MaxLength validator ever runs, so a route whose largest declared field is 8000
+// characters can still hold ~42 MiB from one request.
+//
+// That is a deliberate scope boundary, not an oversight, and it is stated so the "pre-auth
+// memory protection" claim above is not read as covering the whole server. This control exists
+// for the one route whose CONTRACT admits a body three orders of magnitude larger than any
+// other; extending it to every route means route-specific caps and weights, and a far smaller
+// global body cap is the cheaper lever for the rest. Anyone tightening this should change
+// MaxRequestBodyBytes (or make it per-route) rather than widening this middleware, because the
+// exposure on other routes is the CAP being generous, not the permit being absent.
+//
 // It does NOT account memory that an unrelated code path later allocates from bytes that were
 // stored earlier. Outbound dispatch reads assets back out of the database, but that happens in a
 // dispatch worker, on bytes fetched from Postgres, long after the HTTP request that stored them
