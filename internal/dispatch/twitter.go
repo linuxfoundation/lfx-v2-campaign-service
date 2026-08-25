@@ -51,12 +51,72 @@ type twitterConfig struct {
 // TwitterDispatcher creates X (Twitter) campaigns for the orchestrator.
 type TwitterDispatcher struct {
 	creds *credsSource
-	opts  []twitter.Option
+	// clients caches the built *twitter.Client per connection, as GoogleAdsDispatcher,
+	// RedditDispatcher and MicrosoftDispatcher do. Entries are validated against the same
+	// row id and version as the credential, so a rotated credential cannot be served
+	// through a stale client.
+	//
+	// The benefit here is NOT a saved token exchange: X signs every request with stored
+	// OAuth 1.0a credentials and mints nothing at construction, so unlike Google Ads and
+	// Reddit there is no token round-trip to collapse. Sharing is wired because the client
+	// now owns the WRITE PACER, and that only bounds the rate if callers share it: X
+	// enforces 1 write/sec per ACCOUNT, so two clients for one account each pace themselves
+	// and together issue ~2 writes/sec. Reuse makes the budget enforceable rather than
+	// merely cheaper.
+	//
+	// Sharing one instance across concurrent callers is safe for this client specifically:
+	// every field is written once at construction, and the only post-construction state is
+	// the pacer's nextWrite, written under the client's own writeMu (see twitter.Client's
+	// pace). No method stores per-call state on the receiver.
+	clients *clientCache
+	opts    []twitter.Option
 }
 
 // NewTwitterDispatcher builds the adapter from the connection repo + encryptor.
 func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter.Option) *TwitterDispatcher {
-	return &TwitterDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+}
+
+// cachedTwitterClient returns the client for this connection, building it only when there is
+// no live entry for the connection's current (row id, version).
+//
+// Every validation the callers perform still runs on every call against the FRESH row; only
+// the construction is cached, so a connection that has gone inactive or lost its account id
+// is refused by the caller exactly as before rather than being served a live client.
+func (d *TwitterDispatcher) cachedTwitterClient(projectID string, platform model.Provider, res *resolved, creds twitterCreds, accountID, fundingID string) *twitter.Client {
+	// ONE construction, called from both the cache closure and the fallback below, matching
+	// cachedRedditClient's and cachedMicrosoftClient's shape. Written twice, the two copies
+	// can drift: a later AccountConfig change has to be made in both, and the compiler
+	// cannot notice if it is not.
+	build := func() *twitter.Client {
+		return twitter.NewClient(
+			twitter.Credentials{
+				ConsumerKey:       creds.ConsumerKey,
+				ConsumerSecret:    creds.ConsumerSecret,
+				AccessToken:       creds.AccessToken,
+				AccessTokenSecret: creds.AccessTokenSecret,
+			},
+			twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: fundingID},
+			d.opts...,
+		)
+	}
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return build(), nil
+	})
+	if err != nil {
+		// buildOnce only surfaces an error the build closure returned, and this one returns
+		// none. Rebuild rather than propagate, so the dispatch path cannot fail on a cache
+		// bookkeeping error.
+		return build()
+	}
+	client, isClient := built.(*twitter.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return build()
+	}
+	return client
 }
 
 // Dispatch implements service.PlatformDispatcher for X (Twitter).
@@ -118,16 +178,10 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		TweetID:         cfg.TweetID,
 	}
 
-	client := twitter.NewClient(
-		twitter.Credentials{
-			ConsumerKey:       creds.ConsumerKey,
-			ConsumerSecret:    creds.ConsumerSecret,
-			AccessToken:       creds.AccessToken,
-			AccessTokenSecret: creds.AccessTokenSecret,
-		},
-		twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: fundingID},
-		d.opts...,
-	)
+	// Built through the client cache, so concurrent dispatches for this account share ONE
+	// client and therefore ONE write pacer — which is what keeps the aggregate write rate
+	// inside X's 1/sec budget. See cachedTwitterClient.
+	client := d.cachedTwitterClient(brief.ProjectID, platform, res, creds, accountID, fundingID)
 
 	// Same claim contract as the other adapters: a client (nil, err) means nothing was
 	// (or may have been) created → notCreated releases the claim; a non-nil partial
@@ -249,21 +303,17 @@ func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID 
 	if err != nil {
 		return nil, err
 	}
-	return twitter.NewClient(
-		twitter.Credentials{
-			ConsumerKey:       creds.ConsumerKey,
-			ConsumerSecret:    creds.ConsumerSecret,
-			AccessToken:       creds.AccessToken,
-			AccessTokenSecret: creds.AccessTokenSecret,
-		},
-		// FundingInstrumentID is populated for consistency with the create path, but is INERT
-		// on the toggle path: UpdateCampaignAndChildrenStatus only PUTs entity_status on
-		// entities that already exist, so the field never reaches the wire here. It is
-		// deliberately NOT required by validateTwitterConnection for the same reason —
-		// demanding a create-time field would refuse an otherwise-valid pause.
-		twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: strings.TrimSpace(res.providerConfig["funding_instrument_id"])},
-		d.opts...,
-	), nil
+	// FundingInstrumentID is populated for consistency with the create path, but is INERT
+	// on the toggle path: UpdateCampaignAndChildrenStatus only PUTs entity_status on
+	// entities that already exist, so the field never reaches the wire here. It is
+	// deliberately NOT required by validateTwitterConnection for the same reason —
+	// demanding a create-time field would refuse an otherwise-valid pause.
+	//
+	// Shares the create path's cache entry: same (project, provider, row id, version) key and
+	// the same AccountConfig, so a toggle and a dispatch for one connection reuse ONE client
+	// and one write pacer rather than pacing independently against the same account budget.
+	return d.cachedTwitterClient(projectID, platform, res, creds, accountID,
+		strings.TrimSpace(res.providerConfig["funding_instrument_id"])), nil
 }
 
 // twitterRunStatus maps the service's run-state vocabulary to X's entity_status.

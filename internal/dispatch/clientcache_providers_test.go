@@ -20,6 +20,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
 // This file covers the LFXV2-3033 extension of clientCache to Reddit and Microsoft. Google Ads
@@ -867,5 +868,178 @@ func TestClientCache_MicrosoftConcurrentDispatchSharesOneGeoCache(t *testing.T) 
 	}
 	if n := tokenHits.Load(); n != 1 {
 		t.Errorf("token endpoint hit %d times across %d concurrent dispatches, want 1", n, callers)
+	}
+}
+
+// twitterCacheConn is redditCacheConn for X (Twitter) Ads.
+func twitterCacheConn(id, creds, accountID string, version int64) *model.Connection {
+	return &model.Connection{
+		ID:                   id,
+		Version:              version,
+		Provider:             model.ProviderTwitterAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		ProviderConfig:       map[string]string{"funding_instrument_id": "fi1"},
+		Status:               model.StatusActive,
+	}
+}
+
+// twitterCacheCampaign is the persisted campaign the toggle/metrics resolve path reads the
+// creation account from.
+func twitterCacheCampaign(accountID string) *model.Campaign {
+	return &model.Campaign{
+		Platform:           model.ProviderTwitterAds,
+		PlatformCampaignID: "cmp1",
+		// The creation account lives in the untagged Result blob (see
+		// twitterCreationAccountID), not in a column.
+		Result: json.RawMessage(`{"CampaignID":"cmp1","LineItemID":"li1","AccountID":"` + accountID + `"}`),
+	}
+}
+
+// TestClientCache_TwitterReusesClient pins the reuse leg of LFXV2-3033 on the X path: repeated
+// resolves for the same unchanged connection hand back the SAME client.
+//
+// The stake here is NOT a saved token exchange — X signs each request with stored OAuth 1.0a
+// credentials and mints nothing at construction. It is the WRITE PACER. twitter.Client bounds
+// writes to 1/sec on the instance, so that budget is only enforced if the callers working
+// against an account share one instance; a client rebuilt per resolve gives each caller a fresh
+// pacer and the aggregate rate scales with the number of callers.
+func TestClientCache_TwitterReusesClient(t *testing.T) {
+	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1)}
+	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0))
+
+	var first *twitter.Client
+	for i := range 5 {
+		c, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+			twitterCacheCampaign("acc1"))
+		if err != nil {
+			t.Fatalf("resolve #%d: %v", i, err)
+		}
+		if i == 0 {
+			first = c
+			continue
+		}
+		if c != first {
+			t.Fatalf("resolve #%d returned a NEW client for an unchanged connection: the client "+
+				"cache is not being consulted, so concurrent callers get independent write "+
+				"pacers and together exceed X's 1 write/sec account budget", i)
+		}
+	}
+}
+
+// TestClientCache_TwitterRotationForcesRebuild is the invalidation contract on the X path: a
+// client built from credential version N must not survive a bump to N+1. A cached client holds
+// the OAuth 1.0a credential it signs every request with, so serving it past a rotation is
+// exactly as dangerous as serving the superseded credential itself.
+func TestClientCache_TwitterRotationForcesRebuild(t *testing.T) {
+	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1)}
+	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0))
+
+	c1, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCacheCampaign("acc1"))
+	if err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+
+	// Rotate on the SAME row: every mutating statement in ConnectionRepo bumps version.
+	repo.row = twitterCacheConn("conn-1",
+		`{"ConsumerKey":"ck2","ConsumerSecret":"cs2","AccessToken":"at2","AccessTokenSecret":"ats2"}`,
+		"acc1", 2)
+
+	c2, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCacheCampaign("acc1"))
+	if err != nil {
+		t.Fatalf("post-rotation resolve: %v", err)
+	}
+	if c2 == c1 {
+		t.Fatal("the pre-rotation client was served from cache after the credential version was " +
+			"bumped: it still signs requests with the superseded OAuth 1.0a credential, so the " +
+			"rotation did not actually take effect")
+	}
+
+	// A reconnect is the case version alone cannot catch: Delete soft-deletes and Create INSERTs
+	// a fresh row, so a different row can present at the SAME key carrying a version already
+	// seen. The credential and account id are held CONSTANT and the version MATCHES the cached
+	// entry's, making the row id the sole discriminator — the state the connID check exists for.
+	repo.row = twitterCacheConn("conn-2", goodTwitterCreds, "acc1", 2)
+
+	c3, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCacheCampaign("acc1"))
+	if err != nil {
+		t.Fatalf("post-reconnect resolve: %v", err)
+	}
+	if c3 == c2 {
+		t.Fatal("a reconnect at the same version was served the previous row's client: only the " +
+			"row id separates a reconnect from the row it replaced")
+	}
+}
+
+// TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced covers the burst a warm-key test
+// cannot see: N callers that ALL miss must build ONE client, not N. Without singleflight
+// coalescing a cold key behaves like no cache at all under a dispatch burst — and for X that
+// means N independent write pacers at the exact moment concurrency is highest.
+func TestClientCache_TwitterColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
+	const callers = 16
+	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1), barrier: callers}
+	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0))
+
+	var mu sync.Mutex
+	seen := map[*twitter.Client]int{}
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+				twitterCacheCampaign("acc1"))
+			if err != nil {
+				t.Errorf("concurrent resolve: %v", err)
+				return
+			}
+			mu.Lock()
+			seen[c]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if len(seen) != 1 {
+		t.Errorf("%d concurrent cold-key resolves produced %d distinct clients, want 1 — each "+
+			"carries its own write pacer, so the account's 1 write/sec budget is multiplied by "+
+			"the burst size", callers, len(seen))
+	}
+}
+
+// TestClientCache_TwitterDispatchUsesTheCachedClient pins the CREATE path specifically. The
+// toggle path resolving through the cache does not imply Dispatch does: Google Ads is wired on
+// its toggle/metrics entry point while GoogleAdsDispatcher.Dispatch still builds inline (see
+// TestClientCache_GoogleAdsDispatchBypassesTheCache). Dispatch is the burst path for X, so it is
+// the one that most needs the shared pacer.
+func TestClientCache_TwitterDispatchUsesTheCachedClient(t *testing.T) {
+	repo := &syncConnReader{row: twitterCacheConn("conn-1", goodTwitterCreds, "acc1", 1)}
+	d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithWriteDelay(0))
+
+	// Prime the cache through the toggle-path resolver, then dispatch. If Dispatch consults the
+	// cache, no new entry appears; if it builds inline, the cache is untouched by it and a
+	// second distinct client exists.
+	primed, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCacheCampaign("acc1"))
+	if err != nil {
+		t.Fatalf("priming resolve: %v", err)
+	}
+
+	// Dispatch will fail at the HTTP layer (no server), which is fine: the client has already
+	// been resolved by then, and that is what is under test.
+	_, _ = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		json.RawMessage(`{"budgetAmount":100,"startDate":"2999-01-01","endDate":"2999-01-02"}`))
+
+	after, err := d.resolveTwitterClient(context.Background(), "cncf", model.ProviderTwitterAds,
+		twitterCacheCampaign("acc1"))
+	if err != nil {
+		t.Fatalf("post-dispatch resolve: %v", err)
+	}
+	if after != primed {
+		t.Error("Dispatch replaced the cached client: the create path is not going through " +
+			"cachedTwitterClient, so a dispatch burst gets one write pacer per campaign")
 	}
 }

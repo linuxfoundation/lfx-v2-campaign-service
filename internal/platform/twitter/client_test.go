@@ -4195,3 +4195,106 @@ func TestFindByNameEmptyArrayDataIsGenuineNotFound(t *testing.T) {
 		t.Errorf("id = %q, want empty", id)
 	}
 }
+
+// TestPaceBoundsWriteRateAcrossConcurrentCallers is the regression test for
+// LFXV2-3033: the write pacing must bound the rate PER CLIENT across all
+// callers, not per call site.
+//
+// It is deliberately concurrent. The pre-fix implementation slept writeDelay
+// unconditionally before each write, which passes any sequential test while
+// letting N goroutines sharing a client sleep in parallel and then issue their
+// writes at the same instant. Only overlapping callers can distinguish the two,
+// so this test runs them.
+//
+// The clock is virtual: timeFn reads a monotonically advancing fake, and the
+// real sleepCtx wait is kept tiny by using a small writeDelay. What is asserted
+// is the SPACING pace hands out, which is clock-driven and therefore exact,
+// rather than wall-clock timing that would be flaky under -race.
+func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
+	const (
+		callers = 8
+		delay   = 5 * time.Millisecond
+	)
+
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(delay))
+
+	// A virtual clock driven off a real monotonic base. Reads are serialized so
+	// -race sees no data race on the clock itself.
+	var clockMu sync.Mutex
+	base := time.Unix(1600000000, 0)
+	start := time.Now()
+	c.timeFn = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return base.Add(time.Since(start))
+	}
+
+	// Record the instant each caller is CLEARED to write, on the same clock pace
+	// reserves against.
+	var mu sync.Mutex
+	cleared := make([]time.Time, 0, callers)
+
+	var wg sync.WaitGroup
+	ready := make(chan struct{})
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-ready // maximize overlap: all callers enter pace together
+			if err := c.pace(context.Background()); err != nil {
+				t.Errorf("pace returned error: %v", err)
+				return
+			}
+			now := c.timeFn()
+			mu.Lock()
+			cleared = append(cleared, now)
+			mu.Unlock()
+		}()
+	}
+	close(ready)
+	wg.Wait()
+
+	if len(cleared) != callers {
+		t.Fatalf("got %d cleared writes, want %d", len(cleared), callers)
+	}
+	sort.Slice(cleared, func(i, j int) bool { return cleared[i].Before(cleared[j]) })
+
+	// Every ADJACENT pair must be at least writeDelay apart. A per-call-site
+	// sleep yields gaps near zero here because the callers wake together.
+	for i := 1; i < len(cleared); i++ {
+		gap := cleared[i].Sub(cleared[i-1])
+		if gap < delay {
+			t.Errorf("writes %d and %d were %v apart; want >= %v (write rate exceeded X's 1/sec budget)",
+				i-1, i, gap, delay)
+		}
+	}
+
+	// And the whole burst must span at least (callers-1) delays: N writes cannot
+	// be squeezed into fewer slots than the rate allows.
+	if span := cleared[len(cleared)-1].Sub(cleared[0]); span < time.Duration(callers-1)*delay {
+		t.Errorf("burst of %d writes spanned %v; want >= %v", callers, span, time.Duration(callers-1)*delay)
+	}
+}
+
+// TestPaceCancellationDoesNotConsumeASlot verifies a caller cancelled while
+// waiting does not advance the reservation. If it did, a cancelled dispatch
+// would push the next real writer back by a slot no write ever used.
+func TestPaceCancellationDoesNotConsumeASlot(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(time.Hour))
+	c.timeFn = func() time.Time { return time.Unix(1600000000, 0) }
+
+	// First write goes immediately and reserves the next slot an hour out.
+	if err := c.pace(context.Background()); err != nil {
+		t.Fatalf("first pace: %v", err)
+	}
+	reserved := c.nextWrite
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.pace(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pace with cancelled ctx = %v; want context.Canceled", err)
+	}
+	if !c.nextWrite.Equal(reserved) {
+		t.Errorf("cancelled caller advanced the reservation from %v to %v; want unchanged", reserved, c.nextWrite)
+	}
+}

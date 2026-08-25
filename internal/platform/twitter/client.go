@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -109,8 +110,21 @@ type AccountConfig struct {
 	FundingInstrumentID string
 }
 
-// Client is an X Ads API client. It is safe for sequential use; the X Ads API
-// enforces a 1 write-request-per-second limit which this client honors.
+// Client is an X Ads API client. It is safe for concurrent use by multiple
+// goroutines, and one instance SHOULD be shared by every caller working against
+// the same X ads account.
+//
+// Sharing is not merely permitted, it is what makes the pacing correct. The X Ads
+// API enforces a 1 write-request-per-second limit PER ACCOUNT, and this client
+// honors it by serializing its own write requests behind writeMu and spacing them
+// writeDelay apart (see pace). That budget is a property of the ACCOUNT, so it can
+// only be enforced by the object every caller for that account shares: two clients
+// built for one account each pace themselves independently and together issue ~2
+// writes/sec, breaching the documented limit. Reads are NOT rate-limited by X and
+// are deliberately left unserialized.
+//
+// The pacing bound is per-CLIENT, and therefore per-process. It does not span
+// replicas; see the note at pace for what that does and does not cover.
 type Client struct {
 	creds   Credentials
 	account AccountConfig
@@ -125,10 +139,28 @@ type Client struct {
 	nonceFn func() string
 	timeFn  func() time.Time
 
-	// writeDelay paces sequential write requests within a single dispatch
-	// (Twitter allows ~1 write/sec). Injectable so tests can set it to 0 rather
-	// than incurring real per-request sleeps; defaults to the writeDelay const.
+	// writeDelay is the minimum spacing between two write requests issued through
+	// this client (Twitter allows ~1 write/sec). Injectable so tests can set it to
+	// 0 rather than incurring real per-request sleeps; defaults to the writeDelay
+	// const. Written once at construction and only read afterwards.
 	writeDelay time.Duration
+
+	// writeMu and nextWrite implement the shared write pacer. nextWrite is the
+	// earliest instant at which the next write may be issued; pace holds writeMu
+	// across its wait so that concurrent writers queue rather than all observing
+	// the same deadline and waking together.
+	//
+	// The state is what makes the delay a RATE bound instead of a per-call-site
+	// sleep. The previous implementation slept writeDelay unconditionally before
+	// each write, which bounds the rate only when one goroutine owns the client
+	// for the whole flow: N concurrent dispatches sharing a client each slept in
+	// parallel and then issued their writes at the same instant, so the observed
+	// rate was N/sec while every individual call still "paced". Tracking the next
+	// permitted instant on the client makes the bound hold for any number of
+	// concurrent callers, which is the precondition for sharing one client through
+	// the dispatch client cache.
+	writeMu   sync.Mutex
+	nextWrite time.Time
 }
 
 // Option customizes a Client at construction time.
@@ -1065,14 +1097,67 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 	return 0
 }
 
-// pace waits c.writeDelay between sequential write requests within a single
-// dispatch, honoring context cancellation. A non-positive writeDelay disables
-// the sleep (used by tests).
+// pace reserves the next write slot on this client, blocking until at least
+// writeDelay has elapsed since the previously reserved write, and honoring
+// context cancellation. A non-positive writeDelay disables pacing entirely
+// (used by tests).
+//
+// The bound is on the CLIENT, not on the call site: every write issued through
+// this instance -- from any goroutine -- passes through here, so N concurrent
+// callers sharing one client are spaced writeDelay apart in aggregate rather than
+// each sleeping in parallel and then firing together. That is what lets the
+// dispatch client cache hand one instance to concurrent dispatches for the same
+// account without exceeding X's documented 1 write/sec.
+//
+// writeMu is held ACROSS the wait, which serializes writers. That is intentional
+// and not merely an implementation shortcut: releasing the lock while waiting
+// would let every queued caller read the same nextWrite, wait to the same
+// instant, and issue simultaneously -- the exact failure being fixed. Waiting
+// under the lock makes each caller reserve a distinct slot. Only WRITES take this
+// path; reads (request/doRequest via the GET/list helpers) never call pace and
+// remain fully concurrent, since X does not rate-limit them.
+//
+// SCOPE -- one process. This bounds writes through THIS client instance, which
+// (given the shared client cache) is every write this replica makes for the
+// account. It does NOT coordinate across replicas: two pods dispatching for the
+// same account can still exceed the account-wide limit, which needs shared
+// cross-replica coordination (a distributed limiter, or the orchestrator
+// serializing per account) tracked by LFXV2-2665 (durable dispatch). The 429
+// exponential-backoff retry in doRequestAbs remains the backstop for that case.
+//
+// The clock is c.timeFn, so tests drive pacing deterministically rather than by
+// sleeping in real time.
 func (c *Client) pace(ctx context.Context) error {
 	if c.writeDelay <= 0 {
 		return nil
 	}
-	return sleepCtx(ctx, c.writeDelay)
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	now := c.timeFn()
+	// The zero value means no write has been issued yet: the first write on a fresh
+	// client goes immediately rather than paying a delay for a slot nobody used.
+	if !c.nextWrite.IsZero() {
+		if wait := c.nextWrite.Sub(now); wait > 0 {
+			if err := sleepCtx(ctx, wait); err != nil {
+				// Cancelled while waiting: no write is issued, so do NOT advance the
+				// reservation. Advancing here would make a cancelled caller push the
+				// next real writer back by a slot it never used.
+				return err
+			}
+			now = c.timeFn()
+		}
+	}
+	// Reserve this caller's slot from the later of "now" and the previous
+	// reservation, so a burst that arrives while the pacer is idle cannot collapse
+	// into the same instant.
+	if c.nextWrite.After(now) {
+		c.nextWrite = c.nextWrite.Add(c.writeDelay)
+	} else {
+		c.nextWrite = now.Add(c.writeDelay)
+	}
+	return nil
 }
 
 // sleepCtx waits for d, honoring context cancellation.
@@ -1687,17 +1772,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"daily_budget_amount_local_micro": strconv.FormatInt(toMicroCurrency(in.BudgetUsd), 10),
 			"entity_status":                   "PAUSED",
 		}
-		// These inter-request sleeps pace THIS dispatch's own sequential writes
-		// (campaign -> line item -> promoted tweet) to stay under X's per-second
-		// write rate. They do NOT enforce X's account-wide write limit across
-		// concurrent or replicated dispatches: this service dispatches jobs async
-		// (possibly across replicas), and separately-constructed clients in
-		// different goroutines/processes can wake and POST at the same instant.
-		// Correct account-wide limiting needs shared cross-replica coordination
-		// (a distributed limiter or the orchestrator serializing per account),
-		// which is out of scope for this stateless per-request client and is
-		// tracked by LFXV2-2665 (durable dispatch). If the account limit is hit
-		// anyway, the 429 exponential-backoff retry in doRequest is the backstop.
+		// pace bounds writes on the CLIENT, so this covers both this dispatch's own
+		// sequential writes (campaign -> line item -> promoted tweet) AND concurrent
+		// dispatches sharing the instance handed out by the dispatch client cache.
+		// It does NOT span replicas: separate pods can still POST at the same
+		// instant, which needs cross-replica coordination tracked by LFXV2-2665
+		// (durable dispatch). The 429 exponential-backoff retry in doRequestAbs
+		// remains the backstop if the account limit is hit anyway. See pace.
 		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}

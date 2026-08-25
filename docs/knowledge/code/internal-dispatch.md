@@ -1273,8 +1273,8 @@ poison a project-owned entry.
 **The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
 platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
 the token however cheap the credential lookup became — measured at five token-endpoint hits across
-five resolves. `GoogleAdsDispatcher`, `RedditDispatcher` and `MicrosoftDispatcher` therefore also
-cache the built client (`clientCache`), keyed and validated by the same (row id, version) identity
+five resolves. `GoogleAdsDispatcher`, `RedditDispatcher`, `MicrosoftDispatcher` and `TwitterDispatcher` therefore
+also cache the built client (`clientCache`), keyed and validated by the same (row id, version) identity
 as the credential, so a rotation invalidates the client in the same step. A client is exactly as
 stale as the credential it was built from; validating it any more loosely would let a revoked
 credential keep authenticating inside a cached token. Discovery paths are deliberately excluded —
@@ -1302,9 +1302,9 @@ the cached toggle/metrics path, and directly through `resolveOwnedGoogleAdsClien
 adoption bypass), and `resolveGoogleAdsDiscoveryClient` (bypass).
 
 **Sharing one client instance across concurrent callers is a per-client property, verified per
-provider rather than inherited.** All three cached clients guard everything they write after
-construction with a mutex and stash no per-call state on the receiver, so the instance is safe to
-share. For Google Ads and Reddit that is the token cache plus its in-flight refresh handle, under
+provider rather than inherited.** Every cached client guards whatever it writes after construction
+with a mutex and stashes no per-call state on the receiver, so the instance is safe to share. For
+X that state is only the write pacer's next-slot instant, under the client's own `writeMu`. For Google Ads and Reddit that is the token cache plus its in-flight refresh handle, under
 one mutex. Microsoft has TWO locks and the count matters: `tokenMu` for the token cache and its
 refresh handle, and the separate `geo.mu` for the parsed geo-locations snapshot and its in-flight
 fetch — separate because a token refresh is a small JSON round trip while a locations refresh is a
@@ -1321,14 +1321,33 @@ per-customer path is `accountsInfoForCustomer`, whose `ListAccounts` client is b
 `AccountConfig` and deliberately bypasses this cache. A future provider whose client stashes
 MUTABLE per-call state must NOT be wired to this cache without changing the client first.
 
-**LinkedIn, Meta and X/Twitter are not yet wired** — a deliberate partial rollout under LFXV2-3033,
-deferred only because open PRs owned those files at the time (cs#148, cs#152, cs#158). They still
-rebuild a client per resolve — but "rebuilds a client" is not "re-mints a token", and none of the
-three re-mints one: Meta and LinkedIn are handed an already-minted bearer token and do no exchange
-at construction, and X signs each request with stored OAuth 1.0a credentials. The win for them is
-allocation, not a saved token round-trip. X additionally documents its client as safe for
-SEQUENTIAL use only, so it must not be shared across concurrent callers on the strength of this
-pattern; each provider needs its own safety and benefit analysis before wiring.
+**LinkedIn and Meta are not yet wired** — a deliberate partial rollout under LFXV2-3033, deferred
+only because open PRs owned those files at the time (cs#148, cs#152). They still rebuild a client
+per resolve — but "rebuilds a client" is not "re-mints a token", and neither re-mints one: both are
+handed an already-minted bearer token and do no exchange at construction. The win for them is
+allocation, not a saved token round-trip, and each needs its own safety and benefit analysis before
+wiring.
+
+**X/Twitter IS now wired, and its entry corrects what this section used to claim.** The old wording
+said X "documents its client as safe for SEQUENTIAL use only, so it must not be shared across
+concurrent callers" — which reads as memory unsafety, and is the reason the wiring was deferred for
+weeks. It was a misreading of the package doc. `twitter.Client` had NO mutable receiver state:
+every field was written once at construction and only read afterwards, and the package contained no
+mutex because the struct never needed one. The real constraint was a RATE LIMIT — X enforces 1
+write-request/sec per ACCOUNT — and the hazard ran the OPPOSITE way to what the note implied. NOT
+sharing was the unsafe option: `pace` was a blind per-call sleep, so two concurrent dispatches
+holding separate clients each paced themselves and together issued ~2 writes/sec against a
+money-spending path. `twitter.Client.pace` now reserves write slots under the client's own
+`writeMu`, bounding the rate per instance, which makes SHARING the precondition for the budget
+being enforceable rather than a risk. Reads never call `pace` and stay concurrent, since X does not
+rate-limit them. X still mints no token — it signs each request with stored OAuth 1.0a credentials
+— so the benefit is the shared pacer, not a saved round-trip. The bound is per-process and does not
+span replicas; cross-replica coordination remains LFXV2-2665. `TwitterDispatcher`'s create and
+toggle paths both resolve through `cachedTwitterClient` and share one entry; its `ListAccounts`
+discovery client keeps a ZERO `AccountConfig` and bypasses the cache for the same reason
+Microsoft's does, and being read-only it issues no write and needs no share of the write budget.
+The pacing bound is pinned by a CONCURRENT test — a sequential one cannot distinguish a per-call
+sleep from a rate bound, which is precisely how the original defect survived.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
