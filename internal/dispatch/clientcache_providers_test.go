@@ -1173,20 +1173,29 @@ func TestClientCache_MetaColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 }
 
 // TestClientCache_LinkedInColdKeyConcurrentBuildsAreCoalesced is the Meta cold-key burst test on
-// the LinkedIn path. It matters more here: LinkedIn's client owns MUTABLE token state, so this is
-// the -race exercise proving concurrent callers may share one instance — the safety argument the
-// wiring depends on (every mutable field written under c.tokenMu, never held across the network
-// call). A coalescing failure also costs more, because a refresh-capable connection mints a token
-// on each new client's first request.
+// the LinkedIn path: it pins that a cold key under a burst yields ONE shared client, and a
+// coalescing failure costs more here than for Meta, because a refresh-capable connection mints a
+// token on each new client's first request.
+//
+// SCOPE, stated precisely because the obvious reading is wrong: this does NOT exercise the
+// mutable token state. goodLinkedInCreds is bearer-only, so Credentials.CanRefresh() is false and
+// the client never writes c.accessToken/c.tokenExpiry/c.inflight — -race here observes concurrent
+// READS of an effectively immutable client, which is real but weaker than it looks. Driving the
+// write path from this package is not possible today: the token endpoint is reachable only via an
+// unexported option, so a refresh-capable fixture here would still never exchange. The mutex
+// discipline that makes SHARING safe is covered where it can be: internal/platform/linkedin's own
+// token tests (single-flight coalescing, rotation, invalidation) run against a real token server.
+// Do not read this test as that evidence.
 func TestClientCache_LinkedInColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
 	const callers = 16
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if strings.Contains(r.URL.Path, "adAnalytics") {
+		switch {
+		case strings.Contains(r.URL.Path, "adAnalytics"):
 			_, _ = io.WriteString(w, `{"elements":[]}`)
-			return
+		default:
+			_, _ = io.WriteString(w, `{}`)
 		}
-		_, _ = io.WriteString(w, `{}`)
 	}))
 	t.Cleanup(srv.Close)
 

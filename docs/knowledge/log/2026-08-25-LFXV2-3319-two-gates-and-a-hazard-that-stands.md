@@ -154,3 +154,32 @@ general lesson is the one worth keeping: **copying a sibling test's shape does n
 binding.** The Reddit test builds its client inside the same call that resolves, so its barrier
 lands in the right window; the Meta and LinkedIn helpers are invoked separately, and the same
 shape lands in the wrong one.
+
+## A test comment that described coverage the fixture could not provide
+
+The LinkedIn cold-key test claimed to be "the -race exercise proving concurrent callers may share
+one instance", naming the mutable token state as what it exercised. It does not.
+`goodLinkedInCreds` is bearer-only, so `Credentials.CanRefresh()` is false and the client never
+writes `c.accessToken`, `c.tokenExpiry` or `c.inflight` — `-race` was observing concurrent READS of
+an effectively immutable object.
+
+Swapping in a refresh-capable fixture does not fix it either, and finding out why is the useful
+part: the token endpoint is reachable only through an unexported option, so a refresh-capable
+client constructed from `internal/dispatch` would still never exchange. The mutex discipline is
+genuinely covered — in `internal/platform/linkedin`'s own token tests, which run against a real
+token server — so the honest fix was to SCOPE the claim: the test comment now states what the
+fixture proves, what it does not, why the write path is unreachable from this package, and where
+the real evidence lives.
+
+This is the same failure as the cold-key mutation above wearing different clothes. There the test
+agreed with itself; here the COMMENT agreed with the test's name rather than its fixture. Both
+would have shipped as coverage a later reader would have trusted.
+
+Caching also falsified three lifetime rationales in `internal/platform/linkedin` that no test could
+catch, because they justify a mechanism rather than describe one: the package-scope token-expiry
+dedup map is justified by "a fresh Client per operation". That is now true only of `Dispatch`. The
+mechanism survives — package scope must cover the SHORTEST-lived caller, and the high-volume
+brief-level fan-out still discards per-client state — but the reason had to be re-derived rather
+than left standing on a premise this change removed. A stale call-site count ("four call sites")
+in `token_expiry_warning_test.go` was deleted rather than corrected: the wiring changed it to
+three and nothing failed, which is the definition of a number no reader should rely on.

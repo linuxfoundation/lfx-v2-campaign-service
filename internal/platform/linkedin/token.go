@@ -566,8 +566,13 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // per operation.
 //
 // It has to live at package scope, and that is forced by the client's lifetime rather
-// than chosen: internal/dispatch/linkedin.go constructs a Client PER OPERATION, so any
-// state held on the Client is discarded before the next operation could consult it.
+// than chosen: internal/dispatch/linkedin.go constructs a Client PER DISPATCH, so any
+// state held on the Client is discarded before the next dispatch could consult it.
+// Since LFXV2-3033 the toggle and metrics paths DO reuse a cached client per connection
+// row+version, so on those paths per-client state would survive — but package scope is
+// still required, because the dispatch path (the high-volume one this dedup exists for,
+// via brief-level fan-out) still discards it, and because a cached client is itself
+// discarded on rotation or TTL expiry. Scope must cover the shortest-lived caller.
 // The map is small and bounded by the number of distinct LinkedIn connections a
 // deployment has, and entries are never removed — a connection that has warned once
 // has nothing further to say until the process restarts, which is exactly the cadence
@@ -615,9 +620,12 @@ func resetRefreshExpiryWarnStateForTest() {
 // the connection label and a whole-day count: never a token.
 //
 // ONCE PER PROCESS PER CONNECTION, not once per evaluation. The window is 30 days wide
-// and every refresh-capable operation builds a fresh Client that exchanges immediately
-// (see accessTokenValue), so an un-deduped warning fires on every operation for a
-// MONTH — a brief-level fan-out alone emits one per campaign. Thousands of identical
+// and every refresh-capable DISPATCH builds a fresh Client that exchanges immediately
+// (see accessTokenValue), so an un-deduped warning fires on every dispatch for a
+// MONTH — a brief-level fan-out alone emits one per campaign. (Toggle and metrics reuse
+// a cached client since LFXV2-3033, so they exchange once per cached client rather than
+// once per call; that reduces the volume on those two paths but not on the fan-out this
+// dedup was sized for.) Thousands of identical
 // lines is not a louder signal than one; it is how the line gets filtered out, leaving
 // the credential to die silently anyway.
 //
@@ -629,7 +637,7 @@ func resetRefreshExpiryWarnStateForTest() {
 //     reconnect can be SCHEDULED; a week is not a campaign cycle.
 //   - MOVE IT TO A ONCE-PER-PROCESS PATH (startup, or a periodic sweep). The right
 //     long-term home, but no such path exists for this package today: credentials are
-//     injected per operation and this package never reads the database, so there is
+//     injected by the caller and this package never reads the database, so there is
 //     nothing that enumerates connections to sweep. Building one is a service-layer
 //     change, deliberately not made here.
 //
