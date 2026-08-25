@@ -38,8 +38,8 @@ import (
 //
 //  2. accountDiscoveryProviders is NOT the AccountLister set, so there is no single map to
 //     derive from. AccountLister is {GoogleAds, Meta, LinkedIn, Microsoft, X} — the FIRST
-//     eligibility half. accountDiscoveryProviders is {GoogleAds, Meta} — providers holding BOTH
-//     halves. The second half is "Dispatch itself calls the validator that tags
+//     eligibility half. accountDiscoveryProviders is {GoogleAds, Meta, X} — providers holding
+//     BOTH halves (X joined in LFXV2-3319). The second half is "Dispatch itself calls the validator that tags
 //     ErrAccountNotSelected", which is a CALL-GRAPH property: every dispatcher including Reddit
 //     mentions that sentinel, so no grep, symbol table or runtime reflection distinguishes
 //     LinkedIn (tags it in a resolver Dispatch does not call) from X (whose Dispatch calls the

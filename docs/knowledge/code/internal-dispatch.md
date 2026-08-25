@@ -1324,12 +1324,15 @@ per-customer path is `accountsInfoForCustomer`, whose `ListAccounts` client is b
 `AccountConfig` and deliberately bypasses this cache. A future provider whose client stashes
 MUTABLE per-call state must NOT be wired to this cache without changing the client first.
 
-**LinkedIn and Meta are not yet wired** — a deliberate partial rollout under LFXV2-3033, deferred
-only because open PRs owned those files at the time (cs#148, cs#152). They still rebuild a client
-per resolve — but "rebuilds a client" is not "re-mints a token", and neither re-mints one: both are
-handed an already-minted bearer token and do no exchange at construction. The win for them is
-allocation, not a saved token round-trip, and each needs its own safety and benefit analysis before
-wiring.
+**Meta and LinkedIn were wired in the second wave of LFXV2-3033**, on their TOGGLE and METRICS
+paths only. Their earlier deferral was procedural — open PRs owned those files at the time
+(cs#148, cs#152, cs#158) — and those PRs have since merged, so the stated reason was gone and each
+was wired after its own safety analysis (recorded on the `clients` field in `meta.go` and
+`linkedin.go`). Meta's client is IMMUTABLE once built, which is stronger than the mutex-guarded
+property Reddit and Microsoft rely on; LinkedIn's mutable token state is written exclusively under
+`c.tokenMu`, never held across the network call. Their `Dispatch` paths stay UNWIRED on purpose:
+Meta's create client carries a fuller `AccountConfig` and LinkedIn's a `RuntimeConfig` with
+per-request targeting, so the client VARIES per call under a cache key that does not.
 
 **X/Twitter IS now wired, and its entry corrects what this section used to claim.** The old wording
 said X "documents its client as safe for SEQUENTIAL use only, so it must not be shared across
@@ -1397,9 +1400,9 @@ rotation OR a reconnect cannot be served the other's plaintext — so
 N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
 receives its own clone and builds its own client, and the access token is cached on the client
 INSTANCE, so collapsing the token exchange is the separate job of the client cache above (wired
-into Google Ads, Reddit, Microsoft and X/Twitter; LinkedIn and Meta still rebuild a client per
-resolve, though rebuilding is not re-minting for those two — see the roster above, which is the
-single source of truth for who is wired).
+into Google Ads, Reddit, Microsoft, X/Twitter and — on their toggle/metrics paths — Meta and
+LinkedIn; see the roster above, which is the single source of truth for who is wired and on which
+paths).
 The version in that
 key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
 pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of

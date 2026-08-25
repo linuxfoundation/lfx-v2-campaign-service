@@ -1100,7 +1100,7 @@ type TwitterAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
 	// X/Twitter Ads account ID (alphanumeric handle)
-	AccountID string
+	AccountID *string
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID string
 }

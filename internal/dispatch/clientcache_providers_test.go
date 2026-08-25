@@ -18,10 +18,17 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
+
+// This file covers the LFXV2-3033 extension of clientCache to Reddit, Microsoft and — in the
+// second wave of the same ticket — Meta and LinkedIn. Google Ads
+// already had its own coverage in credcache_test.go; these are the two providers this change
+// wires, and each gets the same three properties the Google Ads client cache is held to:
 
 // This file covers the LFXV2-3033 extension of clientCache to Reddit, Microsoft and X/Twitter.
 // Google Ads already had its own coverage in credcache_test.go. Each provider here gets the same
@@ -877,6 +884,384 @@ func TestClientCache_MicrosoftConcurrentDispatchSharesOneGeoCache(t *testing.T) 
 	}
 	if n := tokenHits.Load(); n != 1 {
 		t.Errorf("token endpoint hit %d times across %d concurrent dispatches, want 1", n, callers)
+	}
+}
+
+// metaCacheConn is redditCacheConn for Meta. page_id is carried because Dispatch requires it;
+// the toggle/metrics client this test exercises does not read it.
+func metaCacheConn(id, creds, accountID string, version int64) *model.Connection {
+	return &model.Connection{
+		ID:                   id,
+		Version:              version,
+		Provider:             model.ProviderMetaAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		ProviderConfig:       map[string]string{"page_id": "987654321"},
+		Status:               model.StatusActive,
+	}
+}
+
+// linkedinCacheConn is redditCacheConn for LinkedIn.
+func linkedinCacheConn(id, creds, accountID string, version int64) *model.Connection {
+	return &model.Connection{
+		ID:                   id,
+		Version:              version,
+		Provider:             model.ProviderLinkedInAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		ProviderConfig:       map[string]string{"org_id": "987654321"},
+		Status:               model.StatusActive,
+	}
+}
+
+// TestClientCache_MetaReusesClient pins the LFXV2-3033 wiring on the Meta toggle/metrics path:
+// repeated resolves of one unchanged connection hand back the SAME *meta.Client.
+//
+// It asserts client IDENTITY rather than a token hit count, and the difference from the
+// Reddit/Microsoft tests above is a property of the provider, not a weaker test. Meta is handed an
+// already-minted bearer token and performs NO exchange at construction, so there is no token
+// endpoint to count — a count-based test would read 0 with and without the cache and prove
+// nothing. Identity is what the cache actually promises here.
+//
+// Reverting cachedMetaClient's body to a direct meta.NewClient(...) is a COMPILING change that
+// leaves the rest of the suite green; this is the test that fails.
+func TestClientCache_MetaReusesClient(t *testing.T) {
+	repo := &syncConnReader{row: metaCacheConn("conn-1", goodMetaCreds, "act_777", 1)}
+	d := NewMetaDispatcher(repo, identityEncryptor{})
+
+	var first *meta.Client
+	for i := range 5 {
+		res, creds, err := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+		if err != nil {
+			t.Fatalf("resolve #%d: %v", i, err)
+		}
+		c := d.cachedMetaClient("cncf", model.ProviderMetaAds, res, creds)
+		if i == 0 {
+			first = c
+			continue
+		}
+		if c != first {
+			t.Fatalf("resolve #%d returned a NEW client for an unchanged connection: the client "+
+				"cache is not being consulted on the Meta toggle/metrics path", i)
+		}
+	}
+}
+
+// TestClientCache_MetaRotationForcesRebuild is the invalidation contract on the Meta path: a
+// client built from credential version N must not survive a bump to N+1. Without it the reuse
+// test above would be satisfied by a cache that never invalidates, which would serve a revoked
+// credential through a live client.
+func TestClientCache_MetaRotationForcesRebuild(t *testing.T) {
+	repo := &syncConnReader{row: metaCacheConn("conn-1", goodMetaCreds, "act_777", 1)}
+	d := NewMetaDispatcher(repo, identityEncryptor{})
+
+	res, creds, err := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+	first := d.cachedMetaClient("cncf", model.ProviderMetaAds, res, creds)
+
+	repo.row = metaCacheConn("conn-1", `{"AccessToken":"rotated"}`, "act_777", 2)
+	res2, creds2, err := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("resolve after rotation: %v", err)
+	}
+	if c := d.cachedMetaClient("cncf", model.ProviderMetaAds, res2, creds2); c == first {
+		t.Error("a rotated credential (version 1 -> 2) was served through the client built from " +
+			"the OLD one: the cache entry is not validated against the row version")
+	}
+}
+
+// TestClientCache_LinkedInReusesClient is TestClientCache_MetaReusesClient on the LinkedIn
+// toggle/metrics path, and asserts identity for the same reason: LinkedIn is handed an
+// already-minted bearer token and performs no exchange at construction on this fixture.
+func TestClientCache_LinkedInReusesClient(t *testing.T) {
+	repo := &syncConnReader{row: linkedinCacheConn("conn-1", goodLinkedInCreds, "123456789", 1)}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{})
+
+	var first *linkedin.Client
+	for i := range 5 {
+		res, creds, err := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+		if err != nil {
+			t.Fatalf("resolve #%d: %v", i, err)
+		}
+		c := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res, creds, res.accountID)
+		if i == 0 {
+			first = c
+			continue
+		}
+		if c != first {
+			t.Fatalf("resolve #%d returned a NEW client for an unchanged connection: the client "+
+				"cache is not being consulted on the LinkedIn toggle/metrics path", i)
+		}
+	}
+}
+
+// TestClientCache_LinkedInRotationForcesRebuild is the Meta rotation test on the LinkedIn path.
+func TestClientCache_LinkedInRotationForcesRebuild(t *testing.T) {
+	repo := &syncConnReader{row: linkedinCacheConn("conn-1", goodLinkedInCreds, "123456789", 1)}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{})
+
+	res, creds, err := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+	first := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res, creds, res.accountID)
+
+	repo.row = linkedinCacheConn("conn-1", `{"AccessToken":"rotated"}`, "123456789", 2)
+	res2, creds2, err := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+	if err != nil {
+		t.Fatalf("resolve after rotation: %v", err)
+	}
+	if c := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res2, creds2, res2.accountID); c == first {
+		t.Error("a rotated credential (version 1 -> 2) was served through the client built from " +
+			"the OLD one: the cache entry is not validated against the row version")
+	}
+}
+
+// TestClientCache_MetaEntryPointsUseTheCachedClient pins the WIRING, which the identity tests
+// above cannot reach.
+//
+// They call cachedMetaClient directly, so they keep passing if ToggleStatus and ReadMetrics
+// construct clients inline and never consult the helper — the cache would be fully tested and
+// simply unused by the paths it exists for. That is not hypothetical: reverting both entry points
+// to a direct meta.NewClient(...) is a COMPILING change that leaves the identity tests green.
+//
+// What binds it is CONSTRUCTION COUNT across calls through the real entry points. A meta.Option
+// runs once per NewClient, so counting invocations counts constructions: cached construction
+// builds once for an unchanged connection, inline construction builds per call. Counting a token
+// endpoint is not available here — Meta mints no token — which is exactly why this is the
+// instrument.
+func TestClientCache_MetaEntryPointsUseTheCachedClient(t *testing.T) {
+	var builds atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		if strings.Contains(r.URL.Path, "insights") {
+			_, _ = io.WriteString(w, `{"data":[{"impressions":"1","clicks":"1","spend":"1.00"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	countingOpt := func(_ *meta.Client) { builds.Add(1) }
+	repo := &syncConnReader{row: metaCacheConn("conn-1", goodMetaCreds, "act_777", 1)}
+	d := NewMetaDispatcher(repo, identityEncryptor{}, meta.WithBaseURL(srv.URL), countingOpt)
+
+	camp := metaToggleCampaign("777", "888")
+	for i := range 2 {
+		if err := d.ToggleStatus(context.Background(), "cncf", model.ProviderMetaAds, camp, model.CampaignRunPaused); err != nil {
+			t.Fatalf("ToggleStatus #%d: %v", i, err)
+		}
+	}
+	if _, err := d.ReadMetrics(context.Background(), "cncf", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+
+	// Three calls through two entry points on ONE unchanged connection: they share a cache key,
+	// so exactly one client is built. Any inline construction pushes this to 2 or 3.
+	if n := builds.Load(); n != 1 {
+		t.Errorf("built %d meta clients across 2 toggles + 1 metrics read of one unchanged "+
+			"connection, want 1 — an entry point is constructing its client inline instead of "+
+			"going through cachedMetaClient, so the client cache does nothing for these paths", n)
+	}
+}
+
+// TestClientCache_LinkedInEntryPointsUseTheCachedClient is the Meta wiring test on the LinkedIn
+// toggle/metrics paths, and it matters more there: a refresh-capable LinkedIn connection performs
+// an OAuth exchange on the FIRST request of every new client, so an unwired entry point re-mints
+// a token per request rather than merely reallocating.
+func TestClientCache_LinkedInEntryPointsUseTheCachedClient(t *testing.T) {
+	var builds atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "adAnalytics"):
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	countingOpt := func(_ *linkedin.Client) { builds.Add(1) }
+	repo := &syncConnReader{row: linkedinCacheConn("conn-1", goodLinkedInCreds, "123456789", 1)}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL), countingOpt)
+
+	camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "urn:li:sponsoredCampaign:777"}
+	// Errors are tolerated: this asserts how many clients were BUILT, not that each call
+	// succeeded against the stub. A failure after construction still counts its construction,
+	// and gating on success would make the test fragile to unrelated stub shape changes.
+	for range 2 {
+		_ = d.ToggleStatus(context.Background(), "cncf", model.ProviderLinkedInAds, camp, model.CampaignRunPaused)
+	}
+	_, _ = d.ReadMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, camp, model.MetricsWindowLast30Days)
+
+	if n := builds.Load(); n != 1 {
+		t.Errorf("built %d linkedin clients across 2 toggles + 1 metrics read of one unchanged "+
+			"connection, want 1 — an entry point is constructing its client inline instead of "+
+			"going through cachedLinkedInClient, so a refresh-capable connection re-mints an "+
+			"OAuth token per request", n)
+	}
+}
+
+// TestClientCache_MetaColdKeyConcurrentBuildsAreCoalesced is the Reddit cold-key burst test on the
+// Meta path, and it carries the load the sequential tests cannot: on a COLD key every caller
+// misses at once, so without coalescing each builds its own client and the cache does nothing for
+// the burst it exists for.
+//
+// It is also the -race exercise for SHARING one meta.Client across concurrent callers, which is
+// the property the wiring rests on. Meta's client is immutable once built (every field written at
+// construction, no token cache, no in-flight handle), and this is what tests that claim rather
+// than asserting it in a comment.
+func TestClientCache_MetaColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
+	const callers = 16
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"1","clicks":"1","spend":"1.00"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	// NO barrier here, unlike the Reddit/Microsoft cold-key tests. Those resolve once per
+	// goroutine, so a 16-party barrier is what aligns them; this test resolves ONCE up front
+	// (see below) and would deadlock waiting for 15 arrivals that never come. The start channel
+	// below is what aligns the callers instead, and it aligns them on buildOnce — which is the
+	// window this test is actually about.
+	repo := &syncConnReader{row: metaCacheConn("conn-1", goodMetaCreds, "act_777", 1)}
+	d := NewMetaDispatcher(repo, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		got []*meta.Client
+	)
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+
+	// Resolve ONCE up front and share the result. This is what puts every caller inside
+	// buildOnce's cache-miss window together, and it is load-bearing rather than a shortcut:
+	// resolving per goroutine coalesces at decryptOnce FIRST, so the leader completes its build
+	// and put before the followers reach buildOnce, which then serves them a WARM entry. That
+	// version of this test passed with singleflight removed — it verified the credential cache,
+	// not this one. Verified by mutation: with the shared resolve, deleting c.group.Do makes
+	// this fail.
+	res, creds, rerr := d.resolveMetaCredentials(context.Background(), "cncf", model.ProviderMetaAds, d.creds.resolve)
+	if rerr != nil {
+		t.Fatalf("pre-resolve: %v", rerr)
+	}
+	start := make(chan struct{})
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			c := d.cachedMetaClient("cncf", model.ProviderMetaAds, res, creds)
+			// The lock covers ONLY the append, never the traffic below: holding it across the
+			// call would serialize all 16 callers and -race would observe no overlap.
+			mu.Lock()
+			got = append(got, c)
+			mu.Unlock()
+
+			// Drive real traffic through the SHARED instance, outside the bookkeeping lock.
+			_, _ = d.ReadMetrics(context.Background(), "cncf", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if len(got) != callers {
+		t.Fatalf("got %d clients, want %d", len(got), callers)
+	}
+	for i, c := range got {
+		if c != got[0] {
+			t.Fatalf("caller %d received a different client instance: construction is not "+
+				"coalesced, so a cold key under a burst builds one client per caller, exactly "+
+				"as if there were no cache", i)
+		}
+	}
+}
+
+// TestClientCache_LinkedInColdKeyConcurrentBuildsAreCoalesced is the Meta cold-key burst test on
+// the LinkedIn path: it pins that a cold key under a burst yields ONE shared client, and a
+// coalescing failure costs more here than for Meta, because a refresh-capable connection mints a
+// token on each new client's first request.
+//
+// SCOPE, stated precisely because the obvious reading is wrong: this does NOT exercise the
+// mutable token state. goodLinkedInCreds is bearer-only, so Credentials.CanRefresh() is false and
+// the client never writes c.accessToken/c.tokenExpiry/c.inflight — -race here observes concurrent
+// READS of an effectively immutable client, which is real but weaker than it looks. Driving the
+// write path from this package is not possible today: the token endpoint is reachable only via an
+// unexported option, so a refresh-capable fixture here would still never exchange. The mutex
+// discipline that makes SHARING safe is covered where it can be: internal/platform/linkedin's own
+// token tests (single-flight coalescing, rotation, invalidation) run against a real token server.
+// Do not read this test as that evidence.
+func TestClientCache_LinkedInColdKeyConcurrentBuildsAreCoalesced(t *testing.T) {
+	const callers = 16
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "adAnalytics"):
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// No barrier, for the reason given on the Meta cold-key test: one shared resolve cannot
+	// satisfy a 16-party barrier, and the start channel aligns the callers on buildOnce instead.
+	repo := &syncConnReader{row: linkedinCacheConn("conn-1", goodLinkedInCreds, "123456789", 1)}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		got []*linkedin.Client
+	)
+	camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "urn:li:sponsoredCampaign:777"}
+
+	// Resolved ONCE and shared, for the reason given on the Meta test above: a per-goroutine
+	// resolve coalesces at decryptOnce first and hands the followers a warm client cache, which
+	// made this pass with coalescing removed.
+	res, creds, rerr := d.resolveLinkedInCredentials(context.Background(), "cncf", model.ProviderLinkedInAds, d.creds.resolve)
+	if rerr != nil {
+		t.Fatalf("pre-resolve: %v", rerr)
+	}
+	start := make(chan struct{})
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			c := d.cachedLinkedInClient("cncf", model.ProviderLinkedInAds, res, creds, res.accountID)
+			mu.Lock()
+			got = append(got, c)
+			mu.Unlock()
+
+			// Concurrent traffic through the SHARED instance, outside the bookkeeping lock, so
+			// -race observes real overlap rather than construction alone. Per the SCOPE note
+			// above, this fixture makes that overlapping READS of an effectively immutable
+			// client — the token-state writes are covered in internal/platform/linkedin.
+			_, _ = d.ReadMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, camp, model.MetricsWindowLast30Days)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if len(got) != callers {
+		t.Fatalf("got %d clients, want %d", len(got), callers)
+	}
+	for i, c := range got {
+		if c != got[0] {
+			t.Fatalf("caller %d received a different client instance: construction is not "+
+				"coalesced, so a cold key under a burst builds one client per caller and a "+
+				"refresh-capable connection mints one OAuth token each", i)
+		}
 	}
 }
 
