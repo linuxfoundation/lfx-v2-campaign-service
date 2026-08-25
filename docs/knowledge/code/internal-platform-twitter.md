@@ -57,11 +57,27 @@ start), AND for a future start: the start's emitted midnight-UTC instant must be
 least `minStartLead` (5m) ahead of now, so today (or a start only moments ahead) is
 rejected before any mutating call — otherwise the multi-request create flow could cross
 the start time and X would reject the now-past line-item start, leaving an orphan.
-Budget is likewise validated pre-create (positive, ≤ 1e9, rounds to ≥ 1 micro-unit). The client paces sequential writes within a SINGLE dispatch
-toward the 1-req/sec limit; it does NOT enforce the account-wide write limit
-across concurrent dispatches or replicas (that needs cross-replica coordination,
-tracked in LFXV2-2665), so operators must not rely on this stateless client for
-cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
+Budget is likewise validated pre-create (positive, ≤ 1e9, rounds to ≥ 1 micro-unit). The client paces writes toward X's 1-req/sec limit on the
+CLIENT INSTANCE, not per call site: `pace` reserves the next write slot under the
+client's own `writeMu`, so concurrent callers sharing an instance are spaced
+`writeDelay` apart in aggregate rather than each sleeping in parallel and then
+issuing together. That is why the dispatch layer shares one client per connection
+(see `internal-dispatch`) — sharing is the precondition for the budget being
+enforceable, not a hazard. Reads are not paced and stay fully concurrent, since X
+does not rate-limit them, and a retried WRITE takes a fresh slot because the 429
+backoff is not itself a reservation. A caller whose context is cancelled reserves
+nothing.
+
+The bound is per client instance, which is narrower than per ACCOUNT. Two clients
+for one X ad account still pace independently, and three ordinary things produce
+them: separate replicas; two PROJECTS whose connections point at the same ad
+account (the client cache is keyed by project + connection row); and cache
+replacement by rotation, TTL or LRU while an in-flight caller still holds its
+predecessor. So this removes the common case — a burst of concurrent dispatches
+for one project — and leaves the residue to the 429 backoff. A limiter keyed by ad
+account, with a lifetime independent of the client cache, plus cross-replica
+coordination, is tracked in LFXV2-2665; operators must not rely on this client for
+account-wide rate limiting. When the account limit is hit anyway, 429s are
 retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. If the caller's
 context expires DURING that backoff sleep, the client returns the 429 as a typed
 `apiError` (with the cancellation cause attached via `Unwrap`) rather than a bare
