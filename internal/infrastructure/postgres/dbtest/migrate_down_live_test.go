@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -188,36 +187,63 @@ var scratchReapers sync.Map
 // green, so it pinned nothing it claimed. This drives the REAL registration path through a
 // subtest and counts the cleanups that path installs -- the number the whole fix is about.
 //
-// It is a unit test of the registration SHAPE. The stalled-server behaviour it protects
-// needs a wedged Postgres and is not reachable here; that limit is stated rather than
-// folded into a pass.
+// It is a unit test of the registration SHAPE, and the shape is all it reaches. Three
+// mutations were run against it, and the third SURVIVES -- recorded here rather than left
+// for the next reader to discover:
+//
+//   - scratchDatabases returns a fresh reaper per call  -> FAILS (same-reaper arm)
+//   - scratchDatabases registers no cleanup at all      -> FAILS (map-entry arm)
+//   - the cleanup is registered but never calls reap()  -> PASSES, still uncaught
+//
+// The third survives because this test must drain the synthetic names before the reap can
+// dial a real server, so "the list is empty afterwards" cannot distinguish the reap having
+// run from the drain having run. Whether reap() actually DROPS anything is pinned by no
+// unit test; it needs a live database, and that is what the live down-migration test
+// exercises in CI. The stalled-server behaviour is likewise unreachable here.
+//
+// An earlier version of this test asserted a cleanup COUNT it incremented itself, which was
+// 1 by construction whether the helper registered one cleanup, many, or none. The comment
+// above it claimed the opposite. Both are gone; what replaced them is the map-entry check,
+// which only the helper's own cleanup can satisfy.
 func TestScratchReaperRegistersOneCleanupForEveryDatabase(t *testing.T) {
 	t.Parallel()
 
-	// A subtest gives a real *testing.T whose Cleanup registrations are observable: each
-	// registered func runs exactly once when the subtest ends, so counting invocations
-	// counts registrations.
-	var cleanups atomic.Int64
+	// The registered cleanup is observed through its EFFECT rather than through a counter
+	// the test increments itself. An earlier version registered its own st.Cleanup and
+	// counted that, which always yielded 1 whether scratchDatabases had installed one
+	// cleanup, many, or none -- review caught it, and removing the helper's registration
+	// entirely left that arm green.
+	//
+	// reap() drains the reaper, so "did the registered cleanup run?" is answered by
+	// whether the list is empty afterwards, which only the helper's own cleanup can do.
+	var r *scratchReaper
 	var reaped []string
+	drained := -1
 
+	var subT *testing.T
 	t.Run("registration", func(st *testing.T) {
-		r := scratchDatabases(st)
-		st.Cleanup(func() { cleanups.Add(1) })
+		subT = st
+		r = scratchDatabases(st)
 
 		for i := range 29 {
 			name := fmt.Sprintf("down_scratch_%d", i)
 			r.add(name)
 			reaped = append(reaped, name)
 		}
-		// Drain before the subtest ends. The registered reap is real and its first act
-		// is a connect against TEST_DATABASE_URL; these names are synthetic, so letting
-		// it run would either fail the subtest on an unrelated connect error or, worse,
-		// issue DROP DATABASE against a live server. Draining leaves the REGISTRATION --
-		// which is what this test measures -- while the reap itself no-ops on an empty
-		// list, the same early return a test that created nothing takes.
+		// Drain before the reap runs. The registered reap is real and its first act is a
+		// connect against TEST_DATABASE_URL; these names are synthetic, so letting it
+		// proceed would either fail the subtest on an unrelated connect error or, worse,
+		// issue DROP DATABASE against a live server.
+		//
+		// Cleanups run LIFO, so this one -- registered after the helper's -- runs FIRST
+		// and hands the reap an empty list, which is the same early return a test that
+		// created nothing takes. `drained` records that the names were still present at
+		// that moment, which is what proves the assertions below ran against a populated
+		// reaper rather than an already-empty one.
 		st.Cleanup(func() {
 			r.mu.Lock()
 			defer r.mu.Unlock()
+			drained = len(r.names)
 			r.names = nil
 		})
 
@@ -236,13 +262,21 @@ func TestScratchReaperRegistersOneCleanupForEveryDatabase(t *testing.T) {
 		}
 	})
 
-	// The wrapper cleanup ran once, which is the shape: one registration per test, however
-	// many databases it provisioned.
-	if got := cleanups.Load(); got != 1 {
-		t.Errorf("observed %d cleanup invocations, want 1", got)
-	}
 	if len(reaped) != 29 {
 		t.Fatalf("test set up %d names, want 29", len(reaped))
+	}
+	// All 29 were still held when the subtest ended, so they accumulated into the single
+	// reaper rather than being dropped one cleanup at a time.
+	if drained != 29 {
+		t.Errorf("the reaper held %d names when the subtest ended, want 29; the databases "+
+			"must accumulate into ONE reap rather than one cleanup each", drained)
+	}
+	// scratchDatabases must have registered a cleanup at all. reap() clears the map entry
+	// for this *testing.T, so a helper that registered nothing leaves it behind -- which
+	// is the regression a self-incremented counter could not see.
+	if _, still := scratchReapers.Load(subT); still {
+		t.Error("scratchDatabases left its reaper registered after the subtest finished; " +
+			"it never installed a cleanup, so nothing would ever drop the scratch databases")
 	}
 
 	// The aggregate budget is ONE CleanupTimeout for all of them, not one each. This is

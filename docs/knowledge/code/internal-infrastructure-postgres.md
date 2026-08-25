@@ -1025,6 +1025,15 @@ teardown. `scratchReaper` collects the names and drops them from ONE test-level 
 ONE `CleanupContext`, with one reconnect rather than one per database, and names the databases actually
 skipped (`names[i:]`, not the whole registered list) if the budget expires mid-reap.
 
+`TestScratchReaperRegistersOneCleanupForEveryDatabase` pins the registration shape: a second
+`scratchDatabases` call returns the SAME reaper, all 29 names accumulate in it, and its map
+entry is gone afterwards (which only the helper's own cleanup can achieve). It deliberately
+counts no cleanup invocations — an earlier arm did, through a counter the test incremented
+itself, and was 1 by construction. One mutation survives and is recorded in the test's godoc:
+registering the cleanup without calling `reap()` still passes, because the test drains the
+synthetic names before the reap can dial a real server. Whether `reap()` drops anything is
+pinned only by the live down-migration test.
+
 **How strongly this is pinned:** `TestCleanupContextIsBoundedAndUncancelled` binds the
 helper — reverting it to a bare `Background()` fails on the missing deadline, and deriving it
 from a cancelled parent fails on both the `Err()` and `Done()` assertions. The CALL SITES are

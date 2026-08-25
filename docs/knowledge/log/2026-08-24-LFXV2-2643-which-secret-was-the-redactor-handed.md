@@ -223,6 +223,26 @@ fails on exactly that mutation: `scratchDatabases returned a different reaper on
 call`. Writing the claim into the doc did not make the test true, and the entry asserted the
 pin before the mutation had been run against it.
 
+**Second correction (2026-08-25).** The REWRITE was vacuous too, in a narrower way, and review
+caught that as well — a fourth instance of the same pattern on this file in one night. It
+counted cleanup invocations through a counter incremented by a cleanup the TEST itself
+registered, so the value was 1 by construction whether `scratchDatabases` installed one
+cleanup, many, or none; removing the helper's registration entirely left the arm green.
+Confirmed by running that mutation before replacing it.
+
+That arm is gone. Nothing counts registrations now: what replaced it is a check that the
+helper's reaper is no longer in `scratchReapers` after the subtest, which only the helper's own
+cleanup can bring about. The two arms kept from the previous round were each re-audited by
+targeted mutation rather than by re-reading — same-reaper fails when `scratchDatabases` returns
+a fresh reaper per call, and the 29-name accumulation fails when `add` stops appending.
+
+One mutation SURVIVES and is now recorded in the test's own godoc rather than left implicit:
+registering the cleanup but never calling `reap()` still passes, because the test must drain
+the synthetic names before the reap can dial a real server, so an empty list afterwards cannot
+distinguish the reap having run from the drain having run. Whether `reap()` actually drops
+anything is pinned by no unit test — it needs a live database, which is what the live
+down-migration test exercises in CI.
+
 The expiry message had the same shape of error: it reported `len(names)` — the full registered
 list — so databases the loop had already dropped were counted as still present and none of the
 skipped ones were named, contradicting the sentence directly above it. It now reports
