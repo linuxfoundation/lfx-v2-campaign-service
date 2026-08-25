@@ -63,9 +63,10 @@ client's own `writeMu`, so concurrent callers sharing an instance are spaced
 `writeDelay` apart in aggregate rather than each sleeping in parallel and then
 issuing together. That is why the dispatch layer shares one client per connection
 (see `internal-dispatch`) — sharing is the precondition for the budget being
-enforceable, not a hazard. Reads are not paced and stay fully concurrent, since X
-does not rate-limit them, and a retried WRITE takes a fresh slot because the 429
-backoff is not itself a reservation. A caller whose context is cancelled reserves
+enforceable, not a hazard. Reads are not paced and stay fully concurrent, since they do
+not spend the write budget — X's read endpoints have their own limit windows, which
+the shared 429 backoff covers for GETs exactly as it does for writes. A retried WRITE
+takes a fresh slot, because the 429 backoff is not itself a reservation. A caller whose context is cancelled reserves
 nothing.
 
 The bound is per client instance, which is narrower than per ACCOUNT. Two clients

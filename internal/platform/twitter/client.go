@@ -120,8 +120,11 @@ type AccountConfig struct {
 // writeDelay apart (see pace). That budget is a property of the ACCOUNT, so it can
 // only be enforced by the object every caller for that account shares: two clients
 // built for one account each pace themselves independently and together issue ~2
-// writes/sec, breaching the documented limit. Reads are NOT rate-limited by X and
-// are deliberately left unserialized.
+// writes/sec, breaching the documented limit. Reads do not spend the WRITE budget,
+// so they are deliberately left unserialized by this pacer. That is not a claim that
+// X does not rate-limit reads at all — its read endpoints have their own limit
+// windows, which the shared 429 backoff in doRequestAbs handles for GETs exactly as
+// it does for writes.
 //
 // The pacing bound is per-CLIENT, and therefore per-process. It does not span
 // replicas; see the note at pace for what that does and does not cover.
@@ -1143,7 +1146,9 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // instant, and issue simultaneously -- the exact failure being fixed. Waiting
 // under the lock makes each caller reserve a distinct slot. Only WRITES take this
 // path; reads (request/doRequest via the GET/list helpers) never call pace and
-// remain fully concurrent, since X does not rate-limit them.
+// remain fully concurrent, since they do not spend the write budget. Read endpoints
+// have their own X-side limit windows; those are handled by the 429 backoff, not by
+// serialising reads behind the write pacer.
 //
 // A sync.Mutex, not a channel semaphore selecting on ctx.Done(). The semaphore
 // would make the QUEUEING WAIT itself cancellable, which this does not: a caller
@@ -1172,6 +1177,21 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // Closing it needs a limiter keyed by X ACCOUNT whose lifetime is independent of
 // the client cache, plus cross-replica coordination -- tracked by LFXV2-2665
 // (durable dispatch).
+//
+// LIMIT -- this spaces ADMISSIONS, not sends. writeMu is released when pace returns,
+// before httpClient.Do runs, so a caller delayed in transport setup (DNS, TCP, TLS)
+// can have its request reach X later than its slot, and a subsequent caller admitted
+// writeDelay afterwards that connects instantly can overtake it. Admissions are
+// therefore >= writeDelay apart while SENDS are only approximately so.
+//
+// Closing that gap means holding the pacer across the HTTP round trip, which is a
+// different and more invasive design: it would serialise every write behind the
+// slowest in-flight request, so one stalled connection would block the account's
+// writes for up to the 30s request timeout rather than for writeDelay. That trade is
+// deliberately NOT taken here -- it is a change to how dispatch behaves under a slow
+// upstream, not a pacing detail -- and the residual overtake is bounded by transport
+// jitter and backstopped by the 429 retry. It belongs with the account-scoped limiter
+// in LFXV2-2665, which has to solve the same problem across replicas anyway.
 //
 // The clock is c.timeFn, so tests drive pacing deterministically rather than by
 // sleeping in real time.

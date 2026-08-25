@@ -43,7 +43,9 @@ that account shares. Sharing is the precondition for correctness, not the risk.
 `pace` now reserves the next write slot under the client's own `writeMu`, tracking `nextWrite` on
 the instance. The lock is deliberately held ACROSS the wait: releasing it would let every queued
 caller read the same deadline, wake together, and fire simultaneously — the exact failure being
-fixed. Reads never call `pace` and stay fully concurrent, because X does not rate-limit them.
+fixed. Reads never call `pace` and stay fully concurrent, because they do not spend the WRITE
+budget — X's read endpoints have their own limit windows, handled by the shared 429 backoff
+rather than by serialising reads behind the write pacer.
 
 A cancelled caller does not advance the reservation. Advancing on the cancel arm would let an
 aborted dispatch push the next real writer back by a slot no write ever used.
