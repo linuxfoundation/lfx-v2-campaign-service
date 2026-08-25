@@ -76,12 +76,18 @@ shared schema — including the 72-hour rows `TestLivePruneTerminalJobsSparesEve
 seeds and asserts survive its prune. Flipping those to `failed` makes them terminal, and a
 terminal aged row is what that test's prune then deletes.
 
-The two do not collide today only because each test seeds and acts within its own body while the
-package runs sequentially. That is a property of the current schedule, not a guarantee — this
-package already calls `t.Parallel` in `migrate_down_live_test.go`, so the interleaving becomes
-reachable the moment the retention tests adopt it. The sweep test now deletes every job it
-creates in a `t.Cleanup` registered BEFORE the sweep, so it fires even when an assertion fails
-the test early. Verified on a pristine database: zero JOBS left behind. The `campaign_briefs`
+The two do not collide today because both run serially and each seeds and acts on its rows
+within its own body. Getting the reason right took a correction: the first version said the
+existing `t.Parallel` calls in `migrate_down_live_test.go` already made the interleaving
+reachable. They do not — Go resumes top-level parallel tests only after every serial test has
+finished, which is the same semantics `connect_redaction_test.go` records, and where a claim
+that such a window was a race had already had to be retired once. Parallelising the retention
+test alone would not do it either; BOTH would have to opt in.
+
+The guarantee still rests on a scheduling property neither test states, so the sweep test does
+not lean on it: it deletes every job it creates in a `t.Cleanup` registered BEFORE the first
+insert, so a `t.Fatalf` from any later insert cannot unwind past a cleanup that does not yet
+exist. Verified on a pristine database: zero JOBS left behind. The `campaign_briefs`
 parent is deliberately retained — this package never cleans up rows, and a leftover brief is
 inert, holding a slug scoped by a `UniqueID` project with nothing sweeping `campaign_briefs`
 the way `FailStuckJobs` sweeps jobs. The jobs are what needs removing precisely because they

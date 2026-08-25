@@ -336,9 +336,13 @@ func TestLiveUpdateJobStatusRejectsAStatusOutsideTheCheckConstraint(t *testing.T
 //   - Inbound: any aged non-terminal row another test leaves behind is swept by THIS call and
 //     inflates the returned count.
 //
-// The two do not collide today because each test seeds its rows and acts on them within its
-// own body, and the package runs sequentially. That is a property of the current schedule, not
-// a guarantee — this package already calls t.Parallel elsewhere (migrate_down_live_test.go).
+// The two do not collide today because both run serially and each seeds its rows and acts on
+// them within its own body. Note what does NOT make them collide, because the tempting version
+// of this sentence is wrong: the t.Parallel calls already in this package
+// (migrate_down_live_test.go) cannot cause it, since Go resumes top-level parallel tests only
+// after every serial test has finished — the semantics connect_redaction_test.go records, where
+// an earlier claim that such a window was a race had to be retired. Parallelising the retention
+// test alone would not do it either. BOTH would have to opt in.
 //
 // So this test cleans up after itself: every JOB it creates is deleted on exit. That is the
 // half that keeps this test from breaking others.

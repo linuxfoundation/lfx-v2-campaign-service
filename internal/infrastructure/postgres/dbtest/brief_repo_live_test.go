@@ -171,8 +171,12 @@ func TestLiveCreateGetBriefRoundTripsEveryColumn(t *testing.T) {
 	if got.ApprovedBy == nil || got.ApprovedBy.Name != "Grace Hopper" {
 		t.Errorf("GetBrief approved_by = %+v, want the approving actor", got.ApprovedBy)
 	}
+	// Fatal, not Error: the approved_at equality below dereferences this pointer, so a
+	// regression that stopped populating the timestamp — exactly what this assertion
+	// covers — would panic the test rather than report it. A guard whose own failure mode
+	// is a panic reports the wrong defect.
 	if got.ApprovedAt == nil {
-		t.Error("GetBrief approved_at is nil on an approved brief")
+		t.Fatal("GetBrief approved_at is nil on an approved brief")
 	}
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Errorf("GetBrief timestamps = created %v / updated %v, want both populated", got.CreatedAt, got.UpdatedAt)

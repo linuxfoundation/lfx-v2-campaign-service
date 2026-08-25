@@ -1106,11 +1106,20 @@ tenant or brief predicate, so it rewrites every aged queued/running row in the s
 including the 72-hour queued and running rows `TestLivePruneTerminalJobsSparesEveryNonTerminalRow`
 seeds and asserts survive its prune. Flipping those to `failed` makes them terminal, and a
 terminal aged row is exactly what that test's prune then deletes. The two do not collide today
-only because each seeds and acts within its own body while the package runs sequentially, which
-is a property of the current schedule and not a guarantee — this package already calls
-`t.Parallel` in `migrate_down_live_test.go`. The sweep test therefore deletes every job it
-creates in a `t.Cleanup` registered BEFORE the sweep runs, so it fires even when an assertion
-fails the test early. Anything added here that ages a non-terminal row owes the same cleanup.
+because both run serially and each seeds and acts on its rows within its own body.
+
+Be precise about what does NOT make them collide, since the tempting version of that sentence
+is wrong in the same way an earlier claim in this bundle was: the `t.Parallel` calls already in
+this package (`migrate_down_live_test.go`) cannot cause the interleaving, because Go resumes
+top-level parallel tests only after every serial test has finished — the same semantics
+recorded for `connect_redaction_test.go` below. Parallelising the retention test alone would
+not do it either. BOTH tests would have to opt in.
+
+That is still a guarantee resting on a scheduling property neither test states, so the sweep
+test does not lean on it: it deletes every job it creates in a `t.Cleanup` registered BEFORE
+the first insert — before, so a `t.Fatalf` from any later insert cannot unwind past a cleanup
+that does not yet exist. Anything added here that ages a non-terminal row owes the same
+cleanup.
 
 ## Redacting a DSN-bearing error (`SafeDSNErr` / `SafeDSNErrFor`)
 
