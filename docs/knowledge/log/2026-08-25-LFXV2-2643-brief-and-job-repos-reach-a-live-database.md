@@ -2,10 +2,19 @@
 
 **Update** — LFXV2-2643's remaining scope bullet was the brief/campaign/job repositories.
 `CreateBrief`, `ReplaceBrief`, `GetBrief`, `Approve`, `ArchiveBrief`, `CreateJob`, `GetJob`,
-`UpdateJobStatus` and `FailStuckJobs` had never been executed by PostgreSQL under test — their
-only coverage was `brief_repo_test.go` regexing the four statement constants. Campaign
-upsert-on-(brief,platform) was already live via `TestLiveClaimThenUpsertPersistsProvenance`, so
-it was not redone. 14 tests added; `dbtest/` goes 70 → 84 test functions with none modified.
+`UpdateJobStatus` and `FailStuckJobs` had never been executed by PostgreSQL under test.
+Campaign upsert-on-(brief,platform) was already live via
+`TestLiveClaimThenUpsertPersistsProvenance`, so it was not redone. 14 tests added; `dbtest/`
+goes 70 → 84 test functions with none modified.
+
+**What stood in for live coverage differed by repository, and saying "regex over SQL text"
+for all nine would be wrong.** The briefs had exactly that — `brief_repo_test.go` regexes the
+four write constants and exercises `scanBrief`, never running a statement. The job methods had
+no repository-level test at all: `job_repo_test.go` covers only the retention surface
+(`terminalJobStatuses` against the domain vocabulary, the prune query's allow-list,
+`DefaultJobRetention`), and the four methods were exercised only through service-level fakes.
+The shared gap is narrower and more precise than either substitute suggests: **no statement in
+either repository had ever been put to PostgreSQL against the real schema.**
 
 The ticket had been graded DONE once on a keyword match against filenames. The tests here are
 named by behaviour, not by scope bullet, so the check that actually settles it is enumerating

@@ -1044,10 +1044,24 @@ evidence than a rendered failure and should not be read as equivalent.
 
 ### Brief and job repositories (`brief_repo_live_test.go`, `job_repo_live_test.go`)
 
-The brief and job repositories were the last ones whose write paths existed only as
-source-text assertions — `brief_repo_test.go` regexes the four statement constants — so
 `CreateBrief`, `ReplaceBrief`, `GetBrief`, `Approve`, `ArchiveBrief`, `CreateJob`, `GetJob`,
-`UpdateJobStatus` and `FailStuckJobs` were never once executed by PostgreSQL under test.
+`UpdateJobStatus` and `FailStuckJobs` had never once been executed by PostgreSQL under test.
+That is the gap the two files close, and it is the ONLY thing all nine shared — what stood in
+for live coverage differed by repository, and neither substitute could have caught what the
+other missed:
+
+- **Briefs**: source-text assertions. `brief_repo_test.go` regexes the four write constants
+  (checking, for instance, that each stamps an actor column in the same statement as its
+  write) and exercises `scanBrief`. It never runs a statement.
+- **Jobs**: neither. `job_repo_test.go` covers only the retention surface — that
+  `terminalJobStatuses` matches the domain vocabulary, that `pruneTerminalJobsQuery` uses an
+  allow-list rather than a negative predicate, and that `DefaultJobRetention` is
+  conservative. Nothing in it touches `CreateJob`, `GetJob`, `UpdateJobStatus` or
+  `FailStuckJobs`, whose only prior exercise was through service-level fakes.
+
+So the brief statements were pinned as *text* and the job methods were pinned as *behaviour
+against a fake*, and in both cases the question "does PostgreSQL accept this, against this
+schema" went unasked.
 
 What makes these worth running live is that **every brief write is a guarded UPDATE whose
 failure mode is invisible in its own statement text.** A gate that matches no row returns

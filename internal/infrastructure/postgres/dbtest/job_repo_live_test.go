@@ -287,6 +287,24 @@ func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 
 	briefID, project := insertApprovedBrief(ctx, t, pool)
 
+	// Delete this test's jobs on the way out so the rows it deliberately ages can never be
+	// swept into another test's fixture.
+	//
+	// Registered BEFORE the first insert, not after the last. insertJobAged fails the test
+	// with t.Fatalf, so a failure on the second, third or fourth insert would otherwise
+	// unwind past a cleanup that had not been registered yet and strand the aged rows
+	// already committed — which is precisely the leak this cleanup exists to prevent, and
+	// it would appear only on a day something else was already broken. Registering against
+	// briefID alone is what makes this possible: the cleanup names the parent, so it does
+	// not need any of the job ids to exist.
+	t.Cleanup(func() {
+		cctx, cancel := dbtest.CleanupContext()
+		defer cancel()
+		if _, err := pool.Exec(cctx, `DELETE FROM campaign_jobs WHERE brief_id = $1`, briefID); err != nil {
+			t.Errorf("cleanup this test's jobs: %v", err)
+		}
+	})
+
 	// Aged well beyond the 15-minute cutoff. insertJobAged backdates updated_at, which is
 	// the column the sweep measures.
 	stuckQueued := insertJobAged(ctx, t, pool, briefID, model.JobQueued, 2*time.Hour)
@@ -296,17 +314,6 @@ func TestLiveFailStuckJobsOnlySweepsIdleNonTerminalJobs(t *testing.T) {
 	// Already terminal AND old: the age predicate alone would match it, so this row is
 	// what proves the status predicate is doing work.
 	oldSucceeded := insertJobAged(ctx, t, pool, briefID, model.JobSucceeded, 2*time.Hour)
-
-	// Delete this test's jobs on the way out so the rows it deliberately ages can never be
-	// swept into another test's fixture. Registered before the sweep runs, so it fires even
-	// if an assertion below fails the test early.
-	t.Cleanup(func() {
-		cctx, cancel := dbtest.CleanupContext()
-		defer cancel()
-		if _, err := pool.Exec(cctx, `DELETE FROM campaign_jobs WHERE brief_id = $1`, briefID); err != nil {
-			t.Errorf("cleanup this test's jobs: %v", err)
-		}
-	})
 
 	const sweepErr = "recovered by startup sweep"
 	n, err := repo.FailStuckJobs(ctx, sweepErr)
