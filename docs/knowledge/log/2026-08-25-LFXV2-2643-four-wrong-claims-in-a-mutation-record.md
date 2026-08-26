@@ -20,8 +20,8 @@ The table listed:
 | --- | --- |
 | `CreateJob("not-a-uuid")` → SQLSTATE 22P02 | FAIL — proves the 23503 check binds, not just `err != nil` |
 
-That was a **dev-time probe**, not a delivered test. `grep -rn not-a-uuid dbtest/` returns
-nothing: `TestLiveCreateJobRequiresARealBrief` passes a well-formed absent UUID and asserts
+That was a **dev-time probe**, not a delivered test. From the repository root,
+`grep -rn not-a-uuid internal/infrastructure/postgres/dbtest/` returns nothing: `TestLiveCreateJobRequiresARealBrief` passes a well-formed absent UUID and asserts
 `23503`. Someone re-deriving the work would look for `22P02` and find no such test.
 
 The two mutations that test actually binds, both re-run against shipped code:

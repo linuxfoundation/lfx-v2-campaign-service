@@ -582,7 +582,11 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 // a bare name also matches prose like this paragraph, so such a check counts itself and
 // reports one too many. From the repo root:
 //
-//	grep -rlE '^\t.*insertApprovedBrief\(' internal/infrastructure/postgres/dbtest/
+//	grep -rlE '^[[:space:]].*insertApprovedBrief\(' internal/infrastructure/postgres/dbtest/
+//
+// POSIX class rather than \t: ERE has no tab escape, so GNU grep -E reads '\t' as a literal
+// 't' and the check returns nothing -- a reproduction that silently reports zero instead of
+// failing.
 //
 // It sits in the brief file because that is where the jsonb ASSERTIONS are, not because jsonb
 // is a brief-only concern -- 13 tables in this schema carry jsonb columns, campaign_briefs
