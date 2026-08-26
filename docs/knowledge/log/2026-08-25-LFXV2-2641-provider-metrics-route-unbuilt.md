@@ -30,9 +30,13 @@ status would silently understate.
 **No project-wide metrics read exists either, which the umbrella note assumed.**
 Both shipped reads require a `brief_id`, so the catalog's description of a TLF
 roll-up as "one call per child foundation" named a second API that does not
-exist. A roll-up needs two levels of fan-out — enumerate briefs, then one
-brief-metrics call each — and the note now says so rather than replacing one
-phantom endpoint with another.
+exist. A roll-up needs two levels of fan-out — brief ids first, then one
+brief-metrics call each — and the ids come from the QUERY SERVICE, not from here:
+`GET /projects/{projectId}/briefs` is `find-brief`, requiring `event_slug` and
+returning one brief, and rule 3 assigns brief lists to the Query Service by design.
+The first draft of this correction said "enumerate briefs" against that path, which
+would have replaced one phantom endpoint with another — an endpoint's shape is not
+readable from its path.
 
 **The chart already routes and authorizes the unbuilt paths.**
 `templates/ruleset.yaml` grants `campaign_manager` on
