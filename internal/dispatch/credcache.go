@@ -373,7 +373,7 @@ func isComparable(v any) bool {
 //
 // THE ROSTER LIVES HERE. Wired today into GoogleAdsDispatcher, RedditDispatcher,
 // MicrosoftDispatcher and — as of LFXV2-3033 — MetaDispatcher and LinkedInDispatcher on their
-// TOGGLE and METRICS paths, plus TwitterDispatcher on its create AND toggle paths (see the
+// TOGGLE and METRICS paths, plus TwitterDispatcher on its create, toggle AND metrics paths (see the
 // per-PATH bypass list below for which paths are excluded and why). The earlier deferral of Meta
 // and LinkedIn was procedural, not technical: open PRs owned those files at the time (cs#148,
 // cs#152, cs#158). Those PRs have since merged, so the stated reason is gone and both have been
