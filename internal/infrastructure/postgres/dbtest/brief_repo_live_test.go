@@ -571,8 +571,13 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 // It lives here rather than in a shared helpers file because that is this package's
 // established shape: helpers sit in the file whose subject they belong to and are used
 // across files as needed -- insertApprovedBrief is declared in audience_lease_live_test.go
-// and consumed by six files, insertBrief in schema_live_test.go by five, insertJobAged in
-// job_retention_live_test.go, newGoogleAdsConn in connection_live_test.go.
+// and called from five OTHER files, insertBrief in schema_live_test.go from four others,
+// insertJobAged in job_retention_live_test.go, newGoogleAdsConn in connection_live_test.go.
+//
+// "OTHER" is load-bearing in both counts. `grep -rl 'insertApprovedBrief(' dbtest/` returns
+// SIX paths, because the declaring file calls it too -- so a reader re-deriving the number
+// gets a different one than a reader reading the sentence, which is the exact drift this
+// entry argues against.
 //
 // It sits in the brief file because that is where the jsonb ASSERTIONS are, not because jsonb
 // is a brief-only concern -- 13 tables in this schema carry jsonb columns, campaign_briefs
