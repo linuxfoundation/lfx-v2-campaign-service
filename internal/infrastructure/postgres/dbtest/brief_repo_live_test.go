@@ -574,10 +574,15 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 // and called from five OTHER files, insertBrief in schema_live_test.go from four others,
 // insertJobAged in job_retention_live_test.go, newGoogleAdsConn in connection_live_test.go.
 //
-// "OTHER" is load-bearing in both counts. `grep -rl 'insertApprovedBrief(' dbtest/` returns
-// SIX paths, because the declaring file calls it too -- so a reader re-deriving the number
-// gets a different one than a reader reading the sentence, which is the exact drift this
-// entry argues against.
+// "OTHER" is load-bearing in both counts, because the declaring file calls the helper too:
+// a grep for call sites returns six paths for the first and five for the second, one more
+// than the number of consumers each time.
+//
+// Re-derive with a pattern anchored to an indented STATEMENT rather than to the bare name --
+// a bare name also matches prose like this paragraph, so such a check counts itself and
+// reports one too many. From the repo root:
+//
+//	grep -rlE '^\t.*insertApprovedBrief\(' internal/infrastructure/postgres/dbtest/
 //
 // It sits in the brief file because that is where the jsonb ASSERTIONS are, not because jsonb
 // is a brief-only concern -- 13 tables in this schema carry jsonb columns, campaign_briefs
