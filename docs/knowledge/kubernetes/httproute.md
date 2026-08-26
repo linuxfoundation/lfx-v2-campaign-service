@@ -21,6 +21,12 @@ the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
 
+**The `{provider}/metrics` segment is admitted but unimplemented.** The regex and the
+RuleSet both carry it for all five ad providers, and no `design/` file declares the
+route, so those paths forward to a service that does not serve them. Recorded rather
+than removed because implementing the route and withdrawing the matchers are opposite
+decisions; see the Monitoring warning in `docs/api-catalog.md`.
+
 **The `connection-*` family is spelled out as THREE alternation branches**, not one. All
 seven providers share `/test` and `/set-credential`; what differs is the extra ruled
 sub-path each carries:

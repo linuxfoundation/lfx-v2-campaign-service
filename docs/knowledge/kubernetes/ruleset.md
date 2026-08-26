@@ -32,7 +32,12 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
-   providers, `google-ads/keywords|audience`, `hubspot`). Gated on the project
+   providers, `google-ads/keywords|audience`, `hubspot`). **`{provider}/metrics` is
+   ruled and routed but NOT SERVED** — no `design/` file declares it, so a request
+   reaching it is authorized here and forwarded to a service with no such route.
+   `parity_test` cannot catch that: it compares the RuleSet to the regex and reads
+   neither `design/` nor `gen/`, so a matcher for an unimplemented endpoint agrees
+   with itself. See the Monitoring warning in `docs/api-catalog.md`. Gated on the project
    `campaign_manager` relation (D2 — reads AND writes; no read-only audience),
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
