@@ -372,21 +372,25 @@ func isComparable(v any) bool {
 // which is the reuse LFXV2-3036 asks for.
 //
 // THE ROSTER LIVES HERE. Wired today into GoogleAdsDispatcher, RedditDispatcher,
-// MicrosoftDispatcher and — as of LFXV2-3033 — MetaDispatcher and LinkedInDispatcher, on their
-// TOGGLE and METRICS paths (see the per-PATH bypass list below for which paths are excluded and
-// why). The earlier deferral of Meta and LinkedIn was procedural, not technical: open PRs owned
-// those files at the time (cs#148, cs#152, cs#158). Those PRs have since merged, so the stated
-// reason is gone and both have been wired after their own safety analysis, recorded on the
-// `clients` field in meta.go and linkedin.go.
+// MicrosoftDispatcher and — as of LFXV2-3033 — MetaDispatcher and LinkedInDispatcher on their
+// TOGGLE and METRICS paths, plus TwitterDispatcher on its create, toggle AND metrics paths (see the
+// per-PATH bypass list below for which paths are excluded and why). The earlier deferral of Meta
+// and LinkedIn was procedural, not technical: open PRs owned those files at the time (cs#148,
+// cs#152, cs#158). Those PRs have since merged, so the stated reason is gone and both have been
+// wired after their own safety analysis, recorded on the `clients` field in meta.go and
+// linkedin.go.
 //
-// X/Twitter remains deliberately NOT wired, and its reason is TECHNICAL and still stands. The X
-// client documents itself as safe for SEQUENTIAL use only, and that is not a stale doc comment:
-// it paces its own writes with an inter-request sleep (twitter.Client.pace/writeDelay) to stay
-// under X's ~1 write-per-second limit, a scheme that assumes the instance is driving one dispatch
-// at a time. Sharing one across concurrent callers would interleave two dispatches through that
-// single pacing assumption and break it — on the money-spending create path. Wiring it needs a
-// concurrency argument this pattern does not supply, not merely a copy of the Meta/LinkedIn
-// analysis.
+// X/Twitter's deferral WAS stated as technical, and that reason has now been retired rather than
+// waived — it rested on a misreading, so the correction is recorded here. This note used to say
+// the X client "documents itself as safe for SEQUENTIAL use only", which reads as memory-unsafety.
+// It is not: twitter.Client had NO mutable receiver state at all, every field being written once
+// at construction, and the package contained no mutex because the struct never needed one. The
+// real constraint is a RATE LIMIT — X enforces 1 write-request/sec per ACCOUNT — and the hazard
+// ran the OPPOSITE way to what the note implied. NOT sharing was the unsafe option: pacing was a
+// blind per-call sleep, so two concurrent dispatches holding separate clients each paced
+// themselves and together issued ~2 writes/sec on a money-spending path. twitter.Client.pace now
+// reserves write slots under the client's own mutex, so sharing the instance is the PRECONDITION
+// for the budget being enforceable, not a risk to be avoided.
 //
 // "Rebuilds a client" is NOT the same as "re-mints a token", but the two come apart per PROVIDER
 // and, for LinkedIn, per CREDENTIAL SHAPE — so state it per case rather than as one blanket claim:
@@ -398,11 +402,18 @@ func isComparable(v any) bool {
 //     branch that would skip it is dead (internal/platform/linkedin/token.go). Caching therefore
 //     saves a real token round-trip for that shape, as it does for Google Ads and Reddit; only a
 //     bearer-only connection reduces to allocation.
-//   - X signs each request with stored OAuth 1.0a credentials and mints nothing.
+//   - X signs each request with stored OAuth 1.0a credentials and mints nothing, so its win is
+//     neither allocation nor a token round-trip but the SHARED WRITE PACER above.
 //
 // Their wiring tests assert client IDENTITY instead of counting hits on a token endpoint because
 // identity is the property that holds across every one of those shapes; a count would pin only
 // the fixture's shape and would read zero for a bearer-only connection with or without a cache.
+//
+// X's bound is per CLIENT INSTANCE, which is narrower than per ACCOUNT: this cache is keyed by
+// project + connection row, so two projects pointing at the same X ad account get separate
+// pacers, as do separate replicas and a client replaced by rotation/TTL/LRU while a caller still
+// holds its predecessor. It removes the common case and leaves the residue to the 429 backoff.
+// See twitter.Client.pace for the full scope note, and LFXV2-2665 for the durable fix.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
 // one-site edit.
 //
@@ -425,6 +436,10 @@ func isComparable(v any) bool {
 //     unlike Google Ads' create path the cost of the exclusion is allocation only.
 //   - Google Ads' adoption owned-connection path (resolveOwnedGoogleAdsClient → LookupCampaign): a
 //     rare one-shot rather than the polling loop this exists for.
+//   - X/Twitter's ListAccounts discovery client (ZERO AccountConfig, twitter.go), for the same
+//     reason as Microsoft's: it asks what the CREDENTIAL reaches, so it must not share a key with
+//     the account-scoped dispatch/toggle client. It is also a read-only one-shot — ListAdAccounts
+//     issues no write, so it never calls pace and needs no share of the write budget.
 //   - **GoogleAdsDispatcher.Dispatch**, which builds its client inline via googleads.NewClient
 //     rather than through cachedGoogleAdsClient. This one is easy to miss and was omitted here for
 //     two tickets: Google Ads is listed as "wired", and it IS — but only on the toggle/metrics
@@ -442,10 +457,12 @@ func isComparable(v any) bool {
 // on the instance.
 //
 // Sharing is safe only because of a property every stored client must have INDIVIDUALLY, and the
-// field is typed `any`, so the compiler enforces none of it: each client guards its token cache
-// and in-flight refresh handle with a mutex and stashes NO per-call state on the receiver. That
+// field is typed `any`, so the compiler enforces none of it: each client guards whatever state it
+// does keep (a token cache and in-flight refresh handle; for X, the write pacer's next-slot
+// instant) with a mutex, and stashes NO per-call state on the receiver. That
 // was verified per provider rather than inherited from Google Ads — see the per-dispatcher
-// comments on the `clients` field in googleads.go, reddit.go and microsoft.go, of which
+// comments on the `clients` field in googleads.go, reddit.go, microsoft.go, meta.go, linkedin.go
+// and twitter.go, of which
 // Microsoft's is the one that most needed checking (multi-customer discovery: a CustomerID that
 // VARIED per caller would have made a shared instance serve one caller against another's
 // customer). Its configured customer IS stashed on the receiver — c.account.CustomerID, which

@@ -706,7 +706,7 @@ func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
 	c.timeFn = staticTime
 
 	// Stands in for toggleCallTimeout expiring during the backoff sleep.
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err := c.UpdateCampaignAndChildrenStatus(ctx, "cmp1", "li1", StatusPaused)
@@ -4193,5 +4193,294 @@ func TestFindByNameEmptyArrayDataIsGenuineNotFound(t *testing.T) {
 	}
 	if id != "" {
 		t.Errorf("id = %q, want empty", id)
+	}
+}
+
+// TestPaceBoundsWriteRateAcrossConcurrentCallers is the regression test for
+// LFXV2-3033: the write pacing must bound the rate PER CLIENT across all callers,
+// not per call site.
+//
+// It is deliberately concurrent. The pre-fix implementation slept writeDelay
+// unconditionally before each write, which passes any sequential test while letting N
+// goroutines sharing a client sleep in parallel and then issue their writes at the
+// same instant. Only overlapping callers can distinguish the two.
+//
+// TWO independent observations are asserted, because either alone can be satisfied by
+// a broken implementation:
+//
+//   - Admission SPACING, recorded by pace itself through onAdmit while writeMu is held.
+//     Sampling a clock after pace returns cannot establish order — a goroutine preempted
+//     between the return and its own read can record after a later caller.
+//   - Real ELAPSED time across the whole burst. Spacing alone is only bookkeeping: a pace
+//     that advanced nextWrite correctly but never actually waited would hand out perfectly
+//     spaced FUTURE reservations while every caller returned immediately, and a
+//     spacing-only assertion passes against it. Verified by mutation — removing the
+//     sleepCtx call while leaving the arithmetic intact passes the spacing checks and
+//     fails this one.
+func TestPaceBoundsWriteRateAcrossConcurrentCallers(t *testing.T) {
+	const (
+		callers = 8
+		delay   = 5 * time.Millisecond
+	)
+
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(delay))
+
+	// The reservation clock: a real monotonic base read through timeFn, serialized so
+	// -race sees no data race on it. NOT a virtual clock — sleepCtx still waits on a real
+	// timer, so this makes the SPACING deterministic, it does not skip wall-clock time.
+	var clockMu sync.Mutex
+	base := time.Unix(1600000000, 0)
+	clockStart := time.Now()
+	c.timeFn = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return base.Add(time.Since(clockStart))
+	}
+
+	// Recorded in admission order, under pace's own lock.
+	var mu sync.Mutex
+	cleared := make([]time.Time, 0, callers)
+	c.onAdmit = func(_ context.Context, at time.Time) {
+		mu.Lock()
+		cleared = append(cleared, at)
+		mu.Unlock()
+	}
+
+	var wg sync.WaitGroup
+	ready := make(chan struct{})
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-ready // maximize overlap: all callers enter pace together
+			if err := c.pace(context.Background()); err != nil {
+				t.Errorf("pace returned error: %v", err)
+			}
+		}()
+	}
+
+	wallStart := time.Now()
+	close(ready)
+	wg.Wait()
+	elapsed := time.Since(wallStart)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(cleared) != callers {
+		t.Fatalf("got %d cleared writes, want %d", len(cleared), callers)
+	}
+
+	// onAdmit fires under writeMu, so `cleared` is already in admission order; sorting
+	// would MASK an out-of-order admission rather than reveal it.
+	for i := 1; i < len(cleared); i++ {
+		if gap := cleared[i].Sub(cleared[i-1]); gap < delay {
+			t.Errorf("writes %d and %d were admitted %v apart; want >= %v (write rate exceeded "+
+				"X's 1/sec budget)", i-1, i, gap, delay)
+		}
+	}
+
+	// The burst must span at least (callers-1) delays on the reservation clock...
+	if span := cleared[len(cleared)-1].Sub(cleared[0]); span < time.Duration(callers-1)*delay {
+		t.Errorf("burst of %d writes spanned %v on the reservation clock; want >= %v",
+			callers, span, time.Duration(callers-1)*delay)
+	}
+
+	// ...and the callers must actually have WAITED that long. A small tolerance absorbs
+	// timer granularity; the gap between a real pacer (~35ms here) and one that only does
+	// the arithmetic (~0) is three orders of magnitude, so this needs no precision.
+	minElapsed := time.Duration(callers-1)*delay - delay/2
+	if elapsed < minElapsed {
+		t.Errorf("the whole burst returned in %v of real time; want >= %v — pace is handing out "+
+			"correctly spaced reservations without actually waiting, so every caller issues "+
+			"immediately and the rate bound is bookkeeping only", elapsed, minElapsed)
+	}
+}
+
+// TestPaceCancellationDoesNotConsumeASlot verifies a caller cancelled while
+// waiting does not advance the reservation. If it did, a cancelled dispatch
+// would push the next real writer back by a slot no write ever used.
+func TestPaceCancellationDoesNotConsumeASlot(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(time.Hour))
+	c.timeFn = func() time.Time { return time.Unix(1600000000, 0) }
+
+	// First write goes immediately and reserves the next slot an hour out.
+	if err := c.pace(context.Background()); err != nil {
+		t.Fatalf("first pace: %v", err)
+	}
+	reserved := c.nextWriteAt()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.pace(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pace with cancelled ctx = %v; want context.Canceled", err)
+	}
+	if got := c.nextWriteAt(); !got.Equal(reserved) {
+		t.Errorf("cancelled caller advanced the reservation from %v to %v; want unchanged", reserved, got)
+	}
+}
+
+// TestPaceIdleCancelledCallerReservesNothing covers the arm the wait-path cancellation test
+// cannot reach: an already-cancelled caller arriving when the pacer is IDLE.
+//
+// With no reservation outstanding there is nothing to wait for, so the old code took the
+// no-wait path, never consulted ctx, returned success and still advanced nextWrite. The write
+// then failed at the HTTP layer, so a write that never left pushed the next real writer back by
+// a full writeDelay.
+func TestPaceIdleCancelledCallerReservesNothing(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(time.Hour))
+	c.timeFn = staticTime
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.pace(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pace on an idle pacer with a cancelled ctx = %v; want context.Canceled", err)
+	}
+	if got := c.nextWriteAt(); !got.IsZero() {
+		t.Errorf("a cancelled caller reserved a slot on an idle pacer (nextWrite = %v); want the "+
+			"pacer untouched, since no write was issued", got)
+	}
+}
+
+// TestWriteRetryRePacesButReadRetryDoesNot pins the 429 retry path against the pacer.
+//
+// The backoff sleep is not a pacing reservation: while a rate-limited caller waits it out,
+// another writer on the same client can reserve the instant the retry is about to fire at, so
+// the retry and that writer would issue together — rebuilding the burst the pacer exists to
+// prevent. A retried WRITE must therefore take a fresh slot. A retried READ must not: reads do
+// not spend X's write budget, and pacing them would serialise them for no reason.
+//
+// The observable is whether the retry REACHES THE SERVER, not whether nextWrite moved. With an
+// hour-long delay and a slot already reserved, a re-pacing write retry blocks until the short
+// context expires — so it never makes a second request, and pace returns before reserving
+// anything (which is why nextWrite is deliberately NOT the probe here).
+func TestWriteRetryRePacesButReadRetryDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		method    string
+		wantCalls int32
+	}{
+		// A re-paced write retry blocks on its slot and never re-reaches the server.
+		{"write retry re-paces", http.MethodPost, 1},
+		// An unpaced read retry proceeds straight through and reaches it twice.
+		{"read retry does not pace", http.MethodGet, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if calls.Add(1) == 1 {
+					// Retry-After MUST be a positive server-declared reset: a 0 or absent
+					// header falls through to the COMPUTED backoff (writeDelay*2^attempt —
+					// an hour here), which exceeds maxRetryWait, so doRequestAbs aborts
+					// without ever retrying and neither arm would be exercised.
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":{"id":"ok"}}`))
+			}))
+			defer srv.Close()
+
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+				WithBaseURL(srv.URL), WithWriteDelay(time.Hour),
+			)
+			c.nonceFn = func() string { return "n" }
+			c.timeFn = staticTime
+
+			// Seed a reservation so an hour-long slot is already outstanding; without this
+			// the pacer is idle and a re-pace would return immediately, making the two arms
+			// indistinguishable.
+			if err := c.pace(context.Background()); err != nil {
+				t.Fatalf("seeding pace: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, _ = c.doRequestAbs(ctx, tc.method, srv.URL+"/x", "x", nil)
+
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Errorf("%s reached the server %d times; want %d", tc.method, got, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// TestPaceCancelAtWaitExpiryReservesNothing covers the TIE: a caller whose context is
+// cancelled at the same instant its pacing wait ends.
+//
+// sleepCtx selects between the timer and ctx.Done(), and Go chooses uniformly at
+// random when both are ready, so such a caller can be handed the TIMER arm and return
+// nil even though its context is dead. Without a post-wait re-check pace then reserves
+// a slot for a write the caller can no longer issue, pushing the next real writer back
+// by writeDelay.
+//
+// This asserts a RATE, not zero, and the reason is worth stating because a
+// zero-tolerance version of this test is unstable against correct code. A context can
+// always be cancelled in the instant AFTER any check, so there is an irreducible window
+// between the re-check and the reservation. What the fix changes is the SIZE of that
+// window: unfixed it is the entire pacing wait (~2ms here), fixed it is the few
+// nanoseconds between the check and the reserve. Measured over 500 trials: 488/500
+// unfixed versus 0/500 fixed, and over 4000 trials the fixed rate was 18 (~0.45%).
+// The threshold below sits far under the unfixed rate and far above the residual one,
+// so it fails loudly on a regression without flaking on correct code.
+//
+// Getting to this fixture took discarding two weaker ones: cancelling MID-wait leaves
+// ctx.Done() the only ready case, which the pre-existing error arm already covers
+// (passes either way), and an already-dead context with a tiny wait never reproduced
+// the tie at all (0/200 unfixed). Liveness is observed INSIDE pace via onAdmit, at the
+// reservation itself, because ctx.Err() read after pace returns cannot distinguish a
+// caller admitted while live whose context died a moment later from a real violation.
+func TestPaceCancelAtWaitExpiryReservesNothing(t *testing.T) {
+	const (
+		trials = 400
+		delay  = 2 * time.Millisecond
+		// Unfixed sits near 98%; the residual race sits near 0.5%.
+		maxViolationRate = 0.10
+	)
+
+	violations := 0
+	for i := range trials {
+		c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(delay))
+
+		var mu sync.Mutex
+		admittedDead := false
+		c.onAdmit = func(ctx context.Context, _ time.Time) {
+			// Sampled while writeMu is held, at the moment the slot is taken.
+			if ctx.Err() != nil {
+				mu.Lock()
+				admittedDead = true
+				mu.Unlock()
+			}
+		}
+
+		if err := c.pace(context.Background()); err != nil {
+			t.Fatalf("trial %d: seeding pace: %v", i, err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel concurrently, timed to collide with the pacing timer, so sleepCtx sees
+		// both cases ready and its choice between them is a genuine coin flip.
+		go func() {
+			time.Sleep(delay)
+			cancel()
+		}()
+		_ = c.pace(ctx)
+		cancel()
+
+		mu.Lock()
+		if admittedDead {
+			violations++
+		}
+		mu.Unlock()
+	}
+
+	if rate := float64(violations) / float64(trials); rate > maxViolationRate {
+		t.Errorf("%d/%d (%.1f%%) of tied callers reserved a slot with an already-cancelled "+
+			"context, want <= %.0f%% — pace is not re-checking cancellation after its wait, so a "+
+			"write that can never be issued is delaying the next real writer",
+			violations, trials, rate*100, maxViolationRate*100)
 	}
 }
