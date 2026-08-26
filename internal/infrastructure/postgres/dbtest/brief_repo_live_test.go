@@ -567,6 +567,33 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 // reorders object keys and strips insignificant whitespace, so a byte comparison against
 // the literal that was inserted fails for reasons that have nothing to do with the code
 // under test.
+//
+// It lives here rather than in a shared helpers file because that is this package's
+// established shape: helpers sit in the file whose subject they belong to and are used
+// across files as needed -- insertApprovedBrief is declared in audience_lease_live_test.go
+// and called from five OTHER files, insertBrief in schema_live_test.go from four others,
+// insertJobAged in job_retention_live_test.go, newGoogleAdsConn in connection_live_test.go.
+//
+// "OTHER" is load-bearing in both counts, because the declaring file calls the helper too:
+// a grep for call sites returns six paths for the first and five for the second, one more
+// than the number of consumers each time.
+//
+// Re-derive with a pattern anchored to an indented STATEMENT rather than to the bare name --
+// a bare name also matches prose like this paragraph, so such a check counts itself and
+// reports one too many. From the repo root:
+//
+//	grep -rlE '^[[:space:]].*insertApprovedBrief\(' internal/infrastructure/postgres/dbtest/
+//
+// POSIX class rather than \t: ERE has no tab escape, so GNU grep -E reads '\t' as a literal
+// 't' and the check returns nothing -- a reproduction that silently reports zero instead of
+// failing.
+//
+// It sits in the brief file because that is where the jsonb ASSERTIONS are, not because jsonb
+// is a brief-only concern -- 13 tables in this schema carry jsonb columns, campaign_briefs
+// merely carries the most (8). This helper has 7 call sites here across five columns and one
+// in job_repo_live_test.go against `result`. Introducing a helpers file for a single function
+// would break the pattern rather than follow it; if a third file needs it, that is the moment
+// to reconsider.
 func assertJSONEqual(t *testing.T, column string, got json.RawMessage, want string) {
 	t.Helper()
 	var gotVal, wantVal any
