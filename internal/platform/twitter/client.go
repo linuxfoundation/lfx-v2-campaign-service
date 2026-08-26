@@ -1158,10 +1158,14 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // was considered and rejected for now because the cancellable-wait version has to
 // hand the reservation to the next waiter correctly on every abandonment path, and
 // getting that wrong reintroduces the burst this exists to prevent -- a worse
-// failure than a late return. What the ctx check below buys instead is that a dead
-// caller never RESERVES a slot or issues a write, so it cannot push a live writer
-// back; the cost is bounded by the writes already queued ahead of it, each one
-// writeDelay long. If that queueing latency ever becomes the binding constraint,
+// failure than a late return. What the ctx check below buys instead is that a
+// cancellation OBSERVED BEFORE ADMISSION reserves no slot and issues no write, so
+// such a caller cannot push a live writer back. Not the stronger "a dead caller
+// never reserves": cancellation can still land between that final check and the
+// nextWrite update, and TestPaceCancelAtWaitExpiryReservesNothing documents and
+// tolerates that residual window -- measured near 0.5%, against roughly 98% before
+// the check existed. The cost is bounded by the writes already queued ahead of it,
+// each one writeDelay long. If that queueing latency ever becomes the binding constraint,
 // the semaphore is the upgrade, and it belongs with the account-scoped limiter in
 // LFXV2-2665 rather than bolted onto a per-instance pacer.
 //

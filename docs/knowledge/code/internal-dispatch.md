@@ -1352,7 +1352,8 @@ covers the 429 RETRY path: a retried write takes a fresh slot, since the backoff
 itself a reservation and a retry is by definition issued while already throttled.
 
 `TwitterDispatcher`'s create, toggle AND metrics paths all resolve through `cachedTwitterClient`
-and share one entry — toggle and metrics via `resolveTwitterClient`, which returns it — — unlike Meta and LinkedIn, whose create paths are excluded, because X's create client
+and share one entry — toggle and metrics via `resolveTwitterClient`, which returns it — unlike
+Meta and LinkedIn, whose create paths are excluded, because X's create client
 carries the same `AccountConfig` as its toggle client and so does not vary per call. Its
 `ListAccounts` discovery client keeps a ZERO `AccountConfig` and bypasses the cache for the same
 reason Microsoft's does, and being read-only it issues no write and needs no share of the write
