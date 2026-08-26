@@ -1,11 +1,16 @@
-# 2026-08-25 — three wrong claims in the LFXV2-2643 mutation record
+# 2026-08-25 — four wrong claims in the LFXV2-2643 mutation record
 
 **Fix** — `2026-08-25-LFXV2-2643-brief-and-job-repos-reach-a-live-database.md` shipped with
-three inaccurate claims, found in review of #185 by dealako and corrected here. That entry is
+**four** inaccurate claims, found in review of #185 by dealako and corrected here. That entry is
 left as written; this file carries the corrections, because a log entry is a record of what was
 believed at the time and rewriting it would destroy the evidence that the belief was wrong.
 
-Read the original with these three amendments.
+Read the original with these four amendments. A fifth was caught in this file's own first
+draft, before it shipped, and is recorded at the end because it is the same defect.
+
+This file was itself first titled "three wrong claims", which undercounted by folding the
+ledger total into the site-count amendment. They are separate claims about separate numbers,
+and a correction record that miscounts its own corrections is the defect it documents.
 
 ## 1. A mutation row described a test that was never shipped
 
@@ -41,11 +46,14 @@ silently as the code it describes grows — the row was correct when written and
 Reading a count cannot detect that; only re-running it can. The other count-bearing row, "3 aged
 rows stranded" for the cleanup-ordering control, was re-derived on a fresh database and holds.
 
-The stated total was low for the same reason: the true ledger is **33** — 29 implementation,
-3 schema, 1 test-side ordering control — not 31. The table is a selected subset of 18 rows, not
-the ledger.
+## 3. The ledger total was low, for the same reason
 
-## 3. Two counts in one file disagreed
+The stated total is **33** — 29 implementation, 3 schema, 1 test-side ordering control — not 31.
+A separate claim about a separate number from the row above, and it drifted the same way: the
+table is a selected subset of 18 rows, not the ledger, so nothing about the table's own contents
+would have revealed it.
+
+## 4. Two counts in one file disagreed
 
 The file said "14 SKIP / 14 PASS" while its opening line said "15 tests added". **15 is
 correct**, derived rather than copied, since either line could have been the wrong one:
@@ -56,7 +64,7 @@ correct**, derived rather than copied, since either line could have been the wro
   run-set cannot silently disagree with the count, reports **15 SKIP / 0 PASS** without
   `TEST_DATABASE_URL` and **0 SKIP / 15 PASS** with it.
 
-## A fourth, caught before it shipped
+## A fifth, caught before it shipped
 
 The first draft of this correction asserted that "jsonb columns are a brief-repo concern". They
 are not: **13** tables in this schema carry jsonb columns, `campaign_briefs` merely carries the
@@ -73,7 +81,7 @@ by 5 — and a helpers file for one function would break it rather than follow i
 
 ## What to take from this
 
-All three are one defect: **a claim that outlived the code it described.** Two were true when
+All four are one defect: **a claim that outlived the code it described.** Three were true when
 written; one never was. The check that finds the first kind is re-deriving the number, not
 re-reading the sentence — and it is worth doing on every count a document offers as evidence,
 because the ones that drift are exactly the ones nobody thinks to question.
