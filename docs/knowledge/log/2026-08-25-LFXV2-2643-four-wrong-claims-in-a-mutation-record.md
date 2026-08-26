@@ -50,8 +50,18 @@ rows stranded" for the cleanup-ordering control, was re-derived on a fresh datab
 
 The stated total is **33** — 29 implementation, 3 schema, 1 test-side ordering control — not 31.
 A separate claim about a separate number from the row above, and it drifted the same way: the
-table is a selected subset of 18 rows, not the ledger, so nothing about the table's own contents
-would have revealed it.
+table is a selected subset of **17** rows, not the ledger, so nothing about the table's own
+contents would have revealed it. From the repository root, counting the data rows without the
+header and separator:
+
+    awk '/^\| mutation \| result \|/,/^$/' \
+      docs/knowledge/log/2026-08-25-LFXV2-2643-brief-and-job-repos-reach-a-live-database.md \
+      | grep -c '^|' | awk '{print $1 - 2}'
+
+**This number was itself wrong on the first correction** — stated as 18, and 18 is what a reader
+gets by counting `|` lines and forgetting that two of them are the header and the separator. A
+correction entry that introduces a fresh miscount is the defect it documents, which is why the
+command is here rather than the bare figure.
 
 ## 4. Two counts in one file disagreed
 
