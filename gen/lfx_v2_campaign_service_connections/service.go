@@ -233,12 +233,23 @@ type Service interface {
 	// returned token is the one HubSpot actually assigned rather than one this
 	// service guessed. **A 2xx carrying no id is reported as an error**, because
 	// the campaign may or may not exist and cannot be addressed either way: the
-	// caller must check HubSpot rather than retry into a second copy. **Every
-	// other failure is reported as UNCONFIRMED, not as a retryable error**, for
-	// the same reason: this is a non-idempotent write into a shared namespace, and
-	// HubSpot marks mutating transport, 429, 3xx and 5xx failures as
-	// possibly-committed. The 503 here means "the outcome could not be confirmed",
-	// never "try again" — verify in HubSpot first.
+	// caller must check HubSpot rather than retry into a second copy. Other
+	// failures fall into THREE classes, and the status tells them apart. **400 —
+	// nothing was created.** Either HubSpot rejected the request on the merits (a
+	// definite non-429 4xx), or the request was never sent at all (no connection,
+	// an inactive one, an unusable credential). Both are safe to correct and
+	// retry; a 401/403 says so in its own words, because retrying another NAME
+	// cannot fix a permission problem. **404 / 500 — setup and service faults**,
+	// reported as themselves for the same reason: they prove nothing reached
+	// HubSpot, so sending an operator to go look for a campaign that was never
+	// attempted hides the remedy they actually need. **503 — UNCONFIRMED, and
+	// never "try again".** Everything else lands here, including any failure this
+	// service cannot positively classify: a non-idempotent write into a shared
+	// namespace fails CLOSED, so an unrecognised error is treated as
+	// possibly-committed rather than reported as a clean failure. HubSpot marks
+	// mutating transport, 429, 3xx and 5xx failures as possibly-committed, and so
+	// is a 2xx whose body could not be decoded. Verify in HubSpot before creating
+	// it again.
 	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
 }
 

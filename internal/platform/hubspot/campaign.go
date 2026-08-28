@@ -20,18 +20,20 @@ const (
 	campaignSearchPath = "/crm/v3/objects/" + campaignObjectType + "/search"
 	campaignCreatePath = "/crm/v3/objects/" + campaignObjectType
 
-	// campaignSearchLimit bounds the search. HubSpot's CRM search caps `limit` at 100; this is
-	// deliberately smaller because the results are shown to a human choosing between candidate
-	// names, and the top of a scored list is where the real match sits.
+	// campaignSearchLimit bounds the search. HubSpot's CRM search caps `limit` at 200 (raised
+	// from 100 in September 2024 — https://developers.hubspot.com/changelog/increasing-our-api-limits),
+	// and this asks for the maximum rather than a smaller "human-readable" number.
 	//
 	// IT IS A CAP, NOT A PAGE. This method does not follow `paging.next.after`, so a campaign
 	// ranked below the cap is not returned — and the caller reads an absent campaign as licence
-	// to create one, in a namespace shared by everyone on that HubSpot portal. Raised to 100 (HubSpot's own
-	// maximum) so the gap between "not in the top N" and "does not exist" is as small as one
-	// request can make it, and stated here because it is a contract fact rather than a tuning
-	// detail: an operator who cannot find their campaign in the results should search a
-	// narrower term rather than assume it is absent.
-	campaignSearchLimit = 100
+	// to create one, in a namespace shared by everyone on that HubSpot portal. Every row the cap
+	// omits is a duplicate this service can cause, which is why the ceiling is the API's own
+	// maximum rather than a display-sized number: the results are not a page to read, they are
+	// the evidence for an absence claim.
+	//
+	// `capped` reports whether the gap is actually open, so a caller is never left inferring
+	// completeness from the row count.
+	campaignSearchLimit = 200
 )
 
 // campaignProps are the properties requested on every campaign read.
