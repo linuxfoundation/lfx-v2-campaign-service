@@ -892,11 +892,15 @@ func (e *transportError) Unwrap() error { return e.Err }
 //     resource was committed before the redirect, so it is UNCONFIRMED. A 3xx on a
 //     GET carries no create and is NOT ambiguous.
 //
-// A definite 4xx (Reddit rejected it), a 3xx on a non-mutating method, or any
-// pre-send failure (token refresh, body encode/build, a pre-connect DNS/dial
-// failure, or a caller-cancel that surfaces raw BEFORE the POST — e.g. from
-// refreshToken), means NOT applied → returns false so the caller returns a clean
-// (nil, err) / "failed" rather than "may exist".
+// A definite 4xx OTHER THAN 429 (Reddit rejected it on the merits), a 3xx on a
+// non-mutating method, or any pre-send failure (token refresh, body encode/build,
+// a pre-connect DNS/dial failure, or a caller-cancel that surfaces raw BEFORE the
+// POST — e.g. from refreshToken), means NOT applied → returns false so the caller
+// returns a clean (nil, err) / "failed" rather than "may exist".
+//
+// 429 is the exception and is treated as AMBIGUOUS: reaching the classifier means
+// the bounded retry was exhausted, and a shed request says nothing about whether
+// the mutation committed first. See the branch below.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -1012,8 +1016,14 @@ func isPreSendDialError(err error) bool {
 // retryBaseDelay*2^attempt, in both cases clamped to maxRetryWait. If a
 // server-declared reset exceeds maxRetryWait, the request aborts with the
 // rate-limit error rather than sleeping past the point of usefulness. A 429 is
-// retried regardless of HTTP method: a 429 means the request was REJECTED
-// before processing (nothing was created), so retrying a create POST is safe.
+// retried regardless of HTTP method: Reddit sheds a throttled request, so a retry
+// is worth making on any method.
+//
+// A 429 is NOT proof that nothing was created. Reddit does not say whether it shed
+// the request before or after processing, so once the bounded retry is exhausted
+// (or the backoff is cancelled, or the declared reset is over cap) the outcome is
+// UNCONFIRMED — createOutcomeAmbiguous reports true for it, and a caller must
+// verify before retrying rather than assume a clean failure.
 func (c *Client) request(ctx context.Context, method, path string, body any) (*apiResponse, error) {
 	// Split any query string off before sanitizing: sanitizePath escapes each
 	// PATH segment (turning a literal '?'/'=' into %3F/%3D), which would corrupt a
@@ -1802,8 +1812,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if !createOutcomeAmbiguous(err) {
 			// Not ambiguous → the campaign was definitely NOT created: a pre-send
 			// failure (token refresh, body encode/build, a pre-connect dial error), a
-			// 429 over-cap abort, a definite 4xx, or a cancellation before the request
-			// went out. Return (nil, err) so a caller can retry safely. If a caller
+			// definite 4xx other than 429, or a cancellation before the request went
+			// out. Return (nil, err) so a caller can retry safely.
+			//
+			// The 429 over-cap abort is NO LONGER in this list: it is classified
+			// ambiguous, because an over-cap reset means Reddit shed a request it may
+			// already have processed. It now takes the unconfirmed branch below. If a caller
 			// cancellation is the cause, surface it as an abort.
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
