@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -246,9 +247,23 @@ func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clic
 		}
 		return 0, 0, 0, 0, fmt.Errorf("%s: unparseable metric field(s): %s", describe, strings.Join(bad, ", "))
 	}
-	// Conversions needs no parsing — it decodes as a float64 already — but it is returned
-	// here so every reader of the shared metrics block gets the whole block from one call
-	// rather than reaching past this helper for one field.
+	// Conversions needs no PARSING — it decodes as a float64 already — but it does need the
+	// same magnitude validation GetCampaignMetrics applies, and for the same reason: NaN and
+	// ±Inf survive JSON decoding of a bare number in some encoders, and a negative conversion
+	// count is upstream corruption rather than a small number. Unchecked, each becomes a figure
+	// the dashboard renders as a measurement — on keyword rows directly, and SUBTRACTED into an
+	// audience bucket's running total, where one bad row corrupts the whole bucket.
+	//
+	// The upper bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
+	// exactly representable as a float64, so the conversion rounds UP to 2^63 and a value of
+	// exactly 2^63 would pass a '>' guard. Same reasoning as GetCampaignMetrics.
+	//
+	// This fails the WHOLE response rather than zeroing the field, matching how this file
+	// already treats an unparseable counter above: a row whose metrics cannot be trusted is not
+	// a row with one missing number.
+	if math.IsNaN(m.Conversions) || math.IsInf(m.Conversions, 0) || m.Conversions < 0 || m.Conversions >= float64(math.MaxInt64) {
+		return 0, 0, 0, 0, fmt.Errorf("%s: conversions is not a usable count", describe)
+	}
 	return impressions, clicks, costMicros, m.Conversions, nil
 }
 

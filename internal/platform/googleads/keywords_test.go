@@ -545,6 +545,73 @@ func TestGetAudienceInsights_QuerySelectsCampaignIDForEveryDimension(t *testing.
 			t.Errorf("query %d (%s) does not SELECT campaign.id, so the scope check cannot run; select list = %q",
 				i, audienceQueries[i].dimension, sel)
 		}
+		// metrics.conversions for the same reason and with the same blind spot: the audience
+		// fixtures return a conversions value regardless of what was asked for, so the
+		// aggregation tests stay green if this field is dropped from the projection — every
+		// bucket would simply report a measured zero. Only asserting the SELECT can catch it.
+		if !strings.Contains(sel, "metrics.conversions") {
+			t.Errorf("query %d (%s) does not SELECT metrics.conversions, so every bucket would report zero; select list = %q",
+				i, audienceQueries[i].dimension, sel)
+		}
+	}
+}
+
+// A conversions value that is not a usable count fails the WHOLE response rather than being
+// folded into a total.
+//
+// NaN and ±Inf survive JSON decoding of a bare number in some encoders, and a negative count is
+// upstream corruption rather than a small number. Unchecked, each reaches a keyword row as a
+// rendered measurement — and on the audience path it is SUMMED into a bucket, where one bad row
+// corrupts every figure in that bucket rather than just its own.
+//
+// This mirrors the guard GetCampaignMetrics already applies; the shared helper had bypassed it.
+func TestParseRowMetrics_RejectsUnusableConversionCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"negative", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":-5}}]}`},
+		{"NaN", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":NaN}}]}`},
+		{"beyond int64", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":1e19}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.body)
+			})
+			// The whole call fails — asserted rather than checking the row was dropped, because
+			// a silently dropped row is its own defect: the caller would total a set missing a
+			// keyword and never know.
+			if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+				t.Fatal("an unusable conversion count was accepted")
+			}
+		})
+	}
+}
+
+// A fractional count is NOT rejected. Google credits fractional conversions under data-driven
+// and position-based attribution, so 0.5 is an ordinary measurement — a guard that treated
+// "not a whole number" as corruption would refuse the common case.
+func TestParseRowMetrics_AcceptsFractionalConversions(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":0.5}}]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("a fractional conversion count was rejected: %v", err)
+	}
+	if got := kp.Rows[0].Conversions; got != 0.5 {
+		t.Errorf("Conversions = %v, want 0.5", got)
 	}
 }
 
