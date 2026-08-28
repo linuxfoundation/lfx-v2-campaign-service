@@ -557,10 +557,6 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 				Err:    fmt.Errorf("decode keyword row at index %d: %w", i, uErr),
 			}
 		}
-		impressions, clicks, costMicros, conversions, pErr := parseRowMetrics(row.Metrics, fmt.Sprintf("get keyword performance: row %d", i))
-		if pErr != nil {
-			return nil, pErr
-		}
 		// A row whose criterion or ad group id is missing cannot be acted on: the
 		// keyword-actions endpoint needs BOTH to address a criterion. Returning it would
 		// hand the caller a row whose action button cannot work, so fail loudly instead —
@@ -605,6 +601,19 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		// keyword and empty this endpoint. This mirrors resolveKeywordCriteria exactly.
 		if row.AdGroupCriterion.Negative {
 			continue
+		}
+		// PARSED ONLY NOW, after the polarity drop. parseRowMetrics fails the WHOLE response on
+		// an unusable counter, so validating a row this endpoint does not publish would let one
+		// corrupt exclusion take down the entire keyword report — the outcome the paragraph above
+		// says dropping exists to avoid.
+		//
+		// It stays AFTER the id and scope checks, which is load-bearing rather than incidental: a
+		// negative row still proves whether the campaign FILTER was honoured, so skipping
+		// assertCampaignInScope for it would let an out-of-scope probe row through unexamined.
+		// TestGetKeywordPerformance_NegativeProbeRowIsStillScopeChecked pins exactly that.
+		impressions, clicks, costMicros, conversions, pErr := parseRowMetrics(row.Metrics, fmt.Sprintf("get keyword performance: row %d", i))
+		if pErr != nil {
+			return nil, pErr
 		}
 		// Counted only now: `matched` advances for rows that survived BOTH the scope check
 		// and the polarity check, so a dropped negative never consumes a cap slot.
