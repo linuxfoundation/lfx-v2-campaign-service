@@ -189,34 +189,34 @@ type Service interface {
 	// default), so the caller has to be able to find one.
 	ListHubspotEmails(context.Context, *ListHubspotEmailsPayload) (res *ListHubspotEmailsResult, err error)
 	// Find LF HubSpot marketing campaigns by name, to read back an existing
-	// campaign's `hs_utm` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns
-	// are not scoped to a project, so this returns matches from the ENTIRE LF
-	// portal regardless of which project scopes the path — the `project_id` gates
-	// permission, not visibility. That is a property of HubSpot's data model
-	// rather than a gap in the scoping here, and it is why the create route below
-	// needs a warning before it is used. The match is HubSpot's own full-text
-	// search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely
-	// share a token with the query. Every match is returned in HubSpot's relevance
-	// order rather than narrowed to a best one, because choosing between
-	// similarly-named campaigns needs a human reading the names — collapsing them
-	// here would hide the ambiguity from the only party able to resolve it. **An
-	// empty `campaigns` array is a 200, not a 404**: 'no campaign is named that'
-	// is the answer a caller acts on by offering to create one, and it must be
-	// distinguishable from a search that failed. A campaign with no `utm` is a
-	// real result and is returned as one — an absent token does NOT mean the
-	// campaign was not found, and treating it that way would prompt a duplicate
-	// create. **The result set is CAPPED at 100 and there is no paging.** A
-	// campaign ranked below the cap is not returned, and a caller reads an absent
-	// campaign as licence to create one — so an operator who cannot find a
-	// campaign should search a narrower term rather than assume it does not exist.
-	// 100 is HubSpot's own per-request maximum, so the gap between "not in the top
-	// N" and "does not exist" is as small as one request can make it. **`capped`
-	// reports when that gap is actually open**, derived from HubSpot's own total
-	// rather than from the returned count — an exactly-full page and a truncated
-	// one are the same length. While it is true the caller must not offer an
-	// unqualified create. This is NOT a list endpoint under rule 3: it is a keyed
-	// query returning the matches for one supplied term, with no collection,
-	// pagination or filtering.
+	// campaign's `hs_utm` token. **THE NAMESPACE IS PORTAL-WIDE.** HubSpot
+	// campaigns are not scoped to a project, so this returns matches from the
+	// ENTIRE LF portal regardless of which project scopes the path — the
+	// `project_id` gates permission, not visibility. That is a property of
+	// HubSpot's data model rather than a gap in the scoping here, and it is why
+	// the create route below needs a warning before it is used. The match is
+	// HubSpot's own full-text search: fuzzy and scored, NOT an exact-name lookup,
+	// so a hit can merely share a token with the query. Every match is returned in
+	// HubSpot's relevance order rather than narrowed to a best one, because
+	// choosing between similarly-named campaigns needs a human reading the names —
+	// collapsing them here would hide the ambiguity from the only party able to
+	// resolve it. **An empty `campaigns` array is a 200, not a 404**: 'no campaign
+	// is named that' is the answer a caller acts on by offering to create one, and
+	// it must be distinguishable from a search that failed. A campaign with no
+	// `utm` is a real result and is returned as one — an absent token does NOT
+	// mean the campaign was not found, and treating it that way would prompt a
+	// duplicate create. **The result set is CAPPED at 100 and there is no
+	// paging.** A campaign ranked below the cap is not returned, and a caller
+	// reads an absent campaign as licence to create one — so an operator who
+	// cannot find a campaign should search a narrower term rather than assume it
+	// does not exist. 100 is HubSpot's own per-request maximum, so the gap between
+	// "not in the top N" and "does not exist" is as small as one request can make
+	// it. **`capped` reports when that gap is actually open**, derived from
+	// HubSpot's own total rather than from the returned count — an exactly-full
+	// page and a truncated one are the same length. While it is true the caller
+	// must not offer an unqualified create. This is NOT a list endpoint under rule
+	// 3: it is a keyed query returning the matches for one supplied term, with no
+	// collection, pagination or filtering.
 	SearchHubspotCampaigns(context.Context, *SearchHubspotCampaignsPayload) (res *SearchHubspotCampaignsResult, err error)
 	// Create an LF HubSpot marketing campaign and return the `hs_utm` token
 	// HubSpot assigns it. **THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The
@@ -305,8 +305,8 @@ type CreateHubspotCampaignPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
-	// The campaign name. Visible to every foundation — do not include
-	// project-sensitive information.
+	// The campaign name. Visible to everyone on the connection's HubSpot portal —
+	// do not include project-sensitive information.
 	Name string
 }
 
@@ -1037,8 +1037,8 @@ type SearchHubspotCampaignsResult struct {
 	// True when HubSpot matched MORE campaigns than were returned. While it is
 	// true, absence from `campaigns` is NOT proof the campaign does not exist, and
 	// a caller must not offer an unqualified create on an empty result — it would
-	// duplicate a campaign in a namespace every foundation shares. Narrow the
-	// search term instead.
+	// duplicate a campaign in a namespace shared by everyone on that HubSpot
+	// portal. Narrow the search term instead.
 	Capped bool
 }
 

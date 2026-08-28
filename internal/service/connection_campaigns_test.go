@@ -4,13 +4,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -362,4 +366,97 @@ type mockNoCampaignDispatcher struct{}
 
 func (m *mockNoCampaignDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
+}
+
+// TestClassifyDiscoveryError_DecryptFailureLogsNoErrorText is the discovery twin of
+// Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText.
+//
+// This arm was the LAST path in the service that still logged the decrypt cause. It was left
+// that way deliberately (internal/dispatch/creds.go says so) because nothing depended on the
+// non-disclosure there — until the campaign CREATE began routing its setup failures through
+// this classifier, which is what closed it.
+//
+// The sentinel itself carries only ciphertext and key material, but what reaches the log is the
+// whole CHAIN, and domain.Encryptor is an interface: an implementation is free to quote what it
+// failed on. safeErrSummary would NOT help — it normalises and truncates, it does not redact.
+func TestClassifyDiscoveryError_DecryptFailureLogsNoErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// A hostile encryptor error, standing in for an implementation that quotes what it failed on.
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	d := &mockCampaignSearcherDispatcher{createErr: fmt.Errorf("%w: aesgcm: open failed on %s",
+		domain.ErrCredentialDecryptionFailed, leaked)}
+
+	_, _ = newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+		&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+
+	if logged := buf.String(); strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the log, so an Encryptor that quotes "+
+			"ciphertext or key material would disclose it.\nlog: %s", logged)
+	}
+}
+
+// The create's three outcome classes, asserted through the DOMAIN sentinels the dispatcher tags
+// rather than through a platform error type. Each needs a different remedy, and collapsing them
+// is how an operator gets sent to fix the wrong thing.
+func TestCreateHubspotCampaign_ClassifiesByDomainSentinel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantType string
+		wantSays string
+		notSays  string
+	}{
+		{
+			name:     "a definite rejection says nothing was created",
+			err:      fmt.Errorf("create hubspot campaign: %w", domain.ErrPlatformRejected),
+			wantType: "*lfxv2campaignserviceconnections.BadRequestError",
+			wantSays: "nothing was created",
+			notSays:  "check HubSpot",
+		},
+		{
+			name:     "a permission refusal names the token and scope, not the name",
+			err:      fmt.Errorf("create: %w", errors.Join(domain.ErrPlatformPermission, domain.ErrPlatformRejected)),
+			wantType: "*lfxv2campaignserviceconnections.BadRequestError",
+			wantSays: "scope",
+			// Retrying another name cannot fix a 403, so the name remedy must not appear.
+			notSays: "check the name",
+		},
+		{
+			name:     "anything unclassified stays unconfirmed",
+			err:      errors.New("upstream timeout"),
+			wantType: "*lfxv2campaignserviceconnections.ConnServiceUnavailableError",
+			wantSays: "check HubSpot",
+			notSays:  "nothing was created",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &mockCampaignSearcherDispatcher{createErr: tc.err}
+			_, err := newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+				&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+			if err == nil {
+				t.Fatal("a failed create was reported as success")
+			}
+			if got := fmt.Sprintf("%T", err); got != tc.wantType {
+				t.Fatalf("error type = %s, want %s", got, tc.wantType)
+			}
+			// Read from the Message FIELD: the generated types return "" from Error().
+			var msg string
+			switch e := err.(type) {
+			case *conn.BadRequestError:
+				msg = e.Message
+			case *conn.ConnServiceUnavailableError:
+				msg = e.Message
+			}
+			if !strings.Contains(msg, tc.wantSays) {
+				t.Errorf("message %q does not contain %q", msg, tc.wantSays)
+			}
+			if strings.Contains(msg, tc.notSays) {
+				t.Errorf("message %q wrongly contains %q", msg, tc.notSays)
+			}
+		})
+	}
 }

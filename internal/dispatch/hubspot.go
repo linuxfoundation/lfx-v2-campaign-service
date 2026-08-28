@@ -663,7 +663,7 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 
 // SearchCampaigns implements service.CampaignSearcher for HubSpot.
 //
-// The result is LF-GLOBAL despite the projectID argument: that argument selects which
+// The result is PORTAL-WIDE despite the projectID argument: that argument selects which
 // connection's credential to use, not which campaigns are visible. HubSpot's campaign namespace
 // is the whole portal, so two projects sharing a portal see the same campaigns.
 func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error) {
@@ -680,7 +680,7 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 	// make(..., 0, n), never nil: service.CampaignSearcher requires a non-nil result on success
 	// so "the portal has no campaign by that name" stays distinguishable from a searcher that
 	// fell through a branch. The caller offers a CREATE on the empty answer, so an accidental
-	// nil would prompt a duplicate in a namespace every foundation shares.
+	// nil would prompt a duplicate in a namespace shared by everyone on that HubSpot portal.
 	out := make([]model.HubSpotCampaign, 0, len(page.Campaigns))
 	for _, c := range page.Campaigns {
 		out = append(out, model.HubSpotCampaign{
@@ -697,7 +697,7 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 
 // CreateCampaign implements service.CampaignSearcher for HubSpot.
 //
-// A WRITE into an LF-GLOBAL namespace: the created campaign is visible to every foundation's
+// A WRITE into a PORTAL-WIDE namespace: the created campaign is visible to every
 // campaign managers, whatever project scoped the request. It performs no existence check — see
 // the client method and the design description for why that belongs with the operator.
 func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
@@ -708,6 +708,19 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 
 	created, err := client.CreateCampaign(ctx, name)
 	if err != nil {
+		// Translated to DOMAIN sentinels here, in the layer that talks to the platform. The
+		// service must be able to tell a definite rejection (nothing was created, report it as
+		// such) from an unconfirmed outcome (verify before retrying) and a permission failure
+		// (retrying any name is futile) — and it must do so without importing a platform client
+		// to inspect its unexported error types, which would invert service → dispatch →
+		// platform. Anything not positively identified as a rejection stays untagged and is
+		// treated as unconfirmed upstream, which is the safe direction for a create.
+		switch {
+		case hubspot.IsPermissionRejection(err):
+			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformPermission, domain.ErrPlatformRejected, err))
+		case hubspot.IsDefiniteRejection(err):
+			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformRejected, err))
+		}
 		return nil, fmt.Errorf("create hubspot campaign: %w", err)
 	}
 	// The client refuses an id-less response rather than returning one, so a nil here would be a

@@ -241,6 +241,19 @@ var (
 	// platform package.
 	ErrConnectionNotUsable = errors.New("the stored connection is not usable as configured")
 
+	// ErrPlatformRejected marks a failure the PLATFORM decided on the merits: it answered, it
+	// refused, and nothing was created. It is the counterpart of an unconfirmed outcome — a
+	// caller may safely report "nothing happened" rather than sending an operator to verify.
+	//
+	// Tagged by the dispatcher, which is the layer that talks to the platform, so the service
+	// can classify without importing a platform client to inspect its private error types.
+	ErrPlatformRejected = errors.New("the platform rejected the request")
+
+	// ErrPlatformPermission narrows ErrPlatformRejected to a refusal on AUTHORISATION (401/403).
+	// Separate because the remedy differs: a rejected name can be fixed by choosing another, a
+	// permission failure cannot be fixed by retrying anything.
+	ErrPlatformPermission = errors.New("the platform refused the request on permissions")
+
 	// ErrSystemConnectionNotUsable marks a defect in the LF-owned SYSTEM connection rather
 	// than in the project's own. It is wrapped alongside ErrConnectionNotUsable, not
 	// instead of it, so nothing that merely asks "was this refused before the platform?"

@@ -1258,7 +1258,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	Method("search-hubspot-campaigns", func() {
 		Description("Find LF HubSpot marketing campaigns by name, to read back an existing campaign's " +
 			"`hs_utm` token. " +
-			"**THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this " +
+			"**THE NAMESPACE IS PORTAL-WIDE.** HubSpot campaigns are not scoped to a project, so this " +
 			"returns matches from the ENTIRE LF portal regardless of which project scopes the path — " +
 			"the `project_id` gates permission, not visibility. That is a property of HubSpot's data " +
 			"model rather than a gap in the scoping here, and it is why the create route below needs " +
@@ -1295,7 +1295,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(func() {
 			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in HubSpot's relevance order. Empty when nothing matched.")
-			Attribute("capped", Boolean, "True when HubSpot matched MORE campaigns than were returned. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace every foundation shares. Narrow the search term instead.")
+			Attribute("capped", Boolean, "True when HubSpot matched MORE campaigns than were returned. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.")
 			Required("campaigns", "capped")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
@@ -1336,7 +1336,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("name", String, "The campaign name. Visible to every foundation — do not include project-sensitive information.", func() {
+			Attribute("name", String, "The campaign name. Visible to everyone on the connection's HubSpot portal — do not include project-sensitive information.", func() {
 				MinLength(1)
 				MaxLength(255)
 				Example("KubeCon NA 2026")

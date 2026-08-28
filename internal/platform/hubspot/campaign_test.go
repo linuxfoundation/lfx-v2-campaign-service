@@ -288,6 +288,35 @@ func TestSearchCampaigns_CappedComesFromTotalNotLength(t *testing.T) {
 		}
 	})
 
+	t.Run("a total smaller than the returned rows is capped", func(t *testing.T) {
+		// A response that contradicts itself cannot be trusted to describe its own
+		// completeness, and "cannot be trusted" must not resolve to the proven absence that
+		// licenses a create.
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"total":0,"results":[{"id":"1","properties":{"hs_name":"A"}}]}`)
+		})
+		got, err := c.SearchCampaigns(context.Background(), "kubecon")
+		if err != nil {
+			t.Fatalf("SearchCampaigns: %v", err)
+		}
+		if !got.Capped {
+			t.Error("Capped = false on a total of 0 with 1 returned row: a self-contradicting response read as authoritative")
+		}
+	})
+
+	t.Run("a negative total is capped", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"total":-5,"results":[]}`)
+		})
+		got, err := c.SearchCampaigns(context.Background(), "kubecon")
+		if err != nil {
+			t.Fatalf("SearchCampaigns: %v", err)
+		}
+		if !got.Capped {
+			t.Error("Capped = false on a negative total")
+		}
+	})
+
 	t.Run("empty and complete", func(t *testing.T) {
 		// The common case, and the one that must NOT warn: nothing matched, and nothing was
 		// hidden. This is where the create offer is legitimate.

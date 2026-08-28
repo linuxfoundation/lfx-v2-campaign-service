@@ -26,7 +26,7 @@ const (
 	//
 	// IT IS A CAP, NOT A PAGE. This method does not follow `paging.next.after`, so a campaign
 	// ranked below the cap is not returned — and the caller reads an absent campaign as licence
-	// to create one, in a namespace every foundation shares. Raised to 100 (HubSpot's own
+	// to create one, in a namespace shared by everyone on that HubSpot portal. Raised to 100 (HubSpot's own
 	// maximum) so the gap between "not in the top N" and "does not exist" is as small as one
 	// request can make it, and stated here because it is a contract fact rather than a tuning
 	// detail: an operator who cannot find their campaign in the results should search a
@@ -43,11 +43,19 @@ var campaignProps = []string{"hs_name", "hs_utm", "hs_start_date"}
 
 // Campaign is one HubSpot marketing campaign.
 //
-// THE NAMESPACE IS LF-GLOBAL. HubSpot campaigns are not scoped to a project, a portal
-// sub-account, or anything else this service partitions by — every campaign in the LF portal is
-// visible to every caller of these methods, and one created here is visible to every other
-// foundation's campaign managers. That is a property of HubSpot's data model, not a gap in the
+// THE NAMESPACE IS PORTAL-WIDE, NOT PROJECT-SCOPED. HubSpot campaigns are not scoped to a
+// project or any sub-account this service partitions by: every campaign in the portal is
+// visible to every caller holding that portal's token, and one created here is visible to
+// everyone else working in it. That is a property of HubSpot's data model, not a gap in the
 // scoping here, and it is why the create path is documented as requiring a UI warning.
+//
+// WHICH portal is the connection's, not necessarily the LF's. A HubSpot connection is stored
+// per project and carries its own token and portal_id, and credsSource refuses the LF system
+// fallback for HubSpot (internal/dispatch/creds.go — that fallback is ad-account-only, because
+// writing one tenant's contacts into another's portal is not the trade it makes). So two
+// projects share this namespace only when they are configured against the SAME portal, which
+// is the common case for foundations under the LF umbrella but is not guaranteed. Do not read
+// "portal-wide" as "every foundation, always".
 type Campaign struct {
 	// ID is HubSpot's own object id (`hs_object_id`).
 	ID string
@@ -133,7 +141,7 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampa
 	for _, hit := range resp.Results {
 		// An id-less hit is a MALFORMED response, not a droppable row. Dropping it would turn
 		// `{"results":[{"id":""}]}` into a clean empty answer — and empty is precisely what the
-		// caller acts on by creating a campaign, in a namespace every foundation shares. That
+		// caller acts on by creating a campaign, in a namespace shared by everyone on that HubSpot portal. That
 		// is the same fail-closed rule the nil-results check above applies, and silently
 		// discarding a row would breach it one layer down. Every other field may legitimately
 		// be empty.
@@ -152,8 +160,12 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampa
 	//
 	// An ABSENT total is treated as capped: the response did not tell us how many matched, so
 	// completeness is unknown, and "unknown" must not be reported as the proven absence that
-	// licenses a create in a namespace every foundation shares.
-	capped := resp.Total == nil || *resp.Total > len(out)
+	// licenses a create in a namespace shared by everyone on that HubSpot portal.
+	// A CONTRADICTORY total is treated as capped too. A negative total, or one smaller than the
+	// rows actually returned, means the response cannot be trusted to describe its own
+	// completeness — and "cannot be trusted" must not resolve to the proven absence that
+	// licenses a create. Only a total that is >= the returned count can say the set is whole.
+	capped := resp.Total == nil || *resp.Total != len(out)
 	return SearchCampaignsPage{Campaigns: out, Capped: capped}, nil
 }
 
@@ -164,11 +176,11 @@ type SearchCampaignsPage struct {
 	Campaigns []Campaign
 	// Capped reports that HubSpot matched MORE campaigns than this request returned. When it is
 	// true, a campaign absent from Campaigns may still exist, so a caller must not read absence
-	// as licence to create one in a namespace every foundation shares.
+	// as licence to create one in a namespace shared by everyone on that HubSpot portal.
 	Capped bool
 }
 
-// CreateCampaign creates an LF-global HubSpot campaign named name.
+// CreateCampaign creates a portal-wide HubSpot campaign named name.
 //
 // IT IS VISIBLE TO EVERY FOUNDATION. The campaign namespace is the whole LF portal, so this is
 // not a project-scoped write however the calling route is scoped — the created campaign appears
@@ -200,7 +212,7 @@ func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, er
 	// caller input.
 	createPath := campaignCreatePath + "?properties=" + strings.Join(campaignProps, ",")
 	// NOT idempotent: this creates a row, and a retried create makes a second campaign in a
-	// namespace every foundation can see. The transport must not replay it.
+	// namespace shared by everyone on that HubSpot portal. The transport must not replay it.
 	raw, err := c.doRequest(ctx, http.MethodPost, createPath, body, false)
 	if err != nil {
 		return nil, err
@@ -212,7 +224,7 @@ func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, er
 		// very likely created the campaign — only our reading of the body failed. A plain error
 		// loses the structural signal (see CloneEmail and CreateList, which mark exactly this
 		// arm) and a caller that treats it as a clean failure retries into a duplicate in a
-		// namespace every foundation shares.
+		// namespace shared by everyone on that HubSpot portal.
 		return nil, unconfirmed("hubspot: campaign create UNCONFIRMED (2xx with an undecodable body — a campaign may have been created; verify before retrying)", err)
 	}
 	// An id-less 2xx means the campaign may or may not have been created and cannot be

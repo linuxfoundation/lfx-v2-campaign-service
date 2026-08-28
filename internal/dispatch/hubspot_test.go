@@ -486,3 +486,64 @@ func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testin
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// TestHubSpot_CreateCampaignTagsDomainSentinels pins the translation the SERVICE depends on.
+//
+// The service classifies a create outcome from domain sentinels alone — it must not import a
+// platform client to read unexported error types, which would invert service → dispatch →
+// platform. That only works if this layer actually tags them, and nothing else in the chain can
+// notice if it stops: the service tests would go on passing against sentinels nobody produces.
+func TestHubSpot_CreateCampaignTagsDomainSentinels(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		wantTags    []error
+		notWantTags []error
+	}{
+		{
+			name:        "403 is a permission rejection",
+			status:      http.StatusForbidden,
+			wantTags:    []error{domain.ErrPlatformPermission, domain.ErrPlatformRejected},
+			notWantTags: nil,
+		},
+		{
+			name:        "400 is a definite rejection but not a permission one",
+			status:      http.StatusBadRequest,
+			wantTags:    []error{domain.ErrPlatformRejected},
+			notWantTags: []error{domain.ErrPlatformPermission},
+		},
+		{
+			// A 500 MAY have committed the campaign, so it must stay untagged and be treated as
+			// unconfirmed upstream. Tagging it would tell the operator nothing was created.
+			name:        "500 is left unclassified",
+			status:      http.StatusInternalServerError,
+			wantTags:    nil,
+			notWantTags: []error{domain.ErrPlatformRejected, domain.ErrPlatformPermission},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{"message":"nope"}`)
+			}))
+			defer srv.Close()
+
+			d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+				fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+			_, err := d.CreateCampaign(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon NA 2027")
+			if err == nil {
+				t.Fatalf("a %d was reported as success", tc.status)
+			}
+			for _, want := range tc.wantTags {
+				if !errors.Is(err, want) {
+					t.Errorf("a %d is not tagged %v, so the service cannot classify it: %v", tc.status, want, err)
+				}
+			}
+			for _, notWant := range tc.notWantTags {
+				if errors.Is(err, notWant) {
+					t.Errorf("a %d is wrongly tagged %v: %v", tc.status, notWant, err)
+				}
+			}
+		})
+	}
+}

@@ -256,6 +256,21 @@ func IsDefiniteRejection(err error) bool {
 	return !ae.Ambiguous
 }
 
+// IsPermissionRejection reports whether err is a definite rejection HubSpot made on
+// AUTHORISATION rather than on the request's content — a 401 or 403.
+//
+// Separate from IsDefiniteRejection because the two need different remedies: a rejected name can
+// be fixed by choosing another, while a permission failure cannot be fixed by retrying anything
+// at all. Telling an operator to "check the name" on a 403 sends them to change the one thing
+// that was never the problem.
+func IsPermissionRejection(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.StatusCode == http.StatusUnauthorized || ae.StatusCode == http.StatusForbidden
+}
+
 // IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
 // request — the server may or may not have applied the change. This is true for an
 // ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply

@@ -20,7 +20,6 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
 // validateConnectionProjectSlug guards the connection CREATE endpoints: project_id
@@ -356,9 +355,16 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
 			credentialProject = model.SystemProjectID
 		}
+		// NO ERROR TEXT. The sentinel itself is built from ciphertext and key material only,
+		// but what reaches the log is the whole CHAIN, and domain.Encryptor is an interface
+		// whose implementations are free to quote the ciphertext or the key they failed on.
+		// internal/dispatch/creds.go says exactly this, and names this arm as the one path
+		// that still logged the cause — closed here, because the campaign CREATE now routes
+		// its setup failures through this classifier. The operator-facing message already
+		// carries the remedy, and the cause adds nothing an operator can act on.
 		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
 			"project_id", credentialProject, "requested_by_project_id", projectID,
-			"provider", string(d.provider), "error", aerr)
+			"provider", string(d.provider))
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
 	case errors.Is(aerr, domain.ErrServiceDefect):
 		// ABOVE both connection arms below. The 400 below completes "the stored <provider>
@@ -1224,8 +1230,8 @@ var hubspotCampaignCreateDiscovery = accountDiscovery{
 // SearchHubspotCampaigns finds LF HubSpot campaigns by name, so a caller can read back an
 // existing campaign's utm token.
 //
-// THE ANSWER IS LF-GLOBAL. `project_id` gates permission, not visibility — HubSpot's campaign
-// namespace is the whole portal, so this returns matches from every foundation's campaigns. That
+// THE ANSWER IS PORTAL-WIDE. `project_id` gates permission, not visibility — HubSpot's campaign
+// namespace is the whole portal, so this returns every campaign in the connection's portal. That
 // is stated on the design method too, because a reader who assumes project scoping would draw
 // the wrong conclusion from an unexpected match.
 func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.SearchHubspotCampaignsPayload) (*conn.SearchHubspotCampaignsResult, error) {
@@ -1268,10 +1274,10 @@ func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.
 	return &conn.SearchHubspotCampaignsResult{Campaigns: out, Capped: page.Capped}, nil
 }
 
-// CreateHubspotCampaign creates an LF-global HubSpot campaign and returns the token HubSpot
+// CreateHubspotCampaign creates a portal-wide HubSpot campaign and returns the token HubSpot
 // assigned it.
 //
-// IT ALWAYS CREATES, and the created campaign is visible to every foundation. Both facts are on
+// IT ALWAYS CREATES, and the created campaign is visible to everyone on that portal. Both facts are on
 // the design method; neither is enforced here, because neither can be: a duplicate check would
 // race, and visibility is HubSpot's data model. The caller searches first and warns.
 func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.CreateHubspotCampaignPayload) (*conn.HubspotCampaign, error) {
@@ -1304,7 +1310,7 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		// NOT classifyDiscoveryError for anything else. That classifier is written for READS: its default arm
 		// reports a retryable "campaign search could not be completed" 503, which is wrong here
 		// twice over. It names the wrong operation, and — far worse — it invites a retry of a
-		// NON-IDEMPOTENT write into a namespace every foundation shares. HubSpot marks mutating
+		// NON-IDEMPOTENT write into a namespace shared by everyone on that HubSpot portal. HubSpot marks mutating
 		// transport, 429, 3xx and 5xx failures as unconfirmed precisely because the campaign may
 		// already exist; collapsing them into "try again" is how a duplicate gets made.
 		//
@@ -1315,9 +1321,27 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		// rather than as !IsUnconfirmed: the negation answers true for any error the platform
 		// package cannot classify, which would report "nothing was created" about an outcome
 		// nobody established. Unrecognised errors fall through to unconfirmed below.
-		slog.ErrorContext(ctx, "hubspot campaign creation failed",
-			"project_id", p.ProjectID, "definite_rejection", hubspot.IsDefiniteRejection(cerr), "error", safeErrSummary(cerr))
-		if hubspot.IsDefiniteRejection(cerr) {
+		// A DECRYPT failure is logged without its cause, for the same reason the discovery
+		// classifier drops it: the chain can carry ciphertext or key material, and
+		// safeErrSummary is NOT a redactor — it normalises and truncates only. Every other
+		// failure here is an upstream or transport error whose text is what an operator needs.
+		if errors.Is(cerr, domain.ErrCredentialDecryptionFailed) {
+			slog.ErrorContext(ctx, "hubspot campaign creation failed: stored credentials could not be decrypted",
+				"project_id", p.ProjectID)
+		} else {
+			slog.ErrorContext(ctx, "hubspot campaign creation failed",
+				"project_id", p.ProjectID, "definite_rejection", errors.Is(cerr, domain.ErrPlatformRejected), "error", safeErrSummary(cerr))
+		}
+		if errors.Is(cerr, domain.ErrPlatformRejected) {
+			// A PERMISSION rejection gets its own remedy. Retrying with another name cannot fix
+			// a 401/403, so the "check the name" message would send the operator to change the
+			// one thing that was never at fault.
+			if errors.Is(cerr, domain.ErrPlatformPermission) {
+				return nil, &conn.BadRequestError{
+					Code:    "400",
+					Message: "hubspot refused the campaign creation on permissions; nothing was created — check that the connection's private app token is valid and has the marketing campaigns write scope",
+				}
+			}
 			return nil, &conn.BadRequestError{
 				Code:    "400",
 				Message: "hubspot rejected the campaign creation; nothing was created — check the name and try again",
