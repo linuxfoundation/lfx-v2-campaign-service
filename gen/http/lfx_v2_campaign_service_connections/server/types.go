@@ -4025,6 +4025,12 @@ type GoogleAdsKeywordResponseBody struct {
 	// member is retained so the type stays usable if a future caller reads
 	// tombstones.
 	Status string `form:"status" json:"status" xml:"status"`
+	// The ad group's display name. Not an identifier — names are not unique across
+	// campaigns; address the ad group by `ad_group_id`.
+	AdGroupName string `form:"ad_group_name" json:"ad_group_name" xml:"ad_group_name"`
+	// The campaign's display name. Not an identifier — address the campaign by
+	// `campaign_id`.
+	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
 	// Impressions over the window
 	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
 	// Clicks over the window
@@ -4035,6 +4041,16 @@ type GoogleAdsKeywordResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Conversions over the window, fraction intact — Google credits fractional
+	// conversions under data-driven and position-based attribution. Absence
+	// upstream is a measured 0, not an unmeasured one: this field is always
+	// selected.
+	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
+	// Google's 1-10 quality rating. ABSENT when Google has not rated this keyword
+	// yet, which is normal for a keyword with few impressions — absence is not a
+	// score of 0, and 0 is not on the scale. Render it as unknown, never as a low
+	// score.
+	QualityScore *int64 `form:"quality_score,omitempty" json:"quality_score,omitempty" xml:"quality_score,omitempty"`
 }
 
 // GoogleAdsAudienceBucketResponseBody is used to define fields on response
@@ -4056,6 +4072,9 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Conversions over the window, fraction intact. Summable WITHIN a dimension
+	// for the same reason impressions are; summing across dimensions triple-counts.
+	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
 }
 
 // MarketingEmailResponseBody is used to define fields on response body types.

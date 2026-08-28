@@ -33,6 +33,17 @@ const (
 	// project's whole spend is a wrong number, not merely an incomplete one.
 	maxKeywordRows = 50
 
+	// minQualityScore and maxQualityScore bound Google's quality rating.
+	//
+	// These MUST equal the Minimum(1)/Maximum(10) declared on quality_score in the design.
+	// The generated client validates the response against that declaration, so a value these
+	// constants admit but the design rejects fails the ENTIRE keywords response rather than
+	// one field — which is why keywordQualityScore drops an out-of-range score instead of
+	// clamping it into range and reporting a rating Google never gave.
+	// TestKeywordQualityScoreBoundsMatchTheDesign pins the two together.
+	minQualityScore = 1
+	maxQualityScore = 10
+
 	// maxKeywordActions bounds one keyword-actions batch. It matches maxKeywords (the
 	// create path's cap) deliberately: the two surfaces address the same criteria, and a
 	// caller able to create 60 keywords in one dispatch must be able to pause the same 60
@@ -82,14 +93,32 @@ type KeywordRow struct {
 	CriterionID string `json:"criterionId"`
 	AdGroupID   string `json:"adGroupId"`
 	CampaignID  string `json:"campaignId"`
-	Text        string `json:"text"`
-	MatchType   string `json:"matchType"`
-	Status      string `json:"status"`
-	Impressions int64  `json:"impressions"`
-	Clicks      int64  `json:"clicks"`
-	CostMicros  int64  `json:"costMicros"`
+	// AdGroupName and CampaignName are the human-readable names for the two ids above.
+	// They are carried alongside rather than instead of the ids: the ids are what
+	// keyword-actions addresses a criterion by, and a name is not unique — two ad groups
+	// in different campaigns may share one. A caller displaying a name and acting on the
+	// id beside it is the intended use.
+	AdGroupName  string `json:"adGroupName"`
+	CampaignName string `json:"campaignName"`
+	Text         string `json:"text"`
+	MatchType    string `json:"matchType"`
+	Status       string `json:"status"`
+	// QualityScore is Google's 1-10 rating, nil when Google reports none. It is a POINTER
+	// because absence is a real and common state that is not zero: Google withholds the
+	// score until a keyword has accrued enough impressions, and a brand-new keyword
+	// legitimately has none. Zero is not a value Google ever assigns on the 1-10 scale, so
+	// flattening absence to 0 would invent a "worst possible score" for exactly the
+	// keywords that have not been rated yet.
+	QualityScore *int64 `json:"qualityScore,omitempty"`
+	Impressions  int64  `json:"impressions"`
+	Clicks       int64  `json:"clicks"`
+	CostMicros   int64  `json:"costMicros"`
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64 `json:"ctr"`
+	// Conversions carries its fraction intact — see gaqlMetricRowMetrics.Conversions.
+	// Unlike QualityScore this is not a pointer: Google Ads always measures conversions
+	// for a served keyword, so an absent field is a measured zero rather than an unknown.
+	Conversions float64 `json:"conversions"`
 }
 
 // KeywordPerformance is the keyword read, confined to the caller's own campaigns.
@@ -118,6 +147,10 @@ type AudienceBucket struct {
 	Clicks      int64   `json:"clicks"`
 	CostMicros  int64   `json:"costMicros"`
 	Ctr         float64 `json:"ctr"`
+	// Conversions is summed across the rows folded into this bucket, with its fraction
+	// intact — see gaqlMetricRowMetrics.Conversions. Summable WITHIN a dimension for the
+	// same reason impressions are, and triple-counted if summed across all three.
+	Conversions float64 `json:"conversions"`
 }
 
 // AudienceInsights is the demographic read across all three breakdowns, confined to the
@@ -152,12 +185,21 @@ type gaqlKeywordRow struct {
 			Text      string `json:"text"`
 			MatchType string `json:"matchType"`
 		} `json:"keyword"`
+		// QualityInfo is absent entirely for a keyword Google has not rated yet, which is
+		// why both it and the score inside it must survive as absence rather than zero.
+		// The score is an int32 upstream, so it arrives as a bare JSON number — the
+		// string-encoding Google applies to int64 fields does not apply here.
+		QualityInfo *struct {
+			QualityScore *int64 `json:"qualityScore"`
+		} `json:"qualityInfo"`
 	} `json:"adGroupCriterion"`
 	AdGroup struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
 	} `json:"adGroup"`
 	Campaign struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
 	} `json:"campaign"`
 	Metrics gaqlMetricRowMetrics `json:"metrics"`
 }
@@ -167,14 +209,27 @@ type gaqlMetricRowMetrics struct {
 	Impressions string `json:"impressions"`
 	Clicks      string `json:"clicks"`
 	CostMicros  string `json:"costMicros"`
+	// Conversions is a JSON NUMBER, not a string, for the same reason it is one in
+	// gaqlMetricsRow: Google Ads REST string-encodes int64-valued fields to protect them
+	// from float64 precision loss, and metrics.conversions is declared DOUBLE upstream, so
+	// it is already a float and arrives as a bare number. Google credits fractional
+	// conversions under data-driven and position-based attribution, so the fraction is
+	// carried through rather than rounded here.
+	//
+	// Absence means a measured 0.0, not "unmeasured": proto3 JSON omits default values, so
+	// a keyword or bucket with no conversions arrives with the key missing. Both readers
+	// select metrics.conversions unconditionally, so there is no case where the field is
+	// absent because it was not asked for.
+	Conversions float64 `json:"conversions"`
 }
 
-// parseRowMetrics parses the three metric strings, naming only the FIELDS that failed
+// parseRowMetrics parses the three string-encoded metric fields and passes through the
+// already-decoded conversions figure, naming only the FIELDS that failed
 // and never their values — the values come straight from the upstream response body and
 // the service renders this error into a log line, so echoing them would let a malformed
 // metric inject attacker-influenced text (including newlines) into the log stream. Same
 // reasoning as GetCampaignMetrics.
-func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clicks, costMicros int64, err error) {
+func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clicks, costMicros int64, conversions float64, err error) {
 	impressions, errImpressions := parseMetricInt(m.Impressions)
 	clicks, errClicks := parseMetricInt(m.Clicks)
 	costMicros, errCost := parseMetricInt(m.CostMicros)
@@ -189,9 +244,44 @@ func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clic
 		if errCost != nil {
 			bad = append(bad, "costMicros")
 		}
-		return 0, 0, 0, fmt.Errorf("%s: unparseable metric field(s): %s", describe, strings.Join(bad, ", "))
+		return 0, 0, 0, 0, fmt.Errorf("%s: unparseable metric field(s): %s", describe, strings.Join(bad, ", "))
 	}
-	return impressions, clicks, costMicros, nil
+	// Conversions needs no parsing — it decodes as a float64 already — but it is returned
+	// here so every reader of the shared metrics block gets the whole block from one call
+	// rather than reaching past this helper for one field.
+	return impressions, clicks, costMicros, m.Conversions, nil
+}
+
+// keywordQualityScore extracts Google's 1-10 quality score, returning nil when Google
+// reported none.
+//
+// Absence arrives at TWO levels and both mean the same thing: `qualityInfo` is omitted
+// entirely for a keyword Google has not rated, and `qualityScore` within it is omitted
+// when the block exists but carries no score. Neither is an error and neither is a zero —
+// Google withholds the rating until a keyword has accrued enough impressions, so a new
+// keyword legitimately has none, and 0 is outside the 1-10 scale it would be mistaken for.
+//
+// A score OUTSIDE the 1-10 scale is treated as no score, and that guard protects the whole
+// response rather than this one field. The design declares quality_score with
+// Minimum(1)/Maximum(10), and Goa emits response validation in the generated CLIENT — so
+// publishing an out-of-range value would make the client reject the ENTIRE keywords
+// response, losing a whole report over one keyword. The row itself is kept: its impressions
+// and spend are real and unaffected by an unusable score. This mirrors the reasoning behind
+// the match_type/status UNKNOWN members, which exist so one unrecognised value cannot fail
+// the response.
+//
+// The returned pointer is a fresh copy rather than the decoded row's own pointer, so a
+// caller holding a KeywordRow cannot reach back into the decode buffer.
+func keywordQualityScore(row gaqlKeywordRow) *int64 {
+	qi := row.AdGroupCriterion.QualityInfo
+	if qi == nil || qi.QualityScore == nil {
+		return nil
+	}
+	score := *qi.QualityScore
+	if score < minQualityScore || score > maxQualityScore {
+		return nil
+	}
+	return &score
 }
 
 // ctrFor is Clicks/Impressions, 0 when Impressions is 0, so no caller divides by zero.
@@ -396,8 +486,9 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 		"SELECT ad_group_criterion.criterion_id, ad_group_criterion.status, "+
 			"ad_group_criterion.negative, "+
 			"ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, "+
-			"ad_group.id, campaign.id, "+
-			"metrics.impressions, metrics.clicks, metrics.cost_micros "+
+			"ad_group_criterion.quality_info.quality_score, "+
+			"ad_group.id, ad_group.name, campaign.id, campaign.name, "+
+			"metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions "+
 			"FROM keyword_view "+
 			"WHERE segments.date DURING %s AND ad_group_criterion.status IN ('ENABLED', 'PAUSED') "+
 			"AND ad_group_criterion.negative = FALSE "+
@@ -445,7 +536,7 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 				Err:    fmt.Errorf("decode keyword row at index %d: %w", i, uErr),
 			}
 		}
-		impressions, clicks, costMicros, pErr := parseRowMetrics(row.Metrics, fmt.Sprintf("get keyword performance: row %d", i))
+		impressions, clicks, costMicros, conversions, pErr := parseRowMetrics(row.Metrics, fmt.Sprintf("get keyword performance: row %d", i))
 		if pErr != nil {
 			return nil, pErr
 		}
@@ -504,16 +595,24 @@ func (c *Client) GetKeywordPerformance(ctx context.Context, window MetricsWindow
 			continue
 		}
 		out = append(out, KeywordRow{
-			CriterionID: row.AdGroupCriterion.CriterionID,
-			AdGroupID:   row.AdGroup.ID,
-			CampaignID:  row.Campaign.ID,
-			Text:        row.AdGroupCriterion.Keyword.Text,
-			MatchType:   normaliseKeywordMatchType(row.AdGroupCriterion.Keyword.MatchType),
-			Status:      normaliseKeywordStatus(row.AdGroupCriterion.Status),
-			Impressions: impressions,
-			Clicks:      clicks,
-			CostMicros:  costMicros,
-			Ctr:         ctrFor(impressions, clicks),
+			CriterionID:  row.AdGroupCriterion.CriterionID,
+			AdGroupID:    row.AdGroup.ID,
+			CampaignID:   row.Campaign.ID,
+			AdGroupName:  row.AdGroup.Name,
+			CampaignName: row.Campaign.Name,
+			Text:         row.AdGroupCriterion.Keyword.Text,
+			MatchType:    normaliseKeywordMatchType(row.AdGroupCriterion.Keyword.MatchType),
+			Status:       normaliseKeywordStatus(row.AdGroupCriterion.Status),
+			// Two levels of absence, both meaning "Google has not rated this keyword":
+			// the qualityInfo block is omitted entirely for an unrated keyword, and the
+			// score within it is omitted when the block is present but the score is not.
+			// Both collapse to nil rather than to a score of zero.
+			QualityScore: keywordQualityScore(row),
+			Impressions:  impressions,
+			Clicks:       clicks,
+			CostMicros:   costMicros,
+			Ctr:          ctrFor(impressions, clicks),
+			Conversions:  conversions,
 		})
 	}
 
@@ -603,7 +702,7 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 		// evidence of which campaign a bucket's impressions and spend came from, so an
 		// unhonoured filter would be indistinguishable from a correct answer.
 		query := fmt.Sprintf(
-			"SELECT %s, campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros "+
+			"SELECT %s, campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions "+
 				"FROM %s WHERE segments.date DURING %s AND %s",
 			aq.selectField, aq.from, w, scope,
 		)
@@ -652,7 +751,7 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 					Err:    fmt.Errorf("decode %s metrics at index %d: %w", aq.dimension, i, uErr),
 				}
 			}
-			impressions, clicks, costMicros, pErr := parseRowMetrics(m.Metrics, fmt.Sprintf("get audience insights (%s): row %d", aq.dimension, i))
+			impressions, clicks, costMicros, conversions, pErr := parseRowMetrics(m.Metrics, fmt.Sprintf("get audience insights (%s): row %d", aq.dimension, i))
 			if pErr != nil {
 				return nil, pErr
 			}
@@ -665,6 +764,11 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 			b.Impressions += impressions
 			b.Clicks += clicks
 			b.CostMicros += costMicros
+			// Summed with the other counters for the same reason: the device query returns
+			// one row per (campaign, device) pair, so a bucket's conversions are spread
+			// across rows and taking any single row's figure would report one campaign's
+			// conversions as the whole device's.
+			b.Conversions += conversions
 		}
 
 		dimBuckets := make([]AudienceBucket, 0, len(order))

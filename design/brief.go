@@ -501,11 +501,26 @@ var GoogleAdsKeyword = Type("google-ads-keyword", func() {
 	// validation — would reject the entire response over one row.
 	Attribute("match_type", String, "How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.", func() { Enum("EXACT", "PHRASE", "BROAD", "UNKNOWN") })
 	Attribute("status", String, "The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.", func() { Enum("ENABLED", "PAUSED", "REMOVED", "UNKNOWN") })
+	// The NAMES accompany the ids rather than replacing them: `keyword-actions` addresses a
+	// criterion by id, and a name is not unique — two ad groups in different campaigns may
+	// share one. Display the name, act on the id beside it.
+	Attribute("ad_group_name", String, "The ad group's display name. Not an identifier — names are not unique across campaigns; address the ad group by `ad_group_id`.", func() { Example("Registration - Exact") })
+	Attribute("campaign_name", String, "The campaign's display name. Not an identifier — address the campaign by `campaign_id`.", func() { Example("KubeCon NA 2026 - Search") })
 	Attribute("impressions", Int64, "Impressions over the window", func() { Example(4820) })
 	Attribute("clicks", Int64, "Clicks over the window", func() { Example(311) })
 	Attribute("cost_micros", Int64, "Cost over the window in micro-units of the account's native currency. This service performs no FX conversion, so do not blend it with another account's figures.", func() { Example(1284000) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)", func() { Example(0.0645) })
-	Required("criterion_id", "ad_group_id", "campaign_id", "text", "match_type", "status", "impressions", "clicks", "cost_micros", "ctr")
+	Attribute("conversions", Float64, "Conversions over the window, fraction intact — Google credits fractional conversions under data-driven and position-based attribution. Absence upstream is a measured 0, not an unmeasured one: this field is always selected.", func() { Example(12.5) })
+	// OPTIONAL, and deliberately so. Google withholds the score until a keyword has accrued
+	// enough impressions, so a brand-new keyword genuinely has none — and 0 is outside the
+	// 1-10 scale, so defaulting absence to zero would present every unrated keyword as the
+	// worst possible one. A caller must render "—" for absent, never a number.
+	Attribute("quality_score", Int64, "Google's 1-10 quality rating. ABSENT when Google has not rated this keyword yet, which is normal for a keyword with few impressions — absence is not a score of 0, and 0 is not on the scale. Render it as unknown, never as a low score.", func() {
+		Minimum(1)
+		Maximum(10)
+		Example(7)
+	})
+	Required("criterion_id", "ad_group_id", "campaign_id", "ad_group_name", "campaign_name", "text", "match_type", "status", "impressions", "clicks", "cost_micros", "ctr", "conversions")
 })
 
 // GoogleAdsKeywords is the keyword performance read, scoped to the project's OWN campaigns.
@@ -539,7 +554,8 @@ var GoogleAdsAudienceBucket = Type("google-ads-audience-bucket", func() {
 	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
 	Attribute("cost_micros", Int64, "Cost over the window in micro-units of the account's native currency", func() { Example(3120000) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
-	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr")
+	Attribute("conversions", Float64, "Conversions over the window, fraction intact. Summable WITHIN a dimension for the same reason impressions are; summing across dimensions triple-counts.", func() { Example(31.25) })
+	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr", "conversions")
 })
 
 // GoogleAdsAudience is the project-scoped demographic read: age, gender and device.
