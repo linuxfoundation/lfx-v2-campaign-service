@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -90,10 +91,16 @@ const maxListPages = 200
 // matches, so a large portal returns an enormous response or spends the orchestrator's
 // deadline mid-walk and 503s, precisely on the portals that most need a picker.
 //
-// It applies ONLY when there is no needle. A filtered search must still walk every page:
-// truncating it would answer "no such email" about an email sitting on page 50, and the
-// callers of a lookup act on that absence. An unfiltered walk has no such failure mode —
-// nothing is being looked UP, and the contract is already "the most recent ones".
+// It applies ONLY when there is no needle. A filtered search is bounded far more generously --
+// maxFilteredScan rows or maxFilteredPages pages, not 500 rows -- because truncating it early
+// would answer "no such email" about an email sitting on page 50, and the callers of a lookup act
+// on that absence. An unfiltered walk has no such failure mode: nothing is being looked UP, and
+// the contract is already "the most recent ones".
+//
+// The filtered walk is not UNBOUNDED, though, and an earlier revision of this comment said it
+// was. Unbounded, a query matching nothing walked the whole portal and died on the request
+// deadline, so the caller saw a connection error rather than "no matches" -- trading a rare false
+// absence for a guaranteed failure on exactly the large portals this exists to serve.
 //
 // WHICH rows the bounded walk returns depends on the server honouring `sort=-updatedAt`,
 // and that dependency is real rather than hedged. An earlier revision over-collected 3×
@@ -108,7 +115,7 @@ const maxListPages = 200
 // user a less useful list, not a wrong answer. The client still re-sorts what it fetched
 // (sortEmailsByUpdatedDesc), so the returned page is correctly ordered within itself even
 // if the server's selection was not. Nothing that must be CORRECT depends on the hint: a
-// filtered search, where a miss is a false absence, still reads every page.
+// filtered search, where a miss is a false absence, reads far more of them (maxFilteredScan).
 const maxUnfilteredEmails = 500
 
 // maxFilteredScan bounds how many emails a FILTERED search reads before giving up on finding
@@ -128,8 +135,9 @@ const maxFilteredPages = 20
 
 // SearchEmails returns marketing emails whose name or subject contains query
 // (case-insensitive), most-recently-updated first. Read-only (idempotent). A FILTERED
-// search follows paging.next.after across ALL pages, so a match beyond the first page is
-// not missed. An UNFILTERED one (empty query) is bounded to maxUnfilteredEmails rows taken
+// search follows paging.next.after across pages, so a match beyond the first page is not
+// missed, up to maxFilteredScan rows or maxFilteredPages pages -- past which the walk stops
+// and logs that its results may be incomplete. An UNFILTERED one (empty query) is bounded to maxUnfilteredEmails rows taken
 // in server order — see that constant for why the two cases differ and what the bound does
 // and does not promise.
 func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error) {
@@ -204,6 +212,14 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// none, which is exactly the case that ran longest. Rows are sorted newest-first by the
 		// server hint, so the pages read are the ones most likely to contain what a user wants.
 		enoughScanned := needle != "" && (scanned >= maxFilteredScan || page+1 >= maxFilteredPages)
+		if enoughScanned && !lastPage {
+			// Say so. The caller gets `(out, nil)` either way, so a truncated walk and an
+			// exhausted one are indistinguishable to it -- and "no matches" on a large portal is
+			// exactly the confusion this bound was added to remove, which would otherwise just
+			// move rather than go away.
+			slog.WarnContext(ctx, "hubspot email search stopped at its scan bound; results may be incomplete",
+				"query_len", len(needle), "scanned", scanned, "pages", page+1, "matched", len(out))
+		}
 		if lastPage || enoughScanned || (needle == "" && len(out) >= maxUnfilteredEmails) {
 			// SORT then trim, deliberately, and not the other way round. The trim is only
 			// reachable when a page carries `out` past the cap — i.e. when the provider ignored

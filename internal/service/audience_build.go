@@ -348,13 +348,19 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		slog.WarnContext(ctx, "audience build did not complete",
 			"audience_id", created.ID, "brief_id", p.BriefID, "status", string(created.Status),
 			"created_lists", strings.Join(ids, ","), "unconfirmed", ambiguous,
-			// The RAW error, matching the sibling persist-failure log below. `SafeErrorCause` is
-			// a WAREHOUSE redactor: it collapses everything it does not recognise -- a HubSpot
-			// 4xx included -- to the literal string "warehouse failure", which would name the
-			// wrong subsystem in the one place an operator goes to find the cause. Redaction
-			// belongs on the persisted summary and the API response, which is where
-			// `partialSummary` already applies it; the server log is not that surface.
-			"error", buildErr)
+			// The RAW error for the HubSpot-API arm, matching the sibling persist-failure log
+			// below. `SafeErrorCause` is a WAREHOUSE redactor: it collapses everything it does
+			// not recognise -- a HubSpot 4xx included -- to the literal "warehouse failure",
+			// naming the wrong subsystem in the one place an operator looks for the cause.
+			// `hubspot.apiError` is safe to render: it prints method, path and status only, and
+			// deliberately never echoes the response body.
+			//
+			// EXCEPT on the credential arm. A builder can fail before any request -- resolving
+			// stored credentials -- and `creds.resolve` wraps the raw decrypt error, which
+			// `domain.Encryptor` implementations are free to have quoted ciphertext or key
+			// material into. `creds.go` carries a standing rule against logging that cause, so
+			// it collapses to the sentinel instead of being "restored" here.
+			"error", buildLogError(buildErr))
 		// Detached for the same reason as the success path below: lists may exist upstream and
 		// this row is the only record of them.
 		partialCtx, cancelPartial := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
@@ -612,6 +618,19 @@ func unrecordedListsErr(cause error, audienceID string, ids []string, exposeCaus
 // Collapsing unknown causes to a generic description here, rather than persisting err.Error()
 // verbatim, keeps a credential-store or driver error from reaching a stored, publicly-readable
 // field. Mirrors audience.SafeErrorCause's pattern for warehouse errors.
+// buildLogError is the build failure as it may be LOGGED.
+//
+// A credential failure collapses to its sentinel: the wrapped cause can carry ciphertext or key
+// material (see the standing rule in `dispatch/creds.go`), and no diagnostic value in it is worth
+// that. Everything else is returned raw, because the errors that reach here otherwise are HubSpot
+// API errors, which render as method/path/status and never quote a response body.
+func buildLogError(err error) error {
+	if errors.Is(err, domain.ErrCredentialDecryptionFailed) || errors.Is(err, domain.ErrCredentialsMalformed) {
+		return domain.ErrCredentialDecryptionFailed
+	}
+	return err
+}
+
 func safeBuildCause(err error) string {
 	if err == nil {
 		return "build failed"

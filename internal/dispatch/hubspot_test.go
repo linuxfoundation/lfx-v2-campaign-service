@@ -67,6 +67,9 @@ type hubspotRec struct {
 	subjectSet   string
 	bodyHTMLSet  string
 	draftHTML    string
+	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
+	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
+	extraWidget bool
 }
 
 func (r *hubspotRec) markClone() {
@@ -168,8 +171,15 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			// earlier write. A stub that always replayed the template made write ORDER
 			// unobservable — and order is the whole claim of the content-vs-tagging test.
 			html := rec.currentBody()
+			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": html}}}
+			// A template with a SECOND rich-text widget, when the test asks for one. There is no
+			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
+			// must decline rather than guess -- see its `len(widgets) != 1` guard.
+			if rec.extraWidget {
+				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "<p>second block</p>"}}
+			}
 			payload, _ := json.Marshal(map[string]any{
-				"content": map[string]any{"widgets": map[string]any{"module_1": map[string]any{"body": map[string]any{"html": html}}}},
+				"content": map[string]any{"widgets": widgets},
 			})
 			_, _ = w.Write(payload)
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
@@ -319,6 +329,33 @@ func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
 	}
 	if !strings.Contains(tagged, "Join us") {
 		t.Errorf("the tagged html must be the GENERATED body, not the template's; got %q", tagged)
+	}
+}
+
+// A template with TWO rich-text widgets must keep its own body. There is no safe way to choose
+// which block the generated body replaces, and writing the wrong one destroys content the
+// operator did not choose to replace -- the single destructive outcome in this path.
+//
+// The subject still applies: it is one field with one meaning, so it carries no such ambiguity.
+func TestHubSpot_MultiWidgetTemplateKeepsItsBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.extraWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the generated subject applied even for a multi-widget template", subject)
+	}
+	// The BODY is what must not be written. Asserting it is empty pins "no content PATCH was
+	// issued for the body" rather than merely "the template survived by luck".
+	if body != "" {
+		t.Errorf("body = %q, want no body write on a multi-widget template", body)
 	}
 }
 
