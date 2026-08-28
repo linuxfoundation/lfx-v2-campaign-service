@@ -178,6 +178,46 @@ func TestRegionEventRegistrantsFilter_UsesIsAnyOfForCountries(t *testing.T) {
 //
 // Each list needs its OWN AND branch. Sibling membership filters inside ONE AND branch mean
 // "in list A AND in list B" — an INTERSECTION, typically empty and exactly backwards.
+// HubSpot requires `operator` on the FILTER itself, not only inside `operation`. Without it the
+// create fails with `Some required fields were not set: [operator]` -- a 400 that names no field
+// path, so it reads as a malformed request rather than a missing key, and every master list
+// (and therefore every audience) fails while the inclusion lists it unions succeed.
+//
+// Confirmed against the live API: the identical payload returns 200 with the field and 400
+// without it.
+func TestMasterListFilter_SetsOperatorAtTheFilterLevel(t *testing.T) {
+	raw, err := MasterListFilter([]string{"30781", "30782"})
+	if err != nil {
+		t.Fatalf("MasterListFilter: %v", err)
+	}
+
+	var root struct {
+		FilterBranches []struct {
+			Filters []map[string]any `json:"filters"`
+		} `json:"filterBranches"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(root.FilterBranches) != 2 {
+		t.Fatalf("want 2 branches, got %d", len(root.FilterBranches))
+	}
+	for i, b := range root.FilterBranches {
+		if len(b.Filters) != 1 {
+			t.Fatalf("branch %d: want 1 filter, got %d", i, len(b.Filters))
+		}
+		// The top-level key is the one HubSpot rejects the request without.
+		if got := b.Filters[0]["operator"]; got != "IN_LIST" {
+			t.Errorf("branch %d: filter-level operator = %v, want IN_LIST", i, got)
+		}
+		// The nested one must survive too -- they are both required, not alternatives.
+		op, _ := b.Filters[0]["operation"].(map[string]any)
+		if op["operator"] != "IN_LIST" {
+			t.Errorf("branch %d: operation.operator = %v, want IN_LIST", i, op["operator"])
+		}
+	}
+}
+
 func TestMasterListFilter_IsAUnionNotAnIntersection(t *testing.T) {
 	raw, err := MasterListFilter([]string{"111", "222", "333"})
 	require.NoError(t, err)

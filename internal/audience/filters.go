@@ -42,7 +42,15 @@ type filter struct {
 	FilterType string `json:"filterType"`
 	Property   string `json:"property,omitempty"`
 	// ListID is set only for LIST_MEMBERSHIP filters (the master list's union members).
-	ListID    string    `json:"listId,omitempty"`
+	ListID string `json:"listId,omitempty"`
+	// Operator is REQUIRED by HubSpot at the FILTER level, in addition to the one inside
+	// `operation`. Omitting it fails the whole create with
+	// `Some required fields were not set: [operator]` -- a 400 that names no field path, so it
+	// reads as a malformed request rather than a missing key. Confirmed against the live API:
+	// the identical payload succeeds with it and 400s without.
+	//
+	// `omitempty` so property filters, which do not set it, keep their existing wire shape.
+	Operator  string    `json:"operator,omitempty"`
 	Operation operation `json:"operation"`
 }
 
@@ -252,6 +260,7 @@ func MasterListFilter(listIDs []string) (json.RawMessage, error) {
 			Filters: []filter{{
 				FilterType: "IN_LIST",
 				ListID:     id,
+				Operator:   "IN_LIST",
 				Operation:  operation{Operator: "IN_LIST", OperationType: "MULTISTRING"},
 			}},
 		})
