@@ -1211,7 +1211,8 @@ func TestResolveGoogleAdsCampaign_RejectsSystemScope(t *testing.T) {
 // The resolver contacts no platform — the answer is entirely in this service's tables — so
 // routing its error through classifyInsightsError would advertise a local table fault as a
 // retryable Google Ads outage, in a message naming "keyword insights". It would also produce a
-// 503 this method does not declare, which the generated server encodes as a 500 anyway.
+// 503 that means something else entirely: this method DOES declare one, reserved for cold start,
+// which is retryable. A live database fault is not.
 func TestResolveGoogleAdsCampaign_StorageFailureIsNotAPlatformOutage(t *testing.T) {
 	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
 	camps := &fakeCampaignRepo{resolveErr: errors.New("connection refused")}
@@ -1228,7 +1229,8 @@ func TestResolveGoogleAdsCampaign_StorageFailureIsNotAPlatformOutage(t *testing.
 	}
 	// A 500, not the 503 the insights classifier's default arm produces. Asserted on the TYPE
 	// rather than the message, because the type is what the generated encoder switches on — a
-	// 503 here is undeclared for this method and would surface as an opaque 500 regardless.
+	// 503 here would be indistinguishable from the cold-start one this method declares, telling
+	// the caller to retry a fault that retrying cannot fix.
 	if _, ok := err.(*conn.InternalServerError); !ok {
 		t.Fatalf("error = %T (%v), want *conn.InternalServerError", err, err)
 	}

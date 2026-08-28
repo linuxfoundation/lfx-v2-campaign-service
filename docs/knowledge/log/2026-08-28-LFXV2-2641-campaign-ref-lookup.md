@@ -42,4 +42,6 @@ answered and discarded.
 `classifyInsightsError`. Every arm of that classifier describes a platform
 failure, and its default reports an upstream outage; this lookup contacts no
 platform, so routing a local table fault there would advertise it as a
-retryable Google Ads problem and return a 503 the method does not declare.
+retryable Google Ads problem, and would reuse the 503 this method reserves for
+COLD START.
+That status means "not wired yet, try again"; a live database fault is neither.

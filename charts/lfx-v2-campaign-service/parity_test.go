@@ -408,7 +408,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- accepted: hubspot base + descendants ---
 		{"/projects/p1/hubspot", true},
 		{"/projects/p1/hubspot/utm", true},
-		// --- accepted: per-provider metrics + google-ads keywords/audience ---
+		// --- accepted: per-provider metrics + the google-ads reads (keywords, audience, campaign-ref) ---
 		{"/projects/p1/google-ads/metrics", true},
 		{"/projects/p1/twitter-ads/metrics", true},
 		{"/projects/p1/google-ads/keywords", true},
