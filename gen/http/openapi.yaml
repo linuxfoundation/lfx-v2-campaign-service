@@ -6727,6 +6727,13 @@ paths:
                         required:
                             - code
                             - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
             schemes:
                 - http
             security:

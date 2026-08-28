@@ -6947,6 +6947,19 @@ func EncodeResolveGoogleAdsCampaignError(encoder func(context.Context, http.Resp
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
 			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveGoogleAdsCampaignServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignserviceconnections.InternalServerError
 			errors.As(v, &res)

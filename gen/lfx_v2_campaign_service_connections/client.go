@@ -949,6 +949,7 @@ func (c *Client) GetGoogleAdsAudience(ctx context.Context, p *GetGoogleAdsAudien
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
 //   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - error: internal error
 func (c *Client) ResolveGoogleAdsCampaign(ctx context.Context, p *ResolveGoogleAdsCampaignPayload) (res *PlatformCampaignResolution, err error) {
 	var ires any

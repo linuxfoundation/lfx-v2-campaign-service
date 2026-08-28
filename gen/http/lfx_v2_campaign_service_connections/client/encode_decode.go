@@ -9022,6 +9022,7 @@ func EncodeResolveGoogleAdsCampaignRequest(encoder func(*http.Request) goahttp.E
 // response body should be restored after having been read.
 // DecodeResolveGoogleAdsCampaignResponse may return the following errors:
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -9071,6 +9072,20 @@ func DecodeResolveGoogleAdsCampaignResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
 			}
 			return nil, NewResolveGoogleAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveGoogleAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignServiceUnavailable(&body)
 		case http.StatusInternalServerError:
 			var (
 				body ResolveGoogleAdsCampaignInternalServerErrorResponseBody

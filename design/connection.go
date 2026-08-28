@@ -1091,6 +1091,14 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		// which every bearerToken() method must carry or a refused token encodes as a 500.
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
+		// Declared even though this method contacts no platform: `resolveBackendWithOrch`
+		// returns a 503 during cold start, before storage or the orchestrator are wired. An
+		// undeclared error is encoded as a 500 by the generated encoder, so a caller would see
+		// an opaque failure for a condition that is explicitly retryable.
+		//
+		// A storage FAULT is separately a 500, not this — that one is a fault in a service that
+		// is up, and retrying does not help. Cold start is the only 503 here.
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/google-ads/campaign-ref")
 			Header("bearer_token:Authorization")
@@ -1099,6 +1107,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
 

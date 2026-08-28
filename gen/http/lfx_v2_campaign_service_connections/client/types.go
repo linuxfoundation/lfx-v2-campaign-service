@@ -3712,6 +3712,16 @@ type ResolveGoogleAdsCampaignBadRequestResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ResolveGoogleAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveGoogleAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ResolveGoogleAdsCampaignInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "InternalServerError" error.
@@ -8533,6 +8543,18 @@ func NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK(body *ResolveGoogle
 // endpoint BadRequest error.
 func NewResolveGoogleAdsCampaignBadRequest(body *ResolveGoogleAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
 	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveGoogleAdsCampaignServiceUnavailable(body *ResolveGoogleAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -13389,6 +13411,19 @@ func ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(body *GetGoogleAdsAudi
 // ValidateResolveGoogleAdsCampaignBadRequestResponseBody runs the validations
 // defined on resolve-google-ads-campaign_BadRequest_response_body
 func ValidateResolveGoogleAdsCampaignBadRequestResponseBody(body *ResolveGoogleAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveGoogleAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// resolve-google-ads-campaign_ServiceUnavailable_response_body
+func ValidateResolveGoogleAdsCampaignServiceUnavailableResponseBody(body *ResolveGoogleAdsCampaignServiceUnavailableResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

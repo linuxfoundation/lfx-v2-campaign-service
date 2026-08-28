@@ -1238,3 +1238,27 @@ func TestResolveGoogleAdsCampaign_StorageFailureIsNotAPlatformOutage(t *testing.
 		t.Errorf("message describes a platform failure: %q", msg)
 	}
 }
+
+// COLD START is a 503, and the design must declare it or the generated encoder turns it into an
+// opaque 500.
+//
+// `resolveBackendWithOrch` refuses before storage and the orchestrator are wired, which is a
+// genuinely retryable condition — distinct from a storage FAULT in a service that is up, which
+// is a 500 because retrying does not help. Both reach the caller from this one method, so both
+// have to be declared and distinguishable.
+func TestResolveGoogleAdsCampaign_ColdStartIsRetryable(t *testing.T) {
+	// No SetOrchestrator: the service is constructed but not yet wired, which is the state a
+	// request arriving during startup finds.
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+
+	_, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err == nil {
+		t.Fatal("expected a cold-start refusal")
+	}
+	if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+		t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError — a 500 here tells the caller not to retry something that will succeed once startup finishes", err, err)
+	}
+}

@@ -3712,6 +3712,16 @@ type ResolveGoogleAdsCampaignBadRequestResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ResolveGoogleAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveGoogleAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ResolveGoogleAdsCampaignInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "InternalServerError" error.
@@ -8135,6 +8145,17 @@ func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewResolveGoogleAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveGoogleAdsCampaignBadRequestResponseBody {
 	body := &ResolveGoogleAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveGoogleAdsCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "resolve-google-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ResolveGoogleAdsCampaignServiceUnavailableResponseBody {
+	body := &ResolveGoogleAdsCampaignServiceUnavailableResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

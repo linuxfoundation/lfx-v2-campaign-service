@@ -8872,6 +8872,15 @@ paths:
                             example:
                                 code: "500"
                                 message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
     /projects/{project_id}/google-ads/keywords:
