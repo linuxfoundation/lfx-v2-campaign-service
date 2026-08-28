@@ -340,6 +340,21 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		if len(ids) == 0 && !ambiguous {
 			created.Status = model.AudienceFailed
 		}
+		// Log the CAUSE. `partialSummary` writes "build failed (see server logs for details)"
+		// into the row, and until now there were no such details: a build that created a real
+		// HubSpot list and then failed on the master list produced no log line at all, leaving
+		// an operator holding list ids with nothing explaining what went wrong. Observed on a
+		// live build (list 30779 created, master list failed, service log silent).
+		slog.WarnContext(ctx, "audience build did not complete",
+			"audience_id", created.ID, "brief_id", p.BriefID, "status", string(created.Status),
+			"created_lists", strings.Join(ids, ","), "unconfirmed", ambiguous,
+			// The RAW error, matching the sibling persist-failure log below. `SafeErrorCause` is
+			// a WAREHOUSE redactor: it collapses everything it does not recognise -- a HubSpot
+			// 4xx included -- to the literal string "warehouse failure", which would name the
+			// wrong subsystem in the one place an operator goes to find the cause. Redaction
+			// belongs on the persisted summary and the API response, which is where
+			// `partialSummary` already applies it; the server log is not that surface.
+			"error", buildErr)
 		// Detached for the same reason as the success path below: lists may exist upstream and
 		// this row is the only record of them.
 		partialCtx, cancelPartial := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
