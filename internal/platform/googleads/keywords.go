@@ -170,8 +170,13 @@ const (
 )
 
 // gaqlKeywordRow is one googleAds:search row for the keyword-performance query.
-// Every numeric field is a string: Google Ads REST emits int64 as JSON strings to
-// avoid float64 precision loss (same as gaqlMetricsRow).
+//
+// The int64-valued fields are STRINGS: Google Ads REST emits int64 as JSON strings to avoid
+// float64 precision loss (same as gaqlMetricsRow). That is not true of every number here —
+// `quality_score` is int32 and `metrics.conversions` is DOUBLE upstream, so both arrive as bare
+// JSON numbers and are decoded as such. The distinction is a type fact about each field, not an
+// inconsistency to normalise: decoding either into a string field fails on every response that
+// carries one.
 type gaqlKeywordRow struct {
 	AdGroupCriterion struct {
 		CriterionID string `json:"criterionId"`
@@ -251,8 +256,9 @@ func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clic
 	// same magnitude validation GetCampaignMetrics applies, and for the same reason: NaN and
 	// ±Inf survive JSON decoding of a bare number in some encoders, and a negative conversion
 	// count is upstream corruption rather than a small number. Unchecked, each becomes a figure
-	// the dashboard renders as a measurement — on keyword rows directly, and SUBTRACTED into an
-	// audience bucket's running total, where one bad row corrupts the whole bucket.
+	// the dashboard renders as a measurement — on keyword rows directly, and SUMMED into an
+	// audience bucket's running total, where one bad row corrupts every figure in that bucket
+	// rather than only its own.
 	//
 	// The upper bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
 	// exactly representable as a float64, so the conversion rounds UP to 2^63 and a value of

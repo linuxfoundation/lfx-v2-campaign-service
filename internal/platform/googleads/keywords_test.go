@@ -573,9 +573,6 @@ func TestParseRowMetrics_RejectsUnusableConversionCounts(t *testing.T) {
 		{"negative", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
 			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
 			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":-5}}]}`},
-		{"NaN", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
-			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
-			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":NaN}}]}`},
 		{"beyond int64", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
 			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
 			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":1e19}}]}`},
@@ -590,6 +587,31 @@ func TestParseRowMetrics_RejectsUnusableConversionCounts(t *testing.T) {
 			// keyword and never know.
 			if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
 				t.Fatal("an unusable conversion count was accepted")
+			}
+		})
+	}
+}
+
+// The NON-FINITE arms, driven directly rather than over HTTP.
+//
+// They cannot be reached through the transport: `encoding/json` rejects the bare literals `NaN`,
+// `Infinity` and `-Infinity` before any handler runs, so an HTTP-level case would test the
+// DECODER and stay green with the guard deleted — which is exactly what an earlier version of
+// this test did. A non-finite value can still arrive from a different decoder or a future direct
+// caller, so the guard is real; calling the helper directly is the only way to bind it.
+func TestParseRowMetrics_RejectsNonFiniteConversions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conv float64
+	}{
+		{"NaN", math.NaN()},
+		{"+Inf", math.Inf(1)},
+		{"-Inf", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := gaqlMetricRowMetrics{Impressions: "10", Clicks: "1", CostMicros: "100", Conversions: tc.conv}
+			if _, _, _, _, err := parseRowMetrics(m, "test"); err == nil {
+				t.Fatalf("a %s conversion count was accepted", tc.name)
 			}
 		})
 	}
