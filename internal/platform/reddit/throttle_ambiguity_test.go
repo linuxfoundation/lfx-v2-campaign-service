@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -29,8 +30,11 @@ func redditThrottleClient(t *testing.T, retryAfter string) *Client {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
 	}))
 	t.Cleanup(tokenSrv.Close)
+	// tinyBackoff, matching the other retry tests: the production base would make the
+	// exhausted-retry case sleep 1s + 2s + 4s of real time on every suite run.
 	return NewClient(testCreds, testAccount,
-		WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+		WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff))
 }
 
 // A 429 PROVES Reddit received the request. If the context then expires while we wait to retry,
@@ -57,25 +61,26 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Cancelled from a GOROUTINE released once the 429 has been written, so the
-			// cancellation lands in sleepCtx rather than in httpClient.Do.
+			// DETERMINISTIC, not timed. The handler counts requests: the first serves the 429
+			// and hands the client into the backoff sleep; the SECOND can only be reached once
+			// that sleep completes. So cancelling from a goroutine that waits on the first
+			// request — and blocking the client's only escape from the sleep — puts the cancel
+			// unambiguously inside sleepCtx.
 			//
-			// Cancelling inside the handler does NOT work: the client is still mid-exchange, so
-			// the cancel kills the NEXT Do and the error reads `Post "...": context canceled` —
-			// a path that already wrapped its error before this fix, so the test would pass with
-			// the sleep wrapping reverted. Verified by reverting it and watching the earlier
-			// version stay green.
-			served := make(chan struct{}, 1)
+			// Neither of my earlier attempts did this. A wall-clock deadline could expire while
+			// httpClient.Do was still reading the 429, and cancelling inside the handler kills
+			// the NEXT request instead; both land in a path that already wrapped its error
+			// before this fix, so the test passed with the fix reverted. The long Retry-After
+			// (and tinyBackoff on the other arm) is what makes the sleep the only place left.
+			first := make(chan struct{})
+			var once sync.Once
 			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.retryAfter != "" {
 					w.Header().Set("Retry-After", tc.retryAfter)
 				}
 				w.WriteHeader(http.StatusTooManyRequests)
 				_, _ = w.Write([]byte(`{"error":"rate limited"}`))
-				select {
-				case served <- struct{}{}:
-				default:
-				}
+				once.Do(func() { close(first) })
 			}))
 			defer apiSrv.Close()
 			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -84,20 +89,27 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			defer tokenSrv.Close()
 
 			go func() {
-				<-served
-				time.Sleep(20 * time.Millisecond)
+				<-first
+				// The handler has written the whole 429 and returned. The client either is in
+				// sleepCtx or is about to be, and the 30s Retry-After guarantees it cannot leave
+				// before this cancel lands.
+				time.Sleep(50 * time.Millisecond)
 				cancel()
 			}()
 
 			c := NewClient(testCreds, testAccount,
-				WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+				WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
+				withRetryBaseDelay(30*time.Second))
 
 			err := c.UpdateCampaignStatus(ctx, "t5_abc123", "PAUSED")
 			if err == nil {
 				t.Fatal("expected the throttled request to fail")
 			}
-			// THE ARM CHECK — see the comment above.
-			if strings.Contains(err.Error(), "Post \"") {
+			// THE ARM CHECK, method-agnostic. Go's transport renders a Do-path cancellation as
+			// `Patch "url": context canceled` for this call and `Post "url": ...` for others, so
+			// matching one verb missed the other entirely — which is exactly what happened here.
+			// Matching the URL is what identifies the arm regardless of method.
+			if strings.Contains(err.Error(), apiSrv.URL) {
 				t.Fatalf("cancellation landed in httpClient.Do, not the backoff sleep — this test would pass without the fix: %v", err)
 			}
 			if !createOutcomeAmbiguous(err) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -35,36 +36,30 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Cancelled from a GOROUTINE released once the 429 has been fully written, so the
-			// cancellation lands while the client is in sleepCtx rather than in httpClient.Do.
+			// DETERMINISTIC, not timed. The first request serves the 429 and hands the client
+			// into the backoff sleep; a long Retry-After (and a long backoff base on the other
+			// arm) means it cannot leave that sleep on its own. Cancelling from a goroutine
+			// released by the first request therefore lands inside sleepCtx.
 			//
-			// Cancelling inside the handler does NOT work and is the trap this test exists to
-			// avoid: the client is still mid-exchange there, so the cancel kills the NEXT Do
-			// instead and the error reads `Post "...": context canceled` — a path that already
-			// wrapped its error before this fix, so the test would pass with the sleep wrapping
-			// reverted. I confirmed that by reverting it and watching this test stay green.
-			//
-			// The long Retry-After (and the default backoff on the other arm) keeps the sleep
-			// wide enough that the cancel cannot race past it.
-			served := make(chan struct{}, 1)
+			// Neither of my earlier attempts did this. A wall-clock deadline could expire while
+			// httpClient.Do was still reading the 429, and cancelling inside the handler kills
+			// the NEXT request instead; both land in a path that already wrapped its error
+			// before this fix, so the test passed with the fix reverted.
+			first := make(chan struct{})
+			var once sync.Once
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.retryAfterS != "" {
 					w.Header().Set("Retry-After", tc.retryAfterS)
 				}
 				w.WriteHeader(http.StatusTooManyRequests)
 				_, _ = w.Write([]byte(`{"error":{"message":"rate limited","code":17}}`))
-				select {
-				case served <- struct{}{}:
-				default:
-				}
+				once.Do(func() { close(first) })
 			}))
 			defer srv.Close()
 
 			go func() {
-				<-served
-				// The handler has returned, so the client has the whole 429 and is now in the
-				// backoff sleep. A short pause makes that ordering robust under CI scheduling.
-				time.Sleep(20 * time.Millisecond)
+				<-first
+				time.Sleep(50 * time.Millisecond)
 				cancel()
 			}()
 
@@ -73,6 +68,7 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 				AccountConfig{AccountID: "act_777", CurrencyOffset: 100},
 				WithBaseURL(srv.URL),
 				WithClock(fixedMetaClock()),
+				withRetryBaseDelay(30*time.Second),
 			)
 
 			// A status toggle rather than a create: the simplest MUTATING call that reaches the
@@ -82,10 +78,11 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected the throttled request to fail")
 			}
-			// THE ARM CHECK. `Post "...": context canceled` means the cancel landed in Do, not
-			// in the sleep — which would make the ambiguity assertion below prove nothing about
-			// this fix.
-			if strings.Contains(err.Error(), "Post \"") {
+			// THE ARM CHECK, matched on the URL rather than the verb. Go renders a Do-path
+			// cancellation as `Post "url": ...` here and `Patch "url": ...` on other calls, so
+			// matching one verb misses the other — which is exactly what happened in the Reddit
+			// copy of this test.
+			if strings.Contains(err.Error(), srv.URL) {
 				t.Fatalf("cancellation landed in httpClient.Do, not the backoff sleep — this test would pass without the fix: %v", err)
 			}
 			if !createOutcomeAmbiguous(err) {
