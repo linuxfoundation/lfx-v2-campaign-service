@@ -28,18 +28,18 @@ func TestSearchCampaigns_ReturnsEveryMatchInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchCampaigns: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("matches = %d, want 2", len(got))
+	if len(got.Campaigns) != 2 {
+		t.Fatalf("matches = %d, want 2", len(got.Campaigns))
 	}
 	// ORDER is HubSpot's relevance order and must survive: the caller shows these to a human
 	// choosing between candidate names, and re-ordering would put a worse match first.
-	if got[0].ID != "11" || got[1].ID != "22" {
-		t.Errorf("order not preserved: %+v", got)
+	if got.Campaigns[0].ID != "11" || got.Campaigns[1].ID != "22" {
+		t.Errorf("order not preserved: %+v", got.Campaigns)
 	}
 	// Each field asserted with a DISTINCT value, so a mapper that crossed two of them fails
 	// rather than passing against a shared placeholder.
-	if got[0].Name != "KubeCon NA 2026" || got[0].UTM != "kubecon-na-2026" || got[0].StartDate != "2026-11-01" {
-		t.Errorf("fields not mapped: %+v", got[0])
+	if got.Campaigns[0].Name != "KubeCon NA 2026" || got.Campaigns[0].UTM != "kubecon-na-2026" || got.Campaigns[0].StartDate != "2026-11-01" {
+		t.Errorf("fields not mapped: %+v", got.Campaigns[0])
 	}
 	if gotPath != campaignSearchPath {
 		t.Errorf("path = %q, want %q", gotPath, campaignSearchPath)
@@ -77,10 +77,10 @@ func TestSearchCampaigns_NoMatchesIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an empty search must not error: %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("matches = %d, want 0", len(got))
+	if len(got.Campaigns) != 0 {
+		t.Errorf("matches = %d, want 0", len(got.Campaigns))
 	}
-	if got == nil {
+	if got.Campaigns == nil {
 		t.Error("want a non-nil empty slice so the caller need not nil-check")
 	}
 }
@@ -132,11 +132,11 @@ func TestSearchCampaigns_KeepsACampaignWithNoUTM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchCampaigns: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("a campaign with no UTM was dropped: %+v", got)
+	if len(got.Campaigns) != 1 {
+		t.Fatalf("a campaign with no UTM was dropped: %+v", got.Campaigns)
 	}
-	if got[0].UTM != "" {
-		t.Errorf("UTM = %q, want the empty token carried through", got[0].UTM)
+	if got.Campaigns[0].UTM != "" {
+		t.Errorf("UTM = %q, want the empty token carried through", got.Campaigns[0].UTM)
 	}
 }
 
@@ -238,4 +238,50 @@ func TestCreateCampaign_RefusesAnEmptyNameWithoutCallingHubSpot(t *testing.T) {
 	if called {
 		t.Error("HubSpot was contacted for an empty name")
 	}
+}
+
+// Capped comes from HubSpot's own `total`, not from len(results)==limit. The distinction is the
+// whole point: an exactly-full page and a truncated one look identical by length, so inferring
+// from length would warn on a complete result set and teach operators to ignore the warning.
+func TestSearchCampaigns_CappedComesFromTotalNotLength(t *testing.T) {
+	t.Run("more matched than returned", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"total":250,"results":[{"id":"1","properties":{"hs_name":"A"}}]}`)
+		})
+		got, err := c.SearchCampaigns(context.Background(), "kubecon")
+		if err != nil {
+			t.Fatalf("SearchCampaigns: %v", err)
+		}
+		if !got.Capped {
+			t.Error("Capped = false while HubSpot reported 250 matches for 1 returned row")
+		}
+	})
+
+	t.Run("every match returned", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"total":1,"results":[{"id":"1","properties":{"hs_name":"A"}}]}`)
+		})
+		got, err := c.SearchCampaigns(context.Background(), "kubecon")
+		if err != nil {
+			t.Fatalf("SearchCampaigns: %v", err)
+		}
+		if got.Capped {
+			t.Error("Capped = true on a complete result set — every operator would see a warning that never clears")
+		}
+	})
+
+	t.Run("empty and complete", func(t *testing.T) {
+		// The common case, and the one that must NOT warn: nothing matched, and nothing was
+		// hidden. This is where the create offer is legitimate.
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"total":0,"results":[]}`)
+		})
+		got, err := c.SearchCampaigns(context.Background(), "nothing")
+		if err != nil {
+			t.Fatalf("SearchCampaigns: %v", err)
+		}
+		if got.Capped {
+			t.Error("Capped = true on an empty, complete search — the create offer would never be available")
+		}
+	})
 }

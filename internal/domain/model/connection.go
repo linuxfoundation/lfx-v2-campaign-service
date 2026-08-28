@@ -250,6 +250,17 @@ type AccessibleAccount struct {
 // "which email should be cloned?", and the chosen id travels per campaign in the dispatch
 // config (hubspotConfig.SourceEmailID) — a different question with a different lifetime, so
 // sharing the type would only make two unrelated things look interchangeable.
+// HubSpotCampaignPage is a campaign search result together with whether the search was capped.
+//
+// Capped exists because ABSENCE FROM Campaigns IS NOT PROOF OF NON-EXISTENCE. The search is
+// bounded at HubSpot's per-request maximum with no paging, so when more campaigns matched than
+// were returned, a campaign the caller cannot see may still exist — and the caller acts on
+// absence by creating one in a namespace every foundation shares.
+type HubSpotCampaignPage struct {
+	Campaigns []HubSpotCampaign
+	Capped    bool
+}
+
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
 // THE NAMESPACE IS LF-GLOBAL. HubSpot campaigns are not scoped to a project or a portal

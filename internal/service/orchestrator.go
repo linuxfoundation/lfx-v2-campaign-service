@@ -297,7 +297,7 @@ type CampaignSearcher interface {
 	// ListAccounts does: the caller branches on empty-vs-found to decide whether to offer a
 	// create, and cannot otherwise tell an authoritative "no such campaign" from a read that
 	// silently returned nothing.
-	SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.HubSpotCampaign, error)
+	SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error)
 
 	// CreateCampaign creates a campaign and returns it with the token the platform assigned.
 	//
@@ -511,6 +511,8 @@ const (
 	opReadSettings   = "read_settings"
 	opListAccounts   = "list_accounts"
 	opSearchEmails   = "search_emails"
+	opSearchCampaign = "search_campaign"
+	opCreateCampaign = "create_campaign"
 	opReadKeywords   = "read_keywords"
 	opReadAudience   = "read_audience"
 	opKeywordActions = "keyword_actions"
@@ -1981,26 +1983,28 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 // truncated list. That is the correct direction (a silently short picker is worse than an
 // error), but it means the practical page ceiling is whatever fits in 20s, well under 200.
 // SearchCampaigns looks up marketing campaigns by name on platform.
-func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.HubSpotCampaign, error) {
+func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error) {
 	searcher, err := o.campaignSearcherFor(platform)
 	if err != nil {
-		return nil, err
+		return model.HubSpotCampaignPage{}, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
-	campaigns, err := searcher.SearchCampaigns(callCtx, projectID, platform, query)
+	start := time.Now()
+	page, err := searcher.SearchCampaigns(callCtx, projectID, platform, query)
+	o.recordUpstream(ctx, platform, opSearchCampaign, start, err)
 	if err != nil {
-		return nil, err
+		return model.HubSpotCampaignPage{}, err
 	}
 	// A (nil, nil) answer is a CONTRACT VIOLATION, refused here rather than forwarded — the same
 	// check SearchEmails makes. Forwarded, the service layer would render it as an authoritative
 	// empty `[]`, and empty is exactly what the caller acts on by creating a campaign in a
 	// namespace every foundation shares. A searcher that fell through a branch must not be able
 	// to license a duplicate.
-	if campaigns == nil {
-		return nil, fmt.Errorf("campaign search for platform %s returned no result and no error", platform)
+	if page.Campaigns == nil {
+		return model.HubSpotCampaignPage{}, fmt.Errorf("campaign search for platform %s returned no result and no error", platform)
 	}
-	return campaigns, nil
+	return page, nil
 }
 
 // CreateCampaign creates a marketing campaign on platform.
@@ -2017,7 +2021,13 @@ func (o *Orchestrator) CreateCampaign(ctx context.Context, projectID string, pla
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
-	return searcher.CreateCampaign(callCtx, projectID, platform, name)
+	start := time.Now()
+	campaign, cerr := searcher.CreateCampaign(callCtx, projectID, platform, name)
+	// Recorded BEFORE the error is returned, and recorded on every arm including the ambiguous
+	// one: an unconfirmed create is precisely the call an operator needs the latency and failure
+	// count for, because it is the one that may have spent money without saying so.
+	o.recordUpstream(ctx, platform, opCreateCampaign, start, cerr)
+	return campaign, cerr
 }
 
 // campaignSearcherFor resolves the dispatcher's campaign capability, or reports that the

@@ -815,6 +815,12 @@ type ListHubspotEmailsResponseBody struct {
 type SearchHubspotCampaignsResponseBody struct {
 	// Matches in HubSpot's relevance order. Empty when nothing matched.
 	Campaigns []*HubspotCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// True when HubSpot matched MORE campaigns than were returned. While it is
+	// true, absence from `campaigns` is NOT proof the campaign does not exist, and
+	// a caller must not offer an unqualified create on an empty result — it would
+	// duplicate a campaign in a namespace every foundation shares. Narrow the
+	// search term instead.
+	Capped bool `form:"capped" json:"capped" xml:"capped"`
 }
 
 // CreateHubspotCampaignResponseBody is the type of the
@@ -5032,7 +5038,9 @@ func NewListHubspotEmailsResponseBody(res *lfxv2campaignserviceconnections.ListH
 // result of the "search-hubspot-campaigns" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 func NewSearchHubspotCampaignsResponseBody(res *lfxv2campaignserviceconnections.SearchHubspotCampaignsResult) *SearchHubspotCampaignsResponseBody {
-	body := &SearchHubspotCampaignsResponseBody{}
+	body := &SearchHubspotCampaignsResponseBody{
+		Capped: res.Capped,
+	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*HubspotCampaignResponseBody, len(res.Campaigns))
 		for i, val := range res.Campaigns {

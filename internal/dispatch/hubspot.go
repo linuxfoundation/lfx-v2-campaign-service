@@ -666,23 +666,23 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 // The result is LF-GLOBAL despite the projectID argument: that argument selects which
 // connection's credential to use, not which campaigns are visible. HubSpot's campaign namespace
 // is the whole portal, so two projects sharing a portal see the same campaigns.
-func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.HubSpotCampaign, error) {
+func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error) {
 	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return model.HubSpotCampaignPage{}, err
 	}
 
-	campaigns, err := client.SearchCampaigns(ctx, query)
+	page, err := client.SearchCampaigns(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("search hubspot campaigns: %w", err)
+		return model.HubSpotCampaignPage{}, fmt.Errorf("search hubspot campaigns: %w", err)
 	}
 
 	// make(..., 0, n), never nil: service.CampaignSearcher requires a non-nil result on success
 	// so "the portal has no campaign by that name" stays distinguishable from a searcher that
 	// fell through a branch. The caller offers a CREATE on the empty answer, so an accidental
 	// nil would prompt a duplicate in a namespace every foundation shares.
-	out := make([]model.HubSpotCampaign, 0, len(campaigns))
-	for _, c := range campaigns {
+	out := make([]model.HubSpotCampaign, 0, len(page.Campaigns))
+	for _, c := range page.Campaigns {
 		out = append(out, model.HubSpotCampaign{
 			ID:        c.ID,
 			Name:      c.Name,
@@ -690,7 +690,9 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 			StartDate: c.StartDate,
 		})
 	}
-	return out, nil
+	// Capped is carried straight through from the client: it is the difference between "no such
+	// campaign" and "not in the returned matches", and only the client can know it.
+	return model.HubSpotCampaignPage{Campaigns: out, Capped: page.Capped}, nil
 }
 
 // CreateCampaign implements service.CampaignSearcher for HubSpot.

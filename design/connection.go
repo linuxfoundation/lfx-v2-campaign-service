@@ -1279,6 +1279,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"an operator who cannot find a campaign should search a narrower term rather than assume " +
 			"it does not exist. 100 is HubSpot's own per-request maximum, so the gap between \"not in " +
 			"the top N\" and \"does not exist\" is as small as one request can make it. " +
+			"**`capped` reports when that gap is actually open**, derived from HubSpot's own total " +
+			"rather than from the returned count — an exactly-full page and a truncated one are the " +
+			"same length. While it is true the caller must not offer an unqualified create. " +
 			"This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for " +
 			"one supplied term, with no collection, pagination or filtering.")
 		Payload(func() {
@@ -1292,7 +1295,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(func() {
 			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in HubSpot's relevance order. Empty when nothing matched.")
-			Required("campaigns")
+			Attribute("capped", Boolean, "True when HubSpot matched MORE campaigns than were returned. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace every foundation shares. Narrow the search term instead.")
+			Required("campaigns", "capped")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
 		authErrors()

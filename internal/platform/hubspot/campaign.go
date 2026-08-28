@@ -84,7 +84,7 @@ type campaignSearchHit struct {
 // An EMPTY result is not an error. "No campaign is named that" is the answer the caller acts on
 // by offering to create one, and it must be distinguishable from a failed search — which is why
 // a malformed 2xx is an error rather than an empty slice.
-func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign, error) {
+func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampaignsPage, error) {
 	// Trimmed before sending, for the reason SearchEmails and SearchLists trim: a padded term
 	// would otherwise fail to match names it should, returning a clean empty answer that reads
 	// as "no such campaign".
@@ -93,7 +93,7 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign,
 		// Refused rather than sent. An empty query is not a search for everything — HubSpot
 		// would return the whole portal's campaigns ranked arbitrarily, and a caller looking
 		// for one event would act on whichever happened to sort first.
-		return nil, fmt.Errorf("hubspot: campaign search requires a non-empty query")
+		return SearchCampaignsPage{}, fmt.Errorf("hubspot: campaign search requires a non-empty query")
 	}
 
 	body := map[string]any{
@@ -103,20 +103,24 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign,
 	}
 	raw, err := c.doRequest(ctx, http.MethodPost, campaignSearchPath, body, true)
 	if err != nil {
-		return nil, err
+		return SearchCampaignsPage{}, err
 	}
 
 	var resp struct {
 		Results []campaignSearchHit `json:"results"`
+		// Total is HubSpot's count of ALL matches, not just the returned page. It is what makes
+		// "capped" a fact rather than an inference: len(results)==limit is also what an exactly-
+		// full last page looks like, and guessing from it would warn on a complete result set.
+		Total int `json:"total"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("hubspot: decode campaign search: %w", err)
+		return SearchCampaignsPage{}, fmt.Errorf("hubspot: decode campaign search: %w", err)
 	}
 	// A malformed 2xx body (`{}` or `null`) decodes with Results==nil, while a genuinely empty
 	// search returns `{"results":[]}` — non-nil. Erroring on nil keeps "the search failed"
 	// distinguishable from "nothing matched", which is the distinction the caller branches on.
 	if resp.Results == nil {
-		return nil, fmt.Errorf("hubspot: campaign search returned a 2xx with no results array (malformed response)")
+		return SearchCampaignsPage{}, fmt.Errorf("hubspot: campaign search returned a 2xx with no results array (malformed response)")
 	}
 
 	out := make([]Campaign, 0, len(resp.Results))
@@ -128,7 +132,7 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign,
 		// discarding a row would breach it one layer down. Every other field may legitimately
 		// be empty.
 		if strings.TrimSpace(hit.ID) == "" {
-			return nil, fmt.Errorf("hubspot: campaign search returned a hit with no id (malformed response)")
+			return SearchCampaignsPage{}, fmt.Errorf("hubspot: campaign search returned a hit with no id (malformed response)")
 		}
 		out = append(out, Campaign{
 			ID:        hit.ID,
@@ -137,7 +141,20 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign,
 			StartDate: hit.Properties.StartDate,
 		})
 	}
-	return out, nil
+	// Capped is derived from HubSpot's own total, not from len(out)==limit — an exactly-full
+	// final page is indistinguishable from a truncated one by length alone.
+	return SearchCampaignsPage{Campaigns: out, Capped: resp.Total > len(out)}, nil
+}
+
+// SearchCampaignsPage is one page of campaign search results plus the fact a caller needs to
+// know whether absence is meaningful.
+type SearchCampaignsPage struct {
+	// Campaigns are the matches, in HubSpot's relevance order.
+	Campaigns []Campaign
+	// Capped reports that HubSpot matched MORE campaigns than this request returned. When it is
+	// true, a campaign absent from Campaigns may still exist, so a caller must not read absence
+	// as licence to create one in a namespace every foundation shares.
+	Capped bool
 }
 
 // CreateCampaign creates an LF-global HubSpot campaign named name.

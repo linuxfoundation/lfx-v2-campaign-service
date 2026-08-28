@@ -815,6 +815,12 @@ type ListHubspotEmailsResponseBody struct {
 type SearchHubspotCampaignsResponseBody struct {
 	// Matches in HubSpot's relevance order. Empty when nothing matched.
 	Campaigns []*HubspotCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// True when HubSpot matched MORE campaigns than were returned. While it is
+	// true, absence from `campaigns` is NOT proof the campaign does not exist, and
+	// a caller must not offer an unqualified create on an empty result — it would
+	// duplicate a campaign in a namespace every foundation shares. Narrow the
+	// search term instead.
+	Capped *bool `form:"capped,omitempty" json:"capped,omitempty" xml:"capped,omitempty"`
 }
 
 // CreateHubspotCampaignResponseBody is the type of the
@@ -9044,7 +9050,9 @@ func NewListHubspotEmailsUnauthorized(body *ListHubspotEmailsUnauthorizedRespons
 // "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
 // endpoint result from a HTTP "OK" response.
 func NewSearchHubspotCampaignsResultOK(body *SearchHubspotCampaignsResponseBody) *lfxv2campaignserviceconnections.SearchHubspotCampaignsResult {
-	v := &lfxv2campaignserviceconnections.SearchHubspotCampaignsResult{}
+	v := &lfxv2campaignserviceconnections.SearchHubspotCampaignsResult{
+		Capped: *body.Capped,
+	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.HubspotCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
 		if val == nil {
@@ -10047,6 +10055,9 @@ func ValidateListHubspotEmailsResponseBody(body *ListHubspotEmailsResponseBody) 
 func ValidateSearchHubspotCampaignsResponseBody(body *SearchHubspotCampaignsResponseBody) (err error) {
 	if body.Campaigns == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.Capped == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("capped", "body"))
 	}
 	for _, e := range body.Campaigns {
 		if e != nil {

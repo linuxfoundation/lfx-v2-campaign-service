@@ -18,6 +18,7 @@ import (
 // the two capabilities are independent, and a mock satisfying both would hide a handler wired to
 // the wrong one.
 type mockCampaignSearcherDispatcher struct {
+	capped      bool
 	campaigns   []model.HubSpotCampaign
 	created     *model.HubSpotCampaign
 	gotPlatform model.Provider
@@ -33,12 +34,20 @@ func (m *mockCampaignSearcherDispatcher) Dispatch(ctx context.Context, brief *mo
 	return nil, nil
 }
 
-func (m *mockCampaignSearcherDispatcher) SearchCampaigns(_ context.Context, _ string, platform model.Provider, query string) ([]model.HubSpotCampaign, error) {
+// COMPILE-TIME assertion, because the runtime one is silent. campaignSearcherFor resolves this
+// capability with a dynamic type assertion, so a mock whose signature drifts from the interface
+// does not fail to build — it stops satisfying CampaignSearcher, every test below falls into the
+// "platform unsupported" arm, and six tests go on passing while exercising nothing. That is
+// exactly what happened when SearchCampaigns began returning a page. This line turns the next
+// such drift into a build error.
+var _ CampaignSearcher = (*mockCampaignSearcherDispatcher)(nil)
+
+func (m *mockCampaignSearcherDispatcher) SearchCampaigns(_ context.Context, _ string, platform model.Provider, query string) (model.HubSpotCampaignPage, error) {
 	m.gotPlatform, m.gotQuery = platform, query
 	if m.searchErr != nil {
-		return nil, m.searchErr
+		return model.HubSpotCampaignPage{}, m.searchErr
 	}
-	return m.campaigns, nil
+	return model.HubSpotCampaignPage{Campaigns: m.campaigns, Capped: m.capped}, nil
 }
 
 func (m *mockCampaignSearcherDispatcher) CreateCampaign(_ context.Context, _ string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
@@ -288,5 +297,37 @@ func TestSearchHubspotCampaigns_NilWithoutErrorIsRefused(t *testing.T) {
 		&conn.SearchHubspotCampaignsPayload{ProjectID: "cncf", Q: "kubecon"})
 	if err == nil {
 		t.Fatal("a nil result with no error was rendered as an authoritative empty answer")
+	}
+}
+
+// Capped must survive the trip to the wire, because it changes what an EMPTY result MEANS. The
+// caller offers a create on an empty search; while capped is true, absence is not proof of
+// non-existence, and an unqualified create duplicates a campaign in a namespace every foundation
+// shares. Dropping the flag anywhere in the chain fails open, silently.
+func TestSearchHubspotCampaigns_CappedReachesTheWire(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{campaigns: []model.HubSpotCampaign{}, capped: true}
+
+	res, err := newCampaignSvc(d).SearchHubspotCampaigns(context.Background(),
+		&conn.SearchHubspotCampaignsPayload{ProjectID: "cncf", Q: "kubecon"})
+	if err != nil {
+		t.Fatalf("SearchHubspotCampaigns: %v", err)
+	}
+	if !res.Capped {
+		t.Error("Capped = false, want true — an empty-but-capped search must not read as proof the campaign does not exist")
+	}
+}
+
+// The other direction, so the flag is not hard-coded true: an uncapped search reports false, and
+// the caller may offer the create.
+func TestSearchHubspotCampaigns_UncappedSearchIsNotFlagged(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{campaigns: []model.HubSpotCampaign{}, capped: false}
+
+	res, err := newCampaignSvc(d).SearchHubspotCampaigns(context.Background(),
+		&conn.SearchHubspotCampaignsPayload{ProjectID: "cncf", Q: "kubecon"})
+	if err != nil {
+		t.Fatalf("SearchHubspotCampaigns: %v", err)
+	}
+	if res.Capped {
+		t.Error("Capped = true on an uncapped search — the create offer would be suppressed for every operator")
 	}
 }

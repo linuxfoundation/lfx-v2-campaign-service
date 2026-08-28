@@ -1230,7 +1230,7 @@ func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.
 		return nil, err
 	}
 
-	campaigns, serr := orch.SearchCampaigns(ctx, p.ProjectID, d.provider, p.Q)
+	page, serr := orch.SearchCampaigns(ctx, p.ProjectID, d.provider, p.Q)
 	if serr != nil {
 		// Mirrors ListHubspotEmails: the unsupported-capability sentinel is the one arm
 		// classifyDiscoveryError cannot carry, because that helper keys on
@@ -1244,11 +1244,13 @@ func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.
 	// make, not nil: an empty result must serialize as `[]` rather than `null`. The caller
 	// branches on empty-vs-found to decide whether to offer a create, so this is the one field
 	// it must be able to read without a null check.
-	out := make([]*conn.HubspotCampaign, 0, len(campaigns))
-	for _, c := range campaigns {
+	out := make([]*conn.HubspotCampaign, 0, len(page.Campaigns))
+	for _, c := range page.Campaigns {
 		out = append(out, toWireHubspotCampaign(c))
 	}
-	return &conn.SearchHubspotCampaignsResult{Campaigns: out}, nil
+	// Capped travels with the results because it changes what an EMPTY result means. Dropped
+	// here, the UI would read "no matches" as "no such campaign" and offer a create.
+	return &conn.SearchHubspotCampaignsResult{Campaigns: out, Capped: page.Capped}, nil
 }
 
 // CreateHubspotCampaign creates an LF-global HubSpot campaign and returns the token HubSpot
@@ -1275,7 +1277,16 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		if errors.Is(cerr, ErrCampaignSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}
-		// NOT classifyDiscoveryError. That classifier is written for READS: its default arm
+		// SETUP failures are reported as themselves, because they PROVE nothing was sent: a
+		// missing or inactive connection, an undecryptable credential, an unsupported platform.
+		// Calling those "may already exist" would send an operator to HubSpot to look for a
+		// campaign that was never attempted, and hide the remedy they actually need — which is
+		// to fix the connection. Only failures that could have reached HubSpot are unconfirmed.
+		if errors.Is(cerr, domain.ErrNotFound) || errors.Is(cerr, domain.ErrSystemConnectionMissing) ||
+			errors.Is(cerr, domain.ErrConnectionNotUsable) {
+			return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
+		}
+		// NOT classifyDiscoveryError for anything else. That classifier is written for READS: its default arm
 		// reports a retryable "campaign search could not be completed" 503, which is wrong here
 		// twice over. It names the wrong operation, and — far worse — it invites a retry of a
 		// NON-IDEMPOTENT write into a namespace every foundation shares. HubSpot marks mutating
