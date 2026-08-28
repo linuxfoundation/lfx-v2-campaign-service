@@ -218,6 +218,14 @@ type Client struct {
 	// list-hubspot-emails endpoint.
 	ListHubspotEmailsDoer goahttp.Doer
 
+	// SearchHubspotCampaigns Doer is the HTTP client used to make requests to the
+	// search-hubspot-campaigns endpoint.
+	SearchHubspotCampaignsDoer goahttp.Doer
+
+	// CreateHubspotCampaign Doer is the HTTP client used to make requests to the
+	// create-hubspot-campaign endpoint.
+	CreateHubspotCampaignDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -289,6 +297,8 @@ func NewClient(
 		ListMicrosoftAdsAccountsDoer:  doer,
 		ListTwitterAdsAccountsDoer:    doer,
 		ListHubspotEmailsDoer:         doer,
+		SearchHubspotCampaignsDoer:    doer,
+		CreateHubspotCampaignDoer:     doer,
 		RestoreResponseBody:           restoreBody,
 		scheme:                        scheme,
 		host:                          host,
@@ -1497,6 +1507,54 @@ func (c *Client) ListHubspotEmails() goa.Endpoint {
 		resp, err := c.ListHubspotEmailsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SearchHubspotCampaigns returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns server.
+func (c *Client) SearchHubspotCampaigns() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSearchHubspotCampaignsRequest(c.encoder)
+		decodeResponse = DecodeSearchHubspotCampaignsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSearchHubspotCampaignsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SearchHubspotCampaignsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// CreateHubspotCampaign returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service create-hubspot-campaign server.
+func (c *Client) CreateHubspotCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCreateHubspotCampaignRequest(c.encoder)
+		decodeResponse = DecodeCreateHubspotCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCreateHubspotCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.CreateHubspotCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
 		}
 		return decodeResponse(resp)
 	}

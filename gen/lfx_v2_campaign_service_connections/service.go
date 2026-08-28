@@ -188,6 +188,44 @@ type Service interface {
 	// caller-specified source email (sourceEmailId is required and has no
 	// default), so the caller has to be able to find one.
 	ListHubspotEmails(context.Context, *ListHubspotEmailsPayload) (res *ListHubspotEmailsResult, err error)
+	// Find LF HubSpot marketing campaigns by name, to read back an existing
+	// campaign's `hs_utm` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns
+	// are not scoped to a project, so this returns matches from the ENTIRE LF
+	// portal regardless of which project scopes the path — the `project_id` gates
+	// permission, not visibility. That is a property of HubSpot's data model
+	// rather than a gap in the scoping here, and it is why the create route below
+	// needs a warning before it is used. The match is HubSpot's own full-text
+	// search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely
+	// share a token with the query. Every match is returned in HubSpot's relevance
+	// order rather than narrowed to a best one, because choosing between
+	// similarly-named campaigns needs a human reading the names — collapsing them
+	// here would hide the ambiguity from the only party able to resolve it. **An
+	// empty `campaigns` array is a 200, not a 404**: 'no campaign is named that'
+	// is the answer a caller acts on by offering to create one, and it must be
+	// distinguishable from a search that failed. A campaign with no `utm` is a
+	// real result and is returned as one — an absent token does NOT mean the
+	// campaign was not found, and treating it that way would prompt a duplicate
+	// create. This is NOT a list endpoint under rule 3: it is a keyed query
+	// returning the matches for one supplied term, with no collection, pagination
+	// or filtering.
+	SearchHubspotCampaigns(context.Context, *SearchHubspotCampaignsPayload) (res *SearchHubspotCampaignsResult, err error)
+	// Create an LF HubSpot marketing campaign and return the `hs_utm` token
+	// HubSpot assigns it. **THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The
+	// campaign namespace is the whole LF portal, so a campaign created here
+	// appears for every other project's campaign managers however this path is
+	// scoped. A caller MUST warn before invoking it, and must not put anything
+	// project-sensitive in the name. **It does not check for an existing campaign
+	// first, and that is deliberate.** A search-then-create inside one call would
+	// still race any concurrent caller and could not prevent a duplicate; the
+	// check belongs with the human who can read the candidate names. Search first,
+	// show the matches, create only if the operator confirms none is right. This
+	// method always creates. `hs_utm` is assigned by HubSpot, never supplied here,
+	// and is read back from the create response rather than re-fetched — so the
+	// returned token is the one HubSpot actually assigned rather than one this
+	// service guessed. **A 2xx carrying no id is reported as an error**, because
+	// the campaign may or may not exist and cannot be addressed either way: the
+	// caller must check HubSpot rather than retry into a second copy.
+	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -210,7 +248,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [50]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails"}
+var MethodNames = [52]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -244,6 +282,18 @@ type CreateGoogleAdsPayload struct {
 	ProjectID   string
 	Config      *GoogleAdsConnectionConfig
 	Credentials *GoogleAdsCredentials
+}
+
+// CreateHubspotCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-hubspot-campaign method.
+type CreateHubspotCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The campaign name. Visible to every foundation — do not include
+	// project-sensitive information.
+	Name string
 }
 
 // CreateHubspotPayload is the payload type of the
@@ -585,6 +635,22 @@ type GoogleAdsKeywords struct {
 	// The rows are the TOP ones by impressions, not the project's full keyword set
 	// — do not total them and present the result as the project's whole spend.
 	Truncated bool
+}
+
+// HubspotCampaign is the result type of the
+// lfx-v2-campaign-service-connections service create-hubspot-campaign method.
+type HubspotCampaign struct {
+	// HubSpot's own campaign object id.
+	ID string
+	// The campaign's display name.
+	Name string
+	// The campaign's UTM token. ABSENT when the campaign has none configured —
+	// that is a real state, not a missing answer, and it does not mean the
+	// campaign was not found.
+	Utm *string
+	// The campaign's start date as HubSpot holds it, for disambiguating same-named
+	// campaigns. Not parsed or normalised here.
+	StartDate *string
 }
 
 // HubspotConnection is the result type of the
@@ -935,6 +1001,25 @@ type RedditAdsCredentials struct {
 	ClientSecret string
 	// OAuth refresh token
 	RefreshToken string
+}
+
+// SearchHubspotCampaignsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns method.
+type SearchHubspotCampaignsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The campaign name to search for. Matched by HubSpot's own fuzzy, scored
+	// full-text search — not an exact-name lookup.
+	Q string
+}
+
+// SearchHubspotCampaignsResult is the result type of the
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns method.
+type SearchHubspotCampaignsResult struct {
+	// Matches in HubSpot's relevance order. Empty when nothing matched.
+	Campaigns []*HubspotCampaign
 }
 
 // SetCredentialGoogleAdsPayload is the payload type of the

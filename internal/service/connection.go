@@ -1193,3 +1193,104 @@ func (s *ConnectionService) TestHubspot(ctx context.Context, p *conn.TestHubspot
 func (s *ConnectionService) SetCredentialHubspot(ctx context.Context, p *conn.SetCredentialHubspotPayload) error {
 	return s.setCredential(ctx, p.ProjectID, model.ProviderHubSpot, p.Credentials, actorFromCtx(ctx))
 }
+
+// hubspotCampaignDiscovery reuses the account-discovery status mapping for the campaign
+// lookup, exactly as hubspotEmailDiscovery does and for the same reasons: every arm applies
+// unchanged (connection missing, unusable, undecryptable, platform down) and only the noun
+// differs.
+var hubspotCampaignDiscovery = accountDiscovery{
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	operation:   "campaign search",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with private_app_token set",
+}
+
+// SearchHubspotCampaigns finds LF HubSpot campaigns by name, so a caller can read back an
+// existing campaign's utm token.
+//
+// THE ANSWER IS LF-GLOBAL. `project_id` gates permission, not visibility — HubSpot's campaign
+// namespace is the whole portal, so this returns matches from every foundation's campaigns. That
+// is stated on the design method too, because a reader who assumes project scoping would draw
+// the wrong conclusion from an unexpected match.
+func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.SearchHubspotCampaignsPayload) (*conn.SearchHubspotCampaignsResult, error) {
+	d := hubspotCampaignDiscovery
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
+	if err != nil {
+		return nil, err
+	}
+
+	campaigns, serr := orch.SearchCampaigns(ctx, p.ProjectID, d.provider, p.Q)
+	if serr != nil {
+		// Mirrors ListHubspotEmails: the unsupported-capability sentinel is the one arm
+		// classifyDiscoveryError cannot carry, because that helper keys on
+		// ErrAccountsUnsupported and the capabilities are independent.
+		if errors.Is(serr, ErrCampaignSearchUnsupported) {
+			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+		}
+		return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, serr)
+	}
+
+	// make, not nil: an empty result must serialize as `[]` rather than `null`. The caller
+	// branches on empty-vs-found to decide whether to offer a create, so this is the one field
+	// it must be able to read without a null check.
+	out := make([]*conn.HubspotCampaign, 0, len(campaigns))
+	for _, c := range campaigns {
+		out = append(out, toWireHubspotCampaign(c))
+	}
+	return &conn.SearchHubspotCampaignsResult{Campaigns: out}, nil
+}
+
+// CreateHubspotCampaign creates an LF-global HubSpot campaign and returns the token HubSpot
+// assigned it.
+//
+// IT ALWAYS CREATES, and the created campaign is visible to every foundation. Both facts are on
+// the design method; neither is enforced here, because neither can be: a duplicate check would
+// race, and visibility is HubSpot's data model. The caller searches first and warns.
+func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.CreateHubspotCampaignPayload) (*conn.HubspotCampaign, error) {
+	d := hubspotCampaignDiscovery
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
+	if err != nil {
+		return nil, err
+	}
+
+	created, cerr := orch.CreateCampaign(ctx, p.ProjectID, d.provider, p.Name)
+	if cerr != nil {
+		if errors.Is(cerr, ErrCampaignSearchUnsupported) {
+			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+		}
+		return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
+	}
+	// The dispatcher refuses a nil-without-error, so this cannot fire on the current path.
+	// Guarded because the alternative is a nil dereference one line down, and a create that
+	// reports success while returning nothing is worse than a clear failure.
+	if created == nil {
+		return nil, &conn.InternalServerError{Code: "500", Message: "the campaign was not returned after creation"}
+	}
+	return toWireHubspotCampaign(*created), nil
+}
+
+// toWireHubspotCampaign maps the domain campaign onto the wire type.
+//
+// `utm` and `start_date` are OPTIONAL on the wire, and an empty domain value maps to an ABSENT
+// key rather than an empty string. That distinction is the point: a campaign with no configured
+// token is a real campaign, and a consumer must be able to tell "no token" from "" without
+// guessing which the producer meant.
+func toWireHubspotCampaign(c model.HubSpotCampaign) *conn.HubspotCampaign {
+	out := &conn.HubspotCampaign{ID: c.ID, Name: c.Name}
+	if c.UTM != "" {
+		utm := c.UTM
+		out.Utm = &utm
+	}
+	if c.StartDate != "" {
+		start := c.StartDate
+		out.StartDate = &start
+	}
+	return out
+}

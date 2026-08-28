@@ -250,6 +250,26 @@ type AccessibleAccount struct {
 // "which email should be cloned?", and the chosen id travels per campaign in the dispatch
 // config (hubspotConfig.SourceEmailID) — a different question with a different lifetime, so
 // sharing the type would only make two unrelated things look interchangeable.
+// HubSpotCampaign is one LF HubSpot marketing campaign.
+//
+// THE NAMESPACE IS LF-GLOBAL. HubSpot campaigns are not scoped to a project or a portal
+// sub-account, so a campaign reachable here is reachable by every foundation's campaign
+// managers. That is HubSpot's data model, not a gap in this service's scoping, and it is why the
+// create path is documented as needing an operator warning.
+type HubSpotCampaign struct {
+	// ID is HubSpot's own campaign object id.
+	ID string
+	// Name is the campaign's display name.
+	Name string
+	// UTM is the campaign's utm token. EMPTY is a REAL state — a campaign can exist with no
+	// token configured — and is not the same as the campaign not existing. A caller that treats
+	// an empty token as "not found" would prompt a duplicate create in a shared namespace.
+	UTM string
+	// StartDate is HubSpot's own date string, for disambiguating same-named campaigns. Not
+	// parsed here: it is displayed, never used for arithmetic.
+	StartDate string
+}
+
 type MarketingEmail struct {
 	// ID is the HubSpot marketing-email id, in the form sourceEmailId expects.
 	ID string

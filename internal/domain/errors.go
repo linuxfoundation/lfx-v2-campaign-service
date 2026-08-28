@@ -157,6 +157,11 @@ var (
 	// An enumeration here is falsified by the next provider added, with nothing failing to
 	// say so — which is exactly what happened to the previous version of this comment.
 	ErrEmailSearchUnsupported = errors.New("email search is not supported for this platform")
+	// ErrCampaignSearchUnsupported is returned when a platform has no marketing-campaign
+	// capability. SEPARATE from ErrEmailSearchUnsupported because the two capabilities are
+	// independent: a platform can search emails without having campaigns, and conflating them
+	// would report the wrong missing capability to the caller.
+	ErrCampaignSearchUnsupported = errors.New("campaign search is not supported for this platform")
 
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.

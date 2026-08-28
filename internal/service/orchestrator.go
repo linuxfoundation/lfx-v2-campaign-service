@@ -282,6 +282,31 @@ type AccountLister interface {
 // which ACCOUNT a credential may act as, and the answer is stored on the connection. This
 // answers which EMAIL a campaign should clone, and the answer travels per campaign in the
 // dispatch config. Only the email channel has the second question at all.
+// CampaignSearcher is implemented by a dispatcher that can look up and create marketing
+// campaigns on its platform.
+//
+// SEPARATE from EmailSearcher, and deliberately so: the capabilities are independent. HubSpot
+// implements both; a platform could implement either alone. Folding them into one interface
+// would make a platform that gains email search appear to have gained campaign search too, and
+// the orchestrator's capability check would stop meaning anything.
+type CampaignSearcher interface {
+	// SearchCampaigns returns campaigns whose name matches query, in the platform's own
+	// relevance order.
+	//
+	// A successful call MUST return a NON-NIL slice even when nothing matches, for the reason
+	// ListAccounts does: the caller branches on empty-vs-found to decide whether to offer a
+	// create, and cannot otherwise tell an authoritative "no such campaign" from a read that
+	// silently returned nothing.
+	SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.HubSpotCampaign, error)
+
+	// CreateCampaign creates a campaign and returns it with the token the platform assigned.
+	//
+	// It ALWAYS creates: it performs no existence check, because a search-then-create inside
+	// one call still races a concurrent caller and cannot prevent a duplicate. The check belongs
+	// with the human who can read the candidate names.
+	CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error)
+}
+
 type EmailSearcher interface {
 	// SearchEmails returns the marketing emails whose name or subject matches query,
 	// most-recently-updated first. An empty query lists the most recently updated emails.
@@ -348,6 +373,8 @@ var (
 
 	// ErrEmailSearchUnsupported: the platform has no email-search capability wired.
 	ErrEmailSearchUnsupported = domain.ErrEmailSearchUnsupported
+	// ErrCampaignSearchUnsupported re-exports the domain sentinel, as the siblings above do.
+	ErrCampaignSearchUnsupported = domain.ErrCampaignSearchUnsupported
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -1953,6 +1980,49 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 // enough to need many pages will hit the deadline MID-WALK and surface as a failure, not as a
 // truncated list. That is the correct direction (a silently short picker is worse than an
 // error), but it means the practical page ceiling is whatever fits in 20s, well under 200.
+// SearchCampaigns looks up marketing campaigns by name on platform.
+func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.HubSpotCampaign, error) {
+	searcher, err := o.campaignSearcherFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	return searcher.SearchCampaigns(callCtx, projectID, platform, query)
+}
+
+// CreateCampaign creates a marketing campaign on platform.
+//
+// NOT given the shared accountsCallTimeout budget by accident: it is a WRITE, and a create whose
+// context expires mid-flight may still have committed upstream. The same budget is used because
+// the call shape is the same, but a caller must treat a timeout here as UNCONFIRMED rather than
+// failed — the campaign may exist, and retrying blindly makes a second one in a namespace every
+// foundation shares.
+func (o *Orchestrator) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
+	searcher, err := o.campaignSearcherFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	return searcher.CreateCampaign(callCtx, projectID, platform, name)
+}
+
+// campaignSearcherFor resolves the dispatcher's campaign capability, or reports that the
+// platform has none. Shared by both methods so the unsupported-platform answer cannot drift
+// between the read and the write.
+func (o *Orchestrator) campaignSearcherFor(platform model.Provider) (CampaignSearcher, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrCampaignSearchUnsupported, platform)
+	}
+	searcher, ok := d.(CampaignSearcher)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCampaignSearchUnsupported, platform)
+	}
+	return searcher, nil
+}
+
 func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {

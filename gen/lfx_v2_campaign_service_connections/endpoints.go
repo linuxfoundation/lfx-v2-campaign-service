@@ -66,6 +66,8 @@ type Endpoints struct {
 	ListMicrosoftAdsAccounts  goa.Endpoint
 	ListTwitterAdsAccounts    goa.Endpoint
 	ListHubspotEmails         goa.Endpoint
+	SearchHubspotCampaigns    goa.Endpoint
+	CreateHubspotCampaign     goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-connections"
@@ -124,6 +126,8 @@ func NewEndpoints(s Service) *Endpoints {
 		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
 		ListTwitterAdsAccounts:    NewListTwitterAdsAccountsEndpoint(s, a.JWTAuth),
 		ListHubspotEmails:         NewListHubspotEmailsEndpoint(s, a.JWTAuth),
+		SearchHubspotCampaigns:    NewSearchHubspotCampaignsEndpoint(s, a.JWTAuth),
+		CreateHubspotCampaign:     NewCreateHubspotCampaignEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -180,6 +184,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListMicrosoftAdsAccounts = m(e.ListMicrosoftAdsAccounts)
 	e.ListTwitterAdsAccounts = m(e.ListTwitterAdsAccounts)
 	e.ListHubspotEmails = m(e.ListHubspotEmails)
+	e.SearchHubspotCampaigns = m(e.SearchHubspotCampaigns)
+	e.CreateHubspotCampaign = m(e.CreateHubspotCampaign)
 }
 
 // NewCreateGoogleAdsEndpoint returns an endpoint function that calls the
@@ -1350,5 +1356,53 @@ func NewListHubspotEmailsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa
 			return nil, err
 		}
 		return s.ListHubspotEmails(ctx, p)
+	}
+}
+
+// NewSearchHubspotCampaignsEndpoint returns an endpoint function that calls
+// the method "search-hubspot-campaigns" of service
+// "lfx-v2-campaign-service-connections".
+func NewSearchHubspotCampaignsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SearchHubspotCampaignsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.SearchHubspotCampaigns(ctx, p)
+	}
+}
+
+// NewCreateHubspotCampaignEndpoint returns an endpoint function that calls the
+// method "create-hubspot-campaign" of service
+// "lfx-v2-campaign-service-connections".
+func NewCreateHubspotCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CreateHubspotCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.CreateHubspotCampaign(ctx, p)
 	}
 }

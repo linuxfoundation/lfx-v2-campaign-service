@@ -559,6 +559,24 @@ var GoogleAdsAudience = Type("google-ads-audience", func() {
 	Required("window", "buckets", "bucket_count")
 })
 
+// HubSpotCampaign is one LF HubSpot marketing campaign.
+//
+// The `hs_utm` token is the point of this type: it is what makes a send attributable to a
+// campaign in HubSpot's own reporting. `internal/utm` GENERATES utm parameters for links this
+// service tags, which is a different thing — this is the token an existing upstream campaign
+// already carries.
+var HubSpotCampaign = Type("hubspot-campaign", func() {
+	Attribute("id", String, "HubSpot's own campaign object id.", func() { Example("112233445566") })
+	Attribute("name", String, "The campaign's display name.", func() { Example("KubeCon NA 2026") })
+	// NOT required: a campaign can exist with no token configured, and that is a different fact
+	// from the campaign not existing. A caller must render an absent token as "no token", never
+	// treat it as "no campaign" — doing so would prompt a duplicate create in a namespace every
+	// foundation shares.
+	Attribute("utm", String, "The campaign's UTM token. ABSENT when the campaign has none configured — that is a real state, not a missing answer, and it does not mean the campaign was not found.", func() { Example("kubecon-na-2026") })
+	Attribute("start_date", String, "The campaign's start date as HubSpot holds it, for disambiguating same-named campaigns. Not parsed or normalised here.", func() { Example("2026-11-01") })
+	Required("id", "name")
+})
+
 // KeywordActionInput is one requested keyword mutation.
 //
 // Both ids are required and neither is inferable. A criterion id is unique only within its ad

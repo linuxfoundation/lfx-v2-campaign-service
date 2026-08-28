@@ -9922,6 +9922,393 @@ func DecodeListHubspotEmailsResponse(decoder func(*http.Response) goahttp.Decode
 	}
 }
 
+// BuildSearchHubspotCampaignsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "search-hubspot-campaigns" endpoint
+func (c *Client) BuildSearchHubspotCampaignsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", "*lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SearchHubspotCampaignsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSearchHubspotCampaignsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections search-hubspot-campaigns server.
+func EncodeSearchHubspotCampaignsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", "*lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("q", p.Q)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeSearchHubspotCampaignsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections search-hubspot-campaigns
+// endpoint. restoreBody controls whether the response body should be restored
+// after having been read.
+// DecodeSearchHubspotCampaignsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeSearchHubspotCampaignsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SearchHubspotCampaignsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			res := NewSearchHubspotCampaignsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body SearchHubspotCampaignsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			return nil, NewSearchHubspotCampaignsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body SearchHubspotCampaignsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			return nil, NewSearchHubspotCampaignsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body SearchHubspotCampaignsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			return nil, NewSearchHubspotCampaignsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body SearchHubspotCampaignsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			return nil, NewSearchHubspotCampaignsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SearchHubspotCampaignsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			return nil, NewSearchHubspotCampaignsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SearchHubspotCampaignsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			err = ValidateSearchHubspotCampaignsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", err)
+			}
+			return nil, NewSearchHubspotCampaignsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "search-hubspot-campaigns", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildCreateHubspotCampaignRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "create-hubspot-campaign" endpoint
+func (c *Client) BuildCreateHubspotCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.CreateHubspotCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "create-hubspot-campaign", "*lfxv2campaignserviceconnections.CreateHubspotCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: CreateHubspotCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "create-hubspot-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeCreateHubspotCampaignRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections create-hubspot-campaign server.
+func EncodeCreateHubspotCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.CreateHubspotCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "create-hubspot-campaign", "*lfxv2campaignserviceconnections.CreateHubspotCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewCreateHubspotCampaignRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+		}
+		return nil
+	}
+}
+
+// DecodeCreateHubspotCampaignResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections create-hubspot-campaign endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeCreateHubspotCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeCreateHubspotCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			var (
+				body CreateHubspotCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			res := NewCreateHubspotCampaignHubspotCampaignCreated(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body CreateHubspotCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			return nil, NewCreateHubspotCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body CreateHubspotCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			return nil, NewCreateHubspotCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body CreateHubspotCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			return nil, NewCreateHubspotCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body CreateHubspotCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			return nil, NewCreateHubspotCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateHubspotCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			return nil, NewCreateHubspotCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateHubspotCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			err = ValidateCreateHubspotCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+			}
+			return nil, NewCreateHubspotCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "create-hubspot-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceconnectionsGoogleAdsConnectionConfigToGoogleAdsConnectionConfigRequestBody
 // builds a value of type *GoogleAdsConnectionConfigRequestBody from a value of
 // type *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig.
@@ -10365,6 +10752,20 @@ func unmarshalMarketingEmailResponseBodyToLfxv2campaignserviceconnectionsMarketi
 		Subject:   v.Subject,
 		State:     v.State,
 		UpdatedAt: v.UpdatedAt,
+	}
+
+	return res
+}
+
+// unmarshalHubspotCampaignResponseBodyToLfxv2campaignserviceconnectionsHubspotCampaign
+// builds a value of type *lfxv2campaignserviceconnections.HubspotCampaign from
+// a value of type *HubspotCampaignResponseBody.
+func unmarshalHubspotCampaignResponseBodyToLfxv2campaignserviceconnectionsHubspotCampaign(v *HubspotCampaignResponseBody) *lfxv2campaignserviceconnections.HubspotCampaign {
+	res := &lfxv2campaignserviceconnections.HubspotCampaign{
+		ID:        *v.ID,
+		Name:      *v.Name,
+		Utm:       v.Utm,
+		StartDate: v.StartDate,
 	}
 
 	return res

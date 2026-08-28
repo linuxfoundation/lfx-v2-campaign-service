@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable)."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable)."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -344,6 +344,45 @@ steady stream of it is a real signal.
 
 Malformed responses (non-JSON or missing/non-numeric `hubId`) do not leak upstream
 data into logs; the error message is fixed text + response length.
+
+## Marketing campaigns and the utm token (LFXV2-2641)
+
+`campaign.go` adds the two operations that read back an existing campaign's `hs_utm`. HubSpot
+models marketing campaigns as the CRM object type `0-35`, which is why these go through
+`/crm/v3/objects` rather than the `/marketing/v3` surface the email endpoints use.
+
+This is NOT the same thing as `internal/utm`. That package GENERATES utm parameters for links
+this service tags (`Apply`) and decides the campaign value (`Resolve`). These read the token an
+existing UPSTREAM campaign already carries — which is the endpoint gap `resolve.go` names as the
+reason `SourceHubSpotCampaign` is reserved but never emitted.
+
+**The namespace is LF-GLOBAL, and that shapes both methods.** HubSpot campaigns are not scoped
+to a project or a portal sub-account: `projectID` selects which connection's credential to use,
+not which campaigns are visible. Two projects sharing a portal see the same campaigns, and one
+created here is visible to every other foundation's campaign managers. That is HubSpot's data
+model rather than a gap in this service's scoping, which is why the create path is documented as
+requiring an operator warning rather than being narrowed here.
+
+**The search is fuzzy and every match is returned.** HubSpot's `query` is a scored full-text
+match, not an exact-name lookup, so a hit can merely share a token with the term. Matches come
+back in relevance order rather than narrowed to a best one: choosing between similarly-named
+campaigns needs a human reading the names, and collapsing them here would hide the ambiguity
+from the only party able to resolve it.
+
+**An empty result is an answer, a malformed one is an error.** The caller branches on
+empty-vs-found to decide whether to offer a create, so a `2xx` with no `results` array is
+refused rather than reported as "nothing matched" — a broken response silently answering empty
+would prompt a duplicate in a namespace every foundation shares. For the same reason a campaign
+with an EMPTY `hs_utm` is kept: a campaign with no token configured is a real campaign, and
+dropping it would hide an existing one.
+
+**Create never checks first, deliberately.** A search-then-create inside one call still races a
+concurrent caller and cannot prevent a duplicate, so the check belongs with the human who can
+read the candidate names. The method always creates, and says so. It is issued NON-idempotently
+— a replayed create makes a second campaign — and `hs_utm` is assigned by HubSpot rather than
+supplied, read back from the create response so the returned token is the one HubSpot actually
+assigned. A `2xx` carrying no id is an ERROR: the campaign may or may not exist and cannot be
+addressed either way, so the caller must check HubSpot rather than retry into a second copy.
 
 ## Scope
 

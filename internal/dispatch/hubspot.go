@@ -660,3 +660,64 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 	}
 	return out, nil
 }
+
+// SearchCampaigns implements service.CampaignSearcher for HubSpot.
+//
+// The result is LF-GLOBAL despite the projectID argument: that argument selects which
+// connection's credential to use, not which campaigns are visible. HubSpot's campaign namespace
+// is the whole portal, so two projects sharing a portal see the same campaigns.
+func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.HubSpotCampaign, error) {
+	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+
+	campaigns, err := client.SearchCampaigns(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("search hubspot campaigns: %w", err)
+	}
+
+	// make(..., 0, n), never nil: service.CampaignSearcher requires a non-nil result on success
+	// so "the portal has no campaign by that name" stays distinguishable from a searcher that
+	// fell through a branch. The caller offers a CREATE on the empty answer, so an accidental
+	// nil would prompt a duplicate in a namespace every foundation shares.
+	out := make([]model.HubSpotCampaign, 0, len(campaigns))
+	for _, c := range campaigns {
+		out = append(out, model.HubSpotCampaign{
+			ID:        c.ID,
+			Name:      c.Name,
+			UTM:       c.UTM,
+			StartDate: c.StartDate,
+		})
+	}
+	return out, nil
+}
+
+// CreateCampaign implements service.CampaignSearcher for HubSpot.
+//
+// A WRITE into an LF-GLOBAL namespace: the created campaign is visible to every foundation's
+// campaign managers, whatever project scoped the request. It performs no existence check — see
+// the client method and the design description for why that belongs with the operator.
+func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
+	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+
+	created, err := client.CreateCampaign(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("create hubspot campaign: %w", err)
+	}
+	// The client refuses an id-less response rather than returning one, so a nil here would be a
+	// contract violation rather than an ordinary absence. Guarded anyway: returning (nil, nil)
+	// would hand the service layer a campaign reference to dereference.
+	if created == nil {
+		return nil, fmt.Errorf("create hubspot campaign: the client returned no campaign and no error")
+	}
+	return &model.HubSpotCampaign{
+		ID:        created.ID,
+		Name:      created.Name,
+		UTM:       created.UTM,
+		StartDate: created.StartDate,
+	}, nil
+}

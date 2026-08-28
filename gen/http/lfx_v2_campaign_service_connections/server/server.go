@@ -70,6 +70,8 @@ type Server struct {
 	ListMicrosoftAdsAccounts  http.Handler
 	ListTwitterAdsAccounts    http.Handler
 	ListHubspotEmails         http.Handler
+	SearchHubspotCampaigns    http.Handler
+	CreateHubspotCampaign     http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -150,6 +152,8 @@ func New(
 			{"ListMicrosoftAdsAccounts", "GET", "/projects/{project_id}/connection-microsoft-ads/accounts"},
 			{"ListTwitterAdsAccounts", "GET", "/projects/{project_id}/connection-twitter-ads/accounts"},
 			{"ListHubspotEmails", "GET", "/projects/{project_id}/connection-hubspot/emails"},
+			{"SearchHubspotCampaigns", "GET", "/projects/{project_id}/connection-hubspot/campaigns"},
+			{"CreateHubspotCampaign", "POST", "/projects/{project_id}/connection-hubspot/campaigns"},
 		},
 		CreateGoogleAds:           NewCreateGoogleAdsHandler(e.CreateGoogleAds, mux, decoder, encoder, errhandler, formatter),
 		GetGoogleAds:              NewGetGoogleAdsHandler(e.GetGoogleAds, mux, decoder, encoder, errhandler, formatter),
@@ -201,6 +205,8 @@ func New(
 		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsHandler(e.ListMicrosoftAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListTwitterAdsAccounts:    NewListTwitterAdsAccountsHandler(e.ListTwitterAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListHubspotEmails:         NewListHubspotEmailsHandler(e.ListHubspotEmails, mux, decoder, encoder, errhandler, formatter),
+		SearchHubspotCampaigns:    NewSearchHubspotCampaignsHandler(e.SearchHubspotCampaigns, mux, decoder, encoder, errhandler, formatter),
+		CreateHubspotCampaign:     NewCreateHubspotCampaignHandler(e.CreateHubspotCampaign, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -259,6 +265,8 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ListMicrosoftAdsAccounts = m(s.ListMicrosoftAdsAccounts)
 	s.ListTwitterAdsAccounts = m(s.ListTwitterAdsAccounts)
 	s.ListHubspotEmails = m(s.ListHubspotEmails)
+	s.SearchHubspotCampaigns = m(s.SearchHubspotCampaigns)
+	s.CreateHubspotCampaign = m(s.CreateHubspotCampaign)
 }
 
 // MethodNames returns the methods served.
@@ -317,6 +325,8 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountListMicrosoftAdsAccountsHandler(mux, h.ListMicrosoftAdsAccounts)
 	MountListTwitterAdsAccountsHandler(mux, h.ListTwitterAdsAccounts)
 	MountListHubspotEmailsHandler(mux, h.ListHubspotEmails)
+	MountSearchHubspotCampaignsHandler(mux, h.SearchHubspotCampaigns)
+	MountCreateHubspotCampaignHandler(mux, h.CreateHubspotCampaign)
 }
 
 // Mount configures the mux to serve the lfx-v2-campaign-service-connections
@@ -3019,6 +3029,116 @@ func NewListHubspotEmailsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-hubspot-emails")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSearchHubspotCampaignsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint.
+func MountSearchHubspotCampaignsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/connection-hubspot/campaigns", f)
+}
+
+// NewSearchHubspotCampaignsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "search-hubspot-campaigns" endpoint.
+func NewSearchHubspotCampaignsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSearchHubspotCampaignsRequest(mux, decoder)
+		encodeResponse = EncodeSearchHubspotCampaignsResponse(encoder)
+		encodeError    = EncodeSearchHubspotCampaignsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "search-hubspot-campaigns")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountCreateHubspotCampaignHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint.
+func MountCreateHubspotCampaignHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/connection-hubspot/campaigns", f)
+}
+
+// NewCreateHubspotCampaignHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "create-hubspot-campaign" endpoint.
+func NewCreateHubspotCampaignHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeCreateHubspotCampaignRequest(mux, decoder)
+		encodeResponse = EncodeCreateHubspotCampaignResponse(encoder)
+		encodeError    = EncodeCreateHubspotCampaignError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "create-hubspot-campaign")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

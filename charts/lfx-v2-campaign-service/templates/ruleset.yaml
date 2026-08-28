@@ -126,6 +126,10 @@ spec:
           # What the caller picks is the marketing email a campaign clones, since
           # hubspotConfig.SourceEmailID is required with no default (LFXV2-3197).
           - path: /projects/:projectId/connection-hubspot/emails
+          # Campaign lookup and create. The LOOKUP reads back an existing campaign's utm
+          # token; the CREATE writes into a namespace every foundation shares, which is why
+          # the design description requires the caller to warn first.
+          - path: /projects/:projectId/connection-hubspot/campaigns
           # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
           # would only match /briefs/{id}; the routed contract has DEEPER paths —
           # /briefs/{id}/approve and /briefs/{id}/campaigns/{campaignId} (per the

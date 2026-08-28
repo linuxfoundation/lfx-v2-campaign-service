@@ -1,0 +1,181 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package hubspot
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+)
+
+// HubSpot models marketing campaigns as the CRM object type `0-35`, which is why these calls go
+// through /crm/v3/objects rather than the /marketing/v3 surface the email endpoints use. The
+// object carries `hs_utm`: the campaign's UTM token, which is what makes a send attributable to
+// a campaign in HubSpot's own reporting rather than only in ours.
+const (
+	campaignObjectType = "0-35"
+	campaignSearchPath = "/crm/v3/objects/" + campaignObjectType + "/search"
+	campaignCreatePath = "/crm/v3/objects/" + campaignObjectType
+
+	// campaignSearchLimit bounds one search page. HubSpot's CRM search caps `limit` at 100;
+	// 10 is deliberate and smaller, because these results are shown to a human choosing
+	// between candidate names — a hundred fuzzy matches is not a more useful answer than ten,
+	// and the top of a scored list is where the real match sits.
+	campaignSearchLimit = 10
+)
+
+// campaignProps are the properties requested on every campaign read.
+//
+// Requested EXPLICITLY rather than relying on defaults: the CRM search endpoint returns only
+// `hs_object_id` and a few system fields unless properties are named, so a consumer promised a
+// utm token would otherwise receive an empty string from every row.
+var campaignProps = []string{"hs_name", "hs_utm", "hs_start_date"}
+
+// Campaign is one HubSpot marketing campaign.
+//
+// THE NAMESPACE IS LF-GLOBAL. HubSpot campaigns are not scoped to a project, a portal
+// sub-account, or anything else this service partitions by — every campaign in the LF portal is
+// visible to every caller of these methods, and one created here is visible to every other
+// foundation's campaign managers. That is a property of HubSpot's data model, not a gap in the
+// scoping here, and it is why the create path is documented as requiring a UI warning.
+type Campaign struct {
+	// ID is HubSpot's own object id (`hs_object_id`).
+	ID string
+	// Name is the campaign's display name (`hs_name`).
+	Name string
+	// UTM is the campaign's UTM token (`hs_utm`). EMPTY is a real state: a campaign can exist
+	// with no token configured, and that is different from the campaign not existing. A caller
+	// must not treat an empty token as "not found" — see SearchCampaigns.
+	UTM string
+	// StartDate is `hs_start_date`, carried through as HubSpot's own string rather than parsed:
+	// it is used for display and disambiguation between same-named campaigns, never for
+	// arithmetic here.
+	StartDate string
+}
+
+// campaignSearchHit is one row of the CRM search response.
+type campaignSearchHit struct {
+	ID         string `json:"id"`
+	Properties struct {
+		Name      string `json:"hs_name"`
+		UTM       string `json:"hs_utm"`
+		StartDate string `json:"hs_start_date"`
+	} `json:"properties"`
+}
+
+// SearchCampaigns finds LF HubSpot campaigns whose name matches query.
+//
+// The match is HubSpot's own full-text `query` search, which is fuzzy and scored — it is not an
+// exact-name lookup, and it can return campaigns whose names merely share a token. Every hit is
+// returned in HubSpot's relevance order rather than filtered to a single "best" one, because
+// picking one here would hide the ambiguity from the only party able to resolve it: a human
+// looking at the names. A caller wanting an exact match must compare names itself.
+//
+// An EMPTY result is not an error. "No campaign is named that" is the answer the caller acts on
+// by offering to create one, and it must be distinguishable from a failed search — which is why
+// a malformed 2xx is an error rather than an empty slice.
+func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign, error) {
+	// Trimmed before sending, for the reason SearchEmails and SearchLists trim: a padded term
+	// would otherwise fail to match names it should, returning a clean empty answer that reads
+	// as "no such campaign".
+	q := strings.TrimSpace(query)
+	if q == "" {
+		// Refused rather than sent. An empty query is not a search for everything — HubSpot
+		// would return the whole portal's campaigns ranked arbitrarily, and a caller looking
+		// for one event would act on whichever happened to sort first.
+		return nil, fmt.Errorf("hubspot: campaign search requires a non-empty query")
+	}
+
+	body := map[string]any{
+		"query":      q,
+		"limit":      campaignSearchLimit,
+		"properties": campaignProps,
+	}
+	raw, err := c.doRequest(ctx, http.MethodPost, campaignSearchPath, body, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []campaignSearchHit `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("hubspot: decode campaign search: %w", err)
+	}
+	// A malformed 2xx body (`{}` or `null`) decodes with Results==nil, while a genuinely empty
+	// search returns `{"results":[]}` — non-nil. Erroring on nil keeps "the search failed"
+	// distinguishable from "nothing matched", which is the distinction the caller branches on.
+	if resp.Results == nil {
+		return nil, fmt.Errorf("hubspot: campaign search returned a 2xx with no results array (malformed response)")
+	}
+
+	out := make([]Campaign, 0, len(resp.Results))
+	for _, hit := range resp.Results {
+		// A hit with no id cannot be addressed or linked to, so it is dropped rather than
+		// returned as a row whose only advertised use fails. Every other field may legitimately
+		// be empty.
+		if strings.TrimSpace(hit.ID) == "" {
+			continue
+		}
+		out = append(out, Campaign{
+			ID:        hit.ID,
+			Name:      hit.Properties.Name,
+			UTM:       hit.Properties.UTM,
+			StartDate: hit.Properties.StartDate,
+		})
+	}
+	return out, nil
+}
+
+// CreateCampaign creates an LF-global HubSpot campaign named name.
+//
+// IT IS VISIBLE TO EVERY FOUNDATION. The campaign namespace is the whole LF portal, so this is
+// not a project-scoped write however the calling route is scoped — the created campaign appears
+// for every other project's campaign managers. Callers must warn before invoking it.
+//
+// It does NOT check for an existing campaign first. A search-then-create here would be a race
+// with any concurrent caller and would still not prevent a duplicate, so the check belongs with
+// the human who can read the candidate names: the caller searches, shows the matches, and only
+// then creates. Making that ordering the caller's job is what keeps this method honest about
+// what it does — it always creates.
+//
+// HubSpot assigns `hs_utm` itself on creation; it is not settable here. The created campaign is
+// read back from the create response rather than re-fetched, so the returned token is the one
+// HubSpot actually assigned rather than one this service guessed.
+func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, error) {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return nil, fmt.Errorf("hubspot: campaign creation requires a non-empty name")
+	}
+
+	body := map[string]any{
+		"properties": map[string]string{"hs_name": n},
+	}
+	// NOT idempotent: this creates a row, and a retried create makes a second campaign in a
+	// namespace every foundation can see. The transport must not replay it.
+	raw, err := c.doRequest(ctx, http.MethodPost, campaignCreatePath, body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var hit campaignSearchHit
+	if err := json.Unmarshal(raw, &hit); err != nil {
+		return nil, fmt.Errorf("hubspot: decode campaign create: %w", err)
+	}
+	// An id-less 2xx means the campaign may or may not have been created and cannot be
+	// addressed either way. Reporting success would hand the caller a campaign reference that
+	// does not work; reporting the ambiguity lets them check HubSpot rather than retry blindly
+	// into a duplicate.
+	if strings.TrimSpace(hit.ID) == "" {
+		return nil, fmt.Errorf("hubspot: campaign create returned a 2xx with no id — the campaign may or may not exist, check HubSpot before retrying")
+	}
+	return &Campaign{
+		ID:        hit.ID,
+		Name:      hit.Properties.Name,
+		UTM:       hit.Properties.UTM,
+		StartDate: hit.Properties.StartDate,
+	}, nil
+}

@@ -3388,6 +3388,169 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-hubspot/campaigns:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: search-hubspot-campaigns lfx-v2-campaign-service-connections
+            description: 'Find LF HubSpot marketing campaigns by name, to read back an existing campaign''s `hs_utm` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this returns matches from the ENTIRE LF portal regardless of which project scopes the path — the `project_id` gates permission, not visibility. That is a property of HubSpot''s data model rather than a gap in the scoping here, and it is why the create route below needs a warning before it is used. The match is HubSpot''s own full-text search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely share a token with the query. Every match is returned in HubSpot''s relevance order rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `campaigns` array is a 200, not a 404**: ''no campaign is named that'' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `utm` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term, with no collection, pagination or filtering.'
+            operationId: lfx-v2-campaign-service-connections#search-hubspot-campaigns
+            parameters:
+                - name: q
+                  in: query
+                  description: The campaign name to search for. Matched by HubSpot's own fuzzy, scored full-text search — not an exact-name lookup.
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LfxV2CampaignServiceConnectionsSearchHubspotCampaignsResponseBody'
+                        required:
+                            - campaigns
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: create-hubspot-campaign lfx-v2-campaign-service-connections
+            description: 'Create an LF HubSpot marketing campaign and return the `hs_utm` token HubSpot assigns it. **THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The campaign namespace is the whole LF portal, so a campaign created here appears for every other project''s campaign managers however this path is scoped. A caller MUST warn before invoking it, and must not put anything project-sensitive in the name. **It does not check for an existing campaign first, and that is deliberate.** A search-then-create inside one call would still race any concurrent caller and could not prevent a duplicate; the check belongs with the human who can read the candidate names. Search first, show the matches, create only if the operator confirms none is right. This method always creates. `hs_utm` is assigned by HubSpot, never supplied here, and is read back from the create response rather than re-fetched — so the returned token is the one HubSpot actually assigned rather than one this service guessed. **A 2xx carrying no id is reported as an error**, because the campaign may or may not exist and cannot be addressed either way: the caller must check HubSpot rather than retry into a second copy.'
+            operationId: lfx-v2-campaign-service-connections#create-hubspot-campaign
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+                - name: Create-Hubspot-CampaignRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceConnectionsCreateHubspotCampaignRequestBody'
+                    required:
+                        - name
+            responses:
+                "201":
+                    description: Created response.
+                    schema:
+                        $ref: '#/definitions/HubspotCampaign'
+                        required:
+                            - id
+                            - name
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-hubspot/emails:
         get:
             tags:
@@ -6866,15 +7029,15 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Aut in voluptate quam delectus optio saepe.
+                example: Voluptate quam delectus optio.
             id:
                 type: string
                 description: Audience UUID
-                example: Quisquam sit ut aliquid consectetur.
+                example: Sit ut aliquid consectetur dolor harum nisi.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Ab iste earum consequatur laboriosam maxime nemo.
+                example: Velit architecto error consequatur nam.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -6884,15 +7047,15 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Vel cum alias iusto molestiae.
+                example: Aliquam vel cum alias iusto.
             project_id:
                 type: string
                 description: Owning project
-                example: Harum nisi illo quia.
+                example: Quia assumenda aut.
             status:
                 type: string
                 description: Build lifecycle status
-                example: built
+                example: failed
                 enum:
                     - building
                     - built
@@ -6901,30 +7064,31 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Et id voluptatem et et et eveniet.
+                    example: Fuga et id voluptatem et et et.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Et doloribus ex dolor quia et dolores.
-                    - Distinctio ea.
+                    - Ad et doloribus ex dolor quia.
+                    - Dolores commodi distinctio ea dignissimos ab.
+                    - Earum consequatur.
+                    - Maxime nemo.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 1623751227268513960
+                example: 7910043010688854541
                 format: int64
         example:
-            brief_id: Veritatis molestiae similique optio et corporis error.
-            id: Error consequatur nam veniam ipsum.
-            inclusion_summary: Sit iure quos aut eligendi facere.
+            brief_id: Voluptatem repellat consectetur alias reiciendis voluptas.
+            id: A et quia.
+            inclusion_summary: Quo eveniet fuga quaerat.
             platform: hubspot
-            platform_master_list_id: Repellat consectetur alias reiciendis.
-            project_id: A et quia.
-            status: built
+            platform_master_list_id: Est quis nostrum quod rerum.
+            project_id: Veritatis molestiae similique optio et corporis error.
+            status: building
             suppression_list_ids:
-                - Cumque est quis nostrum quod.
-                - Dolorum enim doloribus.
-                - Ex enim rem.
-                - Omnis repellendus atque.
-            version: 6027409796815781045
+                - Doloribus et ex enim rem modi omnis.
+                - Atque quo sit iure quos.
+                - Eligendi facere.
+            version: 1240420025497052675
         required:
             - id
             - project_id
@@ -6939,7 +7103,7 @@ definitions:
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Repellat eos.
+                example: Incidunt in.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -6949,7 +7113,7 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Quaerat sed et modi.
+                example: Magni repellendus et.
             status:
                 type: string
                 description: Build lifecycle status
@@ -6962,22 +7126,20 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Magni repellendus et.
+                    example: Deserunt eligendi rerum architecto necessitatibus alias.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Eligendi rerum.
-                    - Necessitatibus alias.
-                    - Vitae sapiente dolor unde harum dolorem iusto.
+                    - Sapiente dolor unde harum dolorem iusto quia.
+                    - Eos doloremque qui repellendus.
         example:
-            inclusion_summary: Velit in.
+            inclusion_summary: Repellat nemo excepturi iusto in.
             platform: hubspot
-            platform_master_list_id: Sit incidunt in et ea.
-            status: building
+            platform_master_list_id: Nesciunt et culpa similique.
+            status: built
             suppression_list_ids:
-                - Et culpa similique quasi ratione.
-                - Laboriosam dolorem ut dolorem odio aut reprehenderit.
-                - Quis inventore iste nemo rerum corporis repellat.
-                - Excepturi iusto in.
+                - Ut laboriosam.
+                - Ut dolorem odio aut.
+                - Consectetur quis inventore iste nemo rerum.
         required:
             - platform
     AudienceUpdateInput:
@@ -6991,11 +7153,11 @@ definitions:
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Nihil labore accusamus illum in delectus magnam.
+                example: Dolorem impedit sint consequatur.
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Sunt et eveniet eaque.
+                example: Rem aliquam voluptatem.
             status:
                 type: string
                 description: Build lifecycle status
@@ -7008,22 +7170,21 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Architecto aut eius quo voluptate repudiandae.
+                    example: Et eveniet eaque non architecto aut.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Et corrupti magnam deleniti nam laboriosam esse.
-                    - Eaque ut voluptatibus qui qui officia.
+                    - Voluptate repudiandae enim distinctio et corrupti.
+                    - Deleniti nam laboriosam esse temporibus eaque ut.
+                    - Qui qui officia.
                     - Alias quis voluptates nihil odio facere magnam.
-                    - Dolorem impedit sint consequatur.
         example:
-            clear_suppression_lists: true
-            inclusion_summary: Dolores dolores sed.
-            platform_master_list_id: Laboriosam placeat nesciunt tempore.
+            clear_suppression_lists: false
+            inclusion_summary: Officia suscipit qui molestias aliquid dolorum consequatur.
+            platform_master_list_id: Accusamus illum in delectus magnam corporis velit.
             status: building
             suppression_list_ids:
-                - Nemo adipisci deleniti.
-                - Suscipit qui molestias aliquid.
-                - Consequatur est qui qui ducimus enim.
+                - Placeat nesciunt.
+                - Porro voluptatum nemo adipisci.
         required:
             - platform
     BadRequestError:
@@ -7051,34 +7212,34 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Ut est est mollitia.
+                example: Natus enim non.
             event_details:
                 description: Extracted event/course details
-                example: Natus enim non.
+                example: Suscipit consequatur iure dolor sit quis ut.
             event_slug:
                 type: string
                 description: Event/course slug (unique within the project)
-                example: Omnis explicabo sed et.
+                example: Ea et sequi aperiam impedit omnis explicabo.
             id:
                 type: string
                 description: Brief UUID
-                example: Repellendus commodi quia.
+                example: Ducimus enim aut dolores dolores sed.
             keywords:
                 description: Keyword list
-                example: Corporis omnis.
+                example: Ut est est mollitia.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Eligendi corporis tenetur delectus excepturi et.
+                    example: Enim temporibus facere.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
+                    - Corporis tenetur delectus excepturi et a.
                     - Et consequuntur id libero sunt.
-                    - Suscipit consequatur iure dolor sit quis ut.
             program_type:
                 type: string
                 description: Funnel context
-                example: membership
+                example: education
                 enum:
                     - events
                     - education
@@ -7086,7 +7247,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Sit eveniet hic ea et sequi.
+                example: Optio enim repellendus commodi quia quod sit.
             status:
                 type: string
                 description: Lifecycle status
@@ -7097,32 +7258,31 @@ definitions:
                     - archived
             targeting:
                 description: Targeting recommendation
-                example: Ea in sunt odit aspernatur.
+                example: Corporis omnis.
             url:
                 type: string
                 description: Event/course page URL
-                example: Commodi autem eos enim temporibus facere.
+                example: Et et commodi autem.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 2850937812109107547
+                example: 69798951378578078
                 format: int64
         example:
-            copy: Odio aut suscipit.
-            event_details: Facere dolorum rem laborum dolor provident.
-            event_slug: Animi reprehenderit inventore aliquam dolorem voluptas autem.
-            id: Minima quas voluptatem.
-            keywords: Vitae voluptas fuga aut minima inventore tenetur.
+            copy: Facere dolorum rem laborum dolor provident.
+            event_details: Voluptas earum provident qui.
+            event_slug: Inventore aliquam dolorem.
+            id: Sunt odit aspernatur exercitationem delectus nisi minima.
+            keywords: Odio aut suscipit.
             platforms:
-                - Illum totam autem ratione est.
-                - Sapiente a animi.
-                - Voluptas earum provident qui.
-            program_type: membership
-            project_id: Dolore doloribus similique.
-            status: draft
-            targeting: Quam aliquid reiciendis maiores similique ab.
-            url: Aut ut enim eum.
-            version: 891818008480731995
+                - Eum ut rem illum.
+                - Autem ratione est exercitationem sapiente a animi.
+            program_type: events
+            project_id: Voluptatem consequuntur dolore doloribus similique et et.
+            status: archived
+            targeting: Vitae voluptas fuga aut minima inventore tenetur.
+            url: Autem enim aut.
+            version: 6745596384904401170
         required:
             - id
             - project_id
@@ -7136,31 +7296,32 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Libero veritatis cum dignissimos deleniti dolorem voluptas.
+                example: Deleniti dolorem voluptas harum soluta repudiandae quisquam.
             event_details:
                 description: Extracted event/course details
-                example: Pariatur accusamus aut.
+                example: Accusamus aut deleniti libero veritatis cum.
             event_slug:
                 type: string
                 description: Event/course slug (unique within the project)
-                example: br
+                example: "2"
                 minLength: 1
             keywords:
                 description: Keyword list
-                example: Soluta repudiandae quisquam accusamus quidem perferendis.
+                example: Quidem perferendis.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: In officiis dolores delectus architecto.
+                    example: Optio consequatur excepturi rerum dolores.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Eligendi omnis est vel est.
-                    - Eveniet iure consectetur.
+                    - Dolores delectus architecto.
+                    - Velit eligendi omnis est vel est et.
+                    - Iure consectetur libero.
             program_type:
                 type: string
                 description: Funnel context
-                example: membership
+                example: events
                 enum:
                     - events
                     - education
@@ -7171,7 +7332,7 @@ definitions:
             url:
                 type: string
                 description: Event/course page URL
-                example: Excepturi rerum.
+                example: Ab vel et libero corporis.
         example:
             copy: Eum iure aut eaque autem possimus.
             event_details: Qui omnis et blanditiis asperiores.
@@ -8595,6 +8756,34 @@ definitions:
             - rows
             - row_count
             - truncated
+    HubspotCampaign:
+        title: HubspotCampaign
+        type: object
+        properties:
+            id:
+                type: string
+                description: HubSpot's own campaign object id.
+                example: "112233445566"
+            name:
+                type: string
+                description: The campaign's display name.
+                example: KubeCon NA 2026
+            start_date:
+                type: string
+                description: The campaign's start date as HubSpot holds it, for disambiguating same-named campaigns. Not parsed or normalised here.
+                example: "2026-11-01"
+            utm:
+                type: string
+                description: The campaign's UTM token. ABSENT when the campaign has none configured — that is a real state, not a missing answer, and it does not mean the campaign was not found.
+                example: kubecon-na-2026
+        example:
+            id: "112233445566"
+            name: KubeCon NA 2026
+            start_date: "2026-11-01"
+            utm: kubecon-na-2026
+        required:
+            - id
+            - name
     HubspotConnection:
         title: HubspotConnection
         type: object
@@ -8958,7 +9147,7 @@ definitions:
             audience:
                 inclusion_summary: Ullam omnis autem.
                 platform: hubspot
-                platform_master_list_id: Aut molestiae exercitationem et impedit at.
+                platform_master_list_id: Exercitationem et impedit at.
                 status: built
                 suppression_list_ids:
                     - Perferendis autem ut alias quis nihil dolore.
@@ -8974,6 +9163,30 @@ definitions:
                 items:
                     $ref: '#/definitions/Audience'
                 example:
+                    - brief_id: Magni repudiandae.
+                      etag: Totam ut illo.
+                      id: Dignissimos non sed omnis officiis et.
+                      inclusion_summary: Corporis voluptas cupiditate ut.
+                      platform: hubspot
+                      platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                      project_id: Laboriosam qui id enim.
+                      status: built
+                      suppression_list_ids:
+                        - Quam et eos quaerat rem.
+                        - Fuga aut est dolor.
+                      version: 1995168378618678740
+                    - brief_id: Magni repudiandae.
+                      etag: Totam ut illo.
+                      id: Dignissimos non sed omnis officiis et.
+                      inclusion_summary: Corporis voluptas cupiditate ut.
+                      platform: hubspot
+                      platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                      project_id: Laboriosam qui id enim.
+                      status: built
+                      suppression_list_ids:
+                        - Quam et eos quaerat rem.
+                        - Fuga aut est dolor.
+                      version: 1995168378618678740
                     - brief_id: Magni repudiandae.
                       etag: Totam ut illo.
                       id: Dignissimos non sed omnis officiis et.
@@ -9273,6 +9486,20 @@ definitions:
         required:
             - config
             - credentials
+    LfxV2CampaignServiceConnectionsCreateHubspotCampaignRequestBody:
+        title: LfxV2CampaignServiceConnectionsCreateHubspotCampaignRequestBody
+        type: object
+        properties:
+            name:
+                type: string
+                description: The campaign name. Visible to every foundation — do not include project-sensitive information.
+                example: KubeCon NA 2026
+                minLength: 1
+                maxLength: 255
+        example:
+            name: KubeCon NA 2026
+        required:
+            - name
     LfxV2CampaignServiceConnectionsCreateHubspotRequestBody:
         title: LfxV2CampaignServiceConnectionsCreateHubspotRequestBody
         type: object
@@ -9525,6 +9752,44 @@ definitions:
                   label: CNCF — under review
         required:
             - accounts
+    LfxV2CampaignServiceConnectionsSearchHubspotCampaignsResponseBody:
+        title: LfxV2CampaignServiceConnectionsSearchHubspotCampaignsResponseBody
+        type: object
+        properties:
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/HubspotCampaign'
+                description: Matches in HubSpot's relevance order. Empty when nothing matched.
+                example:
+                    - id: "112233445566"
+                      name: KubeCon NA 2026
+                      start_date: "2026-11-01"
+                      utm: kubecon-na-2026
+                    - id: "112233445566"
+                      name: KubeCon NA 2026
+                      start_date: "2026-11-01"
+                      utm: kubecon-na-2026
+                    - id: "112233445566"
+                      name: KubeCon NA 2026
+                      start_date: "2026-11-01"
+                      utm: kubecon-na-2026
+                    - id: "112233445566"
+                      name: KubeCon NA 2026
+                      start_date: "2026-11-01"
+                      utm: kubecon-na-2026
+        example:
+            campaigns:
+                - id: "112233445566"
+                  name: KubeCon NA 2026
+                  start_date: "2026-11-01"
+                  utm: kubecon-na-2026
+                - id: "112233445566"
+                  name: KubeCon NA 2026
+                  start_date: "2026-11-01"
+                  utm: kubecon-na-2026
+        required:
+            - campaigns
     LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody:
         title: LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody
         type: object

@@ -168,6 +168,15 @@ type SetCredentialHubspotRequestBody struct {
 	Credentials *HubspotCredentialsRequestBody `form:"credentials" json:"credentials" xml:"credentials"`
 }
 
+// CreateHubspotCampaignRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP request body.
+type CreateHubspotCampaignRequestBody struct {
+	// The campaign name. Visible to every foundation — do not include
+	// project-sensitive information.
+	Name string `form:"name" json:"name" xml:"name"`
+}
+
 // CreateGoogleAdsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body.
@@ -798,6 +807,31 @@ type ListTwitterAdsAccountsResponseBody struct {
 // HTTP response body.
 type ListHubspotEmailsResponseBody struct {
 	Emails []*MarketingEmailResponseBody `form:"emails,omitempty" json:"emails,omitempty" xml:"emails,omitempty"`
+}
+
+// SearchHubspotCampaignsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body.
+type SearchHubspotCampaignsResponseBody struct {
+	// Matches in HubSpot's relevance order. Empty when nothing matched.
+	Campaigns []*HubspotCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+}
+
+// CreateHubspotCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body.
+type CreateHubspotCampaignResponseBody struct {
+	// HubSpot's own campaign object id.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The campaign's display name.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The campaign's UTM token. ABSENT when the campaign has none configured —
+	// that is a real state, not a missing answer, and it does not mean the
+	// campaign was not found.
+	Utm *string `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
+	// The campaign's start date as HubSpot holds it, for disambiguating same-named
+	// campaigns. Not parsed or normalised here.
+	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
 }
 
 // CreateGoogleAdsBadRequestResponseBody is the type of the
@@ -3987,6 +4021,126 @@ type ListHubspotEmailsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// SearchHubspotCampaignsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "BadRequest" error.
+type SearchHubspotCampaignsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchHubspotCampaignsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SearchHubspotCampaignsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchHubspotCampaignsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SearchHubspotCampaignsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchHubspotCampaignsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "NotFound" error.
+type SearchHubspotCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchHubspotCampaignsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SearchHubspotCampaignsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchHubspotCampaignsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SearchHubspotCampaignsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type CreateHubspotCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type CreateHubspotCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type CreateHubspotCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type CreateHubspotCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type CreateHubspotCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type CreateHubspotCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -4246,6 +4400,21 @@ type MarketingEmailResponseBody struct {
 	UpdatedAt *string `form:"updated_at,omitempty" json:"updated_at,omitempty" xml:"updated_at,omitempty"`
 }
 
+// HubspotCampaignResponseBody is used to define fields on response body types.
+type HubspotCampaignResponseBody struct {
+	// HubSpot's own campaign object id.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The campaign's display name.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The campaign's UTM token. ABSENT when the campaign has none configured —
+	// that is a real state, not a missing answer, and it does not mean the
+	// campaign was not found.
+	Utm *string `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
+	// The campaign's start date as HubSpot holds it, for disambiguating same-named
+	// campaigns. Not parsed or normalised here.
+	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
+}
+
 // NewCreateGoogleAdsRequestBody builds the HTTP request body from the payload
 // of the "create-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -4494,6 +4663,16 @@ func NewSetCredentialHubspotRequestBody(p *lfxv2campaignserviceconnections.SetCr
 	body := &SetCredentialHubspotRequestBody{}
 	if p.Credentials != nil {
 		body.Credentials = marshalLfxv2campaignserviceconnectionsHubspotCredentialsToHubspotCredentialsRequestBody(p.Credentials)
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignRequestBody builds the HTTP request body from the
+// payload of the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignRequestBody(p *lfxv2campaignserviceconnections.CreateHubspotCampaignPayload) *CreateHubspotCampaignRequestBody {
+	body := &CreateHubspotCampaignRequestBody{
+		Name: p.Name,
 	}
 	return body
 }
@@ -8861,6 +9040,183 @@ func NewListHubspotEmailsUnauthorized(body *ListHubspotEmailsUnauthorizedRespons
 	return v
 }
 
+// NewSearchHubspotCampaignsResultOK builds a
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint result from a HTTP "OK" response.
+func NewSearchHubspotCampaignsResultOK(body *SearchHubspotCampaignsResponseBody) *lfxv2campaignserviceconnections.SearchHubspotCampaignsResult {
+	v := &lfxv2campaignserviceconnections.SearchHubspotCampaignsResult{}
+	v.Campaigns = make([]*lfxv2campaignserviceconnections.HubspotCampaign, len(body.Campaigns))
+	for i, val := range body.Campaigns {
+		if val == nil {
+			v.Campaigns[i] = nil
+			continue
+		}
+		v.Campaigns[i] = unmarshalHubspotCampaignResponseBodyToLfxv2campaignserviceconnectionsHubspotCampaign(val)
+	}
+
+	return v
+}
+
+// NewSearchHubspotCampaignsBadRequest builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint BadRequest error.
+func NewSearchHubspotCampaignsBadRequest(body *SearchHubspotCampaignsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchHubspotCampaignsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint ServiceUnavailable error.
+func NewSearchHubspotCampaignsServiceUnavailable(body *SearchHubspotCampaignsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchHubspotCampaignsInternalServerError builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint InternalServerError error.
+func NewSearchHubspotCampaignsInternalServerError(body *SearchHubspotCampaignsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchHubspotCampaignsNotFound builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint NotFound error.
+func NewSearchHubspotCampaignsNotFound(body *SearchHubspotCampaignsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchHubspotCampaignsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint PayloadTooLarge error.
+func NewSearchHubspotCampaignsPayloadTooLarge(body *SearchHubspotCampaignsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchHubspotCampaignsUnauthorized builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint Unauthorized error.
+func NewSearchHubspotCampaignsUnauthorized(body *SearchHubspotCampaignsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewCreateHubspotCampaignHubspotCampaignCreated builds a
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint result from a HTTP "Created" response.
+func NewCreateHubspotCampaignHubspotCampaignCreated(body *CreateHubspotCampaignResponseBody) *lfxv2campaignserviceconnections.HubspotCampaign {
+	v := &lfxv2campaignserviceconnections.HubspotCampaign{
+		ID:        *body.ID,
+		Name:      *body.Name,
+		Utm:       body.Utm,
+		StartDate: body.StartDate,
+	}
+
+	return v
+}
+
+// NewCreateHubspotCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service create-hubspot-campaign endpoint
+// BadRequest error.
+func NewCreateHubspotCampaignBadRequest(body *CreateHubspotCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateHubspotCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service create-hubspot-campaign endpoint
+// ServiceUnavailable error.
+func NewCreateHubspotCampaignServiceUnavailable(body *CreateHubspotCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateHubspotCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service create-hubspot-campaign endpoint
+// InternalServerError error.
+func NewCreateHubspotCampaignInternalServerError(body *CreateHubspotCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateHubspotCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service create-hubspot-campaign endpoint
+// NotFound error.
+func NewCreateHubspotCampaignNotFound(body *CreateHubspotCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateHubspotCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service create-hubspot-campaign endpoint
+// PayloadTooLarge error.
+func NewCreateHubspotCampaignPayloadTooLarge(body *CreateHubspotCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateHubspotCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service create-hubspot-campaign endpoint
+// Unauthorized error.
+func NewCreateHubspotCampaignUnauthorized(body *CreateHubspotCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // ValidateCreateGoogleAdsResponseBody runs the validations defined on
 // Create-Google-AdsResponseBody
 func ValidateCreateGoogleAdsResponseBody(body *CreateGoogleAdsResponseBody) (err error) {
@@ -9682,6 +10038,34 @@ func ValidateListHubspotEmailsResponseBody(body *ListHubspotEmailsResponseBody) 
 				err = goa.MergeErrors(err, err2)
 			}
 		}
+	}
+	return
+}
+
+// ValidateSearchHubspotCampaignsResponseBody runs the validations defined on
+// Search-Hubspot-CampaignsResponseBody
+func ValidateSearchHubspotCampaignsResponseBody(body *SearchHubspotCampaignsResponseBody) (err error) {
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := ValidateHubspotCampaignResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignResponseBody runs the validations defined on
+// Create-Hubspot-CampaignResponseBody
+func ValidateCreateHubspotCampaignResponseBody(body *CreateHubspotCampaignResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
 	return
 }
@@ -13561,6 +13945,154 @@ func ValidateListHubspotEmailsUnauthorizedResponseBody(body *ListHubspotEmailsUn
 	return
 }
 
+// ValidateSearchHubspotCampaignsBadRequestResponseBody runs the validations
+// defined on search-hubspot-campaigns_BadRequest_response_body
+func ValidateSearchHubspotCampaignsBadRequestResponseBody(body *SearchHubspotCampaignsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchHubspotCampaignsServiceUnavailableResponseBody runs the
+// validations defined on
+// search-hubspot-campaigns_ServiceUnavailable_response_body
+func ValidateSearchHubspotCampaignsServiceUnavailableResponseBody(body *SearchHubspotCampaignsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchHubspotCampaignsInternalServerErrorResponseBody runs the
+// validations defined on
+// search-hubspot-campaigns_InternalServerError_response_body
+func ValidateSearchHubspotCampaignsInternalServerErrorResponseBody(body *SearchHubspotCampaignsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchHubspotCampaignsNotFoundResponseBody runs the validations
+// defined on search-hubspot-campaigns_NotFound_response_body
+func ValidateSearchHubspotCampaignsNotFoundResponseBody(body *SearchHubspotCampaignsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchHubspotCampaignsPayloadTooLargeResponseBody runs the
+// validations defined on search-hubspot-campaigns_PayloadTooLarge_response_body
+func ValidateSearchHubspotCampaignsPayloadTooLargeResponseBody(body *SearchHubspotCampaignsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchHubspotCampaignsUnauthorizedResponseBody runs the validations
+// defined on search-hubspot-campaigns_Unauthorized_response_body
+func ValidateSearchHubspotCampaignsUnauthorizedResponseBody(body *SearchHubspotCampaignsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignBadRequestResponseBody runs the validations
+// defined on create-hubspot-campaign_BadRequest_response_body
+func ValidateCreateHubspotCampaignBadRequestResponseBody(body *CreateHubspotCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// create-hubspot-campaign_ServiceUnavailable_response_body
+func ValidateCreateHubspotCampaignServiceUnavailableResponseBody(body *CreateHubspotCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// create-hubspot-campaign_InternalServerError_response_body
+func ValidateCreateHubspotCampaignInternalServerErrorResponseBody(body *CreateHubspotCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignNotFoundResponseBody runs the validations
+// defined on create-hubspot-campaign_NotFound_response_body
+func ValidateCreateHubspotCampaignNotFoundResponseBody(body *CreateHubspotCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignPayloadTooLargeResponseBody runs the
+// validations defined on create-hubspot-campaign_PayloadTooLarge_response_body
+func ValidateCreateHubspotCampaignPayloadTooLargeResponseBody(body *CreateHubspotCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignUnauthorizedResponseBody runs the validations
+// defined on create-hubspot-campaign_Unauthorized_response_body
+func ValidateCreateHubspotCampaignUnauthorizedResponseBody(body *CreateHubspotCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateLinkedinAdsConnectionConfigRequestBody runs the validations defined
 // on linkedin-ads-connection-configRequestBody
 func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionConfigRequestBody) (err error) {
@@ -13700,6 +14232,18 @@ func ValidateGoogleAdsAudienceBucketResponseBody(body *GoogleAdsAudienceBucketRe
 func ValidateMarketingEmailResponseBody(body *MarketingEmailResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	return
+}
+
+// ValidateHubspotCampaignResponseBody runs the validations defined on
+// hubspot-campaignResponseBody
+func ValidateHubspotCampaignResponseBody(body *HubspotCampaignResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
 	return
 }

@@ -28,14 +28,14 @@ func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|apply-keyword-actions|delete-campaign|get-job)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam omnis autem.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Aut molestiae exercitationem et impedit at.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Perferendis autem ut alias quis nihil dolore.\",\n            \"Reprehenderit et aut animi.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"7e20c445-3014-457e-98ec-401c50f548c1\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam omnis autem.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Exercitationem et impedit at.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Perferendis autem ut alias quis nihil dolore.\",\n            \"Reprehenderit et aut animi.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"84fe5ea6-3014-457e-98ec-401c50f548c1\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Corporis corporis et iste impedit voluptas ut.\",\n         \"client_secret\": \"Officiis et accusamus provident omnis.\",\n         \"developer_token\": \"Eos earum fuga.\",\n         \"refresh_token\": \"Sint optio nobis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
@@ -440,6 +440,16 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag           = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.String("q", "", "")
 		lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags           = flag.NewFlagSet("search-hubspot-campaigns", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSearchHubspotCampaignsProjectIDFlag   = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQFlag           = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.String("q", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSearchHubspotCampaignsBearerTokenFlag = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags           = flag.NewFlagSet("create-hubspot-campaign", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateHubspotCampaignBodyFlag        = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
 
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
@@ -526,6 +536,8 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Usage = lfxV2CampaignServiceConnectionsListHubspotEmailsUsage
+	lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.Usage = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsUsage
+	lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.Usage = lfxV2CampaignServiceConnectionsCreateHubspotCampaignUsage
 
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
@@ -804,6 +816,12 @@ func ParseEndpoint(
 			case "list-hubspot-emails":
 				epf = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags
 
+			case "search-hubspot-campaigns":
+				epf = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags
+
+			case "create-hubspot-campaign":
+				epf = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags
+
 			}
 
 		case "lfx-v2-campaign-service-svc":
@@ -1072,6 +1090,12 @@ func ParseEndpoint(
 			case "list-hubspot-emails":
 				endpoint = c.ListHubspotEmails()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListHubspotEmailsPayload(*lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag, *lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag, *lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag)
+			case "search-hubspot-campaigns":
+				endpoint = c.SearchHubspotCampaigns()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSearchHubspotCampaignsPayload(*lfxV2CampaignServiceConnectionsSearchHubspotCampaignsProjectIDFlag, *lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQFlag, *lfxV2CampaignServiceConnectionsSearchHubspotCampaignsBearerTokenFlag)
+			case "create-hubspot-campaign":
+				endpoint = c.CreateHubspotCampaign()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateHubspotCampaignPayload(*lfxV2CampaignServiceConnectionsCreateHubspotCampaignBodyFlag, *lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerTokenFlag)
 			}
 		case "lfx-v2-campaign-service-svc":
 			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -1126,7 +1150,7 @@ func lfxV2CampaignServiceAudiencesCreateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam omnis autem.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Aut molestiae exercitationem et impedit at.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Perferendis autem ut alias quis nihil dolore.\",\n            \"Reprehenderit et aut animi.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"7e20c445-3014-457e-98ec-401c50f548c1\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam omnis autem.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Exercitationem et impedit at.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Perferendis autem ut alias quis nihil dolore.\",\n            \"Reprehenderit et aut animi.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"84fe5ea6-3014-457e-98ec-401c50f548c1\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
@@ -1793,6 +1817,8 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    list-microsoft-ads-accounts: Enumerate the Microsoft Advertising accounts accessible via the stored connection credential, across every customer the credential can reach. Returns account ids as digits, ready to store as the connection's account_id; the label carries Microsoft's human-facing account number, which is what its own UI shows.`)
 	fmt.Fprintln(os.Stderr, `    list-twitter-ads-accounts: Enumerate the X/Twitter Ads accounts accessible via the stored connection credential. Returns account ids as the alphanumeric handle X uses, ready to store as the connection's account_id. Accounts that are under review or rejected are RETURNED with the reason in the label rather than hidden, so a caller whose only account is unusable sees it and why. DELETED accounts are a different case and are not promised: the walk does not send `+"`"+`with_deleted`+"`"+`, so it takes X's documented default of false and deleted accounts are normally excluded upstream — a deleted account is not a choice. The per-row deleted flag is still honoured defensively, so a row X flags anyway is labelled rather than passing as live.`)
 	fmt.Fprintln(os.Stderr, `    list-hubspot-emails: Search the marketing emails reachable via the stored HubSpot connection, most-recently-updated first. This is a TEMPLATE picker, not an account picker: a HubSpot connection is already scoped to the portal its private-app token authenticates against, but staging an email campaign clones a caller-specified source email (sourceEmailId is required and has no default), so the caller has to be able to find one.`)
+	fmt.Fprintln(os.Stderr, `    search-hubspot-campaigns: Find LF HubSpot marketing campaigns by name, to read back an existing campaign's `+"`"+`hs_utm`+"`"+` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this returns matches from the ENTIRE LF portal regardless of which project scopes the path — the `+"`"+`project_id`+"`"+` gates permission, not visibility. That is a property of HubSpot's data model rather than a gap in the scoping here, and it is why the create route below needs a warning before it is used. The match is HubSpot's own full-text search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely share a token with the query. Every match is returned in HubSpot's relevance order rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `+"`"+`campaigns`+"`"+` array is a 200, not a 404**: 'no campaign is named that' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `+"`"+`utm`+"`"+` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term, with no collection, pagination or filtering.`)
+	fmt.Fprintln(os.Stderr, `    create-hubspot-campaign: Create an LF HubSpot marketing campaign and return the `+"`"+`hs_utm`+"`"+` token HubSpot assigns it. **THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The campaign namespace is the whole LF portal, so a campaign created here appears for every other project's campaign managers however this path is scoped. A caller MUST warn before invoking it, and must not put anything project-sensitive in the name. **It does not check for an existing campaign first, and that is deliberate.** A search-then-create inside one call would still race any concurrent caller and could not prevent a duplicate; the check belongs with the human who can read the candidate names. Search first, show the matches, create only if the operator confirms none is right. This method always creates. `+"`"+`hs_utm`+"`"+` is assigned by HubSpot, never supplied here, and is read back from the create response rather than re-fetched — so the returned token is the one HubSpot actually assigned rather than one this service guessed. **A 2xx carrying no id is reported as an error**, because the campaign may or may not exist and cannot be addressed either way: the caller must check HubSpot rather than retry into a second copy.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -2857,6 +2883,50 @@ func lfxV2CampaignServiceConnectionsListHubspotEmailsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-hubspot-emails --project-id \"cncf\" --q \"KubeCon\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSearchHubspotCampaignsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections search-hubspot-campaigns", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -q STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Find LF HubSpot marketing campaigns by name, to read back an existing campaign's `+"`"+`hs_utm`+"`"+` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this returns matches from the ENTIRE LF portal regardless of which project scopes the path — the `+"`"+`project_id`+"`"+` gates permission, not visibility. That is a property of HubSpot's data model rather than a gap in the scoping here, and it is why the create route below needs a warning before it is used. The match is HubSpot's own full-text search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely share a token with the query. Every match is returned in HubSpot's relevance order rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `+"`"+`campaigns`+"`"+` array is a 200, not a 404**: 'no campaign is named that' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `+"`"+`utm`+"`"+` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term, with no collection, pagination or filtering.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -q STRING: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections search-hubspot-campaigns --project-id \"cncf\" --q \"KubeCon NA 2026\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateHubspotCampaignUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-hubspot-campaign", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create an LF HubSpot marketing campaign and return the `+"`"+`hs_utm`+"`"+` token HubSpot assigns it. **THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The campaign namespace is the whole LF portal, so a campaign created here appears for every other project's campaign managers however this path is scoped. A caller MUST warn before invoking it, and must not put anything project-sensitive in the name. **It does not check for an existing campaign first, and that is deliberate.** A search-then-create inside one call would still race any concurrent caller and could not prevent a duplicate; the check belongs with the human who can read the candidate names. Search first, show the matches, create only if the operator confirms none is right. This method always creates. `+"`"+`hs_utm`+"`"+` is assigned by HubSpot, never supplied here, and is read back from the create response rather than re-fetched — so the returned token is the one HubSpot actually assigned rather than one this service guessed. **A 2xx carrying no id is reported as an error**, because the campaign may or may not exist and cannot be addressed either way: the caller must check HubSpot rather than retry into a second copy.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-hubspot-campaign --body '{\n      \"name\": \"KubeCon NA 2026\"\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceSvcUsage displays the usage of the

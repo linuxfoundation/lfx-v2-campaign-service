@@ -1254,4 +1254,98 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
+
+	Method("search-hubspot-campaigns", func() {
+		Description("Find LF HubSpot marketing campaigns by name, to read back an existing campaign's " +
+			"`hs_utm` token. " +
+			"**THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this " +
+			"returns matches from the ENTIRE LF portal regardless of which project scopes the path — " +
+			"the `project_id` gates permission, not visibility. That is a property of HubSpot's data " +
+			"model rather than a gap in the scoping here, and it is why the create route below needs " +
+			"a warning before it is used. " +
+			"The match is HubSpot's own full-text search: fuzzy and scored, NOT an exact-name lookup, " +
+			"so a hit can merely share a token with the query. Every match is returned in HubSpot's " +
+			"relevance order rather than narrowed to a best one, because choosing between " +
+			"similarly-named campaigns needs a human reading the names — collapsing them here would " +
+			"hide the ambiguity from the only party able to resolve it. " +
+			"**An empty `campaigns` array is a 200, not a 404**: 'no campaign is named that' is the " +
+			"answer a caller acts on by offering to create one, and it must be distinguishable from a " +
+			"search that failed. " +
+			"A campaign with no `utm` is a real result and is returned as one — an absent token does " +
+			"NOT mean the campaign was not found, and treating it that way would prompt a duplicate " +
+			"create. " +
+			"This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for " +
+			"one supplied term, with no collection, pagination or filtering.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("q", String, "The campaign name to search for. Matched by HubSpot's own fuzzy, scored full-text search — not an exact-name lookup.", func() {
+				MinLength(1)
+				Example("KubeCon NA 2026")
+			})
+			Required("project_id", "q")
+		})
+		Result(func() {
+			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in HubSpot's relevance order. Empty when nothing matched.")
+			Required("campaigns")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-hubspot/campaigns")
+			Param("q")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			connectionAuthErrorResponses()
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("create-hubspot-campaign", func() {
+		Description("Create an LF HubSpot marketing campaign and return the `hs_utm` token HubSpot " +
+			"assigns it. " +
+			"**THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The campaign namespace is the whole LF " +
+			"portal, so a campaign created here appears for every other project's campaign managers " +
+			"however this path is scoped. A caller MUST warn before invoking it, and must not put " +
+			"anything project-sensitive in the name. " +
+			"**It does not check for an existing campaign first, and that is deliberate.** A " +
+			"search-then-create inside one call would still race any concurrent caller and could not " +
+			"prevent a duplicate; the check belongs with the human who can read the candidate names. " +
+			"Search first, show the matches, create only if the operator confirms none is right. " +
+			"This method always creates. " +
+			"`hs_utm` is assigned by HubSpot, never supplied here, and is read back from the create " +
+			"response rather than re-fetched — so the returned token is the one HubSpot actually " +
+			"assigned rather than one this service guessed. " +
+			"**A 2xx carrying no id is reported as an error**, because the campaign may or may not " +
+			"exist and cannot be addressed either way: the caller must check HubSpot rather than " +
+			"retry into a second copy.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("name", String, "The campaign name. Visible to every foundation — do not include project-sensitive information.", func() {
+				MinLength(1)
+				MaxLength(255)
+				Example("KubeCon NA 2026")
+			})
+			Required("project_id", "name")
+		})
+		Result(HubSpotCampaign)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			POST("/projects/{project_id}/connection-hubspot/campaigns")
+			Header("bearer_token:Authorization")
+			Response(StatusCreated)
+			Response("NotFound", StatusNotFound)
+			connectionAuthErrorResponses()
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
 })
