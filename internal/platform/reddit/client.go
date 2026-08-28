@@ -909,6 +909,21 @@ func createOutcomeAmbiguous(err error) bool {
 	if ae.StatusCode >= 500 {
 		return true
 	}
+	// 429 is the one 4xx that is NOT a semantic rejection, and reaching here means the bounded
+	// retry above was EXHAUSTED — Reddit received the request and shed it, which says nothing
+	// about whether the mutation committed first. Without this branch an exhausted throttle
+	// classified as DEFINITELY NOT APPLIED, so a caller retried a create that may already have
+	// run and duplicated a campaign that spends real budget.
+	//
+	// Deliberately NOT gated on the method, matching the Meta client: a throttled name LOOKUP
+	// confirms no absence either, and a caller told "not found" on the strength of one would
+	// create a second campaign for an event that already has one.
+	//
+	// This is the same hazard the over-cap abort and the cancelled backoff sleep carry — all
+	// three follow a 429 — so all three now answer the same way.
+	if ae.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
 	// A 3xx on a mutating request reached a responder and may have committed a
 	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create.
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
