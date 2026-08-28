@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -221,5 +222,71 @@ func TestSearchHubspotCampaigns_UnsupportedPlatformIsABadRequest(t *testing.T) {
 	}
 	if !errors.Is(errors.Unwrap(err), nil) && err == nil {
 		t.Fatal("unreachable")
+	}
+}
+
+// A whitespace-only query is a BAD REQUEST, refused before the platform is contacted.
+//
+// Goa's MinLength(1) counts runes, so "   " passes the generated decoder. The client then
+// refuses it with a sentinel-less error that classifyDiscoveryError reports as a retryable
+// 503 — telling the caller to retry a request that can never succeed.
+func TestSearchHubspotCampaigns_WhitespaceQueryIsABadRequest(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{}
+
+	_, err := newCampaignSvc(d).SearchHubspotCampaigns(context.Background(),
+		&conn.SearchHubspotCampaignsPayload{ProjectID: "cncf", Q: "   "})
+	if err == nil {
+		t.Fatal("a whitespace-only query was accepted")
+	}
+	if _, ok := err.(*conn.BadRequestError); !ok {
+		t.Errorf("error = %T (%v), want *conn.BadRequestError — a 503 would invite a pointless retry", err, err)
+	}
+	if d.gotQuery != "" {
+		t.Error("the platform was contacted for an empty query")
+	}
+}
+
+// A CREATE failure must not be reported as a retryable search failure.
+//
+// The read classifier's default arm says "campaign search could not be completed" and invites a
+// retry. Both halves are wrong for a create: it names the wrong operation, and — far worse — a
+// retried NON-IDEMPOTENT write into an LF-global namespace is how a duplicate campaign gets
+// made. HubSpot marks mutating transport/429/3xx/5xx failures unconfirmed precisely because the
+// campaign may already exist.
+func TestCreateHubspotCampaign_FailureIsUnconfirmedNotRetryableSearch(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{createErr: errors.New("upstream timeout")}
+
+	_, err := newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+		&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+	if err == nil {
+		t.Fatal("a failed create was reported as success")
+	}
+	// Read from the Message FIELD, not Error(): the generated error types return "" from
+	// Error() by design, so asserting on that would pass against any message at all.
+	ue, ok := err.(*conn.ConnServiceUnavailableError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
+	}
+	msg := ue.Message
+	// The message must send the operator to HubSpot, not back through the button.
+	if !strings.Contains(msg, "check HubSpot") {
+		t.Errorf("message does not warn against a blind retry: %q", msg)
+	}
+	// And it must not describe a SEARCH — that is the read classifier's wording.
+	if strings.Contains(strings.ToLower(msg), "campaign search") {
+		t.Errorf("a create failure was reported as a search failure: %q", msg)
+	}
+}
+
+// The orchestrator refuses a (nil, nil) contract violation rather than forwarding it. Forwarded,
+// the service layer renders it as an authoritative empty list — and empty is what the caller
+// acts on by creating a campaign in a shared namespace.
+func TestSearchHubspotCampaigns_NilWithoutErrorIsRefused(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{campaigns: nil}
+
+	_, err := newCampaignSvc(d).SearchHubspotCampaigns(context.Background(),
+		&conn.SearchHubspotCampaignsPayload{ProjectID: "cncf", Q: "kubecon"})
+	if err == nil {
+		t.Fatal("a nil result with no error was rendered as an authoritative empty answer")
 	}
 }

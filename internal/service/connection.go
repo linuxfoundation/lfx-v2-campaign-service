@@ -1218,6 +1218,13 @@ func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err
 	}
+	// Trimmed-empty is a BAD REQUEST, refused before the platform is contacted. Goa's
+	// MinLength(1) counts runes, so `q="   "` passes the generated decoder; the client then
+	// refuses it with a sentinel-less error that classifyDiscoveryError would report as a
+	// retryable 503 — telling the caller to retry a request that can never succeed.
+	if strings.TrimSpace(p.Q) == "" {
+		return nil, &conn.BadRequestError{Code: "400", Message: "a campaign search requires a non-empty query"}
+	}
 	_, _, orch, err := s.resolveBackendWithOrch(d.label())
 	if err != nil {
 		return nil, err
@@ -1255,6 +1262,9 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(p.Name) == "" {
+		return nil, &conn.BadRequestError{Code: "400", Message: "a campaign creation requires a non-empty name"}
+	}
 	_, _, orch, err := s.resolveBackendWithOrch(d.label())
 	if err != nil {
 		return nil, err
@@ -1265,7 +1275,21 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		if errors.Is(cerr, ErrCampaignSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}
-		return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
+		// NOT classifyDiscoveryError. That classifier is written for READS: its default arm
+		// reports a retryable "campaign search could not be completed" 503, which is wrong here
+		// twice over. It names the wrong operation, and — far worse — it invites a retry of a
+		// NON-IDEMPOTENT write into a namespace every foundation shares. HubSpot marks mutating
+		// transport, 429, 3xx and 5xx failures as unconfirmed precisely because the campaign may
+		// already exist; collapsing them into "try again" is how a duplicate gets made.
+		//
+		// A create whose outcome cannot be confirmed is reported as one, and the message sends
+		// the operator to HubSpot rather than back through the button.
+		slog.ErrorContext(ctx, "hubspot campaign creation failed",
+			"project_id", p.ProjectID, "error", safeErrSummary(cerr))
+		return nil, &conn.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the campaign creation could not be confirmed — check HubSpot before creating it again, as it may already exist",
+		}
 	}
 	// The dispatcher refuses a nil-without-error, so this cannot fire on the current path.
 	// Guarded because the alternative is a nil dereference one line down, and a create that

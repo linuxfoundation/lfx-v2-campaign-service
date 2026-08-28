@@ -44,3 +44,28 @@ malformed 2xx read as empty, an id-less create reported as success, an
 untrimmed query, and dropping a campaign whose token is empty. The Heimdall
 RuleSet entry was verified to bind by removing it alone and watching
 `TestRouteRuleSetParityWitnesses` fail.
+
+**Update** — Review found five defects in the first cut, two blocking.
+
+`CreateCampaign` posted only `hs_name` and never asked for the properties BACK.
+The CRM create endpoint returns system fields unless they are named, so the
+"read back the assigned token" the doc comment promised was describing a
+request that never asked for it — every real create would have returned an
+empty token. The create now sends `?properties=` exactly as the search does.
+
+Create failures were routed through the READ classifier, so a timeout or 5xx
+became a retryable "campaign search could not be completed" 503. That names the
+wrong operation and, far worse, invites a retry of a NON-IDEMPOTENT write into
+a namespace every foundation shares — which is how a duplicate gets made. They
+are now reported as UNCONFIRMED, with a message sending the operator to HubSpot.
+
+Three more: an id-less hit was silently dropped, turning a malformed payload
+into the clean empty answer that licenses a create; a whitespace-only `q` passed
+Goa's rune-counting MinLength(1) and was classified as a retryable 503 rather
+than a 400; and the orchestrator forwarded a `(nil, nil)` contract violation
+that the service layer would have rendered as an authoritative empty list.
+
+The search cap was also raised from 10 to HubSpot's maximum of 100 and
+documented as a contract fact rather than a tuning detail: it is a cap with no
+paging, so a campaign below it reads as absent, and absent is what prompts a
+duplicate.

@@ -20,11 +20,18 @@ const (
 	campaignSearchPath = "/crm/v3/objects/" + campaignObjectType + "/search"
 	campaignCreatePath = "/crm/v3/objects/" + campaignObjectType
 
-	// campaignSearchLimit bounds one search page. HubSpot's CRM search caps `limit` at 100;
-	// 10 is deliberate and smaller, because these results are shown to a human choosing
-	// between candidate names — a hundred fuzzy matches is not a more useful answer than ten,
-	// and the top of a scored list is where the real match sits.
-	campaignSearchLimit = 10
+	// campaignSearchLimit bounds the search. HubSpot's CRM search caps `limit` at 100; this is
+	// deliberately smaller because the results are shown to a human choosing between candidate
+	// names, and the top of a scored list is where the real match sits.
+	//
+	// IT IS A CAP, NOT A PAGE. This method does not follow `paging.next.after`, so a campaign
+	// ranked below the cap is not returned — and the caller reads an absent campaign as licence
+	// to create one, in a namespace every foundation shares. Raised to 100 (HubSpot's own
+	// maximum) so the gap between "not in the top N" and "does not exist" is as small as one
+	// request can make it, and stated here because it is a contract fact rather than a tuning
+	// detail: an operator who cannot find their campaign in the results should search a
+	// narrower term rather than assume it is absent.
+	campaignSearchLimit = 100
 )
 
 // campaignProps are the properties requested on every campaign read.
@@ -114,11 +121,14 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) ([]Campaign,
 
 	out := make([]Campaign, 0, len(resp.Results))
 	for _, hit := range resp.Results {
-		// A hit with no id cannot be addressed or linked to, so it is dropped rather than
-		// returned as a row whose only advertised use fails. Every other field may legitimately
+		// An id-less hit is a MALFORMED response, not a droppable row. Dropping it would turn
+		// `{"results":[{"id":""}]}` into a clean empty answer — and empty is precisely what the
+		// caller acts on by creating a campaign, in a namespace every foundation shares. That
+		// is the same fail-closed rule the nil-results check above applies, and silently
+		// discarding a row would breach it one layer down. Every other field may legitimately
 		// be empty.
 		if strings.TrimSpace(hit.ID) == "" {
-			continue
+			return nil, fmt.Errorf("hubspot: campaign search returned a hit with no id (malformed response)")
 		}
 		out = append(out, Campaign{
 			ID:        hit.ID,
@@ -154,9 +164,16 @@ func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, er
 	body := map[string]any{
 		"properties": map[string]string{"hs_name": n},
 	}
+	// The properties are REQUESTED on the way back, exactly as the search does. The CRM create
+	// endpoint returns only system fields unless they are named, so without this the response
+	// carries no `hs_utm` — and the doc comment above promising the assigned token would have
+	// been describing something the request never asked for. `?properties=` is the documented
+	// parameter on POST /crm/v3/objects/{type}; the names are compile-time constants, never
+	// caller input.
+	createPath := campaignCreatePath + "?properties=" + strings.Join(campaignProps, ",")
 	// NOT idempotent: this creates a row, and a retried create makes a second campaign in a
 	// namespace every foundation can see. The transport must not replay it.
-	raw, err := c.doRequest(ctx, http.MethodPost, campaignCreatePath, body, false)
+	raw, err := c.doRequest(ctx, http.MethodPost, createPath, body, false)
 	if err != nil {
 		return nil, err
 	}

@@ -1274,6 +1274,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"A campaign with no `utm` is a real result and is returned as one — an absent token does " +
 			"NOT mean the campaign was not found, and treating it that way would prompt a duplicate " +
 			"create. " +
+			"**The result set is CAPPED at 100 and there is no paging.** A campaign ranked below the " +
+			"cap is not returned, and a caller reads an absent campaign as licence to create one — so " +
+			"an operator who cannot find a campaign should search a narrower term rather than assume " +
+			"it does not exist. 100 is HubSpot's own per-request maximum, so the gap between \"not in " +
+			"the top N\" and \"does not exist\" is as small as one request can make it. " +
 			"This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for " +
 			"one supplied term, with no collection, pagination or filtering.")
 		Payload(func() {
@@ -1322,7 +1327,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"assigned rather than one this service guessed. " +
 			"**A 2xx carrying no id is reported as an error**, because the campaign may or may not " +
 			"exist and cannot be addressed either way: the caller must check HubSpot rather than " +
-			"retry into a second copy.")
+			"retry into a second copy. " +
+			"**Every other failure is reported as UNCONFIRMED, not as a retryable error**, for the same reason: this is a non-idempotent write into a shared namespace, and HubSpot marks mutating transport, 429, 3xx and 5xx failures as possibly-committed. The 503 here means \"the outcome could not be confirmed\", never \"try again\" — verify in HubSpot first.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

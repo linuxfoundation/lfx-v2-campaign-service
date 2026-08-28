@@ -140,29 +140,30 @@ func TestSearchCampaigns_KeepsACampaignWithNoUTM(t *testing.T) {
 	}
 }
 
-// A row with no id cannot be addressed or linked to, so it is dropped rather than returned as a
-// row whose only advertised use fails.
-func TestSearchCampaigns_DropsAnIDLessRow(t *testing.T) {
+// An id-less hit is a MALFORMED response, not a droppable row.
+//
+// Dropping it would turn a broken payload into a clean empty answer — and empty is what the
+// caller acts on by creating a campaign, in a namespace every foundation shares. The paired
+// healthy row makes the point sharper: even with a real match present, the response cannot be
+// trusted once one hit is unaddressable.
+func TestSearchCampaigns_IDLessRowIsAMalformedResponse(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[
 			{"id":"","properties":{"hs_name":"Ghost"}},
 			{"id":"22","properties":{"hs_name":"Real"}}
 		]}`)
 	})
 
-	got, err := c.SearchCampaigns(context.Background(), "x")
-	if err != nil {
-		t.Fatalf("SearchCampaigns: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "22" {
-		t.Errorf("id-less row not dropped: %+v", got)
+	if _, err := c.SearchCampaigns(context.Background(), "x"); err == nil {
+		t.Fatal("an id-less hit was silently dropped rather than failing the response")
 	}
 }
 
 func TestCreateCampaign_ReadsBackTheAssignedToken(t *testing.T) {
-	var gotPath, gotMethod, gotBody string
+	var gotPath, gotMethod, gotBody, gotQuery string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotMethod = r.URL.Path, r.Method
+		gotPath, gotMethod, gotQuery = r.URL.Path, r.Method, r.URL.RawQuery
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		// hs_utm is assigned by HubSpot, not sent by us.
@@ -186,6 +187,15 @@ func TestCreateCampaign_ReadsBackTheAssignedToken(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, "KubeCon NA 2027") {
 		t.Errorf("name not sent trimmed: %s", gotBody)
+	}
+	// The properties must be ASKED FOR on the create, not just on the search. The CRM create
+	// endpoint returns only system fields otherwise, so the assigned token would come back empty
+	// from every real call — and the struct assertion above would still pass against a
+	// hand-written fixture. This half is what makes that assertion mean anything.
+	for _, want := range []string{"hs_utm", "hs_name"} {
+		if !strings.Contains(gotPath+gotQuery, want) {
+			t.Errorf("create does not request %s back: path=%q query=%q", want, gotPath, gotQuery)
+		}
 	}
 	// We must NOT send hs_utm. HubSpot assigns it, and sending one would either be ignored or
 	// set a token this service invented.

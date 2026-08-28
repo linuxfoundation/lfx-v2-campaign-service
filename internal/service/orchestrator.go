@@ -1988,7 +1988,19 @@ func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, pl
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
-	return searcher.SearchCampaigns(callCtx, projectID, platform, query)
+	campaigns, err := searcher.SearchCampaigns(callCtx, projectID, platform, query)
+	if err != nil {
+		return nil, err
+	}
+	// A (nil, nil) answer is a CONTRACT VIOLATION, refused here rather than forwarded — the same
+	// check SearchEmails makes. Forwarded, the service layer would render it as an authoritative
+	// empty `[]`, and empty is exactly what the caller acts on by creating a campaign in a
+	// namespace every foundation shares. A searcher that fell through a branch must not be able
+	// to license a duplicate.
+	if campaigns == nil {
+		return nil, fmt.Errorf("campaign search for platform %s returned no result and no error", platform)
+	}
+	return campaigns, nil
 }
 
 // CreateCampaign creates a marketing campaign on platform.
