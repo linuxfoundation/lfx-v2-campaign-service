@@ -159,9 +159,13 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 // rows it just displayed.
 //
 // NOT a dispatcher call: the answer is entirely in this service's tables, so no connection is
-// resolved and Google is never contacted. That is also why it cannot fail the way the reads
-// above can — there is no 409 for an unusable connection and no 503 for an upstream outage,
-// which is why this method declares neither.
+// resolved and Google is never contacted. That is why it declares no 409 — there is no
+// connection to be unusable and no ad account to mismatch.
+//
+// It DOES declare a 503, for cold start only: resolveBackendWithOrch refuses before storage and
+// the orchestrator are wired, which is genuinely retryable. A storage FAULT is a 500 instead —
+// a failure in a service already up, where retrying does not help. Both reach the caller from
+// this one method, so both are declared and kept distinguishable.
 //
 // An unowned id is an empty `matches` with a 200, NOT a 404. "This project owns no campaign
 // with that upstream id" is an answer the caller acts on by refusing the action, and a 404

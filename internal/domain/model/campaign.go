@@ -684,6 +684,16 @@ func (r *CampaignSettingsReadback) SummariseSettings() {
 // would let a stale id address a DIFFERENT customer's campaign of the same number — the very
 // invariant ReadMetrics and the keyword mutation already fail closed on. Carrying Result means
 // the adapter can apply that same check rather than trusting the id.
+type ProjectCampaignScope struct {
+	// PlatformCampaignID is the upstream campaign id, as recorded when it was dispatched.
+	PlatformCampaignID string
+	// Result is the platform-shaped provenance blob the row recorded at create time. For
+	// Google Ads it carries the creating customer id, read back by
+	// googleAdsCreationCustomerID. EMPTY means "unknown" — a row written before provenance
+	// tracking existed — and per the service-wide convention a READ may proceed on it.
+	Result json.RawMessage
+}
+
 // LocalCampaignRef addresses one of THIS SERVICE'S campaign rows by the pair its mutation
 // routes require.
 //
@@ -702,14 +712,4 @@ type LocalCampaignRef struct {
 	// BriefID is the brief the campaign belongs to. Required because the mutation routes are
 	// brief-scoped, and a caller holding only a platform id has no way to know it.
 	BriefID string
-}
-
-type ProjectCampaignScope struct {
-	// PlatformCampaignID is the upstream campaign id, as recorded when it was dispatched.
-	PlatformCampaignID string
-	// Result is the platform-shaped provenance blob the row recorded at create time. For
-	// Google Ads it carries the creating customer id, read back by
-	// googleAdsCreationCustomerID. EMPTY means "unknown" — a row written before provenance
-	// tracking existed — and per the service-wide convention a READ may proceed on it.
-	Result json.RawMessage
 }
