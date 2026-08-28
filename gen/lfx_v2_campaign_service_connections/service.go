@@ -166,13 +166,19 @@ type Service interface {
 	// unowned id is 200 with an empty `matches`, not 404.** The project genuinely
 	// owning no such campaign is an answer the caller acts on by refusing the
 	// action, and it must be distinguishable from the route or the project being
-	// wrong, which is what a 404 would say. **More than one match is possible and
-	// is not an error here.** No unique constraint covers (project, platform,
-	// platform_campaign_id), so an ambiguous id is reported as ambiguous rather
-	// than resolved by picking a row — the caller refuses, because acting on a
-	// guess would mutate a campaign nobody named. This is NOT a list endpoint
-	// under rule 3: it is a keyed lookup returning the matches for one supplied
-	// id, with no collection, pagination or filtering.
+	// wrong, which is what a 404 would say. **`matches` is an array, but a valid
+	// database can never return more than one entry.** Migration 000020's
+	// `uq_campaigns_platform_campaign_live` is a UNIQUE index on (platform,
+	// platform_campaign_id) over every live Google Ads row, and it is global
+	// rather than per-project — so scoping to a project can only narrow one row to
+	// zero or one. The array is DEFENSIVE against that invariant lapsing (a
+	// dropped index, a narrowed predicate, a platform added to this read but not
+	// to the index), not a claim that duplicates occur: a single-ref contract
+	// would force some layer to pick a row, and picking would mutate a campaign
+	// nobody named. A caller receiving more than one must refuse rather than
+	// choose. This is NOT a list endpoint under rule 3: it is a keyed lookup
+	// returning the matches for one supplied id, with no collection, pagination or
+	// filtering.
 	ResolveGoogleAdsCampaign(context.Context, *ResolveGoogleAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the

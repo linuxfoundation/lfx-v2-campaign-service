@@ -174,11 +174,13 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 // across foundations, so an unscoped lookup would confirm whether ANOTHER project owns a given
 // campaign id — a question that must not be answerable at all, not merely filtered afterwards.
 //
-// It also pins what the query must NOT do. No LIMIT: nothing constrains
-// (project, platform, platform_campaign_id) to be unique, so a LIMIT 1 would turn a genuinely
-// ambiguous answer into a confident wrong one, and the caller would mutate a campaign nobody
-// named. And no DISTINCT: unlike the scope query above, a repeated id here is the finding
-// rather than noise.
+// It also pins what the query must NOT do, and the reason is defensive rather than a claim that
+// duplicates occur: uq_campaigns_platform_campaign_live (migration 000020) is a global UNIQUE
+// index on (platform, platform_campaign_id) for live Google Ads rows, so a valid database returns
+// at most one match. No LIMIT, because a LIMIT 1 would turn a lapsed invariant — a dropped index,
+// a narrowed predicate — into a confident wrong answer, and the caller would mutate a campaign
+// nobody named instead of refusing. And no DISTINCT: unlike the scope query above, a repeated id
+// here would be the finding rather than noise.
 func TestResolvePlatformCampaign_IsScopedInSQL(t *testing.T) {
 	q := normalizeWS(resolvePlatformCampaignQuery)
 
