@@ -154,6 +154,26 @@ type Service interface {
 	// than dropped: they are real unattributed traffic, and hiding them would make
 	// the buckets silently under-sum.
 	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
+	// Resolve one Google Ads campaign id to this service's own campaign and brief.
+	// A caller holding a keyword row has the PLATFORM's numeric campaign id; every
+	// mutation route here is keyed by this service's campaign UUID under its
+	// brief. Nothing else bridges the two, so a keyword table cannot act on its
+	// own rows without this. A pure READ: it enumerates nothing and mutates
+	// nothing, and it is scoped to the project's own campaigns by the same
+	// `project_id` predicate the keyword and audience reads use — so it cannot be
+	// used to discover whether ANOTHER project owns a given upstream id, which on
+	// a shared ad account is the question that must not be answerable. **An
+	// unowned id is 200 with an empty `matches`, not 404.** The project genuinely
+	// owning no such campaign is an answer the caller acts on by refusing the
+	// action, and it must be distinguishable from the route or the project being
+	// wrong, which is what a 404 would say. **More than one match is possible and
+	// is not an error here.** No unique constraint covers (project, platform,
+	// platform_campaign_id), so an ambiguous id is reported as ambiguous rather
+	// than resolved by picking a row — the caller refuses, because acting on a
+	// guess would mutate a campaign nobody named. This is NOT a list endpoint
+	// under rule 3: it is a keyed lookup returning the matches for one supplied
+	// id, with no collection, pagination or filtering.
+	ResolveGoogleAdsCampaign(context.Context, *ResolveGoogleAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the
 	// connection's account_id. Accounts Meta reports as disabled, unsettled or
@@ -210,7 +230,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [50]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails"}
+var MethodNames = [51]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -224,6 +244,14 @@ type AccessibleAccount struct {
 	ID string
 	// Human-readable account name or label
 	Label *string
+}
+
+type CampaignRef struct {
+	// This service's campaign id, as the mutation routes take it.
+	CampaignID string
+	// The brief the campaign belongs to. Needed because the mutation routes are
+	// brief-scoped.
+	BriefID string
 }
 
 // ConnectionTestResult is the result type of the
@@ -914,6 +942,19 @@ type MicrosoftAdsCredentials struct {
 	DeveloperToken string
 }
 
+// PlatformCampaignResolution is the result type of the
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// method.
+type PlatformCampaignResolution struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none; more than one only when the data is genuinely ambiguous.
+	Matches []*CampaignRef
+	// How many matches were found.
+	MatchCount int
+}
+
 // RedditAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-reddit-ads method.
 type RedditAdsConnection struct {
@@ -954,6 +995,18 @@ type RedditAdsCredentials struct {
 	ClientSecret string
 	// OAuth refresh token
 	RefreshToken string
+}
+
+// ResolveGoogleAdsCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// method.
+type ResolveGoogleAdsCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Google Ads campaign id to resolve. Digits only.
+	PlatformCampaignID string
 }
 
 // SetCredentialGoogleAdsPayload is the payload type of the

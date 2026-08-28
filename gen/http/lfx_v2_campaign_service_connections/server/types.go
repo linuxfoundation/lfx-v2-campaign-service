@@ -765,6 +765,19 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
 }
 
+// ResolveGoogleAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body.
+type ResolveGoogleAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none; more than one only when the data is genuinely ambiguous.
+	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
+	// How many matches were found.
+	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -3687,6 +3700,56 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveGoogleAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveGoogleAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveGoogleAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveGoogleAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveGoogleAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveGoogleAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveGoogleAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveGoogleAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveGoogleAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4075,6 +4138,15 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	// Conversions over the window, fraction intact. Summable WITHIN a dimension
 	// for the same reason impressions are; summing across dimensions triple-counts.
 	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
+}
+
+// CampaignRefResponseBody is used to define fields on response body types.
+type CampaignRefResponseBody struct {
+	// This service's campaign id, as the mutation routes take it.
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The brief the campaign belongs to. Needed because the mutation routes are
+	// brief-scoped.
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 }
 
 // MarketingEmailResponseBody is used to define fields on response body types.
@@ -4774,6 +4846,29 @@ func NewGetGoogleAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.Go
 		}
 	} else {
 		body.Buckets = []*GoogleAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewResolveGoogleAdsCampaignResponseBody builds the HTTP response body from
+// the result of the "resolve-google-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveGoogleAdsCampaignResponseBody {
+	body := &ResolveGoogleAdsCampaignResponseBody{
+		PlatformCampaignID: res.PlatformCampaignID,
+		MatchCount:         res.MatchCount,
+	}
+	if res.Matches != nil {
+		body.Matches = make([]*CampaignRefResponseBody, len(res.Matches))
+		for i, val := range res.Matches {
+			if val == nil {
+				body.Matches[i] = nil
+				continue
+			}
+			body.Matches[i] = marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody(val)
+		}
+	} else {
+		body.Matches = []*CampaignRefResponseBody{}
 	}
 	return body
 }
@@ -8033,6 +8128,61 @@ func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewResolveGoogleAdsCampaignBadRequestResponseBody builds the HTTP response
+// body from the result of the "resolve-google-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveGoogleAdsCampaignBadRequestResponseBody {
+	body := &ResolveGoogleAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveGoogleAdsCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "resolve-google-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ResolveGoogleAdsCampaignInternalServerErrorResponseBody {
+	body := &ResolveGoogleAdsCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveGoogleAdsCampaignNotFoundResponseBody builds the HTTP response
+// body from the result of the "resolve-google-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ResolveGoogleAdsCampaignNotFoundResponseBody {
+	body := &ResolveGoogleAdsCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveGoogleAdsCampaignPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "resolve-google-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ResolveGoogleAdsCampaignPayloadTooLargeResponseBody {
+	body := &ResolveGoogleAdsCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveGoogleAdsCampaignUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "resolve-google-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveGoogleAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveGoogleAdsCampaignUnauthorizedResponseBody {
+	body := &ResolveGoogleAdsCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMetaAdsAccountsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-meta-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -8850,6 +9000,18 @@ func NewGetGoogleAdsAudiencePayload(projectID string, window *string, bearerToke
 	v := &lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignPayload builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint payload.
+func NewResolveGoogleAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveGoogleAdsCampaignPayload {
+	v := &lfxv2campaignserviceconnections.ResolveGoogleAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
 	v.BearerToken = bearerToken
 
 	return v

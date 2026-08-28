@@ -138,6 +138,20 @@ type CampaignReader interface {
 	// unscoped read: an empty id list means "this project owns no campaigns here", which is
 	// precisely when an unscoped query would expose everyone else's.
 	ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
+
+	// ResolvePlatformCampaign maps ONE upstream campaign id back to this service's own
+	// campaign rows, so a caller holding a keyword row (which carries the platform's numeric
+	// campaign id) can address the brief-scoped mutation routes.
+	//
+	// Returns EVERY live match rather than one, and an empty slice rather than an error when
+	// the project owns none. Both are deliberate: nothing constrains
+	// (project, platform, platform_campaign_id) to be unique, so an ambiguous id must be
+	// reported as ambiguous instead of resolved by picking a row; and "this project does not
+	// own that campaign" is an ordinary answer a caller acts on, not a fault.
+	//
+	// Scoped by projectID, which is what stops it answering questions about another
+	// foundation's campaigns on the shared ad account.
+	ResolvePlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) ([]model.LocalCampaignRef, error)
 	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
 	// platform) by inserting a placeholder campaign row (status 'pending') via
 	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker

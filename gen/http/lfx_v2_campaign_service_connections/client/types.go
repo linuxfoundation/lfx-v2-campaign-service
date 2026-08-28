@@ -765,6 +765,19 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
 }
 
+// ResolveGoogleAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body.
+type ResolveGoogleAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none; more than one only when the data is genuinely ambiguous.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -3687,6 +3700,56 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveGoogleAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveGoogleAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveGoogleAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveGoogleAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveGoogleAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveGoogleAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveGoogleAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveGoogleAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveGoogleAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4246,6 +4309,15 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	// Conversions over the window, fraction intact. Summable WITHIN a dimension
 	// for the same reason impressions are; summing across dimensions triple-counts.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+}
+
+// CampaignRefResponseBody is used to define fields on response body types.
+type CampaignRefResponseBody struct {
+	// This service's campaign id, as the mutation routes take it.
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The brief the campaign belongs to. Needed because the mutation routes are
+	// brief-scoped.
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
 }
 
 // MarketingEmailResponseBody is used to define fields on response body types.
@@ -8434,6 +8506,87 @@ func NewGetGoogleAdsAudienceUnauthorized(body *GetGoogleAdsAudienceUnauthorizedR
 	return v
 }
 
+// NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
+// endpoint result from a HTTP "OK" response.
+func NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK(body *ResolveGoogleAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint BadRequest error.
+func NewResolveGoogleAdsCampaignBadRequest(body *ResolveGoogleAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveGoogleAdsCampaignInternalServerError(body *ResolveGoogleAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint NotFound error.
+func NewResolveGoogleAdsCampaignNotFound(body *ResolveGoogleAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveGoogleAdsCampaignPayloadTooLarge(body *ResolveGoogleAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveGoogleAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-google-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveGoogleAdsCampaignUnauthorized(body *ResolveGoogleAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMetaAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -9618,6 +9771,28 @@ func ValidateGetGoogleAdsAudienceResponseBody(body *GetGoogleAdsAudienceResponse
 	for _, e := range body.Buckets {
 		if e != nil {
 			if err2 := ValidateGoogleAdsAudienceBucketResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateResolveGoogleAdsCampaignResponseBody runs the validations defined on
+// Resolve-Google-Ads-CampaignResponseBody
+func ValidateResolveGoogleAdsCampaignResponseBody(body *ResolveGoogleAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := ValidateCampaignRefResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -13209,6 +13384,68 @@ func ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(body *GetGoogleAdsAudi
 	return
 }
 
+// ValidateResolveGoogleAdsCampaignBadRequestResponseBody runs the validations
+// defined on resolve-google-ads-campaign_BadRequest_response_body
+func ValidateResolveGoogleAdsCampaignBadRequestResponseBody(body *ResolveGoogleAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveGoogleAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// resolve-google-ads-campaign_InternalServerError_response_body
+func ValidateResolveGoogleAdsCampaignInternalServerErrorResponseBody(body *ResolveGoogleAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveGoogleAdsCampaignNotFoundResponseBody runs the validations
+// defined on resolve-google-ads-campaign_NotFound_response_body
+func ValidateResolveGoogleAdsCampaignNotFoundResponseBody(body *ResolveGoogleAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveGoogleAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on
+// resolve-google-ads-campaign_PayloadTooLarge_response_body
+func ValidateResolveGoogleAdsCampaignPayloadTooLargeResponseBody(body *ResolveGoogleAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveGoogleAdsCampaignUnauthorizedResponseBody runs the
+// validations defined on resolve-google-ads-campaign_Unauthorized_response_body
+func ValidateResolveGoogleAdsCampaignUnauthorizedResponseBody(body *ResolveGoogleAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListMetaAdsAccountsBadRequestResponseBody runs the validations
 // defined on list-meta-ads-accounts_BadRequest_response_body
 func ValidateListMetaAdsAccountsBadRequestResponseBody(body *ListMetaAdsAccountsBadRequestResponseBody) (err error) {
@@ -13732,6 +13969,24 @@ func ValidateGoogleAdsAudienceBucketResponseBody(body *GoogleAdsAudienceBucketRe
 		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "device") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"age", "gender", "device"}))
 		}
+	}
+	return
+}
+
+// ValidateCampaignRefResponseBody runs the validations defined on
+// campaign-refResponseBody
+func ValidateCampaignRefResponseBody(body *CampaignRefResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.CampaignID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.campaign_id", *body.CampaignID, goa.FormatUUID))
+	}
+	if body.BriefID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
 	}
 	return
 }

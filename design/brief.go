@@ -575,6 +575,43 @@ var GoogleAdsAudience = Type("google-ads-audience", func() {
 	Required("window", "buckets", "bucket_count")
 })
 
+// CampaignRef points at one of this service's campaigns, for a caller that holds only the
+// platform's own campaign id.
+//
+// The two id spaces do not meet anywhere else. Every mutation route here is keyed by this
+// service's campaign UUID under its brief, while the keyword rows a caller acts on carry the
+// PLATFORM's numeric campaign id — `GoogleAdsKeyword.campaign_id` is Google's, not ours. A
+// caller looking at a keyword table therefore cannot address the campaign it belongs to without
+// asking, which is what this type answers.
+var CampaignRef = Type("campaign-ref", func() {
+	Attribute("campaign_id", String, "This service's campaign id, as the mutation routes take it.", func() {
+		Format(FormatUUID)
+		Example("6f9619ff-8b86-d011-b42d-00c04fc964ff")
+	})
+	Attribute("brief_id", String, "The brief the campaign belongs to. Needed because the mutation routes are brief-scoped.", func() {
+		Format(FormatUUID)
+		Example("2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c")
+	})
+	Required("campaign_id", "brief_id")
+})
+
+// PlatformCampaignResolution answers "which of my campaigns is this platform id?".
+//
+// `matches` is an ARRAY rather than a single ref, and that is not defensive vagueness. Nothing
+// in the schema constrains (project, platform, platform_campaign_id) to be unique, so the honest
+// answer to an ambiguous id is both rows and a caller that refuses to guess — collapsing it here
+// would silently pick one and mutate a campaign the caller never named.
+//
+// An EMPTY array is a 200, not a 404. The project genuinely owns no campaign with that upstream
+// id, which is an answer rather than a failure — and it is the answer a caller acts on by
+// refusing the action, so it must be distinguishable from the route being wrong.
+var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
+	Attribute("platform_campaign_id", String, "The upstream id that was resolved, echoed back.", func() { Example("24183781329") })
+	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none; more than one only when the data is genuinely ambiguous.")
+	Attribute("match_count", Int, "How many matches were found.", func() { Example(1) })
+	Required("platform_campaign_id", "matches", "match_count")
+})
+
 // KeywordActionInput is one requested keyword mutation.
 //
 // Both ids are required and neither is inferable. A criterion id is unique only within its ad

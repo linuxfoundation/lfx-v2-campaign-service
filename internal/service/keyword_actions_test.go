@@ -1031,3 +1031,169 @@ func TestKeywordInsights_ScopeLookupFailureDoesNotFallBack(t *testing.T) {
 			"established", d.keywordCalls, d.audienceCalls)
 	}
 }
+
+// ─── platform campaign resolution ───
+
+// resolverService wires a ConnectionService whose campaign repo holds the given campaigns.
+//
+// The campaigns are supplied as real rows rather than through scopeIDs, because the resolver
+// answers from the ROWS: it needs each campaign's own id and brief, which a scope entry does not
+// carry.
+func resolverService(t *testing.T, campaigns ...*model.Campaign) *ConnectionService {
+	t.Helper()
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	camps := &fakeCampaignRepo{upserted: campaigns}
+	svc.SetOrchestrator(NewOrchestrator(camps, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: &keywordActionDispatcher{},
+	}))
+	return svc
+}
+
+func googleCampaign(id, briefID, projectID, platformCampaignID string) *model.Campaign {
+	return &model.Campaign{
+		ID:                 id,
+		BriefID:            briefID,
+		ProjectID:          projectID,
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: platformCampaignID,
+	}
+}
+
+func TestResolveGoogleAdsCampaign_ReturnsTheBriefAndCampaignPair(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", "24183781329"))
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 1 || len(res.Matches) != 1 {
+		t.Fatalf("matches = %d, match_count = %d, want 1", len(res.Matches), res.MatchCount)
+	}
+	// BOTH ids are asserted, and with different values: the pair is the whole point of the
+	// endpoint, and a resolver that returned the campaign id twice would satisfy a single-field
+	// check while leaving the mutation route unaddressable.
+	if res.Matches[0].CampaignID != "c-1" {
+		t.Errorf("CampaignID = %q, want c-1", res.Matches[0].CampaignID)
+	}
+	if res.Matches[0].BriefID != "b-1" {
+		t.Errorf("BriefID = %q, want b-1", res.Matches[0].BriefID)
+	}
+	// Echoed from the request so the caller can pair the answer with what it asked.
+	if res.PlatformCampaignID != "24183781329" {
+		t.Errorf("PlatformCampaignID = %q, want the requested id", res.PlatformCampaignID)
+	}
+}
+
+// An id this project does not own answers 200 with NO matches, not an error.
+//
+// The distinction is what the caller acts on: an empty result means "not your campaign, refuse
+// the action", while an error means "the request or the service is wrong, retry or report". A
+// 404 here would say the latter about the former.
+func TestResolveGoogleAdsCampaign_UnownedIDIsAnEmptyAnswerNotAnError(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", "24183781329"))
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "99999999999",
+	})
+	if err != nil {
+		t.Fatalf("an unowned id must not be an error: %v", err)
+	}
+	if res.MatchCount != 0 {
+		t.Errorf("match_count = %d, want 0", res.MatchCount)
+	}
+	// Non-nil so it serialises as `[]` rather than `null` — the empty case is the one a caller
+	// must be able to read without a null check.
+	if res.Matches == nil {
+		t.Error("Matches = nil, want an empty slice so the JSON carries [] rather than null")
+	}
+}
+
+// THE TENANT BOUNDARY. The Google Ads customer is shared across foundations, so a campaign id
+// belonging to another project must resolve to nothing — otherwise this endpoint answers
+// "does foundation X own campaign N?", which is exactly the question the shared account makes
+// dangerous.
+func TestResolveGoogleAdsCampaign_DoesNotResolveAnotherProjectsCampaign(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-other", "b-other", "another-foundation", "24183781329"))
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 0 || len(res.Matches) != 0 {
+		t.Fatalf("another project's campaign resolved: %+v", res.Matches)
+	}
+}
+
+// A soft-deleted campaign is invisible here as it is to every other read. Resolving one would
+// hand back a handle to a campaign this service considers gone, and the mutation route would
+// then refuse it — an error the caller cannot act on, in place of a clean "not found".
+func TestResolveGoogleAdsCampaign_SkipsSoftDeletedCampaigns(t *testing.T) {
+	deleted := googleCampaign("c-1", "b-1", "cncf", "24183781329")
+	deleted.Status = "deleted"
+	svc := resolverService(t, deleted)
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 0 {
+		t.Errorf("a soft-deleted campaign was resolved: %+v", res.Matches)
+	}
+}
+
+// Ambiguity is REPORTED, not resolved. Nothing constrains
+// (project, platform, platform_campaign_id) to be unique, so two rows can genuinely share an
+// upstream id — and picking one would mutate a campaign the caller never named. Both come back
+// so the caller can refuse.
+func TestResolveGoogleAdsCampaign_ReportsAmbiguityRatherThanPickingOne(t *testing.T) {
+	svc := resolverService(t,
+		googleCampaign("c-1", "b-1", "cncf", "24183781329"),
+		googleCampaign("c-2", "b-2", "cncf", "24183781329"),
+	)
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 2 || len(res.Matches) != 2 {
+		t.Fatalf("matches = %d, want both rows so the caller can refuse", len(res.Matches))
+	}
+	seen := map[string]string{}
+	for _, m := range res.Matches {
+		seen[m.CampaignID] = m.BriefID
+	}
+	if seen["c-1"] != "b-1" || seen["c-2"] != "b-2" {
+		t.Errorf("each match must carry its OWN brief: %+v", seen)
+	}
+}
+
+// The reserved LF scope is unaddressable here for the same reason it is on the keyword and
+// audience reads: left open, it would report whether the Linux Foundation's own scope holds a
+// given campaign to any caller.
+func TestResolveGoogleAdsCampaign_RejectsSystemScope(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-1", "b-1", model.SystemProjectID, "24183781329"))
+
+	_, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          model.SystemProjectID,
+		PlatformCampaignID: "24183781329",
+	})
+	if err == nil {
+		t.Fatal("expected the reserved system scope to be rejected")
+	}
+	if _, ok := err.(*conn.NotFoundError); !ok {
+		t.Errorf("error = %T (%v), want *conn.NotFoundError", err, err)
+	}
+}

@@ -2059,6 +2059,23 @@ func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID strin
 	return ids, nil
 }
 
+// ResolvePlatformCampaign maps one upstream campaign id back to this service's own campaigns.
+//
+// A pure lookup: no dispatcher is involved and the ad platform is never contacted, because the
+// answer lives entirely in this service's own tables. That is why it does not go through
+// keywordInsightsFor or any of the connection machinery the reads above need.
+//
+// Every match is returned. Deciding what an ambiguous or empty answer MEANS belongs to the
+// caller — the service layer refuses the action rather than picking a row, and this layer must
+// not make that choice for it by collapsing the slice here.
+func (o *Orchestrator) ResolvePlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) ([]model.LocalCampaignRef, error) {
+	refs, err := o.campaigns.ResolvePlatformCampaign(ctx, projectID, platform, platformCampaignID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve platform campaign %s for project %s on %s: %w", platformCampaignID, projectID, platform, err)
+	}
+	return refs, nil
+}
+
 // ReadKeywordPerformance reads keyword performance across the project's OWN campaigns.
 func (o *Orchestrator) ReadKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.KeywordPerformance, error) {
 	reader, err := o.keywordInsightsFor(platform)

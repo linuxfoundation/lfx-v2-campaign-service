@@ -61,6 +61,7 @@ type Endpoints struct {
 	ListGoogleAdsAccounts     goa.Endpoint
 	GetGoogleAdsKeywords      goa.Endpoint
 	GetGoogleAdsAudience      goa.Endpoint
+	ResolveGoogleAdsCampaign  goa.Endpoint
 	ListMetaAdsAccounts       goa.Endpoint
 	ListLinkedinAdsAccounts   goa.Endpoint
 	ListMicrosoftAdsAccounts  goa.Endpoint
@@ -119,6 +120,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ListGoogleAdsAccounts:     NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
 		GetGoogleAdsKeywords:      NewGetGoogleAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetGoogleAdsAudience:      NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
+		ResolveGoogleAdsCampaign:  NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
 		ListMetaAdsAccounts:       NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsAccounts:   NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
 		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
@@ -175,6 +177,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListGoogleAdsAccounts = m(e.ListGoogleAdsAccounts)
 	e.GetGoogleAdsKeywords = m(e.GetGoogleAdsKeywords)
 	e.GetGoogleAdsAudience = m(e.GetGoogleAdsAudience)
+	e.ResolveGoogleAdsCampaign = m(e.ResolveGoogleAdsCampaign)
 	e.ListMetaAdsAccounts = m(e.ListMetaAdsAccounts)
 	e.ListLinkedinAdsAccounts = m(e.ListLinkedinAdsAccounts)
 	e.ListMicrosoftAdsAccounts = m(e.ListMicrosoftAdsAccounts)
@@ -1230,6 +1233,30 @@ func NewGetGoogleAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 			return nil, err
 		}
 		return s.GetGoogleAdsAudience(ctx, p)
+	}
+}
+
+// NewResolveGoogleAdsCampaignEndpoint returns an endpoint function that calls
+// the method "resolve-google-ads-campaign" of service
+// "lfx-v2-campaign-service-connections".
+func NewResolveGoogleAdsCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResolveGoogleAdsCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ResolveGoogleAdsCampaign(ctx, p)
 	}
 }
 

@@ -150,6 +150,54 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 	}, nil
 }
 
+// ResolveGoogleAdsCampaign maps one Google Ads campaign id to this service's own campaign
+// and brief, so a caller holding keyword rows can address the brief-scoped mutation routes.
+//
+// The keyword read publishes `campaign_id` as GOOGLE's numeric id, because that is what the
+// GAQL rows carry; every mutation route here is keyed by this service's own campaign UUID under
+// its brief. Nothing else bridges the two, so without this a keyword table cannot act on the
+// rows it just displayed.
+//
+// NOT a dispatcher call: the answer is entirely in this service's tables, so no connection is
+// resolved and Google is never contacted. That is also why it cannot fail the way the reads
+// above can — there is no 409 for an unusable connection and no 503 for an upstream outage,
+// which is why this method declares neither.
+//
+// An unowned id is an empty `matches` with a 200, NOT a 404. "This project owns no campaign
+// with that upstream id" is an answer the caller acts on by refusing the action, and a 404
+// would say something different — that the route or the project is wrong. Distinguishing them
+// is the difference between a caller reporting "not your campaign" and one retrying a request
+// that will never work.
+func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *conn.ResolveGoogleAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	// Same reserved-scope refusal as the reads above: left open, this would report whether the
+	// Linux Foundation's own scope holds a given campaign to any caller.
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch("resolve campaign reference")
+	if err != nil {
+		return nil, err
+	}
+	refs, rerr := orch.ResolvePlatformCampaign(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID)
+	if rerr != nil {
+		return nil, s.classifyInsightsError(ctx, p.ProjectID, rerr)
+	}
+
+	// Preallocated with make so an empty result serializes as `[]`, never `null` — the empty
+	// case is the one a caller must be able to read reliably.
+	matches := make([]*conn.CampaignRef, 0, len(refs))
+	for _, r := range refs {
+		matches = append(matches, &conn.CampaignRef{CampaignID: r.CampaignID, BriefID: r.BriefID})
+	}
+	return &conn.PlatformCampaignResolution{
+		// Echoed from the REQUEST, which is safe here precisely because it is not evidence of
+		// anything: the caller already knows what it asked, and the matches are what answer it.
+		PlatformCampaignID: p.PlatformCampaignID,
+		Matches:            matches,
+		MatchCount:         len(matches),
+	}, nil
+}
+
 // GetGoogleAdsAudience reads Google Ads demographics across the project's OWN campaigns.
 //
 // Age, gender and device arrive in one flat array discriminated by `dimension`. Each

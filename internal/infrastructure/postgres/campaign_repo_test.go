@@ -169,6 +169,39 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 			"creation-customer check that ReadMetrics already enforces")
 }
 
+// The resolver answers "which of MY campaigns is this upstream id", and the tenant scope has
+// to live in the SQL for the same reason it does above: the Google Ads customer is shared
+// across foundations, so an unscoped lookup would confirm whether ANOTHER project owns a given
+// campaign id — a question that must not be answerable at all, not merely filtered afterwards.
+//
+// It also pins what the query must NOT do. No LIMIT: nothing constrains
+// (project, platform, platform_campaign_id) to be unique, so a LIMIT 1 would turn a genuinely
+// ambiguous answer into a confident wrong one, and the caller would mutate a campaign nobody
+// named. And no DISTINCT: unlike the scope query above, a repeated id here is the finding
+// rather than noise.
+func TestResolvePlatformCampaign_IsScopedInSQL(t *testing.T) {
+	q := normalizeWS(resolvePlatformCampaignQuery)
+
+	require.Contains(t, q, "project_id=$1",
+		"the project scope must be applied in SQL; a Go-side filter over an unscoped read would let "+
+			"one foundation confirm another's campaign ids on the shared ad account")
+	require.Contains(t, q, "platform=$2",
+		"the platform must be part of the scope, or one provider's numeric id could match another's")
+	require.Contains(t, q, "platform_campaign_id=$3",
+		"the upstream id must be a bound parameter, never interpolated")
+	require.Contains(t, q, "status <> 'deleted'",
+		"soft-deleted rows must be invisible here as they are to every other read; resolving one "+
+			"would offer a handle to a campaign this service considers gone")
+	require.Contains(t, strings.ToUpper(q), "SELECT ID, BRIEF_ID",
+		"only the two ids a mutation route needs; selecting whole rows hands the caller fields it "+
+			"has no use for")
+	require.NotContains(t, strings.ToUpper(q), "LIMIT",
+		"a LIMIT would collapse an ambiguous answer into one row, and the caller could not tell "+
+			"that it had been given a guess")
+	require.NotContains(t, strings.ToUpper(q), "DISTINCT",
+		"two rows sharing an upstream id is exactly what this query exists to reveal")
+}
+
 // TestDeleteCampaign_IsSoftDelete pins that the delete is a status UPDATE and never a
 // row DELETE. The retained row holds platform_campaign_id — the only local pointer to
 // a campaign that may still exist and still be spending on the ad platform, since this

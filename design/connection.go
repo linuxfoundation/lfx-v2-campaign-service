@@ -1054,6 +1054,54 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("resolve-google-ads-campaign", func() {
+		Description("Resolve one Google Ads campaign id to this service's own campaign and brief. " +
+			"A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation " +
+			"route here is keyed by this service's campaign UUID under its brief. Nothing else " +
+			"bridges the two, so a keyword table cannot act on its own rows without this. " +
+			"A pure READ: it enumerates nothing and mutates nothing, and it is scoped to the " +
+			"project's own campaigns by the same `project_id` predicate the keyword and audience " +
+			"reads use — so it cannot be used to discover whether ANOTHER project owns a given " +
+			"upstream id, which on a shared ad account is the question that must not be answerable. " +
+			"**An unowned id is 200 with an empty `matches`, not 404.** The project genuinely owning " +
+			"no such campaign is an answer the caller acts on by refusing the action, and it must be " +
+			"distinguishable from the route or the project being wrong, which is what a 404 would say. " +
+			"**More than one match is possible and is not an error here.** No unique constraint " +
+			"covers (project, platform, platform_campaign_id), so an ambiguous id is reported as " +
+			"ambiguous rather than resolved by picking a row — the caller refuses, because acting " +
+			"on a guess would mutate a campaign nobody named. " +
+			"This is NOT a list endpoint under rule 3: it is a keyed lookup returning the matches " +
+			"for one supplied id, with no collection, pagination or filtering.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Digits-only for the same reason KeywordActionInput's ids are: the value is a
+			// Google Ads campaign id, and admitting a non-numeric one only moves its refusal
+			// to a place that classifies it less clearly.
+			Attribute("platform_campaign_id", String, "The Google Ads campaign id to resolve. Digits only.", func() {
+				Pattern(`^[0-9]+$`)
+				MaxLength(19)
+				Example("24183781329")
+			})
+			Required("project_id", "platform_campaign_id")
+		})
+		Result(PlatformCampaignResolution)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		HTTP(func() {
+			GET("/projects/{project_id}/google-ads/campaign-ref")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("platform_campaign_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+		})
+	})
+
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
 			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +
