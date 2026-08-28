@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,9 @@ type hubspotRec struct {
 	sawClone     bool
 	sawSendList  bool
 	taggedHTML   string
+	subjectSet   string
+	bodyHTMLSet  string
+	draftHTML    string
 }
 
 func (r *hubspotRec) markClone() {
@@ -76,6 +80,44 @@ func (r *hubspotRec) markSendList(body map[string]any) {
 	defer r.mu.Unlock()
 	r.sawSendList = true
 	r.sendListBody = body
+}
+
+// markSubject records a PATCH that set the draft's subject (LFXV2-2775 content apply).
+func (r *hubspotRec) markSubject(v string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.subjectSet = v
+}
+
+// markBody records the html written to the draft's single rich-text widget.
+func (r *hubspotRec) markBody(v string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bodyHTMLSet = v
+	r.draftHTML = v
+}
+
+// setDraft records html written by a path that is not the content apply (the UTM tagger).
+func (r *hubspotRec) setDraft(v string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.draftHTML = v
+}
+
+// currentBody is the draft's html as it stands, seeded with the template's own body.
+func (r *hubspotRec) currentBody() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.draftHTML == "" {
+		return `<a href="https://events.lfx.dev/reg">Register</a>`
+	}
+	return r.draftHTML
+}
+
+func (r *hubspotRec) snapshotContent() (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.subjectSet, r.bodyHTMLSet
 }
 
 func (r *hubspotRec) markTagged(raw string) {
@@ -94,6 +136,20 @@ func (r *hubspotRec) SendListBody() map[string]any {
 }
 func (r *hubspotRec) TaggedHTML() string { r.mu.Lock(); defer r.mu.Unlock(); return r.taggedHTML }
 
+// extractWidgetHTML pulls the single widget's html out of a content PATCH payload.
+func extractWidgetHTML(body map[string]any) string {
+	content, _ := body["content"].(map[string]any)
+	widgets, _ := content["widgets"].(map[string]any)
+	for _, w := range widgets {
+		wm, _ := w.(map[string]any)
+		bm, _ := wm["body"].(map[string]any)
+		if h, ok := bm["html"].(string); ok {
+			return h
+		}
+	}
+	return ""
+}
+
 func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	t.Helper()
 	rec := &hubspotRec{}
@@ -108,17 +164,35 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
-			// The draft body the UTM tagger reads: one rich-text widget with a bare link.
-			_, _ = io.WriteString(w, `{"content":{"widgets":{"module_1":{"body":{"html":"<a href=\"https://events.lfx.dev/reg\">Register</a>"}}}}}`)
+			// STATEFUL: returns whatever was last written, so a reader sees the effect of an
+			// earlier write. A stub that always replayed the template made write ORDER
+			// unobservable — and order is the whole claim of the content-vs-tagging test.
+			html := rec.currentBody()
+			payload, _ := json.Marshal(map[string]any{
+				"content": map[string]any{"widgets": map[string]any{"module_1": map[string]any{"body": map[string]any{"html": html}}}},
+			})
+			_, _ = w.Write(payload)
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]any
 			_ = json.Unmarshal(raw, &body)
 			// The send-list PATCH and the UTM PATCH hit the same path; tell them apart by
 			// which key the payload carries rather than by call order.
-			if _, isContent := body["content"]; isContent {
-				rec.markTagged(string(raw))
-			} else {
+			switch {
+			case body["content"] != nil:
+				// Both the content apply (LFXV2-2775) and the UTM tagger PATCH `content`.
+				// Tell them apart by what the html contains: a tagged body carries utm_
+				// parameters, a freshly applied body does not.
+				html := extractWidgetHTML(body)
+				if strings.Contains(html, "utm_") {
+					rec.markTagged(string(raw))
+					rec.setDraft(html)
+				} else {
+					rec.markBody(html)
+				}
+			case body["subject"] != nil:
+				rec.markSubject(fmt.Sprint(body["subject"]))
+			default:
 				rec.markSendList(body)
 			}
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
@@ -214,6 +288,57 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	body, _ := json.Marshal(rec.SendListBody())
 	if !strings.Contains(string(body), "26724") {
 		t.Errorf("send-list payload must carry the audience master list id 26724, got %s", body)
+	}
+}
+
+// TestHubSpot_AppliesGeneratedContent: subject and body from the config reach the draft, and the
+// body is written BEFORE the UTM tagger so the tags survive (LFXV2-2775).
+func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p><a href=\"https://events.lfx.dev/reg\">Register</a>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the generated subject", subject)
+	}
+	if !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body", body)
+	}
+
+	// ORDER is the claim, not merely that both ran: the tagger rewrites the body's links, so a
+	// body written afterwards would discard every utm_ parameter it had just added.
+	tagged := rec.TaggedHTML()
+	if !strings.Contains(tagged, "utm_") {
+		t.Errorf("the tagger must run AFTER the body is applied, so the final draft carries utm parameters; got %q", tagged)
+	}
+	if !strings.Contains(tagged, "Join us") {
+		t.Errorf("the tagged html must be the GENERATED body, not the template's; got %q", tagged)
+	}
+}
+
+// TestHubSpot_ContentAbsentLeavesTemplateCopy: omitting subject/bodyHtml must change nothing —
+// this is every campaign that predates LFXV2-2775.
+func TestHubSpot_ContentAbsentLeavesTemplateCopy(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "" {
+		t.Errorf("no subject was configured, so none may be PATCHed; got %q", subject)
+	}
+	if body != "" {
+		t.Errorf("no body was configured, so the template's body must be left alone; got %q", body)
 	}
 }
 

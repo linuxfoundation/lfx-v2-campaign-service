@@ -590,8 +590,23 @@ populated by the audience-building step). No budget/schedule — email has none.
 sourceEmailId: string           — REQUIRED. The HubSpot marketing-email id to CLONE as this
                                   campaign's email. There is no default template. The clone is
                                   created as a DRAFT (a human reviews and sends it), so staging is
-                                  safe. The AI body content (subject/preheader/body) is applied by
-                                  a separate content-generation step.
+                                  safe. Generated copy is applied by `subject`/`bodyHtml` below.
+subject: string                 — OPTIONAL. Replaces the cloned draft's subject line. Unset leaves
+                                  the template's own subject, which is what every campaign did
+                                  before LFXV2-2775. Applied BEST-EFFORT: a failure here logs and
+                                  leaves the template's subject rather than failing the dispatch,
+                                  because the email is already cloned and correctly targeted.
+bodyHtml: string                — OPTIONAL. Replaces the cloned draft's rich-text body, and ONLY
+                                  when the draft has exactly ONE rich-text widget. HubSpot
+                                  templates may carry several (header blurb, body, footer note)
+                                  and the API exposes no marker for which is "the" body — a
+                                  heuristic would silently overwrite a footer on some templates.
+                                  Writing nothing is recoverable by hand; writing the wrong widget
+                                  destroys content the operator did not choose to replace.
+                                  Applied BEFORE utm tagging, so the tags land on this body and
+                                  survive. NOTE there is no preheader field: Marketing Emails v3
+                                  exposes no preheader property, so accepting one would report
+                                  success while HubSpot ignored it.
 utmCampaign: string             — OPTIONAL. Overrides the utm_campaign applied to every ELIGIBLE
                                   link in the staged email — that is, every untagged web link.
                                   Links that already carry a non-empty utm_campaign keep it (an

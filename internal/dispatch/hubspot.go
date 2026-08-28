@@ -53,6 +53,15 @@ type hubspotConfig struct {
 	// when unset the campaign is derived from the deterministic email name, so links are always
 	// attributable. Set it to make several briefs' emails roll up to one campaign in reporting.
 	UTMCampaign string `json:"utmCampaign"`
+	// Subject optionally replaces the cloned draft's subject line. OPTIONAL: unset leaves the
+	// template's own subject, which is what every campaign did before LFXV2-2775. Supplied by a
+	// caller that generated copy (GenerateEmailCopy) and wants it applied rather than pasted in
+	// by hand.
+	Subject string `json:"subject"`
+	// BodyHTML optionally replaces the cloned draft's rich-text body. OPTIONAL, and applied only
+	// when the draft has exactly ONE rich-text widget to replace — see applyEmailContent for why
+	// a multi-widget template is left alone rather than guessed at.
+	BodyHTML string `json:"bodyHtml"`
 }
 
 // audienceReader is the narrow read slice of the audience repository the email dispatcher needs:
@@ -372,7 +381,12 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
-	// STEP 3 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
+	// STEP 3 (mutating, BEST-EFFORT): apply generated copy to the draft. BEFORE the UTM tagging
+	// below, not after: tagging rewrites the body's links, so writing the body afterwards would
+	// discard every tag it had just added and send the email untracked.
+	applyEmailContent(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML)
+
+	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
 	// traffic is attributable in the warehouse. Deliberately LAST and non-fatal: the email is
 	// already cloned and pointed at the right audience, so it is a working campaign. An
 	// untagged email is a reporting gap; failing here would turn that gap into a failed send
@@ -380,6 +394,59 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
 
 	return campaignFromHubSpot(ctx, email, cfg, portalID), nil
+}
+
+// applyEmailContent writes generated copy onto a cloned draft: the subject via
+// PatchEmailSettings, the body by replacing the draft's single rich-text widget.
+//
+// BEST-EFFORT, like tagEmailLinks and for the same reason: by the time this runs the email is
+// cloned and pointed at the right audience, so it is already a working campaign. A failure here
+// leaves a draft carrying the TEMPLATE's copy — which is what every campaign had before
+// LFXV2-2775 — so turning it into a dispatch failure would trade a recoverable cosmetic gap for
+// a failed send and an orphaned draft. Every failure is logged and swallowed.
+//
+// The body is applied ONLY when the draft has exactly one rich-text widget. HubSpot templates can
+// carry several (a header blurb, a body, a footer note) and the API exposes no marker saying
+// which is "the" body — a heuristic like "the longest" would silently overwrite a footer on some
+// templates and the body on others. Writing nothing is recoverable by hand; writing the wrong
+// widget destroys template content the operator did not choose to replace. The subject is applied
+// regardless, since it has exactly one home.
+//
+// Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
+// hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
+// success while HubSpot silently ignored it.
+func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML string) {
+	if subject = strings.TrimSpace(subject); subject != "" {
+		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
+			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
+				"email_id", emailID, "error", err)
+		}
+	}
+
+	if bodyHTML = strings.TrimSpace(bodyHTML); bodyHTML == "" {
+		return
+	}
+
+	widgets, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	if err != nil {
+		slog.WarnContext(ctx, "could not read the email draft to set its body; it keeps the template's body",
+			"email_id", emailID, "error", err)
+		return
+	}
+
+	if len(widgets) != 1 {
+		// Not an error: a template this shape is simply one this cannot safely rewrite.
+		slog.InfoContext(ctx, "email draft does not have exactly one rich-text widget; leaving its body as the template wrote it",
+			"email_id", emailID, "widget_count", len(widgets))
+		return
+	}
+
+	for key := range widgets {
+		if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{key: bodyHTML}); perr != nil {
+			slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
+				"email_id", emailID, "error", perr)
+		}
+	}
 }
 
 // tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by
