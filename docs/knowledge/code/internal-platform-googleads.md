@@ -1150,11 +1150,18 @@ GOOGLE's numeric campaign id, because that is what the GAQL rows hold, while eve
 is keyed by this service's own campaign UUID under its brief. Nothing else connects them, so a
 caller looking at a keyword table could not address the campaign a keyword belongs to.
 `GET /projects/{projectId}/google-ads/campaign-ref` answers it from this service's own tables —
-no dispatcher, no connection, the ad platform is never contacted, which is why it declares
-neither a 409 for an unusable connection nor a 503 for an upstream outage. A storage failure is
-reported as a 500 and NOT through `classifyInsightsError`: every arm of that classifier describes
-a platform failure, so routing a local table fault there would advertise it as a retryable Google
-Ads problem and return a status the method does not declare.
+no dispatcher, no connection, the ad platform is never contacted, which is why
+it declares no 409 — there is no connection to be unusable and no ad account to
+mismatch.
+
+It DOES declare a 503, for cold start only: `resolveBackendWithOrch` refuses
+before storage and the orchestrator are wired, which is genuinely retryable. A
+storage FAULT is a 500 instead — a failure in a service already up, where
+retrying does not help — and is reported directly rather than through
+`classifyInsightsError`: every arm of that classifier describes a platform
+failure, so routing a local table fault there would advertise it as a retryable
+Google Ads problem, in a message naming keyword insights. The two statuses are
+deliberately distinct because a caller should branch on them differently.
 
 An unowned id answers 200 with an empty `matches`, not 404: "this project owns no campaign with
 that id" is an answer the caller acts on by refusing, while a 404 says the route or project is
