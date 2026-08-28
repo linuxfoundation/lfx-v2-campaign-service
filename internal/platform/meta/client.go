@@ -1640,14 +1640,28 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 					return abortErr
 				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
-					return err
+					// A request HAS already been sent (the 429 proves the platform received it), so a
+					// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
+					// not "not applied". A bare ctx error matches neither transportError nor
+					// APIError, so createOutcomeAmbiguous would report false and the caller would be
+					// told a mutation that may have committed definitely did not — and retry it,
+					// double-creating a campaign that spends real budget. Wrapped so the ambiguity
+					// survives, exactly as the Google Ads client does.
+					return &transportError{Method: method, Path: path, Err: err}
 				}
 				continue
 			}
 			// No server-declared reset: capped exponential backoff, from the shared
 			// helper the /adimages upload loop also uses.
 			if err := sleepCtx(ctx, c.backoffDelay(attempt)); err != nil {
-				return err
+				// A request HAS already been sent (the 429 proves the platform received it), so a
+				// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
+				// not "not applied". A bare ctx error matches neither transportError nor
+				// APIError, so createOutcomeAmbiguous would report false and the caller would be
+				// told a mutation that may have committed definitely did not — and retry it,
+				// double-creating a campaign that spends real budget. Wrapped so the ambiguity
+				// survives, exactly as the Google Ads client does.
+				return &transportError{Method: method, Path: path, Err: err}
 			}
 			continue
 		}

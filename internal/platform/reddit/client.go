@@ -1099,10 +1099,26 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 				// clamps an over-cap value to a maxRetryWait+1s sentinel, so printing
 				// the duration would misreport (e.g. a 3600s reset as "1m1s").
 				if retryAfter > maxRetryWait {
-					return nil, fmt.Errorf("reddit API %s %s -> 429: rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", method, path, resp.Header.Get("Retry-After"), maxRetryWait)
+					// Typed, not a plain fmt.Errorf: this abort follows a 429, which proves
+					// Reddit received the request. A plain error matches nothing
+					// createOutcomeAmbiguous keys on, so an abort here would report a
+					// possibly-committed mutation as definitely-failed. Reachable rather than
+					// defensive — it fires whenever Reddit declares a reset longer than the cap.
+					return nil, &transportError{
+						Method: method,
+						Path:   path,
+						Err:    fmt.Errorf("429: rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", resp.Header.Get("Retry-After"), maxRetryWait),
+					}
 				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
-					return nil, err
+					// A request HAS already been sent (the 429 proves Reddit received it), so a
+					// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
+					// not "not applied". A bare ctx error matches neither transportError nor apiError,
+					// so createOutcomeAmbiguous reports false and the caller is told a mutation that
+					// may have committed definitely did not — and retries it, double-creating a
+					// campaign that spends real budget. This is the same hazard the doc comment above
+					// describes for the in-flight Do; it applies to the BACKOFF SLEEP too.
+					return nil, &transportError{Method: method, Path: path, Err: err}
 				}
 				continue
 			}
@@ -1112,7 +1128,14 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 				wait = maxRetryWait
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
-				return nil, err
+				// A request HAS already been sent (the 429 proves Reddit received it), so a
+				// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
+				// not "not applied". A bare ctx error matches neither transportError nor apiError,
+				// so createOutcomeAmbiguous reports false and the caller is told a mutation that
+				// may have committed definitely did not — and retries it, double-creating a
+				// campaign that spends real budget. This is the same hazard the doc comment above
+				// describes for the in-flight Do; it applies to the BACKOFF SLEEP too.
+				return nil, &transportError{Method: method, Path: path, Err: err}
 			}
 			continue
 		}
