@@ -275,8 +275,12 @@ func TestGetKeywordPerformance_ParseErrorNamesFieldNotValue(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"results": []any{map[string]any{
 			"adGroupCriterion": map[string]any{"criterionId": "1", "status": "ENABLED",
 				"keyword": map[string]any{"text": "x", "matchType": "EXACT"}},
-			"adGroup":  map[string]any{"id": "2"},
-			"campaign": map[string]any{"id": "3"},
+			"adGroup": map[string]any{"id": "2"},
+			// IN SCOPE, deliberately. The metrics parse now runs after the scope check, so a
+			// fixture naming an out-of-scope campaign would fail on the scope error and prove
+			// nothing about how a parse failure is reported. It passed that way only while the
+			// parse happened to run first.
+			"campaign": map[string]any{"id": "555"},
 			"metrics":  map[string]any{"impressions": poison, "clicks": "1", "costMicros": "1"},
 		}}})
 		_, _ = w.Write(body)
@@ -2265,5 +2269,72 @@ func TestKeywordQualityScoreBoundsMatchTheDesign(t *testing.T) {
 		if want != tc.guard {
 			t.Errorf("design %s(%d) != guard constant %d — an out-of-range score would fail the whole response", tc.name, want, tc.guard)
 		}
+	}
+}
+
+// A NEGATIVE keyword carrying an unusable conversions value must not fail the whole report.
+//
+// The row is dropped either way — this endpoint publishes only positive keywords — so
+// validating its counters can only ever turn a droppable row into a total failure. That is
+// exactly the outcome the polarity-drop comment says dropping exists to avoid: "erroring would
+// let one exclusion in an ad group take down the whole keyword report."
+//
+// The fixture pairs the poisoned exclusion with a HEALTHY positive row, so the assertion is not
+// merely "no error" — it is that the good row still comes back. A version that dropped both
+// would satisfy a bare error check while silently losing real keywords.
+func TestGetKeywordPerformance_CorruptNegativeRowDoesNotFailTheReport(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conv string
+	}{
+		{"negative count", "-5"},
+		{"beyond int64", "1e19"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+
+					// An exclusion whose conversions cannot be parsed. In scope, so the scope
+					// check passes and the polarity drop is what decides its fate.
+					`{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","negative":true,`+
+					`"keyword":{"text":"free","matchType":"BROAD"}},`+
+					`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+					`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":`+tc.conv+`}},`+
+					// A healthy positive row that must survive.
+					`{"adGroupCriterion":{"criterionId":"9","status":"ENABLED",`+
+					`"keyword":{"text":"kubernetes training","matchType":"EXACT"}},`+
+					`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+					`"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":12.5}}`+
+					`]}`)
+			})
+
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+			if err != nil {
+				t.Fatalf("a corrupt EXCLUSION failed the whole report: %v", err)
+			}
+			if len(kp.Rows) != 1 {
+				t.Fatalf("rows = %d, want the one positive keyword to survive", len(kp.Rows))
+			}
+			if kp.Rows[0].CriterionID != "9" {
+				t.Errorf("wrong row survived: %+v", kp.Rows[0])
+			}
+		})
+	}
+}
+
+// The same corruption on a POSITIVE row still fails the whole response. The two cases are
+// different facts: an exclusion is a row this endpoint does not publish, while a published row
+// with an unusable counter would be rendered as a measurement.
+func TestGetKeywordPerformance_CorruptPositiveRowStillFailsTheReport(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED",`+
+			`"keyword":{"text":"x","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":-5}}]}`)
+	})
+
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+		t.Fatal("a corrupt POSITIVE row was published rather than failing the response")
 	}
 }
