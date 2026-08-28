@@ -111,7 +111,13 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampa
 		// Total is HubSpot's count of ALL matches, not just the returned page. It is what makes
 		// "capped" a fact rather than an inference: len(results)==limit is also what an exactly-
 		// full last page looks like, and guessing from it would warn on a complete result set.
-		Total int `json:"total"`
+		//
+		// A POINTER, because an ABSENT total and a total of zero are different answers and a
+		// plain int cannot tell them apart. Absent means the response did not say how many
+		// matched — so capping is UNKNOWN, and the fail-closed reading is that it may have been
+		// capped. Decoded as zero, an absent total would read as "0 matched, nothing hidden",
+		// which is the authoritative absence a caller acts on by creating a duplicate campaign.
+		Total *int `json:"total"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return SearchCampaignsPage{}, fmt.Errorf("hubspot: decode campaign search: %w", err)
@@ -143,7 +149,12 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampa
 	}
 	// Capped is derived from HubSpot's own total, not from len(out)==limit — an exactly-full
 	// final page is indistinguishable from a truncated one by length alone.
-	return SearchCampaignsPage{Campaigns: out, Capped: resp.Total > len(out)}, nil
+	//
+	// An ABSENT total is treated as capped: the response did not tell us how many matched, so
+	// completeness is unknown, and "unknown" must not be reported as the proven absence that
+	// licenses a create in a namespace every foundation shares.
+	capped := resp.Total == nil || *resp.Total > len(out)
+	return SearchCampaignsPage{Campaigns: out, Capped: capped}, nil
 }
 
 // SearchCampaignsPage is one page of campaign search results plus the fact a caller needs to
@@ -197,14 +208,22 @@ func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, er
 
 	var hit campaignSearchHit
 	if err := json.Unmarshal(raw, &hit); err != nil {
-		return nil, fmt.Errorf("hubspot: decode campaign create: %w", err)
+		// UNCONFIRMED, not a plain decode error. The POST already returned 2xx, so HubSpot has
+		// very likely created the campaign — only our reading of the body failed. A plain error
+		// loses the structural signal (see CloneEmail and CreateList, which mark exactly this
+		// arm) and a caller that treats it as a clean failure retries into a duplicate in a
+		// namespace every foundation shares.
+		return nil, unconfirmed("hubspot: campaign create UNCONFIRMED (2xx with an undecodable body — a campaign may have been created; verify before retrying)", err)
 	}
 	// An id-less 2xx means the campaign may or may not have been created and cannot be
 	// addressed either way. Reporting success would hand the caller a campaign reference that
 	// does not work; reporting the ambiguity lets them check HubSpot rather than retry blindly
 	// into a duplicate.
 	if strings.TrimSpace(hit.ID) == "" {
-		return nil, fmt.Errorf("hubspot: campaign create returned a 2xx with no id — the campaign may or may not exist, check HubSpot before retrying")
+		// Same reasoning as the decode arm above, and marked the same way: the message already
+		// said the outcome was unknown, but only the STRUCTURAL signal survives being wrapped
+		// by callers, and it is what a classifier reads.
+		return nil, unconfirmed("hubspot: campaign create returned a 2xx with no id — the campaign may or may not exist, check HubSpot before retrying", nil)
 	}
 	return &Campaign{
 		ID:        hit.ID,

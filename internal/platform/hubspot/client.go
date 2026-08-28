@@ -239,6 +239,23 @@ type apiError struct {
 	Ambiguous bool
 }
 
+// IsDefiniteRejection reports whether err is a POSITIVELY IDENTIFIED clean rejection: HubSpot
+// answered on the merits with a non-ambiguous 4xx, and nothing was created.
+//
+// It is deliberately not `!IsUnconfirmed(err)`. That negation is fail-OPEN — it answers true for
+// any error this package cannot classify at all (a wrapped context error, a bug elsewhere in the
+// call chain, an error from a different layer), and a caller of a NON-IDEMPOTENT create would
+// then be told "nothing was created" about an outcome nobody established. Only an error this
+// package recognises as a definite 4xx returns true here; everything unrecognised is left to be
+// treated as unconfirmed, which is the safe direction for a write into a shared namespace.
+func IsDefiniteRejection(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return !ae.Ambiguous
+}
+
 // IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
 // request — the server may or may not have applied the change. This is true for an
 // ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply

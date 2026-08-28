@@ -44,8 +44,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Soluta qui maiores sit.
-                            example: Quia facere praesentium voluptates ut.
+                                example: Nisi accusamus est nihil numquam.
+                            example: Molestias commodi ratione vel ut voluptatum vero.
                     content:
                         application/json:
                             schema:
@@ -186,8 +186,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Nulla omnis sed quisquam dolorum.
-                            example: Vel eos et.
+                                example: Perferendis voluptatem ut culpa rerum.
+                            example: Soluta qui maiores sit.
                     content:
                         application/json:
                             schema:
@@ -306,9 +306,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: aeae1f40-5682-42f4-93cf-d54dfdd6c3e9
+                    example: 3c79656a-bbbb-440e-89fd-94e4ffcb4535
                     format: uuid
-                  example: bfbbb47b-da0a-4deb-a9a1-2fe6811c2c10
+                  example: 3225532b-80cf-4acd-8171-4c82816b68cc
             responses:
                 "204":
                     description: No Content response.
@@ -409,9 +409,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 7e9440b4-6d55-4cb5-a91f-96e05b172051
+                    example: 8255f619-d9ce-4fc4-9153-74c5cae14ac9
                     format: uuid
-                  example: 6cf463b8-6237-47d3-8123-7976af9c31a1
+                  example: dea41bbf-4ba0-4b9b-807f-94274ec0d4df
             responses:
                 "200":
                     description: OK response.
@@ -421,8 +421,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Voluptatem dignissimos dolorum pariatur.
-                            example: Sed corporis modi.
+                                example: Dolore asperiores sed corporis modi et.
+                            example: Ut id explicabo eligendi fugiat eum.
                     content:
                         application/json:
                             schema:
@@ -539,9 +539,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 21e240f1-f41e-469e-b50a-a08d78f415e6
+                    example: 03cf3dae-aa77-4f2b-a474-d66c2d7c9130
                     format: uuid
-                  example: 5ca720c8-1522-4c0f-b42f-4ed6cf86a957
+                  example: 5c5e9197-8c8a-4438-8fb6-ec5b2c986a1f
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -580,8 +580,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Tenetur veritatis dolorem quia labore natus voluptatibus.
-                            example: Aperiam qui sit.
+                                example: Non consequuntur aperiam qui.
+                            example: Porro sint vel.
                     content:
                         application/json:
                             schema:
@@ -719,9 +719,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 1d924e25-dcd0-400b-aa6d-4940460a5cef
+                    example: acb463e5-6974-407e-b0d6-14fea7d8b17a
                     format: uuid
-                  example: 5ddb6855-bec2-40a5-9317-08de5a25866b
+                  example: b99ddb85-a258-4de9-91e4-a4130e491714
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -740,8 +740,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Fugit eos quis quis iusto.
-                            example: Labore sunt.
+                                example: Nihil aperiam ducimus labore sunt illo voluptatum.
+                            example: Tempora libero ut ut nostrum beatae.
                     content:
                         application/json:
                             schema:
@@ -877,9 +877,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 32fe8a86-93d6-4724-829d-126fd08fbf41
+                    example: f1caa71f-5d0e-4819-bb6a-91b73bda4551
                     format: uuid
-                  example: 0330e7d1-a9bb-4898-b175-caf7f158b71e
+                  example: ecf1dbc6-08e5-4a8f-89d8-368251464c47
             responses:
                 "200":
                     description: OK response.
@@ -1034,9 +1034,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 960d40c7-4688-4735-a44a-949d6374bd5c
+                    example: 960d40c7-4688-474b-9cdf-4a4b94257cc0
                     format: uuid
-                  example: 0b7f1dc2-b9db-4024-afb4-3f701f563d37
+                  example: e89e0466-10de-4a36-84ea-c43df44885e8
             requestBody:
                 required: true
                 content:
@@ -1045,13 +1045,15 @@ paths:
                             $ref: '#/components/schemas/CreateAudienceRequestBody'
                         example:
                             audience:
-                                inclusion_summary: Ullam omnis autem.
+                                inclusion_summary: Et aut consequatur inventore enim reiciendis.
                                 platform: hubspot
-                                platform_master_list_id: Exercitationem et impedit at.
-                                status: built
+                                platform_master_list_id: Et impedit at perspiciatis quisquam perferendis.
+                                status: building
                                 suppression_list_ids:
-                                    - Perferendis autem ut alias quis nihil dolore.
+                                    - Alias quis nihil dolore.
                                     - Reprehenderit et aut animi.
+                                    - Ullam omnis autem.
+                                    - Id laboriosam nihil ea.
             responses:
                 "201":
                     description: Created response.
@@ -1061,25 +1063,25 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Placeat accusamus et quo et provident.
-                            example: Illum non saepe.
+                                example: Et provident et mollitia voluptas qui.
+                            example: Repellendus et.
                     content:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Audience2'
                             example:
-                                brief_id: Culpa iste.
-                                id: Incidunt qui aut tempora dolor sequi quia.
-                                inclusion_summary: Minus voluptatem sed architecto itaque doloribus.
+                                brief_id: Sint officiis est et qui.
+                                id: Odio quia culpa.
+                                inclusion_summary: Dolorum minus voluptatem.
                                 platform: hubspot
-                                platform_master_list_id: Incidunt sint officiis est et qui.
-                                project_id: Consequatur velit odio.
-                                status: building
+                                platform_master_list_id: Sint quia nostrum tempore nemo illum.
+                                project_id: Id sit.
+                                status: built
                                 suppression_list_ids:
-                                    - Sint quia nostrum tempore nemo illum.
-                                    - Maiores atque accusantium enim temporibus dolor ipsam.
-                                    - Sit repudiandae aut aut ducimus dolores vel.
-                                version: 4142310974435201645
+                                    - Atque accusantium enim temporibus.
+                                    - Ipsam sed sit repudiandae.
+                                    - Aut ducimus dolores.
+                                version: 1609701542729052998
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1178,9 +1180,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: ce4fcc82-2b4e-4b82-aa1e-bc8ff56a2d41
+                    example: 8af9eca1-9169-4ac1-84ab-4a45dd1fcf92
                     format: uuid
-                  example: 5095ada5-ef47-486c-acd2-559ef1250640
+                  example: 0583d54a-e488-44a6-970d-15a55598dcd9
                 - name: audience_id
                   in: path
                   description: Audience UUID
@@ -1188,9 +1190,9 @@ paths:
                   schema:
                     type: string
                     description: Audience UUID
-                    example: e4de5733-b7c0-430c-8c97-e4093d57592c
+                    example: 11b9dcc6-c8ac-4831-b9e3-9cc450451c2a
                     format: uuid
-                  example: 74083afa-fbe7-4666-8bc4-274582a290cb
+                  example: 76146b5d-0fce-4bff-8765-f4a3d0d22f99
             responses:
                 "200":
                     description: OK response.
@@ -1200,8 +1202,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Vel nam totam.
-                            example: Odio eos accusamus quisquam voluptatibus veniam enim.
+                                example: Non nobis illum sunt cum explicabo.
+                            example: Totam recusandae.
                     content:
                         application/json:
                             schema:
@@ -1317,9 +1319,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: f69461bb-c067-4325-aa25-89811fa31d6a
+                    example: 159ec228-e395-4e02-b3bb-c233a8edf234
                     format: uuid
-                  example: 4e3b647b-0ede-4079-8e0d-42f510ac46ce
+                  example: d1cca9b5-0fa1-4f15-a6f2-7a84cc631364
                 - name: audience_id
                   in: path
                   description: Audience UUID
@@ -1327,9 +1329,9 @@ paths:
                   schema:
                     type: string
                     description: Audience UUID
-                    example: b062fe8d-04f2-4d72-a2e9-a2d76944564b
+                    example: 2e422345-cbc5-49f0-b886-a870b8bf6e83
                     format: uuid
-                  example: 02a34db5-3e32-4027-b2a0-17d553c16324
+                  example: d14ed06a-45e3-4d4c-8bd1-50fa79a1668c
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -1364,8 +1366,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Sequi praesentium.
-                            example: Cupiditate ex accusantium illo.
+                                example: Molestiae aut quibusdam molestias et.
+                            example: Excepturi quae aperiam ipsa sint.
                     content:
                         application/json:
                             schema:
@@ -1500,9 +1502,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: f93991ca-f106-4542-a921-d22d43dcb928
+                    example: 685a5484-958c-407c-a247-6b89d6bc4c76
                     format: uuid
-                  example: 09e52ca6-389d-4487-80c1-4fea5e2bdc41
+                  example: 71099678-dcd4-4825-bb90-c37a5a134476
             responses:
                 "202":
                     description: Accepted response.
@@ -1512,8 +1514,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Sit omnis neque possimus corporis.
-                            example: Veniam omnis dicta molestiae.
+                                example: Natus et.
+                            example: Nulla omnis sed quisquam dolorum.
                     content:
                         application/json:
                             schema:
@@ -1632,9 +1634,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 167d55a6-4961-418f-af4c-e14787e0b33e
+                    example: 12000e17-cb24-49c2-a12f-cbb9fef0abd4
                     format: uuid
-                  example: 76a6cbb8-9b7d-4eaa-93ff-3ddd32352134
+                  example: 43291cd4-32b3-494a-85b4-b3f29e25c463
             requestBody:
                 required: true
                 content:
@@ -1781,9 +1783,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 306eaee6-cb9e-43af-85e5-654c8b0a2ce8
+                    example: f119ea37-0dcb-4261-9692-79c36772403a
                     format: uuid
-                  example: 740876b9-9049-4a1b-8dba-612a2d10d480
+                  example: c7202030-84ee-4609-9487-acb80b9b746d
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -1791,9 +1793,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 7eae2e22-fcdf-4887-b4fc-2c64fd791627
+                    example: 6b322245-f5ed-403f-a8a0-9a11a573e1ee
                     format: uuid
-                  example: 0e8332c5-8a43-4e37-bcd0-eb0275d655be
+                  example: f848ffd7-c7cf-4867-adf4-d21ea614b21a
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -1921,9 +1923,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: eb6fa388-e4e7-4ad3-9617-55494ac9e4da
+                    example: 6ce4a4cf-dddc-48dc-8738-df1391a3272e
                     format: uuid
-                  example: b328bae2-5768-42a8-8bd3-d0b127eb076c
+                  example: ab2c8100-fef8-4201-954b-b1724178bfca
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -1931,9 +1933,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 5a017ba3-7d7a-4836-99c4-3173aad91c2b
+                    example: 6eb9d145-139d-4279-bc25-ec96d6446de2
                     format: uuid
-                  example: e6df403c-d078-4ce8-8bdc-591990fcc538
+                  example: 2bfff3a8-5b3a-43c4-acb4-51e99626f15b
             responses:
                 "200":
                     description: OK response.
@@ -1943,8 +1945,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Harum dicta fugiat recusandae aut illum sunt.
-                            example: Quod aliquam ut eius molestiae.
+                                example: Eius molestiae ex iste facilis blanditiis debitis.
+                            example: Molestias dolores.
                     content:
                         application/json:
                             schema:
@@ -2055,9 +2057,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: b849d907-2514-4b21-8430-8001b42fa6a0
+                    example: b7c0530d-829e-4acf-9f12-6efa79d705f6
                     format: uuid
-                  example: d2f9df8c-abe1-490b-9add-1809c76aa3eb
+                  example: 0cc6f51d-763e-4a72-8f96-c8f2c45a92c6
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -2065,9 +2067,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 0db1c953-60ae-4828-8e60-a2d93ec4a8fc
+                    example: 8bbcf8d4-4762-42b6-9805-b3a1c7cefc86
                     format: uuid
-                  example: 0405f079-c3d9-4712-85e2-082282ca3ac8
+                  example: f9e047ac-0286-40f0-b007-da709a5367e4
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -2097,8 +2099,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Omnis ducimus dolores quod quibusdam.
-                            example: Distinctio consequatur minima.
+                                example: Consequatur minima mollitia sed.
+                            example: Facilis voluptatibus non ut aliquid aut est.
                     content:
                         application/json:
                             schema:
@@ -2228,9 +2230,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: c710cc7c-8fae-408f-8687-c59071eb20a5
+                    example: a711e191-2686-48c2-b35d-1acc04fc9000
                     format: uuid
-                  example: 00db159d-9d68-4872-818d-dea92198aab7
+                  example: 6960c963-f188-4595-9033-cd5dea9059e3
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -2238,9 +2240,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: ea9841db-d23d-4120-bdad-da496f3b2328
+                    example: 3fec0207-9a95-4365-a5af-f43fd85eebab
                     format: uuid
-                  example: fa11e9fd-d5e4-4181-bff7-c1220bad381f
+                  example: 5b7ce194-9456-482d-aac0-cbe5f59eb716
             requestBody:
                 required: true
                 content:
@@ -2369,7 +2371,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_7_days
+                  example: last_14_days
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -2386,9 +2388,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 6d5cb5a3-a0e3-4434-b760-58f3a1b7d401
+                    example: 8d1a2259-92b4-4777-b396-6465424e1dfd
                     format: uuid
-                  example: 9e6613de-3ca3-4a6a-be9d-194b48929d53
+                  example: 65a40e6d-6425-47e4-9e36-d049caa147ab
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -2396,9 +2398,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: e854e587-d3dd-4411-bcd8-373e2858bd7f
+                    example: 0f8d7967-9052-40eb-852b-f587cf91e804
                     format: uuid
-                  example: a932f684-a26b-41fe-918b-d8022fabf685
+                  example: 40fdd004-3460-414e-9733-797cfda4162b
             responses:
                 "200":
                     description: OK response.
@@ -2519,9 +2521,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: c1442baa-02f8-417a-a648-3e9bdfa6dace
+                    example: 84ffe6ae-a26c-4305-ab12-1d012650ef73
                     format: uuid
-                  example: fbf87c54-30c1-4f38-b1d2-9ddaa369cc73
+                  example: 17dcfd75-f614-4b50-aae2-82950b97bb6f
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -2529,9 +2531,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 8424a323-70f9-4065-a595-b7efe94074a3
+                    example: 6f0e480f-2238-406e-b300-2d9a1094f009
                     format: uuid
-                  example: 4e5c96a1-87c4-435d-82f4-eaa31fc1a08f
+                  example: 74023afb-33d0-41b8-84e8-81f224bcd800
             responses:
                 "200":
                     description: OK response.
@@ -2679,9 +2681,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 307bba0e-fd26-4ae3-9967-de5fb14e1e77
+                    example: 01331d5c-38fa-4e06-8909-ccb49d1f9068
                     format: uuid
-                  example: 6302f04f-4bc9-4af4-98e6-6588cc4a5d1d
+                  example: f2bde963-fa2e-4bea-9284-9cc4d7458e06
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -2689,9 +2691,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 59012e07-9547-436f-9d2d-049748412fd3
+                    example: 585580fc-1d97-42e7-83ea-6e46ea5a29d2
                     format: uuid
-                  example: d1d96f12-fd58-4128-9f02-4a81cbee6824
+                  example: dae2573d-7fe8-4966-9153-1f622e61905f
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -2718,8 +2720,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Asperiores at at magni reprehenderit ab.
-                            example: Eum aut exercitationem animi ut quos enim.
+                                example: Ut quos enim molestiae.
+                            example: Temporibus doloremque aliquid illum doloremque vel.
                     content:
                         application/json:
                             schema:
@@ -2851,9 +2853,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: cf4a0e7a-72ef-438f-a94d-658178a79b9c
+                    example: 97b67aaa-5cb4-4dbd-bb3e-4240f290ee27
                     format: uuid
-                  example: f141c318-560d-41a1-8358-6073f65f1c1a
+                  example: 2f1bce9f-7af8-4ba6-bc43-3fbcab281196
             requestBody:
                 required: true
                 content:
@@ -2872,8 +2874,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Eos perspiciatis ad assumenda nobis facere soluta.
-                            example: Repudiandae aut voluptatibus.
+                                example: Aut voluptatibus voluptatum ea adipisci ut inventore.
+                            example: Id nihil libero.
                     content:
                         application/json:
                             schema:
@@ -2985,9 +2987,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: e24c891e-44ce-4b3f-8f52-4ffa628c64b6
+                    example: 56e1e50f-c724-47ab-8aa4-73ce4db43aa5
                     format: uuid
-                  example: e690cc10-1fb4-4c19-9369-462c3dd67635
+                  example: 9bcf2b39-5969-4256-ac4a-5466da678d2b
             requestBody:
                 required: true
                 content:
@@ -3124,9 +3126,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: fa538fb2-2d01-4e47-9b0a-8a237cb64fc4
+                    example: bf32c207-c516-4141-abbf-9e8c5bcaddeb
                     format: uuid
-                  example: 8ca8350e-2882-4b7a-bc16-23c798ae67da
+                  example: 4d28ecdb-851f-4aaa-ade5-e4cfeb17c88d
             responses:
                 "200":
                     description: OK response.
@@ -3228,7 +3230,7 @@ paths:
                   schema:
                     type: string
                     description: Platform-agnostic reporting window applied to every campaign; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which fall back to the widest range they support. A row's own metrics.window records what it actually covers.
-                    example: this_month
+                    example: last_month
                     enum:
                         - today
                         - yesterday
@@ -3254,9 +3256,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: ca7865fd-6e6b-4679-b45e-b2473c3dc718
+                    example: d28fd65f-6740-4383-af3b-635f50726eb6
                     format: uuid
-                  example: 27dad180-eea0-468f-b707-aa78cc3e64af
+                  example: f62435a0-0296-4436-a4f2-5c3e71b589a9
             responses:
                 "200":
                     description: OK response.
@@ -3565,8 +3567,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Facere ut ut iure.
-                            example: Illo voluptas adipisci distinctio nostrum possimus tempore.
+                                example: Distinctio nostrum.
+                            example: Veniam ut ut.
                     content:
                         application/json:
                             schema:
@@ -3687,8 +3689,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Et culpa non quidem qui a.
-                            example: Fuga aperiam harum dolorem cumque qui.
+                                example: Harum dolorem cumque qui voluptatem facere ut.
+                            example: Ducimus quasi illo voluptas.
                     content:
                         application/json:
                             schema:
@@ -3812,8 +3814,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Ab dolores mollitia veniam ut ut.
-                            example: Qui aut dolores vel et voluptatibus est.
+                                example: Quia qui sint qui est consequatur.
+                            example: Consectetur architecto saepe voluptate et.
                     content:
                         application/json:
                             schema:
@@ -4299,8 +4301,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Eligendi voluptates.
-                            example: Pariatur dolores atque aperiam eos eum rerum.
+                                example: Veritatis totam sit ullam sed.
+                            example: Dolorem assumenda quibusdam sed officiis nostrum.
                     content:
                         application/json:
                             schema:
@@ -4424,8 +4426,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Vitae enim.
-                            example: Ut numquam expedita reiciendis et non.
+                                example: Praesentium possimus velit iusto.
+                            example: Eligendi voluptates.
                     content:
                         application/json:
                             schema:
@@ -4555,8 +4557,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Dolorem assumenda quibusdam sed officiis nostrum.
-                            example: Dolore sequi cupiditate.
+                                example: Est necessitatibus hic.
+                            example: Inventore id ratione veritatis atque quod.
                     content:
                         application/json:
                             schema:
@@ -4660,7 +4662,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: search-hubspot-campaigns lfx-v2-campaign-service-connections
-            description: 'Find LF HubSpot marketing campaigns by name, to read back an existing campaign''s `hs_utm` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this returns matches from the ENTIRE LF portal regardless of which project scopes the path — the `project_id` gates permission, not visibility. That is a property of HubSpot''s data model rather than a gap in the scoping here, and it is why the create route below needs a warning before it is used. The match is HubSpot''s own full-text search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely share a token with the query. Every match is returned in HubSpot''s relevance order rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `campaigns` array is a 200, not a 404**: ''no campaign is named that'' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `utm` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. **The result set is CAPPED at 100 and there is no paging.** A campaign ranked below the cap is not returned, and a caller reads an absent campaign as licence to create one — so an operator who cannot find a campaign should search a narrower term rather than assume it does not exist. 100 is HubSpot''s own per-request maximum, so the gap between "not in the top N" and "does not exist" is as small as one request can make it. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term, with no collection, pagination or filtering.'
+            description: 'Find LF HubSpot marketing campaigns by name, to read back an existing campaign''s `hs_utm` token. **THE NAMESPACE IS LF-GLOBAL.** HubSpot campaigns are not scoped to a project, so this returns matches from the ENTIRE LF portal regardless of which project scopes the path — the `project_id` gates permission, not visibility. That is a property of HubSpot''s data model rather than a gap in the scoping here, and it is why the create route below needs a warning before it is used. The match is HubSpot''s own full-text search: fuzzy and scored, NOT an exact-name lookup, so a hit can merely share a token with the query. Every match is returned in HubSpot''s relevance order rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `campaigns` array is a 200, not a 404**: ''no campaign is named that'' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `utm` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. **The result set is CAPPED at 100 and there is no paging.** A campaign ranked below the cap is not returned, and a caller reads an absent campaign as licence to create one — so an operator who cannot find a campaign should search a narrower term rather than assume it does not exist. 100 is HubSpot''s own per-request maximum, so the gap between "not in the top N" and "does not exist" is as small as one request can make it. **`capped` reports when that gap is actually open**, derived from HubSpot''s own total rather than from the returned count — an exactly-full page and a truncated one are the same length. While it is true the caller must not offer an unqualified create. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term, with no collection, pagination or filtering.'
             operationId: lfx-v2-campaign-service-connections#search-hubspot-campaigns
             parameters:
                 - name: q
@@ -4700,6 +4702,7 @@ paths:
                                       name: KubeCon NA 2026
                                       start_date: "2026-11-01"
                                       utm: kubecon-na-2026
+                                capped: true
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5261,8 +5264,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Aliquid consequatur iusto nihil incidunt iure rerum.
-                            example: Eos esse sit possimus et dolorem.
+                                example: Laboriosam veritatis aut.
+                            example: Tempora velit repellat iusto numquam exercitationem.
                     content:
                         application/json:
                             schema:
@@ -5383,8 +5386,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Consectetur architecto saepe voluptate et.
-                            example: Maiores eum reiciendis.
+                                example: Alias sunt.
+                            example: Aliquid consequatur iusto nihil incidunt iure rerum.
                     content:
                         application/json:
                             schema:
@@ -5508,8 +5511,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Tempora velit repellat iusto numquam exercitationem.
-                            example: Qui odio cumque suscipit voluptas non expedita.
+                                example: Excepturi autem aut fugiat.
+                            example: Neque recusandae sapiente.
                     content:
                         application/json:
                             schema:
@@ -5995,8 +5998,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Illum dolore occaecati nobis.
-                            example: Voluptas nostrum.
+                                example: Nobis voluptatem quia harum eos incidunt dicta.
+                            example: At totam fugit.
                     content:
                         application/json:
                             schema:
@@ -6117,8 +6120,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Neque recusandae sapiente.
-                            example: Officiis fuga itaque.
+                                example: Repudiandae consequatur ad ex nihil corporis.
+                            example: Illum dolore occaecati nobis.
                     content:
                         application/json:
                             schema:
@@ -6244,8 +6247,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: At totam fugit.
-                            example: Hic rem impedit.
+                                example: Harum nulla.
+                            example: Totam omnis id non.
                     content:
                         application/json:
                             schema:
@@ -6730,8 +6733,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Optio harum doloribus.
-                            example: Omnis perspiciatis accusantium aspernatur.
+                                example: Debitis et occaecati quia.
+                            example: Consectetur rerum consequatur sit aspernatur aut vero.
                     content:
                         application/json:
                             schema:
@@ -6852,8 +6855,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Accusamus et nam pariatur quia natus.
-                            example: Vel tempora minus ut animi eos iure.
+                                example: Consectetur et qui harum.
+                            example: Optio harum doloribus.
                     content:
                         application/json:
                             schema:
@@ -6977,8 +6980,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Consectetur rerum consequatur sit aspernatur aut vero.
-                            example: Expedita sunt voluptas iure.
+                                example: Provident ad magnam dicta dolor nihil.
+                            example: Vitae enim.
                     content:
                         application/json:
                             schema:
@@ -7464,8 +7467,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Incidunt nostrum quas vel aut ut non.
-                            example: Id hic aut sit.
+                                example: Quae reprehenderit sed voluptas quia sed.
+                            example: Id voluptatem vel.
                     content:
                         application/json:
                             schema:
@@ -7585,8 +7588,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Totam omnis id non.
-                            example: Quia odit.
+                                example: Ad eveniet distinctio error eum ut.
+                            example: Incidunt nostrum quas vel aut ut non.
                     content:
                         application/json:
                             schema:
@@ -7710,8 +7713,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Id voluptatem vel.
-                            example: Dolor ad soluta excepturi.
+                                example: Quis occaecati et quia ratione repellendus asperiores.
+                            example: Placeat qui consectetur magnam aut.
                     content:
                         application/json:
                             schema:
@@ -8102,8 +8105,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Quo velit consequuntur.
-                            example: Nihil est et quae.
+                                example: Eius sit adipisci dolorem sed id.
+                            example: Blanditiis consequatur nobis iste debitis.
                     content:
                         application/json:
                             schema:
@@ -8224,8 +8227,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Placeat qui consectetur magnam aut.
-                            example: Quia eum eum blanditiis alias omnis.
+                                example: Eum at qui quia.
+                            example: Quo velit consequuntur.
                     content:
                         application/json:
                             schema:
@@ -8349,8 +8352,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Blanditiis consequatur nobis iste debitis.
-                            example: Velit magnam cum expedita iste.
+                                example: Commodi saepe suscipit at quis rerum sit.
+                            example: Accusamus et nam pariatur quia natus.
                     content:
                         application/json:
                             schema:
@@ -8859,7 +8862,7 @@ paths:
                   schema:
                     type: string
                     description: Platform-agnostic reporting window; defaults to last_30_days when omitted
-                    example: last_month
+                    example: today
                     enum:
                         - today
                         - yesterday
@@ -8868,7 +8871,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_30_days
+                  example: yesterday
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -8996,7 +8999,7 @@ paths:
                   schema:
                     type: string
                     description: Platform-agnostic reporting window; defaults to last_30_days when omitted
-                    example: last_30_days
+                    example: last_month
                     enum:
                         - today
                         - yesterday
@@ -9005,7 +9008,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_14_days
+                  example: this_month
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -9155,9 +9158,9 @@ paths:
                   schema:
                     type: string
                     description: Job UUID
-                    example: d6c332e5-493f-4960-ba4d-d5ccc015eebb
+                    example: fde1785b-5668-4fb2-b372-35863a55459a
                     format: uuid
-                  example: 966a034e-920a-4bfb-ba3b-55274525e1d3
+                  example: 096960f7-7a0e-4520-9f51-dffb72abb982
             responses:
                 "200":
                     description: OK response.
@@ -9324,19 +9327,19 @@ components:
                 brief_id:
                     type: string
                     description: Owning brief
-                    example: Ut a ut maiores assumenda sed.
+                    example: Deserunt praesentium et aut architecto fugiat dolores.
                 etag:
                     type: string
                     description: ETag header value (mirrors version)
-                    example: Quae maxime ut dolor itaque nisi eum.
+                    example: Sunt laborum.
                 id:
                     type: string
                     description: Audience UUID
-                    example: Possimus porro exercitationem et.
+                    example: Quaerat expedita eum non sed ut.
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Ut ut ut.
+                    example: Eum enim architecto.
                 platform:
                     type: string
                     description: Platform the audience is built on
@@ -9346,11 +9349,11 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Omnis deserunt praesentium et aut architecto fugiat.
+                    example: Beatae molestiae minima.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Expedita eum non.
+                    example: Ut maiores assumenda sed laborum dignissimos.
                 status:
                     type: string
                     description: Build lifecycle status
@@ -9363,29 +9366,30 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Odit beatae.
+                        example: Iste architecto molestias et nihil.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Minima sint iste architecto molestias et nihil.
-                        - Eum et magnam adipisci ipsa itaque.
+                        - Et magnam adipisci ipsa.
+                        - Facilis ut ut ut.
+                        - Voluptates voluptatem quae maxime ut dolor itaque.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 3403544469190876882
+                    example: 3534410099868750238
                     format: int64
             example:
-                brief_id: Sapiente eveniet consectetur.
-                etag: Ut inventore.
-                id: Architecto et dolores et sunt laborum.
-                inclusion_summary: Facilis quo dolor magni aliquam.
+                brief_id: Sed non odio repudiandae molestiae veritatis dolores.
+                etag: Quisquam unde sed laboriosam perspiciatis sint dolorem.
+                id: Ad repellendus neque tempora atque provident.
+                inclusion_summary: Dolor magni aliquam ut voluptatum perspiciatis.
                 platform: hubspot
-                platform_master_list_id: Non odio repudiandae molestiae veritatis dolores.
-                project_id: Ad repellendus neque tempora atque provident.
+                platform_master_list_id: Repudiandae sunt voluptatem ratione delectus recusandae quia.
+                project_id: Sapiente eveniet consectetur.
                 status: built
                 suppression_list_ids:
-                    - Repudiandae sunt voluptatem ratione delectus recusandae quia.
-                    - Excepturi esse officiis temporibus dolorem aperiam.
-                version: 4254007717506360807
+                    - Esse officiis temporibus.
+                    - Aperiam corporis facilis.
+                version: 5635140134928960651
             required:
                 - id
                 - project_id
@@ -9687,7 +9691,7 @@ components:
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Molestias accusantium beatae.
+                    example: Voluptatum explicabo vero repudiandae temporibus ut.
                 platform:
                     type: string
                     description: Platform the audience is built on
@@ -9697,7 +9701,7 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Ullam in tempora harum corporis deserunt quae.
+                    example: Tempora harum corporis deserunt quae occaecati aut.
                 status:
                     type: string
                     description: Build lifecycle status
@@ -9710,23 +9714,23 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Aut mollitia.
+                        example: Eveniet et qui est qui commodi.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Qui est.
-                        - Commodi hic.
                         - Pariatur ratione blanditiis.
                         - Ex quis molestias nam quia facilis.
+                        - Molestias accusantium beatae.
+                        - Deserunt earum saepe repellat.
             example:
-                inclusion_summary: Et non possimus qui consectetur.
+                inclusion_summary: Reprehenderit eius distinctio voluptatum.
                 platform: hubspot
-                platform_master_list_id: Saepe repellat quo voluptatum explicabo.
-                status: built
+                platform_master_list_id: Illum reiciendis.
+                status: building
                 suppression_list_ids:
-                    - Temporibus ut praesentium aut nesciunt illum reiciendis.
-                    - Enim est hic enim.
-                    - Et eveniet vel magnam blanditiis.
-                    - Similique est fugit natus numquam voluptatibus quisquam.
+                    - Est hic enim similique et eveniet vel.
+                    - Blanditiis inventore similique est.
+                    - Natus numquam voluptatibus quisquam et et.
+                    - Possimus qui.
             required:
                 - platform
         AudienceUpdateInput:
@@ -9735,19 +9739,19 @@ components:
                 clear_suppression_lists:
                     type: boolean
                     description: Set true to remove all suppression lists (round-trips where an empty array cannot)
-                    example: true
+                    example: false
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Tempora quos impedit rerum sapiente aut itaque.
+                    example: Sapiente aut.
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Distinctio voluptatum aperiam sit amet.
+                    example: Amet molestiae.
                 status:
                     type: string
                     description: Build lifecycle status
-                    example: failed
+                    example: built
                     enum:
                         - building
                         - built
@@ -9756,20 +9760,21 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Mollitia quisquam quasi.
+                        example: Quisquam quasi aliquam sit voluptatibus sunt.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Voluptatibus sunt.
-                        - Pariatur corrupti suscipit molestias sit.
-                        - Ratione unde occaecati fugiat.
+                        - Corrupti suscipit molestias sit sint ratione.
+                        - Occaecati fugiat error tempora quos impedit.
             example:
-                clear_suppression_lists: true
-                inclusion_summary: Sit error ducimus consequatur cumque possimus.
-                platform_master_list_id: Odio dolorum qui nisi doloremque eos facilis.
-                status: built
+                clear_suppression_lists: false
+                inclusion_summary: Hic optio possimus.
+                platform_master_list_id: Voluptatem odio dolorum qui.
+                status: failed
                 suppression_list_ids:
+                    - Eos facilis necessitatibus.
                     - Nihil occaecati molestiae occaecati.
                     - Nihil ducimus.
+                    - Sit error ducimus consequatur cumque possimus.
             required:
                 - platform
         BadRequestError:
@@ -10320,7 +10325,7 @@ components:
                 event_slug:
                     type: string
                     description: Event/course slug (unique within the project)
-                    example: Unde sed laboriosam perspiciatis sint dolorem adipisci.
+                    example: Quam possimus ex delectus ea ullam.
                 keywords:
                     description: Keyword list
                     example: Sequi non.
@@ -10328,17 +10333,16 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Reiciendis optio fuga nam vero repellendus et.
+                        example: Saepe molestiae aut est.
                     description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                     example:
-                        - Molestiae aut.
-                        - Quaerat inventore veniam dignissimos vel.
-                        - Omnis numquam blanditiis.
+                        - Veniam dignissimos vel non.
+                        - Numquam blanditiis.
                         - Cum totam quod explicabo.
                 program_type:
                     type: string
                     description: Funnel context
-                    example: events
+                    example: education
                     enum:
                         - events
                         - education
@@ -10349,7 +10353,7 @@ components:
                 url:
                     type: string
                     description: Event/course page URL
-                    example: Quam possimus ex delectus ea ullam.
+                    example: Reiciendis optio fuga nam vero repellendus et.
             example:
                 copy: Voluptatem fugiat.
                 event_details: Qui qui molestias.
@@ -11399,13 +11403,15 @@ components:
                     $ref: '#/components/schemas/AudienceInput'
             example:
                 audience:
-                    inclusion_summary: Ullam omnis autem.
+                    inclusion_summary: Et aut consequatur inventore enim reiciendis.
                     platform: hubspot
-                    platform_master_list_id: Exercitationem et impedit at.
-                    status: built
+                    platform_master_list_id: Et impedit at perspiciatis quisquam perferendis.
+                    status: building
                     suppression_list_ids:
-                        - Perferendis autem ut alias quis nihil dolore.
+                        - Alias quis nihil dolore.
                         - Reprehenderit et aut animi.
+                        - Ullam omnis autem.
+                        - Id laboriosam nihil ea.
             required:
                 - audience
         CreateBriefRequestBody:
@@ -14410,6 +14416,10 @@ components:
                           name: KubeCon NA 2026
                           start_date: "2026-11-01"
                           utm: kubecon-na-2026
+                capped:
+                    type: boolean
+                    description: True when HubSpot matched MORE campaigns than were returned. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace every foundation shares. Narrow the search term instead.
+                    example: true
             example:
                 campaigns:
                     - id: "112233445566"
@@ -14420,8 +14430,10 @@ components:
                       name: KubeCon NA 2026
                       start_date: "2026-11-01"
                       utm: kubecon-na-2026
+                capped: false
             required:
                 - campaigns
+                - capped
         ServiceUnavailableError:
             type: object
             properties:

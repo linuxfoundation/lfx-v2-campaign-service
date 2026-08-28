@@ -331,3 +331,35 @@ func TestSearchHubspotCampaigns_UncappedSearchIsNotFlagged(t *testing.T) {
 		t.Error("Capped = true on an uncapped search — the create offer would be suppressed for every operator")
 	}
 }
+
+// The create endpoint must name ITS OWN operation. Sharing the search descriptor made it report
+// "campaign search is not supported" for a create the caller never described that way, sending
+// the operator to look at the wrong thing.
+func TestCreateHubspotCampaign_ReportsCreationNotSearch(t *testing.T) {
+	// A dispatcher with no campaign capability at all, which is the arm that renders the label.
+	d := &mockNoCampaignDispatcher{}
+
+	_, err := newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+		&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+	if err == nil {
+		t.Fatal("an unsupported create was reported as success")
+	}
+	be, ok := err.(*conn.BadRequestError)
+	if !ok {
+		t.Fatalf("error = %T, want *conn.BadRequestError", err)
+	}
+	if strings.Contains(strings.ToLower(be.Message), "search") {
+		t.Errorf("a create failure describes a search: %q", be.Message)
+	}
+	if !strings.Contains(strings.ToLower(be.Message), "creation") {
+		t.Errorf("message does not name the creation: %q", be.Message)
+	}
+}
+
+// mockNoCampaignDispatcher implements PlatformDispatcher but NOT CampaignSearcher, so
+// campaignSearcherFor rejects it with the unsupported sentinel.
+type mockNoCampaignDispatcher struct{}
+
+func (m *mockNoCampaignDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}

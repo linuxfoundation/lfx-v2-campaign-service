@@ -20,6 +20,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
 // validateConnectionProjectSlug guards the connection CREATE endpoints: project_id
@@ -1206,6 +1207,20 @@ var hubspotCampaignDiscovery = accountDiscovery{
 		"with private_app_token set",
 }
 
+// hubspotCampaignCreateDiscovery is the CREATE path's own descriptor.
+//
+// Separate from hubspotCampaignDiscovery only because `operation` reaches the operator: sharing
+// it made the create endpoint report "campaign search service is unavailable" during cold start
+// and "campaign search is not supported" on a capability gap. Both name an operation the caller
+// did not ask for, sending them to look at the wrong thing.
+var hubspotCampaignCreateDiscovery = accountDiscovery{
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	operation:   "campaign creation",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with private_app_token set",
+}
+
 // SearchHubspotCampaigns finds LF HubSpot campaigns by name, so a caller can read back an
 // existing campaign's utm token.
 //
@@ -1260,7 +1275,7 @@ func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.
 // the design method; neither is enforced here, because neither can be: a duplicate check would
 // race, and visibility is HubSpot's data model. The caller searches first and warns.
 func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.CreateHubspotCampaignPayload) (*conn.HubspotCampaign, error) {
-	d := hubspotCampaignDiscovery
+	d := hubspotCampaignCreateDiscovery
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err
 	}
@@ -1293,10 +1308,24 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		// transport, 429, 3xx and 5xx failures as unconfirmed precisely because the campaign may
 		// already exist; collapsing them into "try again" is how a duplicate gets made.
 		//
-		// A create whose outcome cannot be confirmed is reported as one, and the message sends
-		// the operator to HubSpot rather than back through the button.
+		// A DEFINITE rejection is reported as one. HubSpot answered on the merits — an invalid
+		// name, a permission failure — and nothing was created, so telling the operator to go
+		// hunt for a campaign that does not exist wastes their time and buries the actual
+		// remedy. IsDefiniteRejection is the structural signal, and it is asked POSITIVELY
+		// rather than as !IsUnconfirmed: the negation answers true for any error the platform
+		// package cannot classify, which would report "nothing was created" about an outcome
+		// nobody established. Unrecognised errors fall through to unconfirmed below.
 		slog.ErrorContext(ctx, "hubspot campaign creation failed",
-			"project_id", p.ProjectID, "error", safeErrSummary(cerr))
+			"project_id", p.ProjectID, "definite_rejection", hubspot.IsDefiniteRejection(cerr), "error", safeErrSummary(cerr))
+		if hubspot.IsDefiniteRejection(cerr) {
+			return nil, &conn.BadRequestError{
+				Code:    "400",
+				Message: "hubspot rejected the campaign creation; nothing was created — check the name and try again",
+			}
+		}
+		// Everything else is UNCONFIRMED, and the message sends the operator to HubSpot rather
+		// than back through the button: this is a NON-IDEMPOTENT write into a namespace every
+		// foundation shares, so a retry on an unconfirmed outcome is how a duplicate gets made.
 		return nil, &conn.ConnServiceUnavailableError{
 			Code:    "503",
 			Message: "the campaign creation could not be confirmed — check HubSpot before creating it again, as it may already exist",

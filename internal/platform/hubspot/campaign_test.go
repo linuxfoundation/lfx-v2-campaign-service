@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -270,6 +271,23 @@ func TestSearchCampaigns_CappedComesFromTotalNotLength(t *testing.T) {
 		}
 	})
 
+	t.Run("absent total is capped, not complete", func(t *testing.T) {
+		// An omitted total says nothing about how many matched. Decoded into a plain int it
+		// would read as "0 matched, nothing hidden" — the authoritative absence a caller acts on
+		// by creating a campaign in a namespace every foundation shares. Unknown must fail
+		// closed, so the absence of the field is treated as possibly capped.
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[]}`)
+		})
+		got, err := c.SearchCampaigns(context.Background(), "nothing")
+		if err != nil {
+			t.Fatalf("SearchCampaigns: %v", err)
+		}
+		if !got.Capped {
+			t.Error("Capped = false on a response with no total: an unknown completeness read as proven absence")
+		}
+	})
+
 	t.Run("empty and complete", func(t *testing.T) {
 		// The common case, and the one that must NOT warn: nothing matched, and nothing was
 		// hidden. This is where the create offer is legitimate.
@@ -282,6 +300,67 @@ func TestSearchCampaigns_CappedComesFromTotalNotLength(t *testing.T) {
 		}
 		if got.Capped {
 			t.Error("Capped = true on an empty, complete search — the create offer would never be available")
+		}
+	})
+}
+
+// The two predicates a create's caller branches on, asserted together because the pair is the
+// contract: a definite rejection means retry is safe, an unconfirmed one means verify first.
+func TestCreateOutcomePredicates(t *testing.T) {
+	t.Run("a definite 4xx is a clean rejection", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"message":"invalid name"}`)
+		})
+		_, err := c.CreateCampaign(context.Background(), "bad name")
+		if err == nil {
+			t.Fatal("a 400 was reported as success")
+		}
+		if !IsDefiniteRejection(err) {
+			t.Error("a definite 400 is not reported as a clean rejection: the operator is sent to hunt for a campaign that was never created")
+		}
+		if IsUnconfirmed(err) {
+			t.Error("a definite 400 reported as unconfirmed")
+		}
+	})
+
+	t.Run("an undecodable 2xx is unconfirmed, not a rejection", func(t *testing.T) {
+		// The POST already succeeded, so HubSpot has very likely created the campaign. Only our
+		// reading of the body failed, and a caller told "nothing was created" would retry into
+		// a duplicate in a namespace every foundation shares.
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"id":`)
+		})
+		_, err := c.CreateCampaign(context.Background(), "KubeCon NA 2027")
+		if err == nil {
+			t.Fatal("an undecodable body was reported as success")
+		}
+		if !IsUnconfirmed(err) {
+			t.Error("an undecodable 2xx lost its unconfirmed signal: a caller will retry a create that already ran")
+		}
+		if IsDefiniteRejection(err) {
+			t.Error("an undecodable 2xx reported as a clean rejection")
+		}
+	})
+
+	t.Run("an id-less 2xx is unconfirmed", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"id":"","properties":{}}`)
+		})
+		_, err := c.CreateCampaign(context.Background(), "KubeCon NA 2027")
+		if err == nil {
+			t.Fatal("an id-less 2xx was reported as success")
+		}
+		if !IsUnconfirmed(err) {
+			t.Error("an id-less 2xx lost its unconfirmed signal")
+		}
+	})
+
+	t.Run("an unclassifiable error is NOT a definite rejection", func(t *testing.T) {
+		// Fail-closed: IsDefiniteRejection is asked positively precisely so an error this
+		// package cannot classify is never reported as "nothing was created".
+		if IsDefiniteRejection(errors.New("something else entirely")) {
+			t.Error("an unrecognised error classified as a clean rejection — a create's outcome nobody established")
 		}
 	})
 }
