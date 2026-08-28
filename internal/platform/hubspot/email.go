@@ -111,6 +111,21 @@ const maxListPages = 200
 // filtered search, where a miss is a false absence, still reads every page.
 const maxUnfilteredEmails = 500
 
+// maxFilteredScan bounds how many emails a FILTERED search reads before giving up on finding
+// more. Without it a query matching nothing walked every page in the portal and the request died
+// on its deadline, so the picker reported a connection problem for what was really "no matches".
+//
+// 2000 is 20 full pages: comfortably inside a request deadline at ~0.8s per page, and far more
+// than a user scanning a name-or-subject match needs, since the server returns newest-first.
+//
+// Bounded by PAGES as well, because a provider that ignores `limit` and returns a handful of rows
+// per page would otherwise still walk to maxListPages before the row bound was reached -- the
+// runaway this exists to stop.
+const maxFilteredScan = 2000
+
+// maxFilteredPages caps the same walk in pages, for the small-page case described above.
+const maxFilteredPages = 20
+
 // SearchEmails returns marketing emails whose name or subject contains query
 // (case-insensitive), most-recently-updated first. Read-only (idempotent). A FILTERED
 // search follows paging.next.after across ALL pages, so a match beyond the first page is
@@ -123,6 +138,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 	needle := strings.ToLower(strings.TrimSpace(query))
 	out := make([]Email, 0)
 	after := ""
+	scanned := 0
 	for page := 0; page < maxListPages; page++ {
 		q := url.Values{}
 		q.Set("limit", "100")
@@ -161,6 +177,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		if resp.Results == nil {
 			return nil, fmt.Errorf("hubspot: email search returned a 2xx with no results array (malformed response)")
 		}
+		scanned += len(resp.Results)
 		for _, e := range resp.Results {
 			// Match the query in name OR subject INDEPENDENTLY. Concatenating them and
 			// searching the joined string would also match a query that spans the field
@@ -178,7 +195,16 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// trims the overshoot rather than being dead code. It runs after the sort so the
 		// rows dropped are the oldest of what was fetched.
 		lastPage := resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == ""
-		if lastPage || (needle == "" && len(out) >= maxUnfilteredEmails) {
+		// A FILTERED walk was bounded only by maxListPages, so a query matching nothing scanned
+		// the whole portal: 200 pages x ~0.8s is well past any request deadline, and the caller
+		// saw `context deadline exceeded` rather than "no matches". Observed on a live portal --
+		// the template picker failed to load every time while a direct one-page fetch took 0.8s.
+		//
+		// `scanned`, not `len(out)`: the bound has to hold when the query matches FEW rows or
+		// none, which is exactly the case that ran longest. Rows are sorted newest-first by the
+		// server hint, so the pages read are the ones most likely to contain what a user wants.
+		enoughScanned := needle != "" && (scanned >= maxFilteredScan || page+1 >= maxFilteredPages)
+		if lastPage || enoughScanned || (needle == "" && len(out) >= maxUnfilteredEmails) {
 			// SORT then trim, deliberately, and not the other way round. The trim is only
 			// reachable when a page carries `out` past the cap — i.e. when the provider ignored
 			// `limit`. If it ignored `limit` it may well have ignored `sort=-updatedAt` too, and

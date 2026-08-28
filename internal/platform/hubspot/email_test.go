@@ -119,6 +119,38 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 	}
 }
 
+// A filtered search was bounded only by maxListPages, so a query matching nothing walked every
+// page in the portal -- 200 pages of round trips, well past any request deadline. The caller then
+// saw `context deadline exceeded`, and the template picker reported a connection problem for what
+// was really "no matches". Observed live against a portal with 100+ emails per page.
+func TestSearchEmails_StopsScanningAQueryThatMatchesNothing(t *testing.T) {
+	pages := 0
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		// Always another page, and never a match: the shape that used to run to maxListPages.
+		// The cursor must ADVANCE each page -- the client refuses a repeated token, so a fixed
+		// one would end the walk for the wrong reason and the test would pass vacuously.
+		fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z","updatedAt":"2026-01-01T00:00:00Z"}],"paging":{"next":{"after":"CUR%d"}}}`, pages, pages)
+	})
+
+	got, err := c.SearchEmails(context.Background(), "no-such-template")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("a query matching nothing must return nothing, got %d", len(got))
+	}
+	// The bound is on rows SCANNED, not rows matched -- matched is zero here, which is exactly
+	// the case that ran longest. This stub returns ONE row per page, the small-page shape the
+	// page bound exists for, so the page bound is what must stop it.
+	if pages > maxFilteredPages {
+		t.Errorf("walked %d pages; must stop at maxFilteredPages (%d)", pages, maxFilteredPages)
+	}
+	if pages >= maxListPages {
+		t.Errorf("walked to the page cap (%d) instead of the scan bound", maxListPages)
+	}
+}
+
 func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
 	// `sort=-updatedAt` (a valid hint) and repeated `includedProperties` to restrict the
