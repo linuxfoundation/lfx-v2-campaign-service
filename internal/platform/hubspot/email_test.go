@@ -135,7 +135,7 @@ func TestSearchEmails_StopsOnTheRowBoundWhenPagesAreOversized(t *testing.T) {
 		for i := 0; i < rowsPerPage; i++ {
 			rows = append(rows, fmt.Sprintf(`{"id":"%d-%d","name":"unrelated","subject":"z","updatedAt":"2026-01-01T00:00:00Z"}`, pages, i))
 		}
-		fmt.Fprintf(w, `{"results":[%s],"paging":{"next":{"after":"CUR%d"}}}`, strings.Join(rows, ","), pages)
+		_, _ = fmt.Fprintf(w, `{"results":[%s],"paging":{"next":{"after":"CUR%d"}}}`, strings.Join(rows, ","), pages)
 	})
 
 	got, err := c.SearchEmails(context.Background(), "no-such-template")
@@ -163,7 +163,7 @@ func TestSearchEmails_StopsScanningAQueryThatMatchesNothing(t *testing.T) {
 		// Always another page, and never a match: the shape that used to run to maxListPages.
 		// The cursor must ADVANCE each page -- the client refuses a repeated token, so a fixed
 		// one would end the walk for the wrong reason and the test would pass vacuously.
-		fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z","updatedAt":"2026-01-01T00:00:00Z"}],"paging":{"next":{"after":"CUR%d"}}}`, pages, pages)
+		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z","updatedAt":"2026-01-01T00:00:00Z"}],"paging":{"next":{"after":"CUR%d"}}}`, pages, pages)
 	})
 
 	got, err := c.SearchEmails(context.Background(), "no-such-template")
