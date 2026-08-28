@@ -597,17 +597,23 @@ var CampaignRef = Type("campaign-ref", func() {
 
 // PlatformCampaignResolution answers "which of my campaigns is this platform id?".
 //
-// `matches` is an ARRAY rather than a single ref, and that is not defensive vagueness. Nothing
-// in the schema constrains (project, platform, platform_campaign_id) to be unique, so the honest
-// answer to an ambiguous id is both rows and a caller that refuses to guess — collapsing it here
-// would silently pick one and mutate a campaign the caller never named.
+// `matches` is an ARRAY, but a valid database can never return more than one entry: migration
+// 000020's uq_campaigns_platform_campaign_live is a UNIQUE index on
+// (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than
+// per-project, so scoping to a project can only narrow one row to zero or one.
+//
+// It stays an array rather than an optional single ref because the shape should not encode an
+// invariant it cannot enforce. If that index were ever dropped or its predicate narrowed, a
+// single-ref contract would force some layer to pick a row — and picking would mutate a campaign
+// the caller never named. An array makes the impossible case representable and refusable instead
+// of silently resolved.
 //
 // An EMPTY array is a 200, not a 404. The project genuinely owns no campaign with that upstream
 // id, which is an answer rather than a failure — and it is the answer a caller acts on by
 // refusing the action, so it must be distinguishable from the route being wrong.
 var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
 	Attribute("platform_campaign_id", String, "The upstream id that was resolved, echoed back.", func() { Example("24183781329") })
-	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none; more than one only when the data is genuinely ambiguous.")
+	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.")
 	Attribute("match_count", Int, "How many matches were found.", func() { Example(1) })
 	Required("platform_campaign_id", "matches", "match_count")
 })

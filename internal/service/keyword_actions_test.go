@@ -1151,10 +1151,18 @@ func TestResolveGoogleAdsCampaign_SkipsSoftDeletedCampaigns(t *testing.T) {
 	}
 }
 
-// Ambiguity is REPORTED, not resolved. Nothing constrains
-// (project, platform, platform_campaign_id) to be unique, so two rows can genuinely share an
-// upstream id — and picking one would mutate a campaign the caller never named. Both come back
-// so the caller can refuse.
+// Ambiguity is REPORTED, not resolved.
+//
+// A valid database cannot produce this: uq_campaigns_platform_campaign_live (migration 000020)
+// is a global UNIQUE index on (platform, platform_campaign_id) for live Google Ads rows, so the
+// state this fake constructs is one PostgreSQL would reject. The test is therefore about the
+// SHAPE of the answer if that invariant ever lapses — a dropped index, a narrowed predicate, a
+// platform added to the read without being added to the index.
+//
+// It is worth pinning precisely because it is unreachable today: the alternative is a handler
+// that quietly takes matches[0], which would mutate a campaign the caller never named the first
+// time the invariant did lapse. Weaker evidence than a test driving a reachable path, and said
+// here rather than left to look like a schema claim.
 func TestResolveGoogleAdsCampaign_ReportsAmbiguityRatherThanPickingOne(t *testing.T) {
 	svc := resolverService(t,
 		googleCampaign("c-1", "b-1", "cncf", "24183781329"),
@@ -1195,5 +1203,38 @@ func TestResolveGoogleAdsCampaign_RejectsSystemScope(t *testing.T) {
 	}
 	if _, ok := err.(*conn.NotFoundError); !ok {
 		t.Errorf("error = %T (%v), want *conn.NotFoundError", err, err)
+	}
+}
+
+// A STORAGE failure is this service's fault, not the ad platform's.
+//
+// The resolver contacts no platform — the answer is entirely in this service's tables — so
+// routing its error through classifyInsightsError would advertise a local table fault as a
+// retryable Google Ads outage, in a message naming "keyword insights". It would also produce a
+// 503 this method does not declare, which the generated server encodes as a 500 anyway.
+func TestResolveGoogleAdsCampaign_StorageFailureIsNotAPlatformOutage(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	camps := &fakeCampaignRepo{resolveErr: errors.New("connection refused")}
+	svc.SetOrchestrator(NewOrchestrator(camps, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: &keywordActionDispatcher{},
+	}))
+
+	_, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err == nil {
+		t.Fatal("a storage failure must not be reported as success")
+	}
+	// A 500, not the 503 the insights classifier's default arm produces. Asserted on the TYPE
+	// rather than the message, because the type is what the generated encoder switches on — a
+	// 503 here is undeclared for this method and would surface as an opaque 500 regardless.
+	if _, ok := err.(*conn.InternalServerError); !ok {
+		t.Fatalf("error = %T (%v), want *conn.InternalServerError", err, err)
+	}
+	// The message must not describe a platform read. "keyword insights" tells the caller to
+	// retry against Google, which will never fix a database fault.
+	if msg := err.Error(); strings.Contains(strings.ToLower(msg), "keyword insights") {
+		t.Errorf("message describes a platform failure: %q", msg)
 	}
 }

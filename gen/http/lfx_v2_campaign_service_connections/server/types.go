@@ -772,7 +772,9 @@ type ResolveGoogleAdsCampaignResponseBody struct {
 	// The upstream id that was resolved, echoed back.
 	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
 	// Every live campaign this project holds for that upstream id. Empty when the
-	// project owns none; more than one only when the data is genuinely ambiguous.
+	// project owns none. A unique index makes more than one impossible in a valid
+	// database; the array shape exists so that case is refusable rather than
+	// silently resolved.
 	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
 	// How many matches were found.
 	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`

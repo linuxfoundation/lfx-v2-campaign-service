@@ -151,6 +151,9 @@ spec:
           # Google-Ads-only reads.
           - path: /projects/:projectId/google-ads/keywords
           - path: /projects/:projectId/google-ads/audience
+          # Maps a Google Ads campaign id to this service's campaign + brief, so a caller
+          # holding keyword rows can address the brief-scoped mutation routes.
+          - path: /projects/:projectId/google-ads/campaign-ref
           # HubSpot UTM (LF-global; projectId only gates permission). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.
           - path: /projects/:projectId/hubspot

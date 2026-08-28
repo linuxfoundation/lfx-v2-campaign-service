@@ -180,7 +180,18 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 	}
 	refs, rerr := orch.ResolvePlatformCampaign(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID)
 	if rerr != nil {
-		return nil, s.classifyInsightsError(ctx, p.ProjectID, rerr)
+		// NOT classifyInsightsError. Every arm of that classifier describes a PLATFORM failure —
+		// an unsupported window, an ad-account mismatch, a connection that cannot be used — and
+		// its default reports an upstream Google Ads outage. This lookup contacts no platform at
+		// all: the only thing that can fail is this service's own database.
+		//
+		// Routing it there would advertise a local table fault as a retryable Google Ads problem,
+		// in a message naming "keyword insights", and would return a 503 this method does not
+		// declare — so the generated server would encode an undeclared error as a 500 anyway.
+		// A storage fault is this service's fault and is reported as one.
+		slog.ErrorContext(ctx, "campaign reference lookup failed",
+			"project_id", p.ProjectID, "error", safeErrSummary(rerr))
+		return nil, &conn.InternalServerError{Code: "500", Message: "the campaign reference could not be read"}
 	}
 
 	// Preallocated with make so an empty result serializes as `[]`, never `null` — the empty

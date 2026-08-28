@@ -366,11 +366,16 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // the mutation routes are brief- and campaign-scoped, while the keyword rows a caller acts on
 // carry only the platform's numeric id.
 //
-// It deliberately does NOT limit to one row. Nothing in the schema constrains
-// (project, platform, platform_campaign_id) to be unique — ListProjectPlatformCampaignIDs
-// selects DISTINCT on a PAIR for exactly that reason — so the caller must decide what an
-// ambiguous answer means rather than silently acting on whichever row sorted first. Ordered by
-// id so a repeated call answers identically.
+// AT MOST ONE ROW CAN MATCH, and that is enforced by the schema rather than by this query:
+// migration 000020 creates uq_campaigns_platform_campaign_live, a UNIQUE index on
+// (platform, platform_campaign_id) for every live Google Ads row. The index is GLOBAL — it has
+// no project_id column — so adding project_id here can only narrow one row to zero or one, never
+// widen. A second match is therefore not a state a valid database can hold.
+//
+// It is still written without LIMIT and the caller still handles a multi-row answer, because the
+// two are not the same claim: the index is the invariant, and a query that assumed uniqueness
+// would silently act on whichever row sorted first if that invariant were ever dropped or the
+// predicate narrowed. Ordered by id so a repeated call answers identically.
 const resolvePlatformCampaignQuery = `SELECT id, brief_id FROM campaigns
 	WHERE project_id=$1 AND platform=$2 AND platform_campaign_id=$3 AND status <> 'deleted'
 	ORDER BY id ASC`

@@ -10271,7 +10271,7 @@ definitions:
                 type: array
                 items:
                     $ref: '#/definitions/CampaignRef'
-                description: Every live campaign this project holds for that upstream id. Empty when the project owns none; more than one only when the data is genuinely ambiguous.
+                description: Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.
                 example:
                     - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff

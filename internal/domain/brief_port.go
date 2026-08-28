@@ -144,10 +144,11 @@ type CampaignReader interface {
 	// campaign id) can address the brief-scoped mutation routes.
 	//
 	// Returns EVERY live match rather than one, and an empty slice rather than an error when
-	// the project owns none. Both are deliberate: nothing constrains
-	// (project, platform, platform_campaign_id) to be unique, so an ambiguous id must be
-	// reported as ambiguous instead of resolved by picking a row; and "this project does not
-	// own that campaign" is an ordinary answer a caller acts on, not a fault.
+	// the project owns none. A valid database holds at most one match —
+	// uq_campaigns_platform_campaign_live (migration 000020) is a global UNIQUE index on
+	// (platform, platform_campaign_id) for live Google Ads rows — so the slice is a shape that
+	// keeps the impossible case refusable, not a claim that duplicates are expected. "This
+	// project does not own that campaign" is an ordinary answer a caller acts on, not a fault.
 	//
 	// Scoped by projectID, which is what stops it answering questions about another
 	// foundation's campaigns on the shared ad account.
