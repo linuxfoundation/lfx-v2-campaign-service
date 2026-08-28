@@ -4196,6 +4196,12 @@ type GoogleAdsKeywordResponseBody struct {
 	// member is retained so the type stays usable if a future caller reads
 	// tombstones.
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The ad group's display name. Not an identifier — names are not unique across
+	// campaigns; address the ad group by `ad_group_id`.
+	AdGroupName *string `form:"ad_group_name,omitempty" json:"ad_group_name,omitempty" xml:"ad_group_name,omitempty"`
+	// The campaign's display name. Not an identifier — address the campaign by
+	// `campaign_id`.
+	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
 	// Impressions over the window
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
 	// Clicks over the window
@@ -4206,6 +4212,16 @@ type GoogleAdsKeywordResponseBody struct {
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+	// Conversions over the window, fraction intact — Google credits fractional
+	// conversions under data-driven and position-based attribution. Absence
+	// upstream is a measured 0, not an unmeasured one: this field is always
+	// selected.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// Google's 1-10 quality rating. ABSENT when Google has not rated this keyword
+	// yet, which is normal for a keyword with few impressions — absence is not a
+	// score of 0, and 0 is not on the scale. Render it as unknown, never as a low
+	// score.
+	QualityScore *int64 `form:"quality_score,omitempty" json:"quality_score,omitempty" xml:"quality_score,omitempty"`
 }
 
 // GoogleAdsAudienceBucketResponseBody is used to define fields on response
@@ -4227,6 +4243,9 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+	// Conversions over the window, fraction intact. Summable WITHIN a dimension
+	// for the same reason impressions are; summing across dimensions triple-counts.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 }
 
 // MarketingEmailResponseBody is used to define fields on response body types.
@@ -13632,6 +13651,12 @@ func ValidateGoogleAdsKeywordResponseBody(body *GoogleAdsKeywordResponseBody) (e
 	if body.CampaignID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
 	}
+	if body.AdGroupName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_group_name", "body"))
+	}
+	if body.CampaignName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_name", "body"))
+	}
 	if body.Text == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
 	}
@@ -13653,6 +13678,9 @@ func ValidateGoogleAdsKeywordResponseBody(body *GoogleAdsKeywordResponseBody) (e
 	if body.Ctr == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
 	}
+	if body.Conversions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("conversions", "body"))
+	}
 	if body.MatchType != nil {
 		if !(*body.MatchType == "EXACT" || *body.MatchType == "PHRASE" || *body.MatchType == "BROAD" || *body.MatchType == "UNKNOWN") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"EXACT", "PHRASE", "BROAD", "UNKNOWN"}))
@@ -13661,6 +13689,16 @@ func ValidateGoogleAdsKeywordResponseBody(body *GoogleAdsKeywordResponseBody) (e
 	if body.Status != nil {
 		if !(*body.Status == "ENABLED" || *body.Status == "PAUSED" || *body.Status == "REMOVED" || *body.Status == "UNKNOWN") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"ENABLED", "PAUSED", "REMOVED", "UNKNOWN"}))
+		}
+	}
+	if body.QualityScore != nil {
+		if *body.QualityScore < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.quality_score", *body.QualityScore, 1, true))
+		}
+	}
+	if body.QualityScore != nil {
+		if *body.QualityScore > 10 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.quality_score", *body.QualityScore, 10, false))
 		}
 	}
 	return
@@ -13686,6 +13724,9 @@ func ValidateGoogleAdsAudienceBucketResponseBody(body *GoogleAdsAudienceBucketRe
 	}
 	if body.Ctr == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Conversions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("conversions", "body"))
 	}
 	if body.Dimension != nil {
 		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "device") {
