@@ -1154,8 +1154,14 @@ no dispatcher, no connection, the ad platform is never contacted, which is why
 it declares no 409 — there is no connection to be unusable and no ad account to
 mismatch.
 
-It DOES declare a 503, for cold start only: `resolveBackendWithOrch` refuses
-before storage and the orchestrator are wired, which is genuinely retryable. A
+It DOES declare a 503: `resolveBackendWithOrch` refuses
+before storage and the orchestrator are wired. That is USUALLY cold start, and
+retrying is then the right answer — but not always. In the supported
+no-database mode `NewContainer` leaves the repository and orchestrator nil
+deliberately, so these routes stay mounted and answer this same typed 503
+rather than a bare 404, and there it persists for the life of the process. A
+client must read 503 as "not available yet", never as a promise that waiting
+changes it. A
 storage FAULT is a 500 instead — a failure in a service already up, where
 retrying does not help — and is reported directly rather than through
 `classifyInsightsError`: every arm of that classifier describes a platform

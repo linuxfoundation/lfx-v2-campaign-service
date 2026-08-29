@@ -1089,9 +1089,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		// Declared even though this method contacts no platform: `resolveBackendWithOrch`
-		// returns a 503 during cold start, before storage or the orchestrator are wired. An
-		// undeclared error is encoded as a 500 by the generated encoder, so a caller would see
-		// an opaque failure for a condition that is explicitly retryable.
+		// returns a 503 until storage and the orchestrator are wired. That is USUALLY cold
+		// start, and retrying is then right — but NOT always: in the supported no-database mode
+		// NewContainer leaves both nil deliberately, so these routes stay mounted and answer
+		// this same 503 for the life of the process. A caller must read it as "not available
+		// yet", never as a promise that waiting will clear it. An undeclared error is encoded as
+		// a 500 by the generated encoder, so a caller would otherwise see an opaque failure.
 		//
 		// A storage FAULT is separately a 500, not this — that one is a fault in a service that
 		// is up, and retrying does not help. Cold start is the only 503 here.
