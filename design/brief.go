@@ -613,9 +613,43 @@ var CampaignRef = Type("campaign-ref", func() {
 // refusing the action, so it must be distinguishable from the route being wrong.
 var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
 	Attribute("platform_campaign_id", String, "The upstream id that was resolved, echoed back.", func() { Example("24183781329") })
-	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.")
+	// The ARRAY carries its own single-element example as well as the composite one below.
+	// Goa's synthesised array example repeats the element type's example twice, which shows a
+	// duplicate for an id a unique index makes single — wrong in the per-property schema even
+	// though the composite example is right.
+	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.", func() {
+		Example([]map[string]any{
+			{
+				"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+				"brief_id":    "2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c",
+			},
+		})
+	})
 	Attribute("match_count", Int, "How many matches were found.", func() { Example(1) })
 	Required("platform_campaign_id", "matches", "match_count")
+	// An explicit COMPOSITE example, for the same reason CampaignSettingsReadback carries one.
+	// Goa synthesises an object example by cloning each attribute's example, so `matches` came
+	// out as the SAME CampaignRef repeated twice while `match_count` kept its scalar 1 — an
+	// example that both contradicts its own count and shows two entries for an id a unique
+	// index makes single. A reader taking that at face value would build a client that expects
+	// duplicates to be normal, which is the opposite of this type's contract.
+	//
+	// The attribute-level Example(1) is retained: it documents the count's shape in the
+	// per-property schema, where no `matches` array sits beside it to contradict it.
+	//
+	// One match is the shape a caller sees whenever the project owns the id at all — zero is
+	// the other real answer, and is already described in words above rather than by example,
+	// since an empty array shows a reader nothing about the element shape.
+	Example(map[string]any{
+		"platform_campaign_id": "24183781329",
+		"matches": []map[string]any{
+			{
+				"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+				"brief_id":    "2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c",
+			},
+		},
+		"match_count": 1,
+	})
 })
 
 // KeywordActionInput is one requested keyword mutation.
