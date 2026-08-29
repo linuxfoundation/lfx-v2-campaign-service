@@ -2000,7 +2000,7 @@ func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, pl
 	// A (nil, nil) answer is a CONTRACT VIOLATION, refused here rather than forwarded — the same
 	// check SearchEmails makes. Forwarded, the service layer would render it as an authoritative
 	// empty `[]`, and empty is exactly what the caller acts on by creating a campaign in a
-	// namespace every foundation shares. A searcher that fell through a branch must not be able
+	// namespace shared portal-wide. A searcher that fell through a branch must not be able
 	// to license a duplicate.
 	if page.Campaigns == nil {
 		return model.HubSpotCampaignPage{}, fmt.Errorf("campaign search for platform %s returned no result and no error", platform)
@@ -2013,8 +2013,8 @@ func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, pl
 // NOT given the shared accountsCallTimeout budget by accident: it is a WRITE, and a create whose
 // context expires mid-flight may still have committed upstream. The same budget is used because
 // the call shape is the same, but a caller must treat a timeout here as UNCONFIRMED rather than
-// failed — the campaign may exist, and retrying blindly makes a second one in a namespace every
-// foundation shares.
+// failed — the campaign may exist, and retrying blindly makes a second one in a namespace shared
+// portal-wide.
 func (o *Orchestrator) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
 	searcher, err := o.campaignSearcherFor(platform)
 	if err != nil {

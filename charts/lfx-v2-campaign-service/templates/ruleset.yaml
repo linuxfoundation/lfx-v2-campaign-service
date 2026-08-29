@@ -127,7 +127,7 @@ spec:
           # hubspotConfig.SourceEmailID is required with no default (LFXV2-3197).
           - path: /projects/:projectId/connection-hubspot/emails
           # Campaign lookup and create. The LOOKUP reads back an existing campaign's utm
-          # token; the CREATE writes into a namespace every foundation shares, which is why
+          # token; the CREATE writes into a namespace shared portal-wide, which is why
           # the design description requires the caller to warn first.
           - path: /projects/:projectId/connection-hubspot/campaigns
           # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
@@ -155,7 +155,8 @@ spec:
           # Google-Ads-only reads.
           - path: /projects/:projectId/google-ads/keywords
           - path: /projects/:projectId/google-ads/audience
-          # HubSpot UTM (LF-global; projectId only gates permission). ** covers
+          # HubSpot UTM (portal-wide; projectId gates permission AND selects the
+          # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.
           - path: /projects/:projectId/hubspot
           - path: /projects/:projectId/hubspot/**

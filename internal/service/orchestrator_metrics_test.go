@@ -419,7 +419,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 		},
 		{
 			// The create is the most operationally sensitive call the service makes: it spends
-			// into an LF-global namespace, and an unconfirmed one may have committed. Its
+			// into a portal-wide namespace, and an unconfirmed one may have committed. Its
 			// latency and failure count are exactly what an operator needs.
 			name: "create campaign",
 			op:   opCreateCampaign,

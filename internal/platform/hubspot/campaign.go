@@ -192,9 +192,11 @@ type SearchCampaignsPage struct {
 
 // CreateCampaign creates a portal-wide HubSpot campaign named name.
 //
-// IT IS VISIBLE TO EVERY FOUNDATION. The campaign namespace is the whole LF portal, so this is
-// not a project-scoped write however the calling route is scoped — the created campaign appears
-// for every other project's campaign managers. Callers must warn before invoking it.
+// IT IS VISIBLE PORTAL-WIDE. The campaign namespace is the whole HubSpot portal this client's
+// credential authenticates against, so this is not a project-scoped write however the calling
+// route is scoped — the created campaign appears for everyone working in that portal. Which
+// portal that is depends on the connection (see Campaign), so this is not necessarily every
+// foundation. Callers must warn before invoking it.
 //
 // It does NOT check for an existing campaign first. A search-then-create here would be a race
 // with any concurrent caller and would still not prevent a duplicate, so the check belongs with
@@ -203,8 +205,13 @@ type SearchCampaignsPage struct {
 // what it does — it always creates.
 //
 // HubSpot assigns `hs_utm` itself on creation; it is not settable here. The created campaign is
-// read back from the create response rather than re-fetched, so the returned token is the one
+// read back from the create response rather than re-fetched, so any token returned is the one
 // HubSpot actually assigned rather than one this service guessed.
+//
+// The token may be ABSENT from a successful create, and that is not an error: property
+// selection on a create is undocumented (see the request below), and HubSpot may not have
+// assigned one yet. `UTM == ""` is a real state every caller already handles — what is refused
+// is a response with no ID, which cannot be addressed at all.
 func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, error) {
 	n := strings.TrimSpace(name)
 	if n == "" {
@@ -214,12 +221,18 @@ func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, er
 	body := map[string]any{
 		"properties": map[string]string{"hs_name": n},
 	}
-	// The properties are REQUESTED on the way back, exactly as the search does. The CRM create
-	// endpoint returns only system fields unless they are named, so without this the response
-	// carries no `hs_utm` — and the doc comment above promising the assigned token would have
-	// been describing something the request never asked for. `?properties=` is the documented
-	// parameter on POST /crm/v3/objects/{type}; the names are compile-time constants, never
-	// caller input.
+	// The properties are requested on the way back, as the search does. Without asking, the CRM
+	// create returns only system fields, so the response would carry no `hs_utm` at all.
+	//
+	// BEST EFFORT, NOT A GUARANTEE. `?properties=` is documented on the READ endpoints; HubSpot
+	// does not document it on the create, and their generated SDK builds this POST with no query
+	// parameters. So it may be honoured or ignored, and this code must not depend on it — which
+	// it does not: a create whose response carries no token returns `UTM == ""`, and an ABSENT
+	// token is a real state every caller already handles (see Campaign.UTM). What the code does
+	// depend on is the id, and an id-less or undecodable response is refused as UNCONFIRMED
+	// rather than reported as success.
+	//
+	// The names are compile-time constants, never caller input.
 	createPath := campaignCreatePath + "?properties=" + strings.Join(campaignProps, ",")
 	// NOT idempotent: this creates a row, and a retried create makes a second campaign in a
 	// namespace shared by everyone on that HubSpot portal. The transport must not replay it.

@@ -26,10 +26,19 @@ provider in the connection store with its own `hubspot_connections` table and
 a `PrivateAppToken`, and the client already implemented fourteen operations.
 Only the campaign object (`0-35`) was untouched.
 
-The namespace is LF-GLOBAL and every layer says so. HubSpot campaigns are not
-scoped to a project: `projectID` selects the credential, not the visibility.
-A campaign created here appears for every foundation's campaign managers, so
-the create path documents an operator warning rather than pretending to scope.
+The namespace is PORTAL-WIDE and every layer says so. HubSpot campaigns are
+not scoped to a project or a sub-account, so every campaign in a portal is
+visible to any caller holding that portal's token. `projectID` selects the
+credential — and therefore WHICH portal is visible, not merely whether the
+caller may look: connections are stored per project with their own token and
+`portal_id`, and `credsSource` refuses the LF system fallback for HubSpot, so
+two projects share the namespace only when configured against the same portal.
+A campaign created here appears for everyone working in that portal, so the
+create path documents an operator warning rather than pretending to scope.
+
+(An earlier draft of this note said LF-GLOBAL / "every foundation". That
+overstated it: it is true only where projects share a portal, which is common
+under the LF umbrella but is not what the code guarantees.)
 
 Three contract decisions, each pinned by a test:
 
@@ -65,7 +74,8 @@ empty token. The create now sends `?properties=` exactly as the search does.
 Create failures were routed through the READ classifier, so a timeout or 5xx
 became a retryable "campaign search could not be completed" 503. That names the
 wrong operation and, far worse, invites a retry of a NON-IDEMPOTENT write into
-a namespace every foundation shares — which is how a duplicate gets made. They
+a namespace shared by everyone on that portal — which is how a duplicate gets
+made. They
 are now reported as UNCONFIRMED, with a message sending the operator to HubSpot.
 
 Three more: an id-less hit was silently dropped, turning a malformed payload

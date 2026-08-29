@@ -356,10 +356,13 @@ this service tags (`Apply`) and decides the campaign value (`Resolve`). These re
 existing UPSTREAM campaign already carries — which is the endpoint gap `resolve.go` names as the
 reason `SourceHubSpotCampaign` is reserved but never emitted.
 
-**The namespace is LF-GLOBAL, and that shapes both methods.** HubSpot campaigns are not scoped
-to a project or a portal sub-account: `projectID` selects which connection's credential to use,
-not which campaigns are visible. Two projects sharing a portal see the same campaigns, and one
-created here is visible to every other foundation's campaign managers. That is HubSpot's data
+**The namespace is PORTAL-WIDE, and that shapes both methods.** HubSpot campaigns are not
+scoped to a project or a sub-account, so every campaign in a portal is visible to any caller
+holding that portal's token. `projectID` selects which connection's credential to use — and
+therefore WHICH portal is visible, not merely whether the caller is allowed to look. Connections
+are stored per project with their own token and `portal_id`, and `credsSource` refuses the LF
+system fallback for HubSpot, so two projects see the same campaigns only when configured against
+the same portal. Common under the LF umbrella; not guaranteed. That is HubSpot's data
 model rather than a gap in this service's scoping, which is why the create path is documented as
 requiring an operator warning rather than being narrowed here.
 
@@ -376,7 +379,7 @@ from the only party able to resolve it.
 **An empty result is an answer, a malformed one is an error.** The caller branches on
 empty-vs-found to decide whether to offer a create, so a `2xx` with no `results` array is
 refused rather than reported as "nothing matched" — a broken response silently answering empty
-would prompt a duplicate in a namespace every foundation shares. For the same reason a campaign
+would prompt a duplicate in a namespace shared portal-wide. For the same reason a campaign
 with an EMPTY `hs_utm` is kept: a campaign with no token configured is a real campaign, and
 dropping it would hide an existing one.
 

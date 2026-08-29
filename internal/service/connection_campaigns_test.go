@@ -128,7 +128,7 @@ func TestSearchHubspotCampaigns_NoMatchesIsAnEmptySliceNotNil(t *testing.T) {
 // A campaign with NO utm token is a real campaign. The wire field is optional, and an empty
 // domain value must map to an ABSENT key rather than "" — a consumer cannot otherwise tell "no
 // token configured" from "the producer sent an empty string", and treating it as "not found"
-// would prompt a duplicate create in a namespace every foundation shares.
+// would prompt a duplicate create in a namespace shared portal-wide.
 func TestSearchHubspotCampaigns_AbsentTokenIsOmittedNotEmptyString(t *testing.T) {
 	d := &mockCampaignSearcherDispatcher{campaigns: []model.HubSpotCampaign{
 		{ID: "11", Name: "Untokened"},
@@ -260,7 +260,7 @@ func TestSearchHubspotCampaigns_WhitespaceQueryIsABadRequest(t *testing.T) {
 //
 // The read classifier's default arm says "campaign search could not be completed" and invites a
 // retry. Both halves are wrong for a create: it names the wrong operation, and — far worse — a
-// retried NON-IDEMPOTENT write into an LF-global namespace is how a duplicate campaign gets
+// retried NON-IDEMPOTENT write into a portal-wide namespace is how a duplicate campaign gets
 // made. HubSpot marks mutating transport/429/3xx/5xx failures unconfirmed precisely because the
 // campaign may already exist.
 func TestCreateHubspotCampaign_FailureIsUnconfirmedNotRetryableSearch(t *testing.T) {
@@ -303,8 +303,8 @@ func TestSearchHubspotCampaigns_NilWithoutErrorIsRefused(t *testing.T) {
 
 // Capped must survive the trip to the wire, because it changes what an EMPTY result MEANS. The
 // caller offers a create on an empty search; while capped is true, absence is not proof of
-// non-existence, and an unqualified create duplicates a campaign in a namespace every foundation
-// shares. Dropping the flag anywhere in the chain fails open, silently.
+// non-existence, and an unqualified create duplicates a campaign in a namespace shared portal-wide
+// . Dropping the flag anywhere in the chain fails open, silently.
 func TestSearchHubspotCampaigns_CappedReachesTheWire(t *testing.T) {
 	d := &mockCampaignSearcherDispatcher{campaigns: []model.HubSpotCampaign{}, capped: true}
 

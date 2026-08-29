@@ -102,7 +102,7 @@ func TestSearchCampaigns_NoMatchesIsNotAnError(t *testing.T) {
 
 // A malformed 2xx must NOT read as "nothing matched". The caller branches on empty-vs-found to
 // decide whether to create a campaign, so a broken response silently answering "empty" would
-// prompt a duplicate create in an LF-global namespace.
+// prompt a duplicate create in a portal-wide namespace.
 func TestSearchCampaigns_MalformedBodyIsAnErrorNotAnEmptyAnswer(t *testing.T) {
 	for _, body := range []string{`{}`, `null`, `{"results":null}`} {
 		t.Run(body, func(t *testing.T) {
@@ -158,7 +158,7 @@ func TestSearchCampaigns_KeepsACampaignWithNoUTM(t *testing.T) {
 // An id-less hit is a MALFORMED response, not a droppable row.
 //
 // Dropping it would turn a broken payload into a clean empty answer — and empty is what the
-// caller acts on by creating a campaign, in a namespace every foundation shares. The paired
+// caller acts on by creating a campaign, in a namespace shared portal-wide. The paired
 // healthy row makes the point sharper: even with a real match present, the response cannot be
 // trusted once one hit is unaddressable.
 func TestSearchCampaigns_IDLessRowIsAMalformedResponse(t *testing.T) {
@@ -231,8 +231,8 @@ func TestCreateCampaign_IDLessResponseIsAnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("an id-less create was reported as success")
 	}
-	// The message must tell the caller not to retry blindly — a duplicate in an LF-global
-	// namespace is visible to every foundation.
+	// The message must tell the caller not to retry blindly — a duplicate is visible to
+	// everyone on that HubSpot portal.
 	if !strings.Contains(err.Error(), "check HubSpot") {
 		t.Errorf("error does not warn against a blind retry: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestSearchCampaigns_CappedComesFromTotalNotLength(t *testing.T) {
 	t.Run("absent total is capped, not complete", func(t *testing.T) {
 		// An omitted total says nothing about how many matched. Decoded into a plain int it
 		// would read as "0 matched, nothing hidden" — the authoritative absence a caller acts on
-		// by creating a campaign in a namespace every foundation shares. Unknown must fail
+		// by creating a campaign in a namespace shared portal-wide. Unknown must fail
 		// closed, so the absence of the field is treated as possibly capped.
 		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"results":[]}`)
@@ -370,7 +370,7 @@ func TestCreateOutcomePredicates(t *testing.T) {
 	t.Run("an undecodable 2xx is unconfirmed, not a rejection", func(t *testing.T) {
 		// The POST already succeeded, so HubSpot has very likely created the campaign. Only our
 		// reading of the body failed, and a caller told "nothing was created" would retry into
-		// a duplicate in a namespace every foundation shares.
+		// a duplicate in a namespace shared portal-wide.
 		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":`)
 		})

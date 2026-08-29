@@ -247,13 +247,17 @@ type Service interface {
 	// an error**, because the campaign may or may not exist and cannot be
 	// addressed either way: the caller must check HubSpot rather than retry into a
 	// second copy. Other failures fall into THREE classes, and the status tells
-	// them apart. **400 — nothing was created.** Either HubSpot rejected the
-	// request on the merits (a definite non-429 4xx), or the request was never
-	// sent at all (no connection, an inactive one, an unusable credential). Both
-	// are safe to correct and retry; a 401/403 says so in its own words, because
-	// retrying another NAME cannot fix a permission problem. **404 / 500 — setup
-	// and service faults**, reported as themselves for the same reason: they prove
-	// nothing reached HubSpot, so sending an operator to go look for a campaign
+	// them apart. **400 — nothing was created, and the request is correctable.**
+	// Either HubSpot rejected it on the merits (a definite non-429 4xx), or the
+	// stored connection EXISTS but is not usable as configured. A 401/403 says so
+	// in its own words, because retrying another NAME cannot fix a permission
+	// problem. **404 — no HubSpot connection is configured for this project.**
+	// Distinct from the 400 above, which means one exists and is broken: the
+	// remedy is to connect HubSpot, not to fix a credential. **500 — the stored
+	// credential could not be decrypted**, or the service is otherwise faulted.
+	// Not the operator's to fix, and not retryable by them. All three prove
+	// nothing reached HubSpot, which is why they are reported as themselves rather
+	// than as an unconfirmed outcome: sending an operator to look for a campaign
 	// that was never attempted hides the remedy they actually need. **503 —
 	// UNCONFIRMED, and never "try again".** Everything else lands here, including
 	// any failure this service cannot positively classify: a non-idempotent write
