@@ -226,9 +226,17 @@ type Service interface {
 	// a keyed query returning the matches for one supplied term, with no
 	// collection, pagination or filtering.
 	SearchHubspotCampaigns(context.Context, *SearchHubspotCampaignsPayload) (res *SearchHubspotCampaignsResult, err error)
-	// Create an LF HubSpot marketing campaign and return the `hs_utm` token
-	// HubSpot assigns it. **THIS WRITE IS VISIBLE PORTAL-WIDE.** The campaign
-	// namespace is the whole HubSpot portal this project's connection
+	// Create an LF HubSpot marketing campaign, returning the `hs_utm` token when
+	// the response carries one. **`utm` MAY BE ABSENT ON A SUCCESSFUL CREATE**,
+	// and that is not an error: the marketing create is not documented to return
+	// the property, and this route does no follow-up read — a second call after a
+	// non-idempotent write is another failure point whose failure would make a
+	// campaign that EXISTS look like one that was never created. An absent token
+	// means only that this response did not carry one, NOT that the campaign has
+	// none configured; the ordinary lookup reads it back. What IS required is the
+	// id: an id-less 2xx is refused as unconfirmed, because a campaign that cannot
+	// be addressed is not a usable answer. **THIS WRITE IS VISIBLE PORTAL-WIDE.**
+	// The campaign namespace is the whole HubSpot portal this project's connection
 	// authenticates against, so a campaign created here appears for everyone
 	// working in that portal however this path is scoped. WHICH portal depends on
 	// the connection — they are stored per project with their own token and
@@ -689,9 +697,14 @@ type HubspotCampaign struct {
 	ID string
 	// The campaign's display name.
 	Name string
-	// The campaign's UTM token. ABSENT when the campaign has none configured —
-	// that is a real state, not a missing answer, and it does not mean the
-	// campaign was not found.
+	// The campaign's UTM token. ABSENT is a real state, not a missing answer, and
+	// it never means the campaign was not found — but WHAT it means depends on
+	// which call produced it. From the SEARCH, where the properties are requested
+	// explicitly, absent means the campaign has none configured. From the CREATE
+	// it means only that that response did not carry one: the marketing create is
+	// not documented to return the property, so a token may already exist and be
+	// readable by the very next search. A consumer must not render the create's
+	// absence as "HubSpot assigned none".
 	Utm *string
 	// The campaign's start date as HubSpot holds it, for disambiguating same-named
 	// campaigns. Not parsed or normalised here.

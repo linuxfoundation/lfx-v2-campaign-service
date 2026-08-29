@@ -838,9 +838,14 @@ type CreateHubspotCampaignResponseBody struct {
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// The campaign's display name.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// The campaign's UTM token. ABSENT when the campaign has none configured —
-	// that is a real state, not a missing answer, and it does not mean the
-	// campaign was not found.
+	// The campaign's UTM token. ABSENT is a real state, not a missing answer, and
+	// it never means the campaign was not found — but WHAT it means depends on
+	// which call produced it. From the SEARCH, where the properties are requested
+	// explicitly, absent means the campaign has none configured. From the CREATE
+	// it means only that that response did not carry one: the marketing create is
+	// not documented to return the property, so a token may already exist and be
+	// readable by the very next search. A consumer must not render the create's
+	// absence as "HubSpot assigned none".
 	Utm *string `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
 	// The campaign's start date as HubSpot holds it, for disambiguating same-named
 	// campaigns. Not parsed or normalised here.
@@ -4419,9 +4424,14 @@ type HubspotCampaignResponseBody struct {
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// The campaign's display name.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// The campaign's UTM token. ABSENT when the campaign has none configured —
-	// that is a real state, not a missing answer, and it does not mean the
-	// campaign was not found.
+	// The campaign's UTM token. ABSENT is a real state, not a missing answer, and
+	// it never means the campaign was not found — but WHAT it means depends on
+	// which call produced it. From the SEARCH, where the properties are requested
+	// explicitly, absent means the campaign has none configured. From the CREATE
+	// it means only that that response did not carry one: the marketing create is
+	// not documented to return the property, so a token may already exist and be
+	// readable by the very next search. A consumer must not render the create's
+	// absence as "HubSpot assigned none".
 	Utm *string `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
 	// The campaign's start date as HubSpot holds it, for disambiguating same-named
 	// campaigns. Not parsed or normalised here.

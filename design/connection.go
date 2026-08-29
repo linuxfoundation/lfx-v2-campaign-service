@@ -1323,8 +1323,16 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	})
 
 	Method("create-hubspot-campaign", func() {
-		Description("Create an LF HubSpot marketing campaign and return the `hs_utm` token HubSpot " +
-			"assigns it. " +
+		Description("Create an LF HubSpot marketing campaign, returning the `hs_utm` token when " +
+			"the response carries one. " +
+			"**`utm` MAY BE ABSENT ON A SUCCESSFUL CREATE**, and that is not an error: the " +
+			"marketing create is not documented to return the property, and this route does no " +
+			"follow-up read — a second call after a non-idempotent write is another failure " +
+			"point whose failure would make a campaign that EXISTS look like one that was never " +
+			"created. An absent token means only that this response did not carry one, NOT that " +
+			"the campaign has none configured; the ordinary lookup reads it back. What IS " +
+			"required is the id: an id-less 2xx is refused as unconfirmed, because a campaign " +
+			"that cannot be addressed is not a usable answer. " +
 			"**THIS WRITE IS VISIBLE PORTAL-WIDE.** The campaign namespace is the whole HubSpot " +
 			"portal this project's connection authenticates against, so a campaign created here " +
 			"appears for everyone working in that portal however this path is scoped. WHICH portal " +

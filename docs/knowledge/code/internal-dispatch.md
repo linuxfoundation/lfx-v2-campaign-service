@@ -1896,8 +1896,14 @@ types, which would invert service → dispatch → platform.
 
 Three sentinels carry it: `ErrPlatformRejected` (HubSpot answered and refused),
 `ErrPlatformPermission` (narrowing that to 401/403, because retrying another name cannot fix a
-permission problem) and `ErrPlatformNeverSent` (a dial failure or already-cancelled context,
-joined with `ErrPlatformRejected` since nothing was created either way).
+permission problem) and `ErrPlatformNeverSent` (a dial failure or already-cancelled context).
+
+`ErrPlatformNeverSent` is carried ALONE, deliberately. Joining `ErrPlatformRejected` onto it
+reported two mutually exclusive events as one — HubSpot refusing on the merits versus HubSpot
+never seeing the request — and it showed up immediately as `definite_rejection=true` in the
+create's telemetry for a DNS failure. A caller that wants "nothing was created" therefore checks
+BOTH sentinels, which is the honest shape given the remedies differ: one is about the request,
+the other about the network. The service checks never-sent FIRST for that reason.
 
 Anything not POSITIVELY identified is left untagged and treated as unconfirmed upstream. That
 default is the safe direction for a non-idempotent write, and

@@ -572,7 +572,7 @@ var HubSpotCampaign = Type("hubspot-campaign", func() {
 	// from the campaign not existing. A caller must render an absent token as "no token", never
 	// treat it as "no campaign" — doing so would prompt a duplicate create in a namespace shared
 	// portal-wide.
-	Attribute("utm", String, "The campaign's UTM token. ABSENT when the campaign has none configured — that is a real state, not a missing answer, and it does not mean the campaign was not found.", func() { Example("kubecon-na-2026") })
+	Attribute("utm", String, "The campaign's UTM token. ABSENT is a real state, not a missing answer, and it never means the campaign was not found — but WHAT it means depends on which call produced it. From the SEARCH, where the properties are requested explicitly, absent means the campaign has none configured. From the CREATE it means only that that response did not carry one: the marketing create is not documented to return the property, so a token may already exist and be readable by the very next search. A consumer must not render the create's absence as \"HubSpot assigned none\".", func() { Example("kubecon-na-2026") })
 	Attribute("start_date", String, "The campaign's start date as HubSpot holds it, for disambiguating same-named campaigns. Not parsed or normalised here.", func() { Example("2026-11-01") })
 	Required("id", "name")
 })
