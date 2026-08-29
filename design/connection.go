@@ -1075,8 +1075,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			// Digits-only for the same reason KeywordActionInput's ids are: the value is a
 			// Google Ads campaign id, and admitting a non-numeric one only moves its refusal
 			// to a place that classifies it less clearly.
-			Attribute("platform_campaign_id", String, "The Google Ads campaign id to resolve. Digits only.", func() {
-				Pattern(`^[0-9]+$`)
+			Attribute("platform_campaign_id", String, "The Google Ads campaign id to resolve. Digits only, no leading zero, and within int64.", func() {
+				// No leading zero, and 1-19 digits. The column is TEXT, so "007" and "7" are
+				// different rows: a leading-zero spelling of a real id matches nothing and comes
+				// back as a 200 "unowned" answer, which reads as "this campaign is not yours"
+				// rather than "that is not an id". "0" is not a Google Ads id either.
+				Pattern(`^[1-9][0-9]{0,18}$`)
 				MaxLength(19)
 				Example("24183781329")
 			})

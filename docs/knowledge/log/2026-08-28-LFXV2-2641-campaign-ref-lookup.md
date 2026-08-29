@@ -43,5 +43,9 @@ answered and discarded.
 failure, and its default reports an upstream outage; this lookup contacts no
 platform, so routing a local table fault there would advertise it as a
 retryable Google Ads problem, and would reuse the 503 this method reserves for
-COLD START.
-That status means "not wired yet, try again"; a live database fault is neither.
+an UNWIRED BACKEND.
+That status means the backend is not wired; a live database fault is neither.
+It is usually cold start and usually clears, but not always: in no-database mode
+the repository is never bound, so the same 503 persists for the life of the
+process. The route cannot distinguish the two, so the doc does not promise that
+retrying recovers it.

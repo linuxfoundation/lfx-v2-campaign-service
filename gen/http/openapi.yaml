@@ -6664,11 +6664,11 @@ paths:
             parameters:
                 - name: platform_campaign_id
                   in: query
-                  description: The Google Ads campaign id to resolve. Digits only.
+                  description: The Google Ads campaign id to resolve. Digits only, no leading zero, and within int64.
                   required: true
                   type: string
                   maxLength: 19
-                  pattern: ^[0-9]+$
+                  pattern: ^[1-9][0-9]{0,18}$
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection

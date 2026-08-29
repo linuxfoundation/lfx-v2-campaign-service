@@ -1013,7 +1013,8 @@ type ResolveGoogleAdsCampaignPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
-	// The Google Ads campaign id to resolve. Digits only.
+	// The Google Ads campaign id to resolve. Digits only, no leading zero, and
+	// within int64.
 	PlatformCampaignID string
 }
 

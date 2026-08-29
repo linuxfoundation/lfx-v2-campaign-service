@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -190,13 +191,28 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 // confident "no such campaign".
 func validateGoogleAdsCampaignID(id string) error {
 	const maxGoogleAdsCampaignIDLen = 19
+	const badID = "the campaign id must be 1-19 digits, without a leading zero, and within int64"
+
 	if id == "" || len(id) > maxGoogleAdsCampaignIDLen {
-		return &conn.BadRequestError{Code: "400", Message: "the campaign id must be 1-19 digits"}
+		return &conn.BadRequestError{Code: "400", Message: badID}
 	}
 	for _, r := range id {
 		if r < '0' || r > '9' {
-			return &conn.BadRequestError{Code: "400", Message: "the campaign id must be 1-19 digits"}
+			return &conn.BadRequestError{Code: "400", Message: badID}
 		}
+	}
+	// Canonical decimal only. The doc comment above is the reason: the id is compared as a
+	// STRING against stored platform ids, so "007" is a different row from "7" and simply
+	// matches nothing — the caller gets a confident 200 "not your campaign" for an id that is
+	// really just misspelled. "0" is not a Google Ads id at all.
+	if id[0] == '0' {
+		return &conn.BadRequestError{Code: "400", Message: badID}
+	}
+	// 19 digits is len(math.MaxInt64) but not every 19-digit string fits in one, and the values
+	// above it are unrepresentable rather than merely absent. Rejecting here keeps "declared 400"
+	// and "what the caller actually gets" the same answer.
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return &conn.BadRequestError{Code: "400", Message: badID}
 	}
 	return nil
 }

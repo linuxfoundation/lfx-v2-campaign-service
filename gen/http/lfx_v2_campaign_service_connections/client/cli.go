@@ -1511,7 +1511,7 @@ func BuildResolveGoogleAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolve
 	var platformCampaignID string
 	{
 		platformCampaignID = lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignPlatformCampaignID
-		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[0-9]+$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
 		if utf8.RuneCountInString(platformCampaignID) > 19 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
 		}

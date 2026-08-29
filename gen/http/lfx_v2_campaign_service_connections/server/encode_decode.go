@@ -6899,7 +6899,7 @@ func DecodeResolveGoogleAdsCampaignRequest(mux goahttp.Muxer, decoder func(*http
 		if platformCampaignID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "query string"))
 		}
-		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[0-9]+$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
 		if utf8.RuneCountInString(platformCampaignID) > 19 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
 		}
