@@ -1521,6 +1521,38 @@ Two places this shows up today:
 - The `ErrToggleUnsupported` 400 distinguishes the two reasons: email has no run state BY
   DESIGN, while an ad platform's toggle may simply not be wired yet.
 
+### The email draft inherits the template, and is corrected in one patch
+
+Cloning is the source of the draft's branding: logo, footer, address and social links come from
+the operator-chosen template, which is why this service has no per-portal module ids or baked
+footer of its own. `applyEmailContent` then corrects only what the brief knows better.
+
+Subject and sender travel in **one** `PatchEmailSettings` call. They share an endpoint, so
+splitting them would spend two requests where one does and could let the sender land while the
+subject failed — leaving a draft whose two halves came from different sources with nothing
+recording it.
+
+The sender is the connection's (`sender_name`, `sender_email`), and it is applied per project.
+Two properties follow from the single patch, and both are load-bearing:
+
+- **An absent sender is left alone, not cleared.** A connection configuring none is saying
+  nothing about the sender, not asking for the template's to be blanked; the `from` object is
+  omitted entirely rather than sent empty.
+- **A malformed address is dropped, not forwarded.** Nothing validates `sender_email` on the way
+  in — the Goa attribute declares no `Format(FormatEmail)` — and HubSpot answers a bad `replyTo`
+  with a 400, which is terminal rather than retryable. Forwarding one would therefore reject the
+  whole patch and lose the SUBJECT too, so a defect in one field would silently revert an
+  unrelated one. `mail.ParseAddress` gates it, and the PARSED address is what is sent: a
+  name-addr like `LF Events <events@example.org>` parses cleanly and would still be rejected as a
+  bare from-address, so validity alone is not enough.
+
+The fallback is partial: `fromName` and the address are separate fields on the `from` object and
+fail independently, so a valid display name survives an invalid address.
+
+The whole call is BEST-EFFORT. By the time it runs the email is cloned and pointed at the right
+audience, so it is already a working campaign; a failure here leaves a draft carrying the
+template's copy, which is what every campaign had before LFXV2-2775.
+
 See [internal/dispatch](../../../internal/dispatch).
 
 ## The system account is a connection row, not a second mechanism

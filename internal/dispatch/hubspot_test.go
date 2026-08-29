@@ -65,10 +65,13 @@ type hubspotRec struct {
 	sawSendList  bool
 	taggedHTML   string
 	subjectSet   string
-	fromNameSet  string
-	fromReplyTo  string
-	bodyHTMLSet  string
-	draftHTML    string
+	// settingsPatches records each settings PATCH as a WHOLE. Recording the fields independently
+	// could not tell one combined patch from two separate ones, nor an omitted `from` object from
+	// `{"fromName":"","replyTo":""}` -- so both sender tests would have passed against a
+	// regression in the very invariants they claim to pin.
+	settingsPatches []map[string]any
+	bodyHTMLSet     string
+	draftHTML       string
 	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
 	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
 	extraWidget bool
@@ -91,19 +94,30 @@ func (r *hubspotRec) markSendList(body map[string]any) {
 	r.sendListBody = body
 }
 
-// markFrom records a PATCH that set the draft's sender.
-func (r *hubspotRec) markFrom(name, replyTo string) {
+// markSettingsPatch records one whole settings PATCH body.
+func (r *hubspotRec) markSettingsPatch(body map[string]any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.fromNameSet = name
-	r.fromReplyTo = replyTo
+	r.settingsPatches = append(r.settingsPatches, body)
 }
 
-// snapshotFrom returns the sender the draft was patched with.
-func (r *hubspotRec) snapshotFrom() (string, string) {
+// settingsPatchCount is how many settings PATCHes were sent — 1 is the contract.
+func (r *hubspotRec) settingsPatchCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.fromNameSet, r.fromReplyTo
+	return len(r.settingsPatches)
+}
+
+// fromObject returns the `from` object of the single settings PATCH, and whether one was present
+// at all. `present=false` is a genuinely different fact from an empty object.
+func (r *hubspotRec) fromObject() (map[string]any, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.settingsPatches) != 1 {
+		return nil, false
+	}
+	from, ok := r.settingsPatches[0]["from"].(map[string]any)
+	return from, ok
 }
 
 // markSubject records a PATCH that set the draft's subject (LFXV2-2775 content apply).
@@ -225,14 +239,12 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 					rec.markBody(html)
 				}
 			case body["subject"] != nil || body["from"] != nil:
+				// The WHOLE body, asserted at the wire level rather than through the
+				// EmailSettings struct: HubSpot ignores `name`/`email` on the `from` object, so
+				// a test reading the struct would pass against a payload HubSpot discards.
+				rec.markSettingsPatch(body)
 				if body["subject"] != nil {
 					rec.markSubject(fmt.Sprint(body["subject"]))
-				}
-				// The v3 `from` object, asserted at the WIRE level rather than through the
-				// EmailSettings struct: HubSpot ignores `name`/`email`, so a test that checked
-				// the struct would pass against a payload HubSpot silently discards.
-				if from, ok := body["from"].(map[string]any); ok {
-					rec.markFrom(fmt.Sprint(from["fromName"]), fmt.Sprint(from["replyTo"]))
 				}
 			default:
 				rec.markSendList(body)
@@ -354,16 +366,51 @@ func TestHubSpot_AppliesConfiguredSender(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
-	name, replyTo := rec.snapshotFrom()
-	if name != "LF Events" {
-		t.Errorf("from.fromName = %q, want the connection's sender_name", name)
+	// ONE patch, which is the contract: the subject and the sender share an endpoint, and sending
+	// them separately would let one land while the other failed. Asserted directly rather than
+	// inferred from both values being present, which two patches would also satisfy.
+	if n := rec.settingsPatchCount(); n != 1 {
+		t.Fatalf("settings PATCHes = %d, want exactly 1 carrying both the subject and the sender", n)
 	}
-	if replyTo != "events@example.org" {
-		t.Errorf("from.replyTo = %q, want the connection's sender_email", replyTo)
+	from, ok := rec.fromObject()
+	if !ok {
+		t.Fatalf("settings PATCH carried no `from` object; want the configured sender")
 	}
-	// The subject must still land in the same patch — they share an endpoint and are sent together.
+	if got := from["fromName"]; got != "LF Events" {
+		t.Errorf("from.fromName = %v, want the connection's sender_name", got)
+	}
+	if got := from["replyTo"]; got != "events@example.org" {
+		t.Errorf("from.replyTo = %v, want the connection's sender_email", got)
+	}
 	if subject, _ := rec.snapshotContent(); subject != "Three days in Amsterdam" {
-		t.Errorf("subject = %q, want it applied alongside the sender", subject)
+		t.Errorf("subject = %q, want it applied in that same patch", subject)
+	}
+}
+
+// TestHubSpot_NormalisesNameAddrSender: a name-addr sender is reduced to the bare address.
+//
+// `LF Events <events@example.org>` PARSES, so a validity check alone would forward it verbatim
+// into `replyTo` -- which HubSpot reads as a bare from-address, so a value that passed validation
+// would still 400 the shared patch and take the subject down with it. That is the failure the
+// parse exists to prevent, so the parsed address is what must be sent.
+func TestHubSpot_NormalisesNameAddrSender(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	conn := activeHubSpotConn(goodHubSpotCreds)
+	conn.ProviderConfig["sender_email"] = "LF Events <events@example.org>"
+	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	from, ok := rec.fromObject()
+	if !ok {
+		t.Fatalf("settings PATCH carried no `from` object")
+	}
+	if got := from["replyTo"]; got != "events@example.org" {
+		t.Errorf("from.replyTo = %v, want the parsed bare address rather than the name-addr form", got)
 	}
 }
 
@@ -392,13 +439,17 @@ func TestHubSpot_DropsInvalidSenderButKeepsSubject(t *testing.T) {
 	if subject, _ := rec.snapshotContent(); subject != "Three days in Amsterdam" {
 		t.Errorf("subject = %q, want it applied despite the invalid sender address", subject)
 	}
-	name, replyTo := rec.snapshotFrom()
-	// The VALID half is kept; only the address is dropped.
-	if name != "LF Events" {
-		t.Errorf("from.fromName = %q, want the valid sender_name to survive", name)
+	from, ok := rec.fromObject()
+	if !ok {
+		t.Fatalf("settings PATCH carried no `from` object; the valid sender_name should still be sent")
 	}
-	if replyTo != "" && replyTo != "<nil>" {
-		t.Errorf("from.replyTo = %q, want the malformed address dropped rather than forwarded", replyTo)
+	// The VALID half is kept; only the address is dropped. The two are separate fields on the
+	// `from` object and fail independently, so the fallback is partial.
+	if got := from["fromName"]; got != "LF Events" {
+		t.Errorf("from.fromName = %v, want the valid sender_name to survive", got)
+	}
+	if _, present := from["replyTo"]; present {
+		t.Errorf("from.replyTo = %v, want the malformed address omitted rather than forwarded", from["replyTo"])
 	}
 }
 
@@ -415,8 +466,11 @@ func TestHubSpot_LeavesSenderAloneWhenUnconfigured(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
-	if name, replyTo := rec.snapshotFrom(); name != "" || replyTo != "" {
-		t.Errorf("from = {%q, %q}, want no sender patched when the connection configures none", name, replyTo)
+	// ABSENT, not empty. `{"fromName":"","replyTo":""}` would blank the template's sender, and an
+	// empty From on a marketing email is not a state to push HubSpot into -- so the object must
+	// not be sent at all. A field-by-field check could not tell those two apart.
+	if from, ok := rec.fromObject(); ok {
+		t.Errorf("settings PATCH carried from = %v, want no `from` object at all when none is configured", from)
 	}
 }
 

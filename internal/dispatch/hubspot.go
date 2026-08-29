@@ -447,14 +447,23 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 		// generated SUBJECT as well, leaving a draft that kept the template's copy for a defect in
 		// an unrelated field.
 		//
-		// Dropping only the address keeps everything that is still valid: the subject lands, and
-		// so does `fromName`. The draft falls back to the template's sender, which is the same
-		// behaviour as configuring none — a working LF-owned address, not a broken send.
-		if _, perr := mail.ParseAddress(senderEmail); perr != nil {
-			slog.WarnContext(ctx, "connection has a sender_email that is not a valid address; leaving the draft with the template's sender",
+		// Dropping only the ADDRESS keeps everything still valid: the subject lands, and so does
+		// `fromName` if one is configured. Only the address falls back to the template's, which is
+		// the same behaviour as configuring none — a working LF-owned address, not a broken send.
+		// The display name and the address are separate fields on the `from` object and fail
+		// independently, so the fallback is partial and this says so.
+		// The PARSED address is what goes out, not the operator's original string. A name-addr
+		// like `LF Events <events@example.org>` parses cleanly and would otherwise be forwarded
+		// verbatim into `replyTo`, which HubSpot reads as a bare from-address -- so a value that
+		// passed validation would still 400 the shared patch and take the subject with it, which
+		// is the exact failure this guard exists to prevent. Taking `.Address` normalises the
+		// name-addr and the plain forms to the same thing.
+		parsed, perr := mail.ParseAddress(senderEmail)
+		if perr != nil {
+			slog.WarnContext(ctx, "connection has a sender_email that is not a valid address; leaving the draft's sender address as the template set it",
 				"email_id", emailID)
 		} else {
-			settings.FromEmail = &senderEmail
+			settings.FromEmail = &parsed.Address
 		}
 	}
 	if settings.Subject != nil || settings.FromName != nil || settings.FromEmail != nil {
