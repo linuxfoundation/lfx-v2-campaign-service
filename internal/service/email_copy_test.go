@@ -21,6 +21,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // newTestLLMClient builds a real llm.Client against an httptest.Server, using the
@@ -935,25 +936,42 @@ func TestGenerateEmailCopy_NilStageIsNotAnError(t *testing.T) {
 	}
 }
 
-// The composed-prompt bound must be REACHABLE -- a bound above every composable prompt is a guard
-// that cannot fire, and deleting the whole check would break no test.
+// The composed-prompt bound guards TEMPLATE growth, not caller input, and this drives it that way.
 //
-// It is one of TWO properties the bounds must satisfy together; the other is that nothing the
-// pre-check accepts is refused by the composed check, which is why the INPUT bound came down to
-// 2400 rather than this one going up. See the sizing comment in email_copy.go: the worst valid
-// compose is 7439 runes (Post-Event) against a 7600 bound, so a stage template growing past
-// ~2559 runes of its current size trips this while no legitimate caller does.
+// It cannot be reached by caller input at ALL, for any pair of bounds: "never reject what the
+// pre-check accepted" needs the composed bound at or above the worst valid composition, and
+// "reachable by caller input" needs it below. The two are mutually exclusive by construction.
 //
-// This test drives caller input large enough to cross the bound with a stage attached, which the
-// input bound alone does not catch.
+// An earlier version of this test drove a 2500-rune event name and was a FALSE GREEN once the
+// input bound moved to 2400: the PRE-check rejected first, both guards returned the same
+// BadRequestError, and nothing could tell them apart. Neutralising the composed guard entirely
+// broke no test. The messages now differ, and this injects an oversized STAGE — the only input
+// that can actually reach the composed check — so deleting the guard fails here.
 func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
-	// Under the 3000-rune INPUT bound, so the pre-check passes and the composed check is what
-	// must reject this.
-	longName := repeatStr("x", 2500)
+	// A stage whose template alone blows the composed budget. Restored after the test so the
+	// package's own templates are untouched for everything else.
+	const oversized = "Oversized Test Stage"
+	original, existed := emailstage.Templates[oversized]
+	emailstage.Templates[oversized] = emailstage.Template{
+		StageName:     oversized,
+		Purpose:       "exercise the composed bound",
+		Tone:          "neutral",
+		UrgencyLevel:  1,
+		ContentPrompt: repeatStr("y", 9000),
+	}
+	t.Cleanup(func() {
+		if existed {
+			emailstage.Templates[oversized] = original
+			return
+		}
+		delete(emailstage.Templates, oversized)
+	})
+
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID: "brief-456", ProjectID: "proj-123",
-		EventDetails: json.RawMessage(`{"eventName":"` + longName + `","location":"Barcelona","dates":"June 17-20, 2026"}`),
+		// Small, so the PRE-check cannot be what rejects this. That distinction is the whole point.
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon","location":"Barcelona","dates":"June 17-20, 2026"}`),
 	}
 	// An LLM client must be configured, or the call fails on service-unavailable BEFORE the size
 	// check and the test would pass for the wrong reason. The server is never reached: the bound
@@ -966,15 +984,20 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, srv))
 
-	stage := "Post-Event"
+	stage := oversized
 	_, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
 		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: &stage,
 	})
 	if err == nil {
-		t.Fatal("expected the composed-prompt bound to reject this; it is unreachable if this passes")
+		t.Fatal("expected the composed-prompt bound to reject an oversized stage template")
 	}
 	var bad *briefs.BadRequestError
 	if !errors.As(err, &bad) {
 		t.Fatalf("want BadRequestError, got %T: %v", err, err)
+	}
+	// The COMPOSED guard specifically. Asserting only the type would pass if the pre-check
+	// rejected instead, which is exactly how the previous version went green.
+	if !strings.Contains(bad.Message, "service-side limit") {
+		t.Errorf("want the composed-bound message, got %q -- the PRE-check may have rejected first", bad.Message)
 	}
 }

@@ -66,12 +66,24 @@ directions, both of which this file has actually shipped:
   `TestGenerateEmailCopy_ComposedBoundIsReachable` exists to catch this, and it passed for a reason
   nobody had checked.
 
-**The two are only satisfiable as a pair.** Nothing the pre-check accepts may be refused here, and
-this check must still be reachable — with a 3000 input bound those are arithmetically incompatible
-(a valid caller composes up to 8041; reachability needs the bound below that). The INPUT bound came
-down to 2400 instead: the worst valid compose is then 7439, comfortably under 7600, while a stage
-template growing past ~2559 runes of its current size still trips the guard. 2400 runes is far more
-event-detail text than any real event carries.
+**The two are not satisfiable together — by construction, not by choice of numbers.** "Never refuse
+what the pre-check accepted" needs the composed bound at or above the worst valid composition;
+"reachable by caller input" needs it below. Three revisions tried to find a pair that did both.
+None can.
+
+The first property wins, because a caller must never be told their input is too large by the second
+of two checks after the first accepted it. The composed bound is then sized for the case that
+remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
+— the templates are large (Post-Event is 5041 runes on its own) and hand-edited.
+
+With the input bound at 2400 the worst valid composition is 7441, so 7600 clears it, and a template
+growing ~159 runes trips the guard. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
+way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
+
+That test was a **false green** for one revision: once the input bound moved to 2400, its 2500-rune
+event name hit the PRE-check instead, and both guards returned the same `BadRequestError` message,
+so nothing could tell them apart — neutralising the composed guard entirely broke no test. The two
+messages now differ, and the test asserts the composed one specifically.
 
 Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
 `design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
@@ -85,7 +97,7 @@ every other bound in this file counts runes. `len()` gave an event named in Japa
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
 shared prompt or any template changes: Post-Event is the largest stage at 5041 runes on its own,
-and with the maximum 2400 runes of caller input it composes to 7439 against the 7600 bound. Every
+and with the maximum 2400 runes of caller input it composes to 7441 against the 7600 bound. Every
 figure in this section has been wrong at least once from a measurement taken before a template
 grew, so derive them rather than carrying them forward.
 

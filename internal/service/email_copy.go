@@ -319,18 +319,22 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// input-token cost and large allocations. The composed total additionally includes the fixed
 	// system prompt and the stage template, which are service-owned constants no caller can grow.
 	//
-	// The two bounds are chosen TOGETHER, because two properties have to hold at once and only
-	// the pair can satisfy both:
+	// This bound guards TEMPLATE growth, not caller input, and it cannot guard both.
 	//
-	//   1. No input the pre-check accepts may be refused here. Two bounds contradicting each other
-	//      tells a caller their input is too large immediately after the first one accepted it.
-	//   2. This check must stay REACHABLE. A bound above every composable prompt is a guard that
-	//      cannot fire, and deleting it would break no test.
+	// The two properties are mutually exclusive BY CONSTRUCTION, for any pair of numbers: "never
+	// refuse what the pre-check accepted" needs this at or above the worst valid composition,
+	// while "reachable by caller input" needs it below. Three revisions tried to satisfy both by
+	// tuning the numbers; none could, and the arithmetic says none can.
 	//
-	// MEASURED: the worst stage-only floor is Post-Event at 5041 runes (system 1776 + user 3265).
-	// With a 2400-rune input bound the worst a valid caller composes is 7441, so 7600 satisfies
-	// (1) with room to spare, and satisfies (2) because a stage template growing past ~2559 runes
-	// of its current size trips it.
+	// So the first property wins -- a caller must never be told their input is too large by the
+	// second of two checks after the first accepted it -- and this one is sized to catch the case
+	// that remains: a stage template growing past the budget in a future edit. That is a real
+	// failure mode, since the templates are large (Post-Event is 5041 runes on its own) and are
+	// edited by hand.
+	//
+	// MEASURED: worst stage-only floor 5041 (system 1776 + user 3265), so with the 2400-rune input
+	// bound the worst valid composition is 7441 and 7600 clears it. A template growing ~159 runes
+	// past its current size trips this.
 	//
 	// Both figures were wrong twice before, in opposite directions, from a stale 4700/7700
 	// measurement taken before the templates grew:
@@ -374,7 +378,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
 		return nil, &briefs.BadRequestError{
 			Code:    "400",
-			Message: "brief's event details are too large; reduce the event name, location, or dates",
+			Message: "the generated prompt for this email stage is too large to send; this is a service-side limit, not something the brief can be edited to fix",
 		}
 	}
 
