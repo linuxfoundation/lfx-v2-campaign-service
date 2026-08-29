@@ -151,3 +151,54 @@ func TestThrottleOverCapAbort_IsAmbiguousNotFailed(t *testing.T) {
 		t.Errorf("createOutcomeAmbiguous = false for an over-cap 429 abort; a possibly-applied mutation reads as definitely failed. err = %v", err)
 	}
 }
+
+// TestCreateIsNotRetriedOnAThrottle pins the half of the 429 contract that classification alone
+// cannot cover.
+//
+// Marking an exhausted throttle UNCONFIRMED describes the error the CALLER finally sees. It says
+// nothing about what happened inside request(), and there the automatic retry was itself the
+// duplicate: Reddit does not say whether it shed a throttled request before or after processing,
+// so a 429 on a create may already have made the campaign — and retrying it makes a second one
+// that spends real budget, before any classification runs.
+//
+// Meta's doCreate passes retryThrottle=false for exactly this reason; this pins that Reddit now
+// matches. Counting REQUESTS is what makes it bind: an assertion on the returned error would
+// pass whether the retry ran or not.
+func TestCreateIsNotRetriedOnAThrottle(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+	}))
+	t.Cleanup(apiSrv.Close)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff))
+
+	_, err := c.requestNoThrottleRetry(context.Background(), http.MethodPost,
+		"/ad_accounts/1/campaigns", map[string]any{"data": map[string]any{}})
+	if err == nil {
+		t.Fatal("a 429 create was reported as success")
+	}
+
+	mu.Lock()
+	got := posts
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("the create was sent %d times; a retried throttle is how the duplicate campaign gets made", got)
+	}
+	// And the outcome is still UNCONFIRMED — not retrying does not make it a clean failure.
+	if !createOutcomeAmbiguous(err) {
+		t.Errorf("a throttled create is not ambiguous, so a caller is told nothing was created: %v", err)
+	}
+}

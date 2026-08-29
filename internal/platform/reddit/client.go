@@ -1025,6 +1025,26 @@ func isPreSendDialError(err error) bool {
 // UNCONFIRMED — createOutcomeAmbiguous reports true for it, and a caller must
 // verify before retrying rather than assume a clean failure.
 func (c *Client) request(ctx context.Context, method, path string, body any) (*apiResponse, error) {
+	// Retries throttles. Every caller that CREATES must use requestNoThrottleRetry instead.
+	return c.requestWithThrottleRetry(ctx, method, path, body, true)
+}
+
+// requestNoThrottleRetry issues a request that is NOT retried on a 429.
+//
+// For a CREATE, the automatic retry is itself the duplicate. Reddit does not say whether it shed
+// a throttled request before or after processing, so a 429 on a create may already have made the
+// campaign — and retrying it then makes a second one that spends real budget. Marking the
+// exhausted outcome UNCONFIRMED (see createOutcomeAmbiguous) is not enough on its own: it
+// describes the error the CALLER finally sees, while the retry has already run inside this
+// method. Mirrors Meta, whose doCreate passes retryThrottle=false for the same reason.
+//
+// The trade is deliberate: a throttled create now fails sooner and is reported as unconfirmed
+// for a human to verify, rather than being retried into a duplicate nobody asked for.
+func (c *Client) requestNoThrottleRetry(ctx context.Context, method, path string, body any) (*apiResponse, error) {
+	return c.requestWithThrottleRetry(ctx, method, path, body, false)
+}
+
+func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path string, body any, retryThrottle bool) (*apiResponse, error) {
 	// Split any query string off before sanitizing: sanitizePath escapes each
 	// PATH segment (turning a literal '?'/'=' into %3F/%3D), which would corrupt a
 	// query. The query (built by the caller via url.Values.Encode) is already
@@ -1111,7 +1131,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		// keeps a hostile/oversized body from being read unbounded. On the final
 		// attempt we fall through and surface the 429 as an ordinary non-2xx error
 		// below rather than looping forever.
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+		if resp.StatusCode == http.StatusTooManyRequests && retryThrottle && attempt < retryMax {
 			retryAfter, ok := c.parseRetryAfter(resp)
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 			_ = resp.Body.Close()
@@ -1799,7 +1819,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		campaignData["conversion_pixel_id"] = conversionPixelID
 	}
 
-	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
+	campaignResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
 		// Classify AMBIGUITY FIRST, before the ctx check: a cancellation that
 		// interrupts THIS create's in-flight round-trip surfaces as a transportError,
@@ -1955,7 +1975,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// place.
 	rejectedCommunitiesByReddit := false
 	rejectedInterestsByReddit := false
-	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(optionalTargeting))
+	adGroupResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(optionalTargeting))
 	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
 	// ambiguous (transportError / 5xx / mutating 3xx — the ad group MAY exist, and partialResult
 	// carries its deterministic name for reconciliation) vs a flat "failed" for a
@@ -2018,7 +2038,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// Carry the rejected-vs-collateral distinction to the persisted summary.
 			rejectedCommunitiesByReddit = rejectedCommunities
 			rejectedInterestsByReddit = rejectedInterests
-			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
+			adGroupResp, err = c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
 				return partialResult(), adGroupErr(err)
 			}
@@ -2132,7 +2152,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			},
 		}
 
-		adResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ads", adBody)
+		adResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ads", adBody)
 		if err != nil {
 			// A caller context cancellation is fatal (return an error, not just a
 			// warning). Whether the ad "may exist" depends on whether the request was
@@ -2294,7 +2314,7 @@ func (c *Client) createPromotedPost(ctx context.Context, accountID string, in Ca
 			}},
 		},
 	}
-	resp, err := c.request(ctx, http.MethodPost, "/profiles/"+accountID+"/posts", body)
+	resp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/profiles/"+accountID+"/posts", body)
 	if err != nil {
 		return "", err
 	}
