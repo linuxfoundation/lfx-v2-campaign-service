@@ -7588,6 +7588,7 @@ func DecodeSearchHubspotCampaignsRequest(mux goahttp.Muxer, decoder func(*http.R
 		if q == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("q", "query string"))
 		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("q", q, "\\S"))
 		if utf8.RuneCountInString(q) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 1, true))
 		}

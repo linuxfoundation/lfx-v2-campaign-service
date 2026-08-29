@@ -1295,8 +1295,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("q", String, "The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked.", func() {
+			Attribute("q", String, "The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked. Must contain a non-whitespace character.", func() {
+				// MinLength(1) alone admits "   ", which the handler then refuses with a 400:
+				// the contract would promise a request the service does not accept. The pattern
+				// states the rule the handler already enforces, so the generated decoder and the
+				// runtime agree and the published schema is what callers can rely on.
 				MinLength(1)
+				Pattern(`\S`)
 				Example("KubeCon NA 2026")
 			})
 			Required("project_id", "q")
@@ -1378,9 +1383,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("name", String, "The campaign name. Visible to everyone on the connection's HubSpot portal — do not include project-sensitive information.", func() {
+			Attribute("name", String, "The campaign name. Visible to everyone on the connection's HubSpot portal — do not include project-sensitive information. Must contain a non-whitespace character.", func() {
+				// See the search `q` attribute: MinLength(1) admits a whitespace-only name that
+				// the handler refuses with a 400.
 				MinLength(1)
 				MaxLength(255)
+				Pattern(`\S`)
 				Example("KubeCon NA 2026")
 			})
 			Required("project_id", "name")

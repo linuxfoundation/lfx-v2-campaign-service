@@ -345,7 +345,8 @@ type CreateHubspotCampaignPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// The campaign name. Visible to everyone on the connection's HubSpot portal —
-	// do not include project-sensitive information.
+	// do not include project-sensitive information. Must contain a non-whitespace
+	// character.
 	Name string
 }
 
@@ -1070,7 +1071,7 @@ type SearchHubspotCampaignsPayload struct {
 	ProjectID string
 	// The campaign name to search for. Matched by HubSpot's own `query` search
 	// over its default searchable properties — not an exact-name lookup, and not
-	// relevance-ranked.
+	// relevance-ranked. Must contain a non-whitespace character.
 	Q string
 }
 

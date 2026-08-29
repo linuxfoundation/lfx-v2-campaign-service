@@ -173,7 +173,8 @@ type SetCredentialHubspotRequestBody struct {
 // endpoint HTTP request body.
 type CreateHubspotCampaignRequestBody struct {
 	// The campaign name. Visible to everyone on the connection's HubSpot portal —
-	// do not include project-sensitive information.
+	// do not include project-sensitive information. Must contain a non-whitespace
+	// character.
 	Name string `form:"name" json:"name" xml:"name"`
 }
 

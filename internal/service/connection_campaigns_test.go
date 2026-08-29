@@ -199,8 +199,21 @@ func TestCreateHubspotCampaign_NilWithoutErrorIsRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("a nil campaign with no error was reported as success")
 	}
-	if _, ok := err.(*conn.InternalServerError); !ok {
-		t.Errorf("error = %T (%v), want *conn.InternalServerError", err, err)
+	// 503, not 500. Reaching this arm means the create returned NO error, so the request was
+	// sent and HubSpot did not refuse it — the campaign may exist. 500 would read as a clean
+	// pre-send failure and invite the retry that makes a duplicate in a namespace every
+	// foundation shares.
+	unavailable, ok := err.(*conn.ConnServiceUnavailableError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
+	}
+	if unavailable.Code != "503" {
+		t.Errorf("code = %q, want 503", unavailable.Code)
+	}
+	// The message must send the operator to HubSpot rather than back through the button: an
+	// unconfirmed non-idempotent create is exactly where a retry duplicates.
+	if !strings.Contains(unavailable.Message, "check HubSpot before creating it again") {
+		t.Errorf("message = %q; want it to tell the caller to check HubSpot before retrying", unavailable.Message)
 	}
 }
 

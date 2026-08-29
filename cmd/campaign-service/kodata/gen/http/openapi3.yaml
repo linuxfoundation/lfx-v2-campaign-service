@@ -4667,13 +4667,14 @@ paths:
             parameters:
                 - name: q
                   in: query
-                  description: The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked.
+                  description: The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked. Must contain a non-whitespace character.
                   allowEmptyValue: true
                   required: true
                   schema:
                     type: string
-                    description: The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked.
+                    description: The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked. Must contain a non-whitespace character.
                     example: KubeCon NA 2026
+                    pattern: \S
                     minLength: 1
                   example: KubeCon NA 2026
                 - name: project_id
@@ -11494,8 +11495,9 @@ components:
             properties:
                 name:
                     type: string
-                    description: The campaign name. Visible to everyone on the connection's HubSpot portal — do not include project-sensitive information.
+                    description: The campaign name. Visible to everyone on the connection's HubSpot portal — do not include project-sensitive information. Must contain a non-whitespace character.
                     example: KubeCon NA 2026
+                    pattern: \S
                     minLength: 1
                     maxLength: 255
             example:

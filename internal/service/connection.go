@@ -1372,8 +1372,18 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 	// The dispatcher refuses a nil-without-error, so this cannot fire on the current path.
 	// Guarded because the alternative is a nil dereference one line down, and a create that
 	// reports success while returning nothing is worse than a clear failure.
+	//
+	// 503, not 500. Reaching here means the create returned NO error: the request was sent and
+	// HubSpot did not refuse it, so the campaign may well exist — this is the one arm where the
+	// service knows least and the write is non-idempotent into a namespace every foundation
+	// shares. 500 is reserved for "definitely not sent", and a caller that reads this as a clean
+	// failure retries and makes the duplicate. Same wording as the catch-all below it, because
+	// the caller's remedy is identical: look in HubSpot before creating again.
 	if created == nil {
-		return nil, &conn.InternalServerError{Code: "500", Message: "the campaign was not returned after creation"}
+		return nil, &conn.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the campaign creation could not be confirmed — check HubSpot before creating it again, as it may already exist",
+		}
 	}
 	return toWireHubspotCampaign(*created), nil
 }

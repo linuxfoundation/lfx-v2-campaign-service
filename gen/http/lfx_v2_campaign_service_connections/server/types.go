@@ -173,7 +173,8 @@ type SetCredentialHubspotRequestBody struct {
 // endpoint HTTP request body.
 type CreateHubspotCampaignRequestBody struct {
 	// The campaign name. Visible to everyone on the connection's HubSpot portal —
-	// do not include project-sensitive information.
+	// do not include project-sensitive information. Must contain a non-whitespace
+	// character.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 }
 
@@ -9618,6 +9619,9 @@ func ValidateSetCredentialHubspotRequestBody(body *SetCredentialHubspotRequestBo
 func ValidateCreateHubspotCampaignRequestBody(body *CreateHubspotCampaignRequestBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Name != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.name", *body.Name, "\\S"))
 	}
 	if body.Name != nil {
 		if utf8.RuneCountInString(*body.Name) < 1 {

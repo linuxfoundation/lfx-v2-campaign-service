@@ -1623,6 +1623,7 @@ func BuildSearchHubspotCampaignsPayload(lfxV2CampaignServiceConnectionsSearchHub
 	var q string
 	{
 		q = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQ
+		err = goa.MergeErrors(err, goa.ValidatePattern("q", q, "\\S"))
 		if utf8.RuneCountInString(q) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 1, true))
 		}
@@ -1655,6 +1656,7 @@ func BuildCreateHubspotCampaignPayload(lfxV2CampaignServiceConnectionsCreateHubs
 		if err != nil {
 			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"name\": \"KubeCon NA 2026\"\n   }'")
 		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.name", body.Name, "\\S"))
 		if utf8.RuneCountInString(body.Name) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", body.Name, utf8.RuneCountInString(body.Name), 1, true))
 		}

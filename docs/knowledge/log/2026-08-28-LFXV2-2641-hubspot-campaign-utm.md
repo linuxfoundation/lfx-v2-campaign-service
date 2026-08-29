@@ -100,3 +100,34 @@ from 100 on their side in September 2024) and
 documented as a contract fact rather than a tuning detail: it is a cap with no
 paging, so a campaign below it reads as absent, and absent is what prompts a
 duplicate.
+
+## 500 is a pre-send status
+
+Review found the service and its UI disagreeing about what a 500 means on this
+create, in a way that decides whether a retry is safe.
+
+The service treated 500 as a definite pre-send failure; the UI treated every 500
+as unconfirmed. Both readings were defensible on their own, and the BFF made it
+worse by emitting its own network failures as 500 — so a transport failure
+AFTER the request went out was indistinguishable from a clean rejection before
+it did. On a non-idempotent create into a namespace every foundation shares,
+that ambiguity is the duplicate.
+
+Resolved by giving the two statuses non-overlapping positions rather than
+choosing a winner:
+
+- **500** means the service faulted BEFORE the request went out. Nothing was
+  created, and the caller may retry.
+- **503** means the outcome could not be confirmed, including anything the
+  service cannot positively classify. The campaign may exist; check HubSpot.
+
+One arm moved as a result. A `created == nil` with NO error had been a 500, but
+reaching it means the request was sent and HubSpot did not refuse it — the
+service's reading of the outcome failed, not the create. It is now a 503 with
+the same "check HubSpot before creating it again" message as the catch-all,
+because the caller's remedy is identical.
+
+The whitespace-only inputs are also closed at the contract now. `MinLength(1)`
+admitted `"   "`, which the handler refused with a 400 — the published schema
+promised a request the service does not accept. Both `q` and `name` carry a
+`\S` pattern, so the generated decoder and the runtime agree.
