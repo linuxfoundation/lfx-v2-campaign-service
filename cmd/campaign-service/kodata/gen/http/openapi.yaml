@@ -2276,6 +2276,11 @@ paths:
                   description: JWT token issued by Heimdall
                   required: false
                   type: string
+                - name: Generate-Email-CopyRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceBriefsGenerateEmailCopyRequestBody'
             responses:
                 "200":
                     description: OK response.
@@ -9179,6 +9184,23 @@ definitions:
             url: https://events.linuxfoundation.org/kubecon-cloudnativecon-europe/
         required:
             - url
+    LfxV2CampaignServiceBriefsGenerateEmailCopyRequestBody:
+        title: LfxV2CampaignServiceBriefsGenerateEmailCopyRequestBody
+        type: object
+        properties:
+            stage:
+                type: string
+                description: Event-lifecycle stage the email belongs to
+                example: Post-Event
+                enum:
+                    - CFP Launch
+                    - Schedule Announcement
+                    - Registration Push
+                    - Discount Offer
+                    - Final Countdown
+                    - Post-Event
+        example:
+            stage: Post-Event
     LfxV2CampaignServiceBriefsToggleCampaignStatusRequestBody:
         title: LfxV2CampaignServiceBriefsToggleCampaignStatusRequestBody
         type: object

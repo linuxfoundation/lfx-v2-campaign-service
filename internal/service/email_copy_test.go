@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -823,5 +824,55 @@ func TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing(t *testing.T) {
 	}
 	if !strings.Contains(logged, "input_size=") {
 		t.Errorf("log = %q, want an input_size field naming what was measured", logged)
+	}
+}
+
+// The stage must reach the MODEL, not merely be accepted by the handler. Asserting only that the
+// call succeeded would pass against a stage that was parsed and then dropped -- which is exactly
+// how the whole feature would be inert while every test stayed green.
+func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
+	cases := []struct {
+		name       string
+		stage      *string
+		wantPhrase string
+	}{
+		// Purpose text unique to each stage's ported ContentPrompt.
+		{"post-event", strPtr("Post-Event"), "Thank attendees"},
+		{"cfp launch", strPtr("CFP Launch"), "Recruit speakers"},
+		// Absent stage keeps the pre-stage behaviour: Registration Push, not an error.
+		{"absent falls back", nil, "Registration"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+				ID: "brief-456", ProjectID: "proj-123",
+				EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","dates":"June 17-20, 2026"}`),
+			}
+
+			var sentBody string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				sentBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+			}))
+			defer srv.Close()
+
+			svc := newTestBriefService(repo)
+			svc.SetLLMClient(newTestLLMClient(t, srv))
+
+			if _, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+				ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: tc.stage,
+			}); err != nil {
+				t.Fatalf("GenerateEmailCopy() error = %v", err)
+			}
+
+			if !strings.Contains(sentBody, tc.wantPhrase) {
+				t.Errorf("prompt sent upstream does not carry %q for stage %v", tc.wantPhrase, tc.stage)
+			}
+		})
 	}
 }

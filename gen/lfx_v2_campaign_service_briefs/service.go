@@ -661,6 +661,8 @@ type GenerateEmailCopyPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
+	// Event-lifecycle stage the email belongs to
+	Stage *string
 }
 
 // GetBriefMetricsPayload is the payload type of the

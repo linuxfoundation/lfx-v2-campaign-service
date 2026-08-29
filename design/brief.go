@@ -1177,6 +1177,19 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			bearerToken()
 			projectIDAttr()
 			briefIDAttr()
+			// The event-lifecycle stage this email belongs to. OPTIONAL, and its absence is
+			// meaningful rather than merely missing: it means the caller did not say, which
+			// resolves to Registration Push -- the copy the single hardcoded prompt produced
+			// before stages existed, so every pre-stage caller keeps its current output.
+			//
+			// Enumerated rather than free text: an unrecognised stage would fall back silently,
+			// so a typo would generate the wrong kind of email and report success. The enum
+			// turns that into a 400 the caller can see.
+			Attribute("stage", String, "Event-lifecycle stage the email belongs to", func() {
+				Enum("CFP Launch", "Schedule Announcement", "Registration Push",
+					"Discount Offer", "Final Countdown", "Post-Event")
+				Example("Post-Event")
+			})
 			Required("project_id", "brief_id")
 		})
 		Result(EmailCopy)
