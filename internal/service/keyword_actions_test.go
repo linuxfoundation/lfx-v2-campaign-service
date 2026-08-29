@@ -1264,3 +1264,59 @@ func TestResolveGoogleAdsCampaign_ColdStartIsRetryable(t *testing.T) {
 		t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError — a 500 here tells the caller not to retry something that will succeed once startup finishes", err, err)
 	}
 }
+
+// A malformed id is a 400, not a confident "no such campaign".
+//
+// The DSL's `^[0-9]+$` / MaxLength(19) is enforced by the generated HTTP decoder only, so a
+// direct service or endpoint caller bypasses it. Unchecked, the value reaches the query and
+// returns an empty match set — which this route documents as "this project owns no campaign
+// with that id". That is a claim the input never justified, and the caller cannot then tell a
+// typo from an unowned campaign.
+func TestResolveGoogleAdsCampaign_MalformedIDIsRefusedNotAnsweredEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"letters", "abc"},
+		{"mixed", "2418378132x"},
+		{"empty", ""},
+		{"twenty digits, one past the int64 width", "12345678901234567890"},
+		{"negative", "-1"},
+		{"decimal", "24183781329.0"},
+		{"leading space", " 24183781329"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", "24183781329"))
+
+			res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+				ProjectID:          "cncf",
+				PlatformCampaignID: tc.id,
+			})
+			if err == nil {
+				t.Fatalf("a malformed id answered %+v instead of being refused", res)
+			}
+			if _, ok := err.(*conn.BadRequestError); !ok {
+				t.Errorf("error = %T (%v), want *conn.BadRequestError", err, err)
+			}
+		})
+	}
+}
+
+// The other direction, so the guard cannot be satisfied by refusing everything: a real
+// 11-digit id and the widest legal one both still resolve.
+func TestResolveGoogleAdsCampaign_WellFormedIDsAreStillAccepted(t *testing.T) {
+	for _, id := range []string{"24183781329", "1", "9223372036854775807"} {
+		svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", id))
+
+		res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+			ProjectID:          "cncf",
+			PlatformCampaignID: id,
+		})
+		if err != nil {
+			t.Fatalf("a well-formed id %q was refused: %v", id, err)
+		}
+		if res.MatchCount != 1 {
+			t.Errorf("id %q: match_count = %d, want 1", id, res.MatchCount)
+		}
+	}
+}

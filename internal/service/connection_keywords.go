@@ -162,20 +162,59 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 // resolved and Google is never contacted. That is why it declares no 409 — there is no
 // connection to be unusable and no ad account to mismatch.
 //
-// It DOES declare a 503, for cold start only: resolveBackendWithOrch refuses before storage and
-// the orchestrator are wired, which is genuinely retryable. A storage FAULT is a 500 instead —
-// a failure in a service already up, where retrying does not help. Both reach the caller from
-// this one method, so both are declared and kept distinguishable.
+// It DOES declare a 503: resolveBackendWithOrch refuses until storage and the orchestrator are
+// wired. That is USUALLY cold start, and retrying is then the right answer — but it is not the
+// only case. In the supported no-database mode NewContainer leaves the repository and
+// orchestrator nil deliberately, so its routes stay mounted and answer this typed 503 rather
+// than a bare 404 — and there the same status persists for the life of the process, however
+// long a caller retries. A client must treat 503 as "not available yet", never as a promise
+// that waiting will change it.
+//
+// A storage FAULT is a 500 instead — a failure in a service already up, where retrying does not
+// help. Both reach the caller from this one method, so both are declared and kept
+// distinguishable.
 //
 // An unowned id is an empty `matches` with a 200, NOT a 404. "This project owns no campaign
 // with that upstream id" is an answer the caller acts on by refusing the action, and a 404
 // would say something different — that the route or the project is wrong. Distinguishing them
 // is the difference between a caller reporting "not your campaign" and one retrying a request
 // that will never work.
+// validateGoogleAdsCampaignID mirrors the DSL constraint on `platform_campaign_id`.
+//
+// Kept as a named helper rather than inlined so the two cannot drift silently: if the design
+// bound changes, this is the one other place that has to move, and it says so.
+//
+// 19 is len(math.MaxInt64), the widest a Google Ads numeric id can be. Digits-only matters
+// beyond tidiness: the id is compared as a STRING against stored platform ids, so a value that
+// is not a canonical decimal integer can never match a real row — it can only produce a
+// confident "no such campaign".
+func validateGoogleAdsCampaignID(id string) error {
+	const maxGoogleAdsCampaignIDLen = 19
+	if id == "" || len(id) > maxGoogleAdsCampaignIDLen {
+		return &conn.BadRequestError{Code: "400", Message: "the campaign id must be 1-19 digits"}
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return &conn.BadRequestError{Code: "400", Message: "the campaign id must be 1-19 digits"}
+		}
+	}
+	return nil
+}
+
 func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *conn.ResolveGoogleAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
 	// Same reserved-scope refusal as the reads above: left open, this would report whether the
 	// Linux Foundation's own scope holds a given campaign to any caller.
 	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	// The DSL's `^[0-9]+$` / MaxLength(19) is enforced by the generated HTTP DECODER only, so a
+	// direct service or endpoint caller bypasses it entirely. Unchecked, "abc" or a 20-digit id
+	// reaches the query and comes back as a 200 with no matches — which this route documents as
+	// "this project owns no campaign with that id", a claim the input never justified. The
+	// caller then refuses an action for the wrong reason and cannot tell a typo from an
+	// unowned campaign. Mirrored here so the answer is the declared 400 whichever door the
+	// request came in by.
+	if err := validateGoogleAdsCampaignID(p.PlatformCampaignID); err != nil {
 		return nil, err
 	}
 	_, _, orch, err := s.resolveBackendWithOrch("resolve campaign reference")
