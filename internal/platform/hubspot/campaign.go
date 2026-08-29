@@ -71,6 +71,18 @@ type Campaign struct {
 	// UTM is the campaign's UTM token (`hs_utm`). EMPTY is a real state: a campaign can exist
 	// with no token configured, and that is different from the campaign not existing. A caller
 	// must not treat an empty token as "not found" — see SearchCampaigns.
+	//
+	// WHAT EMPTY MEANS DEPENDS ON WHICH CALL PRODUCED IT, and neither caller may state the
+	// stronger reading as fact:
+	//
+	//   - From SearchCampaigns, the properties were requested explicitly, so empty means the
+	//     campaign HAS no token configured.
+	//   - From CreateCampaign, the marketing create is not documented to return `hs_utm` at all
+	//     (see that method), so empty means only that THIS RESPONSE did not carry one. A token
+	//     may already exist and be visible to the very next search.
+	//
+	// A create path that renders empty as "HubSpot has not assigned one yet" is therefore
+	// guessing. The honest answer is that the token is not known yet and a re-read will say.
 	UTM string
 	// StartDate is `hs_start_date`, carried through as HubSpot's own string rather than parsed:
 	// it is used for display and disambiguation between same-named campaigns, never for
