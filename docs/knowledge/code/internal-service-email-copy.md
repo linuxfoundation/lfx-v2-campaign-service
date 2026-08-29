@@ -54,10 +54,18 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 `maxPromptSize` is 3000 **runes** and bounds the three event-detail fields BEFORE
 `composeEmailCopyPrompt`; `maxComposedPromptSize` is 6500 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
-input plus the stage template. Sharing one number REJECTS every valid request: the smallest composed
-prompt is 4923 runes (Schedule Announcement) because the stage template alone exceeds 3000, so a
-shared 3000 fails the post-check on input the pre-check correctly allowed. Neither check is
-redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
+input plus the stage template — and getting the second number wrong fails in TWO opposite
+directions, both of which this file has actually shipped:
+
+- **Too low rejects everything.** Reusing 3000 for the composed check fails every valid request:
+  the smallest composed prompt is 4923 runes (Schedule Announcement) because the stage template
+  alone exceeds 3000, so the post-check refuses input the pre-check correctly allowed.
+- **Too high never fires.** The first stage-aware version set it to 8000 against a maximum
+  reachable composition of 7700, so the guard could not be tripped by any input — a bound that
+  looks enforced and enforces nothing. That is what `TestGenerateEmailCopy_ComposedBoundIsReachable`
+  exists to catch, and why the measured figure below has to be re-derived rather than estimated.
+
+Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
 `design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
 check formats a 50MB stored event name into a new string before measuring it — the allocation
 the guard exists to prevent, performed by the guard's own input. The three fields alone cannot
