@@ -591,3 +591,53 @@ func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
 		t.Errorf("a never-sent failure tagged as a permission refusal: %v", err)
 	}
 }
+
+// TestHubSpot_SearchCampaignsCrossesTheSeam covers the dispatcher adapter itself.
+//
+// The client tests derive Capped and the service tests map it onto the wire, but nothing
+// exercised the adapter BETWEEN them. Dropping page.Capped here would leave both of those suites
+// green while turning a capped, incomplete search into a plain empty answer — and empty is
+// exactly what the UI acts on by offering to create a campaign, in a namespace every foundation
+// on that portal shares. Every field is asserted for the same reason: a field silently lost at
+// this seam cannot be seen from either side of it.
+func TestHubSpot_SearchCampaignsCrossesTheSeam(t *testing.T) {
+	const searchPath = "/crm/v3/objects/0-35/search"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == searchPath {
+			// total (7) deliberately exceeds the returned rows (1): that is what makes the page
+			// capped, and the capped flag is the whole point of this test.
+			_, _ = io.WriteString(w, `{"total":7,"results":[{"id":"c-1","properties":{"hs_name":"KubeCon NA 2026","hs_utm":"kubecon-na-2026","hs_start_date":"2026-11-10"}}]}`)
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	page, err := d.SearchCampaigns(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon")
+	if err != nil {
+		t.Fatalf("SearchCampaigns: %v", err)
+	}
+	if !page.Capped {
+		t.Error("Capped was dropped crossing the dispatcher: an incomplete search now reads as a " +
+			"complete one, and an absent campaign is what licenses a duplicate create")
+	}
+	if len(page.Campaigns) != 1 {
+		t.Fatalf("got %d campaigns, want 1", len(page.Campaigns))
+	}
+	got := page.Campaigns[0]
+	for _, f := range []struct{ name, got, want string }{
+		{"ID", got.ID, "c-1"},
+		{"Name", got.Name, "KubeCon NA 2026"},
+		{"UTM", got.UTM, "kubecon-na-2026"},
+		{"StartDate", got.StartDate, "2026-11-10"},
+	} {
+		if f.got != f.want {
+			t.Errorf("%s = %q, want %q — lost crossing the dispatcher seam", f.name, f.got, f.want)
+		}
+	}
+}

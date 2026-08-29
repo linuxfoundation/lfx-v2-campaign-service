@@ -1270,9 +1270,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
 			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
 			"sort, and no `sorts` is sent, so rows arrive in HubSpot's default order (by object " +
-			"creation). **Do not read the first row as the best match.** " +
-			"so a hit can merely share a token with the query. Every match is returned in HubSpot's " +
-			"the order HubSpot returned them rather than narrowed to a best one, because choosing between " +
+			"creation). **Do not read the first row as the best match** — the search is token-based, " +
+			"so a hit can merely share a token with the query. Every match is returned, in the order " +
+			"HubSpot returned them, rather than narrowed to a best one, because choosing between " +
 			"similarly-named campaigns needs a human reading the names — collapsing them here would " +
 			"hide the ambiguity from the only party able to resolve it. " +
 			"**An empty `campaigns` array is a 200, not a 404**: 'no campaign is named that' is the " +
