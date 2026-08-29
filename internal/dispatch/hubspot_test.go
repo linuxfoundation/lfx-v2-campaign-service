@@ -65,6 +65,8 @@ type hubspotRec struct {
 	sawSendList  bool
 	taggedHTML   string
 	subjectSet   string
+	fromNameSet  string
+	fromReplyTo  string
 	bodyHTMLSet  string
 	draftHTML    string
 	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
@@ -87,6 +89,21 @@ func (r *hubspotRec) markSendList(body map[string]any) {
 	defer r.mu.Unlock()
 	r.sawSendList = true
 	r.sendListBody = body
+}
+
+// markFrom records a PATCH that set the draft's sender.
+func (r *hubspotRec) markFrom(name, replyTo string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fromNameSet = name
+	r.fromReplyTo = replyTo
+}
+
+// snapshotFrom returns the sender the draft was patched with.
+func (r *hubspotRec) snapshotFrom() (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fromNameSet, r.fromReplyTo
 }
 
 // markSubject records a PATCH that set the draft's subject (LFXV2-2775 content apply).
@@ -207,8 +224,16 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 				} else {
 					rec.markBody(html)
 				}
-			case body["subject"] != nil:
-				rec.markSubject(fmt.Sprint(body["subject"]))
+			case body["subject"] != nil || body["from"] != nil:
+				if body["subject"] != nil {
+					rec.markSubject(fmt.Sprint(body["subject"]))
+				}
+				// The v3 `from` object, asserted at the WIRE level rather than through the
+				// EmailSettings struct: HubSpot ignores `name`/`email`, so a test that checked
+				// the struct would pass against a payload HubSpot silently discards.
+				if from, ok := body["from"].(map[string]any); ok {
+					rec.markFrom(fmt.Sprint(from["fromName"]), fmt.Sprint(from["replyTo"]))
+				}
 			default:
 				rec.markSendList(body)
 			}
@@ -305,6 +330,58 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	body, _ := json.Marshal(rec.SendListBody())
 	if !strings.Contains(string(body), "26724") {
 		t.Errorf("send-list payload must carry the audience master list id 26724, got %s", body)
+	}
+}
+
+// TestHubSpot_AppliesConfiguredSender: the per-project sender configured on the CONNECTION reaches
+// the cloned draft. Until LFXV2-2776 the dispatch path read neither key, so an operator could set a
+// sender, watch it save, and have every draft keep the template's sender instead — a silent no-op,
+// which is worse than an unsupported field because the UI confirms the value was stored.
+//
+// Asserted at the WIRE level (`from.fromName` / `from.replyTo`). HubSpot ignores `name`/`email` on
+// this object, so a test reading the EmailSettings struct would pass against a payload HubSpot
+// discards — the field mapping is precisely what needs pinning.
+func TestHubSpot_AppliesConfiguredSender(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	conn := activeHubSpotConn(goodHubSpotCreds)
+	conn.ProviderConfig["sender_name"] = "LF Events"
+	conn.ProviderConfig["sender_email"] = "events@example.org"
+	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	name, replyTo := rec.snapshotFrom()
+	if name != "LF Events" {
+		t.Errorf("from.fromName = %q, want the connection's sender_name", name)
+	}
+	if replyTo != "events@example.org" {
+		t.Errorf("from.replyTo = %q, want the connection's sender_email", replyTo)
+	}
+	// The subject must still land in the same patch — they share an endpoint and are sent together.
+	if subject, _ := rec.snapshotContent(); subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want it applied alongside the sender", subject)
+	}
+}
+
+// TestHubSpot_LeavesSenderAloneWhenUnconfigured: a connection that configures NO sender must not
+// blank the template's. Absent means "saying nothing about the sender", not "clear it" — and an
+// empty From on a marketing email is not a state to push HubSpot into.
+func TestHubSpot_LeavesSenderAloneWhenUnconfigured(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if name, replyTo := rec.snapshotFrom(); name != "" || replyTo != "" {
+		t.Errorf("from = {%q, %q}, want no sender patched when the connection configures none", name, replyTo)
 	}
 }
 

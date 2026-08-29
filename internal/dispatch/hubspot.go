@@ -384,7 +384,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// STEP 3 (mutating, BEST-EFFORT): apply generated copy to the draft. BEFORE the UTM tagging
 	// below, not after: tagging rewrites the body's links, so writing the body afterwards would
 	// discard every tag it had just added and send the email untracked.
-	applyEmailContent(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML)
+	applyEmailContent(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, res.providerConfig)
 
 	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
 	// traffic is attributable in the warehouse. Deliberately LAST and non-fatal: the email is
@@ -415,10 +415,32 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 // Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
 // hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
 // success while HubSpot silently ignored it.
-func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML string) {
+func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML string, providerConfig map[string]string) {
+	// Subject and sender travel in ONE patch. They share an endpoint, so splitting them would
+	// spend two calls where one does, and would let the sender land while the subject failed —
+	// leaving a draft whose two halves came from different sources with nothing recording that.
+	settings := hubspot.EmailSettings{}
 	if subject = strings.TrimSpace(subject); subject != "" {
-		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
-			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
+		settings.Subject = &subject
+	}
+	// The per-project sender. These are configured on the connection (`sender_name`,
+	// `sender_email` are declared for HubSpot in model.connection) and until now nothing on the
+	// dispatch path read them: an operator could set a sender, see it stored, and have every
+	// draft keep the TEMPLATE's sender instead — a silent no-op, which is worse than an
+	// unsupported field because the UI confirms it was saved.
+	//
+	// Absent is left ALONE rather than cleared. A connection that configures no sender is saying
+	// nothing about the sender, not asking for the template's to be blanked, and an empty From on
+	// a marketing email is not a state HubSpot should be pushed into.
+	if senderName := strings.TrimSpace(providerConfig["sender_name"]); senderName != "" {
+		settings.FromName = &senderName
+	}
+	if senderEmail := strings.TrimSpace(providerConfig["sender_email"]); senderEmail != "" {
+		settings.FromEmail = &senderEmail
+	}
+	if settings.Subject != nil || settings.FromName != nil || settings.FromEmail != nil {
+		if _, err := client.PatchEmailSettings(ctx, emailID, settings); err != nil {
+			slog.WarnContext(ctx, "could not set the generated subject or configured sender on the email draft; it keeps the template's",
 				"email_id", emailID, "error", err)
 		}
 	}
