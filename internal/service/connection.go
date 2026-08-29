@@ -1325,17 +1325,14 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		// rather than as !IsUnconfirmed: the negation answers true for any error the platform
 		// package cannot classify, which would report "nothing was created" about an outcome
 		// nobody established. Unrecognised errors fall through to unconfirmed below.
-		// A DECRYPT failure is logged without its cause, for the same reason the discovery
-		// classifier drops it: the chain can carry ciphertext or key material, and
-		// safeErrSummary is NOT a redactor — it normalises and truncates only. Every other
-		// failure here is an upstream or transport error whose text is what an operator needs.
-		if errors.Is(cerr, domain.ErrCredentialDecryptionFailed) {
-			slog.ErrorContext(ctx, "hubspot campaign creation failed: stored credentials could not be decrypted",
-				"project_id", p.ProjectID)
-		} else {
-			slog.ErrorContext(ctx, "hubspot campaign creation failed",
-				"project_id", p.ProjectID, "definite_rejection", errors.Is(cerr, domain.ErrPlatformRejected), "error", safeErrSummary(cerr))
-		}
+		// The cause is summarised here, which is safe ONLY because every credential-bearing
+		// failure has already returned above: ErrCredentialDecryptionFailed is handled with the
+		// other setup failures, whose classifier logs no error text at all. A decrypt branch
+		// here would be unreachable — and worse than merely dead, since its security commentary
+		// would imply a second redaction path that never runs. If a credential-bearing sentinel
+		// is ever added to this method, it belongs in the setup group above, not here.
+		slog.ErrorContext(ctx, "hubspot campaign creation failed",
+			"project_id", p.ProjectID, "definite_rejection", errors.Is(cerr, domain.ErrPlatformRejected), "error", safeErrSummary(cerr))
 		// FIRST, because ErrPlatformNeverSent no longer joins ErrPlatformRejected: the two are
 		// mutually exclusive (HubSpot refused vs HubSpot never saw it), and reporting both made
 		// `definite_rejection` true for a dial failure.
