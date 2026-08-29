@@ -85,11 +85,16 @@ type campaignSearchHit struct {
 
 // SearchCampaigns finds LF HubSpot campaigns whose name matches query.
 //
-// The match is HubSpot's own full-text `query` search, which is fuzzy and scored — it is not an
-// exact-name lookup, and it can return campaigns whose names merely share a token. Every hit is
-// returned in HubSpot's relevance order rather than filtered to a single "best" one, because
-// picking one here would hide the ambiguity from the only party able to resolve it: a human
-// looking at the names. A caller wanting an exact match must compare names itself.
+// The match is HubSpot's own `query` search over the default searchable properties. It is NOT
+// an exact-name lookup — it can return campaigns whose names merely share a token — and it is
+// NOT relevance-ranked: the CRM v3 search API has no relevance sort, and with no `sorts` in the
+// request the rows come back in HubSpot's default order, which is by object creation. Do not
+// read the first row as the best match; nothing here has scored them.
+//
+// Every hit is returned rather than filtered to a single "best" one, because picking one would
+// hide the ambiguity from the only party able to resolve it: a human looking at the names. A
+// caller wanting an exact match, or a ranked one, must do that itself — the UI does exactly
+// that, scoring locally before it offers a best match.
 //
 // An EMPTY result is not an error. "No campaign is named that" is the answer the caller acts on
 // by offering to create one, and it must be distinguishable from a failed search — which is why
@@ -174,11 +179,14 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampa
 // SearchCampaignsPage is one page of campaign search results plus the fact a caller needs to
 // know whether absence is meaningful.
 type SearchCampaignsPage struct {
-	// Campaigns are the matches, in HubSpot's relevance order.
+	// Campaigns are the matches, in the order HubSpot returned them — by object creation, NOT
+	// by relevance. See SearchCampaigns.
 	Campaigns []Campaign
-	// Capped reports that HubSpot matched MORE campaigns than this request returned. When it is
-	// true, a campaign absent from Campaigns may still exist, so a caller must not read absence
-	// as licence to create one in a namespace shared by everyone on that HubSpot portal.
+	// Capped reports that this search could NOT be shown to be complete — HubSpot reported more
+	// matches than it returned, OR completeness is simply unknown (an absent `total`, or one
+	// that contradicts the rows). All of those fail CLOSED: a campaign absent from Campaigns may
+	// still exist, so a caller must not read absence as licence to create one in a namespace
+	// shared by everyone on that HubSpot portal.
 	Capped bool
 }
 

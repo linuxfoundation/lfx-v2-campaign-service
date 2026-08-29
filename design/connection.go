@@ -1267,9 +1267,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"configured against the same portal, which is common under the LF umbrella but is not " +
 			"guaranteed. The portal-wide part is a property of HubSpot's data model rather than a " +
 			"gap in the scoping here, and it is why the create route below needs a warning. " +
-			"The match is HubSpot's own full-text search: fuzzy and scored, NOT an exact-name lookup, " +
+			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
+			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
+			"sort, and no `sorts` is sent, so rows arrive in HubSpot's default order (by object " +
+			"creation). **Do not read the first row as the best match.** " +
 			"so a hit can merely share a token with the query. Every match is returned in HubSpot's " +
-			"relevance order rather than narrowed to a best one, because choosing between " +
+			"the order HubSpot returned them rather than narrowed to a best one, because choosing between " +
 			"similarly-named campaigns needs a human reading the names — collapsing them here would " +
 			"hide the ambiguity from the only party able to resolve it. " +
 			"**An empty `campaigns` array is a 200, not a 404**: 'no campaign is named that' is the " +
@@ -1292,15 +1295,15 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("q", String, "The campaign name to search for. Matched by HubSpot's own fuzzy, scored full-text search — not an exact-name lookup.", func() {
+			Attribute("q", String, "The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked.", func() {
 				MinLength(1)
 				Example("KubeCon NA 2026")
 			})
 			Required("project_id", "q")
 		})
 		Result(func() {
-			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in HubSpot's relevance order. Empty when nothing matched.")
-			Attribute("capped", Boolean, "True when HubSpot matched MORE campaigns than were returned. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.")
+			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in the order HubSpot returned them — by object creation, NOT by relevance, so the first row is not the best match. Empty when nothing matched.")
+			Attribute("capped", Boolean, "True when the search could NOT be shown to be complete. That covers the case HubSpot reported more matches than it returned, and equally the cases where completeness is simply unknown: an absent `total`, or one that contradicts the rows (negative, or fewer than were returned). All of them fail CLOSED, because \"we cannot tell\" must not be reported as the proven absence a caller acts on by creating a campaign. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.")
 			Required("campaigns", "capped")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
@@ -1322,10 +1325,14 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	Method("create-hubspot-campaign", func() {
 		Description("Create an LF HubSpot marketing campaign and return the `hs_utm` token HubSpot " +
 			"assigns it. " +
-			"**THIS WRITE IS VISIBLE TO EVERY FOUNDATION.** The campaign namespace is the whole LF " +
-			"portal, so a campaign created here appears for every other project's campaign managers " +
-			"however this path is scoped. A caller MUST warn before invoking it, and must not put " +
-			"anything project-sensitive in the name. " +
+			"**THIS WRITE IS VISIBLE PORTAL-WIDE.** The campaign namespace is the whole HubSpot " +
+			"portal this project's connection authenticates against, so a campaign created here " +
+			"appears for everyone working in that portal however this path is scoped. WHICH portal " +
+			"depends on the connection — they are stored per project with their own token and " +
+			"`portal_id`, and the LF system fallback is refused for HubSpot — so this is not " +
+			"necessarily every foundation, and projects on different portals do not see each " +
+			"other's campaigns. A caller MUST warn before invoking it, and must not put anything " +
+			"project-sensitive in the name. " +
 			"**It does not check for an existing campaign first, and that is deliberate.** A " +
 			"search-then-create inside one call would still race any concurrent caller and could not " +
 			"prevent a duplicate; the check belongs with the human who can read the candidate names. " +

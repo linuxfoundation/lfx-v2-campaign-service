@@ -813,13 +813,20 @@ type ListHubspotEmailsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
 // endpoint HTTP response body.
 type SearchHubspotCampaignsResponseBody struct {
-	// Matches in HubSpot's relevance order. Empty when nothing matched.
+	// Matches in the order HubSpot returned them — by object creation, NOT by
+	// relevance, so the first row is not the best match. Empty when nothing
+	// matched.
 	Campaigns []*HubspotCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// True when HubSpot matched MORE campaigns than were returned. While it is
-	// true, absence from `campaigns` is NOT proof the campaign does not exist, and
-	// a caller must not offer an unqualified create on an empty result — it would
-	// duplicate a campaign in a namespace shared by everyone on that HubSpot
-	// portal. Narrow the search term instead.
+	// True when the search could NOT be shown to be complete. That covers the case
+	// HubSpot reported more matches than it returned, and equally the cases where
+	// completeness is simply unknown: an absent `total`, or one that contradicts
+	// the rows (negative, or fewer than were returned). All of them fail CLOSED,
+	// because "we cannot tell" must not be reported as the proven absence a caller
+	// acts on by creating a campaign. While it is true, absence from `campaigns`
+	// is NOT proof the campaign does not exist, and a caller must not offer an
+	// unqualified create on an empty result — it would duplicate a campaign in a
+	// namespace shared by everyone on that HubSpot portal. Narrow the search term
+	// instead.
 	Capped *bool `form:"capped,omitempty" json:"capped,omitempty" xml:"capped,omitempty"`
 }
 

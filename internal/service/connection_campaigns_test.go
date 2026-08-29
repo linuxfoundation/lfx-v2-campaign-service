@@ -423,6 +423,16 @@ func TestCreateHubspotCampaign_ClassifiesByDomainSentinel(t *testing.T) {
 			notSays: "check the name",
 		},
 		{
+			// PROVABLY not sent: credsSource.decryptConn returns this before any HubSpot request
+			// is built, so telling the operator the campaign "may already exist" sends them to
+			// hunt for something that was never attempted, and hides the real remedy.
+			name:     "a decrypt failure is reported as a setup failure, not unconfirmed",
+			err:      fmt.Errorf("decrypt hubspot credentials: %w", domain.ErrCredentialDecryptionFailed),
+			wantType: "*lfxv2campaignserviceconnections.InternalServerError",
+			wantSays: "could not be completed",
+			notSays:  "may already exist",
+		},
+		{
 			name:     "anything unclassified stays unconfirmed",
 			err:      errors.New("upstream timeout"),
 			wantType: "*lfxv2campaignserviceconnections.ConnServiceUnavailableError",
@@ -446,6 +456,8 @@ func TestCreateHubspotCampaign_ClassifiesByDomainSentinel(t *testing.T) {
 			case *conn.BadRequestError:
 				msg = e.Message
 			case *conn.ConnServiceUnavailableError:
+				msg = e.Message
+			case *conn.InternalServerError:
 				msg = e.Message
 			}
 			if !strings.Contains(msg, tc.wantSays) {

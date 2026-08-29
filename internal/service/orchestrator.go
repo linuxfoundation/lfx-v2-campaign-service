@@ -303,7 +303,8 @@ type EmailSearcher interface {
 // the orchestrator's capability check would stop meaning anything.
 type CampaignSearcher interface {
 	// SearchCampaigns returns campaigns whose name matches query, in the platform's own
-	// relevance order.
+	// order — which for HubSpot is by object creation, NOT by relevance. A caller must not
+	// read the first element as the best match.
 	//
 	// A successful call MUST return a NON-NIL slice even when nothing matches, for the reason
 	// ListAccounts does: the caller branches on empty-vs-found to decide whether to offer a

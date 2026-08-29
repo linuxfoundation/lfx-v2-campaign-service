@@ -268,8 +268,9 @@ type HubSpotCampaign struct {
 // HubSpotCampaignPage is a campaign search result together with whether the search was capped.
 //
 // Capped exists because ABSENCE FROM Campaigns IS NOT PROOF OF NON-EXISTENCE. The search is
-// bounded at HubSpot's per-request maximum with no paging, so when more campaigns matched than
-// were returned, a campaign the caller cannot see may still exist — and the caller acts on
+// bounded at HubSpot's per-request maximum with no paging, so whenever completeness is not
+// PROVEN — more matched than returned, or the response cannot say — a campaign the caller
+// cannot see may still exist — and the caller acts on
 // absence by creating one in a namespace shared by everyone on that portal.
 type HubSpotCampaignPage struct {
 	Campaigns []HubSpotCampaign

@@ -1303,8 +1303,12 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 		// Calling those "may already exist" would send an operator to HubSpot to look for a
 		// campaign that was never attempted, and hide the remedy they actually need — which is
 		// to fix the connection. Only failures that could have reached HubSpot are unconfirmed.
+		// ErrCredentialDecryptionFailed belongs here too, and its absence was a real defect:
+		// credsSource.decryptConn returns it BEFORE any HubSpot request is built, so the campaign
+		// provably does not exist — yet it fell through to the unconfirmed 503 telling the
+		// operator to go and check.
 		if errors.Is(cerr, domain.ErrNotFound) || errors.Is(cerr, domain.ErrSystemConnectionMissing) ||
-			errors.Is(cerr, domain.ErrConnectionNotUsable) {
+			errors.Is(cerr, domain.ErrConnectionNotUsable) || errors.Is(cerr, domain.ErrCredentialDecryptionFailed) {
 			return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
 		}
 		// NOT classifyDiscoveryError for anything else. That classifier is written for READS: its default arm

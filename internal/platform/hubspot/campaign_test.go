@@ -32,7 +32,8 @@ func TestSearchCampaigns_ReturnsEveryMatchInOrder(t *testing.T) {
 	if len(got.Campaigns) != 2 {
 		t.Fatalf("matches = %d, want 2", len(got.Campaigns))
 	}
-	// ORDER is HubSpot's relevance order and must survive: the caller shows these to a human
+	// ORDER is HubSpot's own (by object creation, not relevance) and must survive: the caller
+	// shows these to a human
 	// choosing between candidate names, and re-ordering would put a worse match first.
 	if got.Campaigns[0].ID != "11" || got.Campaigns[1].ID != "22" {
 		t.Errorf("order not preserved: %+v", got.Campaigns)
@@ -50,12 +51,25 @@ func TestSearchCampaigns_ReturnsEveryMatchInOrder(t *testing.T) {
 	var sent struct {
 		Query      string   `json:"query"`
 		Properties []string `json:"properties"`
+		// A POINTER, so an OMITTED limit is distinguishable from a zero one. Decoded as a plain
+		// int, dropping the field entirely would read as limit=0 and could be mistaken for a
+		// deliberate value.
+		Limit *int `json:"limit"`
 	}
 	if err := json.Unmarshal([]byte(gotBody), &sent); err != nil {
 		t.Fatalf("decode sent body: %v", err)
 	}
 	if sent.Query != "KubeCon" {
 		t.Errorf("query = %q, want the trimmed term", sent.Query)
+	}
+	// The limit must be SENT, and must be the constant. HubSpot's default page is 10, so a
+	// dropped field silently restores it — and the cap is part of the duplicate-avoidance
+	// contract: every row it omits is a campaign a caller can duplicate. Asserted against
+	// campaignSearchLimit rather than a literal so raising the constant cannot leave this behind.
+	if sent.Limit == nil {
+		t.Errorf("search sends no limit, so HubSpot's default of 10 applies: %s", gotBody)
+	} else if *sent.Limit != campaignSearchLimit {
+		t.Errorf("limit = %d, want campaignSearchLimit (%d)", *sent.Limit, campaignSearchLimit)
 	}
 	// The properties must be ASKED FOR. The CRM search returns only system fields otherwise, so
 	// a consumer promised a utm token would receive an empty string from every row — and the

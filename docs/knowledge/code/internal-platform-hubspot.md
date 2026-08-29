@@ -363,9 +363,13 @@ created here is visible to every other foundation's campaign managers. That is H
 model rather than a gap in this service's scoping, which is why the create path is documented as
 requiring an operator warning rather than being narrowed here.
 
-**The search is fuzzy and every match is returned.** HubSpot's `query` is a scored full-text
-match, not an exact-name lookup, so a hit can merely share a token with the term. Matches come
-back in relevance order rather than narrowed to a best one: choosing between similarly-named
+**The search is loose, unranked, and every match is returned.** HubSpot's `query` searches its
+default searchable properties, not an exact name, so a hit can merely share a token with the
+term. It is NOT relevance-ranked: the CRM v3 search API has no relevance sort, and no `sorts` is
+sent, so rows arrive in HubSpot's default order — by object creation. **The first row is not the
+best match**, and any ranking a caller shows is its own (the UI scores locally).
+
+Matches come back whole rather than narrowed to a best one: choosing between similarly-named
 campaigns needs a human reading the names, and collapsing them here would hide the ambiguity
 from the only party able to resolve it.
 
