@@ -242,31 +242,15 @@ type AccessibleAccount struct {
 	Label string
 }
 
-// MarketingEmail is a minimal view of one marketing email reachable through a stored
-// connection, for a picker that has to choose which email a campaign will CLONE.
-//
-// Deliberately not an AccessibleAccount. Discovery on the ad platforms answers "which account
-// may this credential act as?", and the chosen id is stored on the connection. This answers
-// "which email should be cloned?", and the chosen id travels per campaign in the dispatch
-// config (hubspotConfig.SourceEmailID) — a different question with a different lifetime, so
-// sharing the type would only make two unrelated things look interchangeable.
-// HubSpotCampaignPage is a campaign search result together with whether the search was capped.
-//
-// Capped exists because ABSENCE FROM Campaigns IS NOT PROOF OF NON-EXISTENCE. The search is
-// bounded at HubSpot's per-request maximum with no paging, so when more campaigns matched than
-// were returned, a campaign the caller cannot see may still exist — and the caller acts on
-// absence by creating one in a namespace every foundation shares.
-type HubSpotCampaignPage struct {
-	Campaigns []HubSpotCampaign
-	Capped    bool
-}
-
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
-// THE NAMESPACE IS LF-GLOBAL. HubSpot campaigns are not scoped to a project or a portal
-// sub-account, so a campaign reachable here is reachable by every foundation's campaign
-// managers. That is HubSpot's data model, not a gap in this service's scoping, and it is why the
-// create path is documented as needing an operator warning.
+// THE NAMESPACE IS PORTAL-WIDE, NOT PROJECT-SCOPED. HubSpot campaigns are not scoped to a
+// project or a sub-account, so a campaign reachable here is reachable by everyone holding that
+// portal's token. WHICH portal is the connection's: HubSpot connections are stored per project
+// with their own token and portal_id, and credsSource refuses the LF system fallback for
+// HubSpot — so two projects share this namespace only when configured against the same portal.
+// That is HubSpot's data model, not a gap in this service's scoping, and it is why the create
+// path is documented as needing an operator warning.
 type HubSpotCampaign struct {
 	// ID is HubSpot's own campaign object id.
 	ID string
@@ -281,6 +265,25 @@ type HubSpotCampaign struct {
 	StartDate string
 }
 
+// HubSpotCampaignPage is a campaign search result together with whether the search was capped.
+//
+// Capped exists because ABSENCE FROM Campaigns IS NOT PROOF OF NON-EXISTENCE. The search is
+// bounded at HubSpot's per-request maximum with no paging, so when more campaigns matched than
+// were returned, a campaign the caller cannot see may still exist — and the caller acts on
+// absence by creating one in a namespace shared by everyone on that portal.
+type HubSpotCampaignPage struct {
+	Campaigns []HubSpotCampaign
+	Capped    bool
+}
+
+// MarketingEmail is a minimal view of one marketing email reachable through a stored
+// connection, for a picker that has to choose which email a campaign will CLONE.
+//
+// Deliberately not an AccessibleAccount. Discovery on the ad platforms answers "which account
+// may this credential act as?", and the chosen id is stored on the connection. This answers
+// "which email should be cloned?", and the chosen id travels per campaign in the dispatch
+// config (hubspotConfig.SourceEmailID) — a different question with a different lifetime, so
+// sharing the type would only make two unrelated things look interchangeable.
 type MarketingEmail struct {
 	// ID is the HubSpot marketing-email id, in the form sourceEmailId expects.
 	ID string

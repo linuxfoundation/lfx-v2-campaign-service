@@ -1259,10 +1259,14 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Description("Find LF HubSpot marketing campaigns by name, to read back an existing campaign's " +
 			"`hs_utm` token. " +
 			"**THE NAMESPACE IS PORTAL-WIDE.** HubSpot campaigns are not scoped to a project, so this " +
-			"returns matches from the ENTIRE LF portal regardless of which project scopes the path — " +
-			"the `project_id` gates permission, not visibility. That is a property of HubSpot's data " +
-			"model rather than a gap in the scoping here, and it is why the create route below needs " +
-			"a warning before it is used. " +
+			"returns every campaign in the portal the connection authenticates against, regardless " +
+			"of which project scopes the path. " +
+			"`project_id` gates permission AND selects WHICH portal is visible: a HubSpot connection " +
+			"is stored per project with its own token and `portal_id`, and the LF system fallback is " +
+			"refused for HubSpot — so two projects see the same campaigns only when they are " +
+			"configured against the same portal, which is common under the LF umbrella but is not " +
+			"guaranteed. The portal-wide part is a property of HubSpot's data model rather than a " +
+			"gap in the scoping here, and it is why the create route below needs a warning. " +
 			"The match is HubSpot's own full-text search: fuzzy and scored, NOT an exact-name lookup, " +
 			"so a hit can merely share a token with the query. Every match is returned in HubSpot's " +
 			"relevance order rather than narrowed to a best one, because choosing between " +
@@ -1274,10 +1278,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"A campaign with no `utm` is a real result and is returned as one — an absent token does " +
 			"NOT mean the campaign was not found, and treating it that way would prompt a duplicate " +
 			"create. " +
-			"**The result set is CAPPED at 100 and there is no paging.** A campaign ranked below the " +
+			"**The result set is CAPPED at 200 and there is no paging.** A campaign ranked below the " +
 			"cap is not returned, and a caller reads an absent campaign as licence to create one — so " +
 			"an operator who cannot find a campaign should search a narrower term rather than assume " +
-			"it does not exist. 100 is HubSpot's own per-request maximum, so the gap between \"not in " +
+			"it does not exist. 200 is HubSpot's own per-request maximum (raised from 100 in September " +
+			"2024), so the gap between \"not in " +
 			"the top N\" and \"does not exist\" is as small as one request can make it. " +
 			"**`capped` reports when that gap is actually open**, derived from HubSpot's own total " +
 			"rather than from the returned count — an exactly-full page and a truncated one are the " +

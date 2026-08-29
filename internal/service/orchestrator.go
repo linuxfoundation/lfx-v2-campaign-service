@@ -282,6 +282,18 @@ type AccountLister interface {
 // which ACCOUNT a credential may act as, and the answer is stored on the connection. This
 // answers which EMAIL a campaign should clone, and the answer travels per campaign in the
 // dispatch config. Only the email channel has the second question at all.
+type EmailSearcher interface {
+	// SearchEmails returns the marketing emails whose name or subject matches query,
+	// most-recently-updated first. An empty query lists the most recently updated emails.
+	//
+	// A successful call MUST return a NON-NIL slice, even when nothing matches — return an
+	// empty slice, not nil, for the same reason ListAccounts does: the caller cannot
+	// otherwise tell "the portal authoritatively has no such email" from an implementation
+	// that fell through a branch, and the two mean opposite things to someone staring at an
+	// empty picker.
+	SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error)
+}
+
 // CampaignSearcher is implemented by a dispatcher that can look up and create marketing
 // campaigns on its platform.
 //
@@ -305,18 +317,6 @@ type CampaignSearcher interface {
 	// one call still races a concurrent caller and cannot prevent a duplicate. The check belongs
 	// with the human who can read the candidate names.
 	CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error)
-}
-
-type EmailSearcher interface {
-	// SearchEmails returns the marketing emails whose name or subject matches query,
-	// most-recently-updated first. An empty query lists the most recently updated emails.
-	//
-	// A successful call MUST return a NON-NIL slice, even when nothing matches — return an
-	// empty slice, not nil, for the same reason ListAccounts does: the caller cannot
-	// otherwise tell "the portal authoritatively has no such email" from an implementation
-	// that fell through a branch, and the two mean opposite things to someone staring at an
-	// empty picker.
-	SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error)
 }
 
 // CampaignAdopter is an OPTIONAL dispatcher capability: look a campaign up BY ITS PLATFORM ID,

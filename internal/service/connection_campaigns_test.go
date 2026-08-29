@@ -233,9 +233,6 @@ func TestSearchHubspotCampaigns_UnsupportedPlatformIsABadRequest(t *testing.T) {
 	if _, ok := err.(*conn.BadRequestError); !ok {
 		t.Errorf("error = %T (%v), want *conn.BadRequestError", err, err)
 	}
-	if !errors.Is(errors.Unwrap(err), nil) && err == nil {
-		t.Fatal("unreachable")
-	}
 }
 
 // A whitespace-only query is a BAD REQUEST, refused before the platform is contacted.

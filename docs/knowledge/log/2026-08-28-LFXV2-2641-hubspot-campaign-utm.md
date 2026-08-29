@@ -5,10 +5,19 @@ client, with the routes
 `GET/POST /projects/{projectId}/connection-hubspot/campaigns`, so a caller can
 read back an existing HubSpot campaign's `hs_utm` token.
 
-This closes the gap `internal/utm/resolve.go` names explicitly: the
+This NARROWS, but does not close, the gap `internal/utm/resolve.go` names: the
 `SourceHubSpotCampaign` provenance was reserved but never emitted because
 "following the source email to its campaign needs endpoints this client does
-not have." It is a DIFFERENT feature from the utm generation already in
+not have." The client can now reach campaigns — by NAME, and by creating one —
+but resolution there starts from a source EMAIL, and nothing reads the
+association from an email to the campaign it belongs to. Searching by the
+email's name would be a guess rather than a lookup: campaign and email names
+need not match, and a wrong hit attributes this email's traffic to somebody
+else's campaign. `SourceHubSpotCampaign` therefore remains un-emitted, and
+closing it needs an association read rather than another search endpoint.
+`resolve.go`'s comment was rewritten to state that narrower gap.
+
+It is a DIFFERENT feature from the utm generation already in
 `internal/utm` — that package tags links this service creates; these read a
 token an upstream campaign already carries.
 
@@ -65,7 +74,8 @@ Goa's rune-counting MinLength(1) and was classified as a retryable 503 rather
 than a 400; and the orchestrator forwarded a `(nil, nil)` contract violation
 that the service layer would have rendered as an authoritative empty list.
 
-The search cap was also raised from 10 to HubSpot's maximum of 100 and
+The search cap was also raised from 10 to HubSpot's maximum of 200 (raised
+from 100 on their side in September 2024) and
 documented as a contract fact rather than a tuning detail: it is a cap with no
 paging, so a campaign below it reads as absent, and absent is what prompts a
 duplicate.

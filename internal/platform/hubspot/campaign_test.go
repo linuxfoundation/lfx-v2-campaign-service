@@ -385,6 +385,24 @@ func TestCreateOutcomePredicates(t *testing.T) {
 		}
 	})
 
+	t.Run("a non-4xx status is NOT a definite rejection", func(t *testing.T) {
+		// `!Ambiguous` alone is fail-OPEN: Ambiguous marks the statuses a mutating request may
+		// have committed under (429/3xx/5xx), so its negation also covers everything else a
+		// non-2xx can be — a 1xx, or any status this client does not model. Those are responses
+		// nobody classified, not refusals on the merits, and calling one "nothing was created"
+		// about a non-idempotent create is the direction that makes duplicates.
+		for _, code := range []int{http.StatusContinue, http.StatusSwitchingProtocols} {
+			err := &apiError{StatusCode: code, Method: http.MethodPost, Ambiguous: false}
+			if IsDefiniteRejection(err) {
+				t.Errorf("a %d classified as a clean rejection", code)
+			}
+		}
+		// And a real 4xx still is one, so the bound cannot be satisfied by refusing everything.
+		if !IsDefiniteRejection(&apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost}) {
+			t.Error("a 400 is no longer reported as a definite rejection")
+		}
+	})
+
 	t.Run("an unclassifiable error is NOT a definite rejection", func(t *testing.T) {
 		// Fail-closed: IsDefiniteRejection is asked positively precisely so an error this
 		// package cannot classify is never reported as "nothing was created".

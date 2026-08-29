@@ -253,6 +253,15 @@ func IsDefiniteRejection(err error) bool {
 	if !errors.As(err, &ae) {
 		return false
 	}
+	// The STATUS is checked, not merely `!Ambiguous`. Ambiguous is set for the statuses a
+	// mutating request may have committed under (429/3xx/5xx), so its negation also covers
+	// everything else a non-2xx can be — a 1xx, or any status this client does not model. Those
+	// are not rejections on the merits; they are responses nobody classified, and reporting one
+	// as "nothing was created" about a non-idempotent create is the fail-OPEN direction this
+	// predicate exists to avoid. Only a real 4xx says HubSpot refused.
+	if ae.StatusCode < 400 || ae.StatusCode >= 500 {
+		return false
+	}
 	return !ae.Ambiguous
 }
 
