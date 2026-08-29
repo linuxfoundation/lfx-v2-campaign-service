@@ -14,6 +14,7 @@ import (
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // emailCopyEventDetails is the slice of a brief's EventDetails this generation needs.
@@ -35,6 +36,9 @@ type emailCopyPromptVars struct {
 	eventName string
 	location  string
 	dates     string
+	// stage selects the generation spec. Empty means the caller did not say, which resolves to
+	// emailstage.DefaultStage rather than erroring -- see Resolve.
+	stage string
 }
 
 // decodeEmailCopyEventDetails pulls the fields email generation needs from the brief's opaque
@@ -92,14 +96,38 @@ Constraints:
 - Write for a professional Linux Foundation / technology audience
 - Make it about the event and community, not promotional`
 
-	// User prompt: the specific event details and request.
+	// Stage-specific guidance, appended to the shared role/constraint block above rather than
+	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
+	// changes. An unknown stage resolves to the default, so a caller that sends none keeps exactly
+	// the copy it produced before stages existed.
+	tpl := emailstage.Resolve(vars.stage)
+	systemPrompt += fmt.Sprintf(`
+
+STAGE: %s
+Purpose: %s
+Tone: %s
+Urgency (1-10): %d
+Subject shape: %s
+Preheader shape: %s
+Call-to-action strategy: %s
+%s`,
+		tpl.StageName, tpl.Purpose, tpl.Tone, tpl.UrgencyLevel,
+		tpl.SubjectPattern, tpl.PreviewPattern,
+		strings.Join(tpl.CTAStrategy, "; "), tpl.FooterNote)
+
+	// User prompt: the specific event details and the stage's own content brief.
+	//
+	// The stage prompt carries [EVENT_NAME]/[LOCATION]/[DATES] placeholders. They are NOT
+	// substituted here: the details are already stated above them as labelled facts, and the
+	// system prompt forbids inventing any others, so leaving the placeholders as shape keeps one
+	// source of truth for the values rather than two that can disagree.
 	userPrompt = fmt.Sprintf(`Generate email copy for this event:
 Event Name: %s
 Location: %s
 Dates: %s
 
-Create compelling email copy that invites registration and highlights the value of attending.`,
-		vars.eventName, vars.location, vars.dates)
+%s`,
+		vars.eventName, vars.location, vars.dates, tpl.ContentPrompt)
 
 	return systemPrompt, userPrompt
 }
@@ -268,6 +296,19 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// that means something different depending on the alphabet the event is named in.
 	const maxPromptSize = 3000 // runes
 
+	// The COMPOSED prompt is bounded separately, and higher, because the two checks bound
+	// different things. `maxPromptSize` bounds what the CALLER supplies -- three `Any`-typed
+	// fields with no length constraint of their own -- and that is the guard against unbounded
+	// input-token cost and large allocations. The composed total additionally includes the fixed
+	// system prompt and the stage template, which are service-owned constants no caller can grow.
+	//
+	// MEASURED, like the bound above: the largest stage (Post-Event) contributes 3552 runes, and
+	// the shared system prompt 962. 8000 leaves headroom for a stage longer than today's largest
+	// without re-tuning, while still rejecting a payload worth paying input tokens for. Sizing
+	// this at 3000 would reject EVERY stage-aware generation -- the constant text alone exceeds
+	// it -- which is what the test suite caught when stages were introduced.
+	const maxComposedPromptSize = 8000 // runes
+
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
 	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
 	// 50MB stored eventName is copied in full before a post-hoc check could reject it — the
@@ -290,10 +331,10 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	systemPrompt, userPrompt := composeEmailCopyPrompt(promptVars)
 
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
-	if totalPromptSize > maxPromptSize {
+	if totalPromptSize > maxComposedPromptSize {
 		slog.WarnContext(ctx, "email copy generation blocked: composed prompt exceeds size limit",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
-			"prompt_size", totalPromptSize, "limit", maxPromptSize)
+			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
 		return nil, &briefs.BadRequestError{
 			Code:    "400",
 			Message: "brief's event details are too large; reduce the event name, location, or dates",
