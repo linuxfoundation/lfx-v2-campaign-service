@@ -68,8 +68,19 @@ RuleSet entry was verified to bind by removing it alone and watching
 `CreateCampaign` posted only `hs_name` and never asked for the properties BACK.
 The CRM create endpoint returns system fields unless they are named, so the
 "read back the assigned token" the doc comment promised was describing a
-request that never asked for it — every real create would have returned an
-empty token. The create now sends `?properties=` exactly as the search does.
+request that never asked for it.
+
+That fix was WRONG, and review caught it: `?properties=` is documented on the
+READ endpoints, not on the create — and the create is not even on the same
+surface. HubSpot documents campaign creation at `/marketing/v3/campaigns`,
+while the CRM object endpoint `0-35` has no create operation at all, so the
+original code would have failed every real call. The legacy UI path running in
+production uses exactly the split now shipped: CRM search, marketing create,
+NO query parameters, and a follow-up search when the token is wanted.
+
+So the create sends no `?properties=`, and an absent `hs_utm` on the response
+is a documented real state rather than an error — which is what `Campaign.UTM`
+already said.
 
 Create failures were routed through the READ classifier, so a timeout or 5xx
 became a retryable "campaign search could not be completed" 503. That names the

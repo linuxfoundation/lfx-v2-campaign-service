@@ -721,13 +721,16 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 		case hubspot.IsDefiniteRejection(err):
 			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformRejected, err))
 		case hubspot.IsNeverSent(err):
+			// Joined with ErrPlatformRejected because nothing WAS created, but tagged distinctly
+			// so the service does not tell the operator HubSpot refused their NAME. It never saw
+			// it.
 			// PROVES nothing was created — a dial failure, or a context already cancelled when
 			// the call began. Left untagged it fell through to the catch-all and the service
 			// reported it as unconfirmed, telling the operator a campaign may exist when the
 			// request never left this process. Tagged as rejected, NOT as a permission problem:
 			// the campaign definitely does not exist, but the cause is the network or a
 			// shutdown rather than anything about the request.
-			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformRejected, err))
+			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformNeverSent, domain.ErrPlatformRejected, err))
 		}
 		return nil, fmt.Errorf("create hubspot campaign: %w", err)
 	}

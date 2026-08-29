@@ -1340,6 +1340,15 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 			// A PERMISSION rejection gets its own remedy. Retrying with another name cannot fix
 			// a 401/403, so the "check the name" message would send the operator to change the
 			// one thing that was never at fault.
+			// NEVER SENT gets its own words. Nothing was created, so this is still a 400 — but
+			// HubSpot never saw the request, and "check the name" would send the operator to
+			// change the one thing that was not at fault.
+			if errors.Is(cerr, domain.ErrPlatformNeverSent) {
+				return nil, &conn.BadRequestError{
+					Code:    "400",
+					Message: "the campaign creation never reached hubspot; nothing was created — retry, and check connectivity if it persists",
+				}
+			}
 			if errors.Is(cerr, domain.ErrPlatformPermission) {
 				return nil, &conn.BadRequestError{
 					Code:    "400",

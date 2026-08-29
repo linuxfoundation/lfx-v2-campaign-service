@@ -347,9 +347,16 @@ data into logs; the error message is fixed text + response length.
 
 ## Marketing campaigns and the utm token (LFXV2-2641)
 
-`campaign.go` adds the two operations that read back an existing campaign's `hs_utm`. HubSpot
-models marketing campaigns as the CRM object type `0-35`, which is why these go through
-`/crm/v3/objects` rather than the `/marketing/v3` surface the email endpoints use.
+`campaign.go` adds the two operations that read back an existing campaign's `hs_utm`, and they
+sit on **two different surfaces**. HubSpot models marketing campaigns as the CRM object type
+`0-35`, so the SEARCH goes through `/crm/v3/objects/0-35/search` — but there is no campaign
+create operation there, and HubSpot documents creation at `/marketing/v3/campaigns`, which is
+where `CreateCampaign` posts.
+
+That asymmetry looks like an oversight and is not one. The legacy UI path running in production
+uses exactly this split, which is the strongest evidence available for what the live API accepts;
+pointing the create at the CRM object endpoint fails every real call while every fixture-based
+test still passes.
 
 This is NOT the same thing as `internal/utm`. That package GENERATES utm parameters for links
 this service tags (`Apply`) and decides the campaign value (`Resolve`). These read the token an

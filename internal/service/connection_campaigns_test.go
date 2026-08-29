@@ -469,3 +469,27 @@ func TestCreateHubspotCampaign_ClassifiesByDomainSentinel(t *testing.T) {
 		})
 	}
 }
+
+// A never-sent failure must not be reported as a rejection of the NAME. Nothing was created
+// either way, so both are 400s — but the remedies are different jobs, and "check the name"
+// sends an operator to change the one thing HubSpot never saw.
+func TestCreateHubspotCampaign_NeverSentDoesNotBlameTheName(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{createErr: fmt.Errorf("create: %w",
+		errors.Join(domain.ErrPlatformNeverSent, domain.ErrPlatformRejected))}
+
+	_, err := newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+		&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+	if err == nil {
+		t.Fatal("a never-sent create was reported as success")
+	}
+	be, ok := err.(*conn.BadRequestError)
+	if !ok {
+		t.Fatalf("error = %T, want *conn.BadRequestError (nothing was created)", err)
+	}
+	if strings.Contains(strings.ToLower(be.Message), "check the name") {
+		t.Errorf("a dial failure blamed the campaign name: %q", be.Message)
+	}
+	if !strings.Contains(strings.ToLower(be.Message), "never reached") {
+		t.Errorf("message does not say the request never reached HubSpot: %q", be.Message)
+	}
+}
