@@ -18,7 +18,12 @@ import (
 const (
 	campaignObjectType = "0-35"
 	campaignSearchPath = "/crm/v3/objects/" + campaignObjectType + "/search"
-	campaignCreatePath = "/crm/v3/objects/" + campaignObjectType
+	// The CREATE lives on a DIFFERENT surface from the search, and this asymmetry is real rather
+	// than an oversight: HubSpot documents campaign creation at /marketing/v3/campaigns, and the
+	// generic CRM object endpoint has no campaign create operation. The legacy UI path that has
+	// been running in production uses exactly this split — CRM search, marketing create — which
+	// is the strongest evidence available that it is what the live API accepts.
+	campaignCreatePath = "/marketing/v3/campaigns"
 
 	// campaignSearchLimit bounds the search. HubSpot's CRM search caps `limit` at 200 (raised
 	// from 100 in September 2024 — https://developers.hubspot.com/changelog/increasing-our-api-limits),
@@ -221,22 +226,20 @@ func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, er
 	body := map[string]any{
 		"properties": map[string]string{"hs_name": n},
 	}
-	// The properties are requested on the way back, as the search does. Without asking, the CRM
-	// create returns only system fields, so the response would carry no `hs_utm` at all.
+	// NO `?properties=`. It is documented on the READ endpoints, not here, and the legacy path
+	// that has been running in production does not send it — it creates, then SEARCHES for the
+	// new campaign to obtain the token. That is the evidence that the create response does not
+	// carry `hs_utm`, and asking for it on an endpoint that does not document the parameter
+	// would be relying on undefined behaviour.
 	//
-	// BEST EFFORT, NOT A GUARANTEE. `?properties=` is documented on the READ endpoints; HubSpot
-	// does not document it on the create, and their generated SDK builds this POST with no query
-	// parameters. So it may be honoured or ignored, and this code must not depend on it — which
-	// it does not: a create whose response carries no token returns `UTM == ""`, and an ABSENT
-	// token is a real state every caller already handles (see Campaign.UTM). What the code does
-	// depend on is the id, and an id-less or undecodable response is refused as UNCONFIRMED
-	// rather than reported as success.
+	// This method does NOT do that follow-up search either, deliberately: a second call after a
+	// non-idempotent write is another failure point, and its failure would leave a campaign that
+	// EXISTS looking like a create that did not happen. `UTM == ""` is a real state every caller
+	// already handles, and the token becomes visible through the ordinary lookup on a later read.
 	//
-	// The names are compile-time constants, never caller input.
-	createPath := campaignCreatePath + "?properties=" + strings.Join(campaignProps, ",")
 	// NOT idempotent: this creates a row, and a retried create makes a second campaign in a
 	// namespace shared by everyone on that HubSpot portal. The transport must not replay it.
-	raw, err := c.doRequest(ctx, http.MethodPost, createPath, body, false)
+	raw, err := c.doRequest(ctx, http.MethodPost, campaignCreatePath, body, false)
 	if err != nil {
 		return nil, err
 	}

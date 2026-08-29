@@ -239,6 +239,18 @@ type apiError struct {
 	Ambiguous bool
 }
 
+// IsNeverSent reports whether err PROVES the request never left this process: a DNS or dial
+// failure before anything was written, or a context already cancelled when the call began.
+//
+// Distinct from IsDefiniteRejection, which means HubSpot answered and refused. Both mean nothing
+// was created, but they point at different remedies — one is a network or shutdown problem, the
+// other is the request itself. Distinct too from a transportError, which is AMBIGUOUS: there the
+// bytes may have left and the reply was simply never read.
+func IsNeverSent(err error) bool {
+	var pe *preSendError
+	return errors.As(err, &pe)
+}
+
 // IsDefiniteRejection reports whether err is a POSITIVELY IDENTIFIED clean rejection: HubSpot
 // answered on the merits with a non-ambiguous 4xx, and nothing was created.
 //

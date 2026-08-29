@@ -193,7 +193,8 @@ func TestCreateCampaign_ReadsBackTheAssignedToken(t *testing.T) {
 		t.Errorf("ID = %q, want 99", got.ID)
 	}
 	// The token must come from the RESPONSE, not be guessed. Asserting a value we never sent is
-	// what proves it was read back rather than echoed.
+	// what proves it was read back rather than echoed. (A real create response may carry no
+	// token at all — that is covered by TestCreateCampaign_TokenlessResponseIsNotAnError.)
 	if got.UTM != "assigned-by-hubspot" {
 		t.Errorf("UTM = %q, want the token HubSpot assigned", got.UTM)
 	}
@@ -203,14 +204,18 @@ func TestCreateCampaign_ReadsBackTheAssignedToken(t *testing.T) {
 	if !strings.Contains(gotBody, "KubeCon NA 2027") {
 		t.Errorf("name not sent trimmed: %s", gotBody)
 	}
-	// The properties must be ASKED FOR on the create, not just on the search. The CRM create
-	// endpoint returns only system fields otherwise, so the assigned token would come back empty
-	// from every real call — and the struct assertion above would still pass against a
-	// hand-written fixture. This half is what makes that assertion mean anything.
-	for _, want := range []string{"hs_utm", "hs_name"} {
-		if !strings.Contains(gotPath+gotQuery, want) {
-			t.Errorf("create does not request %s back: path=%q query=%q", want, gotPath, gotQuery)
-		}
+	// NO query parameters. `?properties=` is documented on the READ endpoints, not on the
+	// marketing create, and the legacy path running in production sends none — it creates and
+	// then SEARCHES for the token. Asking for a parameter the endpoint does not document would
+	// be relying on undefined behaviour, so this pins its absence rather than its presence.
+	if gotQuery != "" {
+		t.Errorf("create sent query parameters %q; the marketing create documents none", gotQuery)
+	}
+	// The endpoint is the MARKETING one, not the generic CRM object surface the search uses.
+	// That asymmetry is real: /crm/v3/objects/0-35 has no campaign create operation, so getting
+	// this wrong fails every create against the live API while every fixture-based test passes.
+	if gotPath != "/marketing/v3/campaigns" {
+		t.Errorf("create path = %q, want /marketing/v3/campaigns", gotPath)
 	}
 	// We must NOT send hs_utm. HubSpot assigns it, and sending one would either be ignored or
 	// set a token this service invented.
@@ -424,4 +429,28 @@ func TestCreateOutcomePredicates(t *testing.T) {
 			t.Error("an unrecognised error classified as a clean rejection — a create's outcome nobody established")
 		}
 	})
+}
+
+// A create response with NO token is a success, not a failure.
+//
+// The marketing create is not documented to return `hs_utm`, and the legacy path in production
+// re-searches to obtain it — so an absent token is the ordinary case rather than an anomaly.
+// Treating it as an error would report a campaign that WAS created as a failure, and the caller
+// acts on failure by retrying, which duplicates it.
+func TestCreateCampaign_TokenlessResponseIsNotAnError(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"99","properties":{"hs_name":"KubeCon NA 2027"}}`)
+	})
+
+	got, err := c.CreateCampaign(context.Background(), "KubeCon NA 2027")
+	if err != nil {
+		t.Fatalf("a create with no token returned an error: %v", err)
+	}
+	if got.ID != "99" {
+		t.Errorf("ID = %q, want 99", got.ID)
+	}
+	if got.UTM != "" {
+		t.Errorf("UTM = %q, want the empty token carried through as a real state", got.UTM)
+	}
 }

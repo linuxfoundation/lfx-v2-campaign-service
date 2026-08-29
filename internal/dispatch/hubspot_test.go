@@ -547,3 +547,39 @@ func TestHubSpot_CreateCampaignTagsDomainSentinels(t *testing.T) {
 		})
 	}
 }
+
+// TestHubSpot_CreateCampaignTagsANeverSentFailure pins the arm the status table above cannot
+// reach: a failure that happens BEFORE any request leaves this process.
+//
+// It matters because the default is deliberately fail-closed. An untagged error is treated as
+// unconfirmed, which is right for anything that might have reached HubSpot — but a dial failure
+// or an already-cancelled context proves the campaign was never created, and reporting that as
+// "may already exist" sends the operator to hunt for something that does not exist.
+func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
+	// A context cancelled before the call begins is the cheapest way to reach preSendError
+	// deterministically — no network, no timing.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request should reach HubSpot when the context is already cancelled")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	_, err := d.CreateCampaign(ctx, "cncf", model.ProviderHubSpot, "KubeCon NA 2027")
+	if err == nil {
+		t.Fatal("a cancelled context was reported as a successful create")
+	}
+	if !errors.Is(err, domain.ErrPlatformRejected) {
+		t.Errorf("a never-sent failure is not tagged rejected, so the service reports it as "+
+			"unconfirmed and tells the operator a campaign may exist: %v", err)
+	}
+	// NOT a permission problem: the campaign definitely does not exist, but nothing about the
+	// request or the credential was at fault.
+	if errors.Is(err, domain.ErrPlatformPermission) {
+		t.Errorf("a never-sent failure tagged as a permission refusal: %v", err)
+	}
+}
