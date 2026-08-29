@@ -832,28 +832,31 @@ func TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing(t *testing.T) {
 // how the whole feature would be inert while every test stayed green.
 func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 	cases := []struct {
-		name       string
-		stage      *string
-		wantPhrase string
+		name  string
+		stage *string
+		// wantPhrase comes from the stage's Purpose, wantContent from its ContentPrompt. They are
+		// separate fields appended separately, so one assertion cannot pin both.
+		wantPhrase  string
+		wantContent string
 	}{
 		// Purpose text unique to each stage's ported ContentPrompt.
 		// EVERY stage, not a sample. LFXV2-1940 requires each one's prompt to reach the model, and
 		// a two-stage sample cannot catch a template wired to the wrong constant -- the failure
 		// that most plausibly survives review, since each stage is a table row that looks right
 		// beside its neighbours.
-		{"cfp launch", strPtr("CFP Launch"), "Recruit speakers"},
-		{"schedule announcement", strPtr("Schedule Announcement"), "speaker lineup"},
-		{"registration push", strPtr("Registration Push"), "Drive registrations"},
-		{"discount offer", strPtr("Discount Offer"), "VIP/alumni"},
-		{"final countdown", strPtr("Final Countdown"), "anticipation"},
-		{"post-event", strPtr("Post-Event"), "extend engagement"},
+		{"cfp launch", strPtr("CFP Launch"), "Recruit speakers", "PRIMARY OBJECTIVE: Recruit speakers"},
+		{"schedule announcement", strPtr("Schedule Announcement"), "speaker lineup", "Showcase learning opportunities"},
+		{"registration push", strPtr("Registration Push"), "Drive registrations", "PRIMARY OBJECTIVE: Drive registrations"},
+		{"discount offer", strPtr("Discount Offer"), "VIP/alumni", "Offer exclusive rate to segment"},
+		{"final countdown", strPtr("Final Countdown"), "anticipation", "PRIMARY OBJECTIVE: Confirm attendance"},
+		{"post-event", strPtr("Post-Event"), "extend engagement", "PRIMARY OBJECTIVE: Thank attendees"},
 		// Absent stage keeps the pre-stage behaviour: Registration Push, not an error.
-		{"absent falls back", nil, "Registration"},
+		{"absent falls back", nil, "Drive registrations", "PRIMARY OBJECTIVE: Drive registrations"},
 		// UNRECOGNISED falls back too, and must reach the service at all -- the design carried a
 		// Goa `Enum` that rejected it with a 400 at the decoder, before `Resolve` could run, which
 		// contradicted the acceptance criterion. Removing the enum is what this pins; the criterion
 		// prefers a caller never blocked by a stage it cannot spell.
-		{"unrecognised falls back", strPtr("Fnal Countdown"), "Registration"},
+		{"unrecognised falls back", strPtr("Fnal Countdown"), "Drive registrations", "PRIMARY OBJECTIVE: Drive registrations"},
 	}
 
 	for _, tc := range cases {
@@ -864,10 +867,13 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 				EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","dates":"June 17-20, 2026"}`),
 			}
 
-			var sentBody string
+			// atomic, not a bare string: the handler goroutine writes it and the test goroutine
+			// reads it, which is a data race `go test -race` reports. The same boundary already
+			// uses atomics elsewhere in this file.
+			var sentBody atomic.Value
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				b, _ := io.ReadAll(r.Body)
-				sentBody = string(b)
+				sentBody.Store(string(b))
 				w.Header().Set("Content-Type", "application/json")
 				content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
 				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
@@ -883,8 +889,16 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 				t.Fatalf("GenerateEmailCopy() error = %v", err)
 			}
 
-			if !strings.Contains(sentBody, tc.wantPhrase) {
+			body, _ := sentBody.Load().(string)
+			if !strings.Contains(body, tc.wantPhrase) {
 				t.Errorf("prompt sent upstream does not carry %q for stage %v", tc.wantPhrase, tc.stage)
+			}
+			// The CONTENT PROMPT too, not only the Purpose. Both are appended, but from separate
+			// fields -- so asserting a Purpose phrase alone leaves `tpl.ContentPrompt` free to be
+			// dropped or swapped with every case still green, which is the half of the stage that
+			// actually shapes the email.
+			if !strings.Contains(body, tc.wantContent) {
+				t.Errorf("prompt sent upstream does not carry the stage's own content brief %q", tc.wantContent)
 			}
 		})
 	}

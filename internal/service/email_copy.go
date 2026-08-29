@@ -99,12 +99,7 @@ Constraints:
 - Body: professional HTML email, inviting and focused on the event
 - CTA: action-oriented, under 50 characters (e.g. "Register Now", "Join Us")
 - Write for a professional Linux Foundation / technology audience
-- Make it about the event and community, not promotional
-- Use ONLY the event details given below. The stage brief contains [PLACEHOLDER] tokens for
-  facts that may not be supplied (prices, promo codes, session counts, venue names, deadlines).
-  Where a fact is not given, KEEP the [PLACEHOLDER] verbatim in your output — never invent a
-  value, and never drop the section. An operator fills these in before sending; an invented
-  price or discount code is worse than a visible gap.`
+- Make it about the event and community, not promotional`
 
 	// Stage-specific guidance, appended to the shared role/constraint block above rather than
 	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
@@ -133,11 +128,13 @@ Call-to-action strategy: %s
 	//
 	// The templates also carry placeholders for facts NOTHING supplies — [PROMO_CODE],
 	// [REGULAR_PRICE], [SESSION_COUNT], [VENUE_NAME] and a dozen more — while marking those
-	// sections required. Only three of roughly twenty placeholder kinds are ever filled. The
-	// system prompt above now tells the model to KEEP an unfillable placeholder rather than
-	// invent a value: a fabricated discount code or price in customer-facing copy is materially
-	// worse than a visible gap an operator fills before sending. An earlier version of this
-	// comment claimed the prompt already forbade inventing them; it did not.
+	// sections required. Only three of roughly twenty placeholder kinds are ever filled.
+	//
+	// The system prompt handles that ONCE, above: omit the sentence or section whose placeholder
+	// has no value, do not guess one, and do not emit the bracket itself. A second instruction
+	// saying to KEEP the placeholder verbatim was added here and removed — it contradicted the
+	// first outright, and a prompt that states both policies lets the model pick either, which is
+	// worse than whichever one it replaced.
 	userPrompt = fmt.Sprintf(`Generate email copy for this event:
 Event Name: %s
 Location: %s

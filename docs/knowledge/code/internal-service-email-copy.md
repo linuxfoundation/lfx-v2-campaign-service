@@ -54,9 +54,10 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 `maxPromptSize` is 3000 **runes** and bounds the three event-detail fields BEFORE
 `composeEmailCopyPrompt`; `maxComposedPromptSize` is 6500 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
-input plus the stage template — and using one number for both made the post-check unreachable: the
-composed prompt could never be smaller than the input it contains, so a single 3000 would either
-reject valid input at the front or never fire at the back. Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
+input plus the stage template. Sharing one number REJECTS every valid request: the smallest composed
+prompt is 4923 runes (Schedule Announcement) because the stage template alone exceeds 3000, so a
+shared 3000 fails the post-check on input the pre-check correctly allowed. Neither check is
+redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
 `design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
 check formats a 50MB stored event name into a new string before measuring it — the allocation
 the guard exists to prevent, performed by the guard's own input. The three fields alone cannot

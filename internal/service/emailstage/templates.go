@@ -572,7 +572,7 @@ INTERNAL VALIDATION:
 □ Clear date, time, timezone, venue
 □ Transit/parking info practical
 □ No detailed agenda (they know it)
-□ No sponsorship, pricing, or CTA info
+□ No sponsorship or pricing info
 □ No paragraph exceeds 3 sentences or 60 words
 □ Bullets for "What to Bring"
 □ Mobile-friendly
@@ -717,6 +717,6 @@ WORD COUNT TARGET: 180-240 words`,
 			"Primary: Watch Recordings (video library link)",
 			"Secondary: Share Your Feedback (survey link)",
 		},
-		FooterNote: "Recordings available [DATE]. Session slides ready now. Thanks for being part of our community!",
+		FooterNote: "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
 	},
 }

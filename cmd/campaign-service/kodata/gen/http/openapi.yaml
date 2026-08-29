@@ -2262,7 +2262,7 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: Event-lifecycle stage the email belongs to. Unrecognised values resolve to Registration Push rather than failing; see emailstage.Names for the recognised set.
+                  description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                   required: false
                   type: string
                 - name: project_id

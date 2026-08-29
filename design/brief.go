@@ -1191,7 +1191,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// told it succeeded. `emailstage.Resolve` is where that fallback lives, and the
 			// response does not report which stage was actually used — a caller that needs to
 			// know must compare what it sent against `Names()`.
-			Attribute("stage", String, "Event-lifecycle stage the email belongs to. Unrecognised values resolve to Registration Push rather than failing; see emailstage.Names for the recognised set.", func() {
+			Attribute("stage", String, "Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
 				Example("Post-Event")
 			})
 			Required("project_id", "brief_id")

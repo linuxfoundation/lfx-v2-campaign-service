@@ -661,9 +661,11 @@ type GenerateEmailCopyPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
-	// Event-lifecycle stage the email belongs to. Unrecognised values resolve to
-	// Registration Push rather than failing; see emailstage.Names for the
-	// recognised set.
+	// Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule
+	// Announcement, Registration Push, Discount Offer, Final Countdown,
+	// Post-Event. Matching is CASE-SENSITIVE and any other value resolves to
+	// Registration Push rather than failing, so a misspelling yields registration
+	// copy under a 200 rather than an error.
 	Stage *string
 }
 
