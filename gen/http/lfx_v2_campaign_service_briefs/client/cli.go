@@ -648,12 +648,6 @@ func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyPr
 	{
 		if lfxV2CampaignServiceBriefsGenerateEmailCopyStage != "" {
 			stage = &lfxV2CampaignServiceBriefsGenerateEmailCopyStage
-			if !(*stage == "CFP Launch" || *stage == "Schedule Announcement" || *stage == "Registration Push" || *stage == "Discount Offer" || *stage == "Final Countdown" || *stage == "Post-Event") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", *stage, []any{"CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
-			}
-			if err != nil {
-				return nil, err
-			}
 		}
 	}
 	var bearerToken *string

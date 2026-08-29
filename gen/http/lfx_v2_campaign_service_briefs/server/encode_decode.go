@@ -2481,11 +2481,6 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if stageRaw != "" {
 			stage = &stageRaw
 		}
-		if stage != nil {
-			if !(*stage == "CFP Launch" || *stage == "Schedule Announcement" || *stage == "Registration Push" || *stage == "Discount Offer" || *stage == "Final Countdown" || *stage == "Post-Event") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", *stage, []any{"CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
-			}
-		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw

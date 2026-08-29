@@ -837,10 +837,23 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 		wantPhrase string
 	}{
 		// Purpose text unique to each stage's ported ContentPrompt.
-		{"post-event", strPtr("Post-Event"), "Thank attendees"},
+		// EVERY stage, not a sample. LFXV2-1940 requires each one's prompt to reach the model, and
+		// a two-stage sample cannot catch a template wired to the wrong constant -- the failure
+		// that most plausibly survives review, since each stage is a table row that looks right
+		// beside its neighbours.
 		{"cfp launch", strPtr("CFP Launch"), "Recruit speakers"},
+		{"schedule announcement", strPtr("Schedule Announcement"), "speaker lineup"},
+		{"registration push", strPtr("Registration Push"), "Drive registrations"},
+		{"discount offer", strPtr("Discount Offer"), "VIP/alumni"},
+		{"final countdown", strPtr("Final Countdown"), "anticipation"},
+		{"post-event", strPtr("Post-Event"), "extend engagement"},
 		// Absent stage keeps the pre-stage behaviour: Registration Push, not an error.
 		{"absent falls back", nil, "Registration"},
+		// UNRECOGNISED falls back too, and must reach the service at all -- the design carried a
+		// Goa `Enum` that rejected it with a 400 at the decoder, before `Resolve` could run, which
+		// contradicted the acceptance criterion. Removing the enum is what this pins; the criterion
+		// prefers a caller never blocked by a stage it cannot spell.
+		{"unrecognised falls back", strPtr("Fnal Countdown"), "Registration"},
 	}
 
 	for _, tc := range cases {

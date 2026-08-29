@@ -2262,16 +2262,9 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: Event-lifecycle stage the email belongs to
+                  description: Event-lifecycle stage the email belongs to. Unrecognised values resolve to Registration Push rather than failing; see emailstage.Names for the recognised set.
                   required: false
                   type: string
-                  enum:
-                    - CFP Launch
-                    - Schedule Announcement
-                    - Registration Push
-                    - Discount Offer
-                    - Final Countdown
-                    - Post-Event
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection

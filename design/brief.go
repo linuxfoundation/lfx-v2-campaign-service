@@ -1182,12 +1182,16 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// resolves to Registration Push -- the copy the single hardcoded prompt produced
 			// before stages existed, so every pre-stage caller keeps its current output.
 			//
-			// Enumerated rather than free text: an unrecognised stage would fall back silently,
-			// so a typo would generate the wrong kind of email and report success. The enum
-			// turns that into a 400 the caller can see.
-			Attribute("stage", String, "Event-lifecycle stage the email belongs to", func() {
-				Enum("CFP Launch", "Schedule Announcement", "Registration Push",
-					"Discount Offer", "Final Countdown", "Post-Event")
+			// FREE TEXT, not an enum, and the fallback is the point: LFXV2-1940 specifies that an
+			// unrecognised or absent stage resolves to Registration Push rather than erroring, so
+			// a caller is never blocked from generating copy by a stage it cannot spell.
+			//
+			// The cost is real and worth naming: a TYPO produces Registration Push copy under a
+			// 200, so a caller asking for "Fnal Countdown" gets the wrong kind of email and is
+			// told it succeeded. `emailstage.Resolve` is where that fallback lives, and the
+			// response does not report which stage was actually used — a caller that needs to
+			// know must compare what it sent against `Names()`.
+			Attribute("stage", String, "Event-lifecycle stage the email belongs to. Unrecognised values resolve to Registration Push rather than failing; see emailstage.Names for the recognised set.", func() {
 				Example("Post-Event")
 			})
 			Required("project_id", "brief_id")
