@@ -77,8 +77,13 @@ func composeEmailCopyPrompt(vars emailCopyPromptVars) (systemPrompt, userPrompt 
 	systemPrompt = `You are an expert email copywriter for technology events and communities.
 Your task is to generate compelling email copy for a campaign brief.
 
-IMPORTANT: Use ONLY the event details provided below; never invent dates, names, or locations.
-Every factual claim must come directly from what you're given.
+IMPORTANT: Use ONLY the event details provided below; never invent dates, names, locations,
+prices, deadlines, counts, or any other fact. Every factual claim must come directly from what
+you're given.
+
+A stage brief below may name a placeholder in [BRACKETS] for a fact that was not supplied --
+prices, attendee counts, session counts, deadlines. OMIT any sentence or section whose placeholder
+has no supplied value. Do not guess one, and do not emit the bracketed placeholder itself.
 
 Generate JSON with these fields (no markdown fencing):
 {
@@ -305,12 +310,16 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// input-token cost and large allocations. The composed total additionally includes the fixed
 	// system prompt and the stage template, which are service-owned constants no caller can grow.
 	//
-	// MEASURED, like the bound above: the largest stage (Post-Event) contributes 3552 runes, and
-	// the shared system prompt 962. 8000 leaves headroom for a stage longer than today's largest
-	// without re-tuning, while still rejecting a payload worth paying input tokens for. Sizing
-	// this at 3000 would reject EVERY stage-aware generation -- the constant text alone exceeds
-	// it -- which is what the test suite caught when stages were introduced.
-	const maxComposedPromptSize = 8000 // runes
+	// MEASURED, like the bound above, and the measurement is the point: the worst composed prompt
+	// with EMPTY caller input is Post-Event at 4700 runes (system 1435 + user 3265), so with the
+	// 3000-rune input bound above the true ceiling is 7700. An earlier revision set this to 8000
+	// -- above that ceiling -- which made the check unreachable: deleting it broke no test,
+	// because no input that passes the pre-check can reach it.
+	//
+	// 6500 sits between the two: comfortably above the 4700 floor a stage-only prompt needs, and
+	// below 7700, so a caller field large enough to matter still trips it. Sizing it at 3000, as
+	// the input bound is, would reject EVERY stage-aware generation on constant text alone.
+	const maxComposedPromptSize = 6500 // runes
 
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
 	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a

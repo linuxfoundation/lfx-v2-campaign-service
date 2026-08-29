@@ -2466,35 +2466,26 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 	return func(r *http.Request) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
 		var payload *lfxv2campaignservicebriefs.GenerateEmailCopyPayload
 		var (
-			body GenerateEmailCopyRequestBody
-			err  error
-		)
-		err = decoder(r).Decode(&body)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
-			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
-		}
-		err = ValidateGenerateEmailCopyRequestBody(&body)
-		if err != nil {
-			return payload, err
-		}
-
-		var (
 			projectID   string
 			briefID     string
+			stage       *string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
 		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		stageRaw := r.URL.Query().Get("stage")
+		if stageRaw != "" {
+			stage = &stageRaw
+		}
+		if stage != nil {
+			if !(*stage == "CFP Launch" || *stage == "Schedule Announcement" || *stage == "Registration Push" || *stage == "Discount Offer" || *stage == "Final Countdown" || *stage == "Post-Event") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", *stage, []any{"CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -2502,7 +2493,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if err != nil {
 			return payload, err
 		}
-		payload = NewGenerateEmailCopyPayload(&body, projectID, briefID, bearerToken)
+		payload = NewGenerateEmailCopyPayload(projectID, briefID, stage, bearerToken)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")

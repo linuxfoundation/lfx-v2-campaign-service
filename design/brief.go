@@ -1196,6 +1196,11 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/email-copy")
+			// A QUERY param, not a body attribute. Declaring it in the body made the body itself
+			// REQUIRED -- Goa emits MissingPayloadError on EOF -- so a pre-stage caller that POSTs
+			// with no body got a 400 instead of the default-stage copy it used to get. Verified
+			// against the running service before and after: body-less went 400, then 200.
+			Param("stage")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

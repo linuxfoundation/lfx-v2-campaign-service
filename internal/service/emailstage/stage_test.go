@@ -4,7 +4,6 @@
 package emailstage
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -53,8 +52,11 @@ func TestResolveFallsBackToDefault(t *testing.T) {
 		{"Nonexistent Stage", DefaultStage},
 	}
 	for _, tc := range cases {
-		if got := Resolve(tc.in).StageName; !strings.Contains(got, strings.Split(tc.want, " ")[0]) {
-			t.Errorf("Resolve(%q).StageName = %q, want the %q template", tc.in, got, tc.want)
+		// EXACT, not a first-word substring. The looser form discriminates today only because no
+		// two stages share a first word -- adding "Registration Launch" beside "Registration Push"
+		// would silently make it vacuous.
+		if got := Templates[tc.want].StageName; Resolve(tc.in).StageName != got {
+			t.Errorf("Resolve(%q).StageName = %q, want %q", tc.in, Resolve(tc.in).StageName, got)
 		}
 	}
 }

@@ -630,23 +630,8 @@ func BuildGetBriefMetricsPayload(lfxV2CampaignServiceBriefsGetBriefMetricsProjec
 
 // BuildGenerateEmailCopyPayload builds the payload for the
 // lfx-v2-campaign-service-briefs generate-email-copy endpoint from CLI flags.
-func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyBody string, lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBriefID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken string) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
+func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBriefID string, lfxV2CampaignServiceBriefsGenerateEmailCopyStage string, lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken string) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
 	var err error
-	var body GenerateEmailCopyRequestBody
-	{
-		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsGenerateEmailCopyBody), &body)
-		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"stage\": \"Post-Event\"\n   }'")
-		}
-		if body.Stage != nil {
-			if !(*body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID
@@ -659,17 +644,28 @@ func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyBo
 			return nil, err
 		}
 	}
+	var stage *string
+	{
+		if lfxV2CampaignServiceBriefsGenerateEmailCopyStage != "" {
+			stage = &lfxV2CampaignServiceBriefsGenerateEmailCopyStage
+			if !(*stage == "CFP Launch" || *stage == "Schedule Announcement" || *stage == "Registration Push" || *stage == "Discount Offer" || *stage == "Final Countdown" || *stage == "Post-Event") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", *stage, []any{"CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken != "" {
 			bearerToken = &lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken
 		}
 	}
-	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{
-		Stage: body.Stage,
-	}
+	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
+	v.Stage = stage
 	v.BearerToken = bearerToken
 
 	return v, nil

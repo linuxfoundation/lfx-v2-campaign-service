@@ -61,14 +61,6 @@ type AdoptCampaignRequestBody struct {
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
 }
 
-// GenerateEmailCopyRequestBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
-// request body.
-type GenerateEmailCopyRequestBody struct {
-	// Event-lifecycle stage the email belongs to
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
-}
-
 // UpdateCampaignRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // request body.
@@ -4595,12 +4587,11 @@ func NewGetBriefMetricsPayload(projectID string, briefID string, window *string,
 
 // NewGenerateEmailCopyPayload builds a lfx-v2-campaign-service-briefs service
 // generate-email-copy endpoint payload.
-func NewGenerateEmailCopyPayload(body *GenerateEmailCopyRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
-	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{
-		Stage: body.Stage,
-	}
+func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
+	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
+	v.Stage = stage
 	v.BearerToken = bearerToken
 
 	return v
@@ -4774,17 +4765,6 @@ func ValidateAdoptCampaignRequestBody(body *AdoptCampaignRequestBody) (err error
 	if body.PlatformCampaignID != nil {
 		if utf8.RuneCountInString(*body.PlatformCampaignID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.platform_campaign_id", *body.PlatformCampaignID, utf8.RuneCountInString(*body.PlatformCampaignID), 64, false))
-		}
-	}
-	return
-}
-
-// ValidateGenerateEmailCopyRequestBody runs the validations defined on
-// Generate-Email-CopyRequestBody
-func ValidateGenerateEmailCopyRequestBody(body *GenerateEmailCopyRequestBody) (err error) {
-	if body.Stage != nil {
-		if !(*body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
 		}
 	}
 	return

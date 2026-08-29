@@ -2260,6 +2260,18 @@ paths:
             description: Generate AI-written email copy (subject, preheader, body, CTA) for a campaign brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503.
             operationId: lfx-v2-campaign-service-briefs#generate-email-copy
             parameters:
+                - name: stage
+                  in: query
+                  description: Event-lifecycle stage the email belongs to
+                  required: false
+                  type: string
+                  enum:
+                    - CFP Launch
+                    - Schedule Announcement
+                    - Registration Push
+                    - Discount Offer
+                    - Final Countdown
+                    - Post-Event
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -2276,11 +2288,6 @@ paths:
                   description: JWT token issued by Heimdall
                   required: false
                   type: string
-                - name: Generate-Email-CopyRequestBody
-                  in: body
-                  required: true
-                  schema:
-                    $ref: '#/definitions/LfxV2CampaignServiceBriefsGenerateEmailCopyRequestBody'
             responses:
                 "200":
                     description: OK response.
@@ -9184,23 +9191,6 @@ definitions:
             url: https://events.linuxfoundation.org/kubecon-cloudnativecon-europe/
         required:
             - url
-    LfxV2CampaignServiceBriefsGenerateEmailCopyRequestBody:
-        title: LfxV2CampaignServiceBriefsGenerateEmailCopyRequestBody
-        type: object
-        properties:
-            stage:
-                type: string
-                description: Event-lifecycle stage the email belongs to
-                example: Post-Event
-                enum:
-                    - CFP Launch
-                    - Schedule Announcement
-                    - Registration Push
-                    - Discount Offer
-                    - Final Countdown
-                    - Post-Event
-        example:
-            stage: Post-Event
     LfxV2CampaignServiceBriefsToggleCampaignStatusRequestBody:
         title: LfxV2CampaignServiceBriefsToggleCampaignStatusRequestBody
         type: object
