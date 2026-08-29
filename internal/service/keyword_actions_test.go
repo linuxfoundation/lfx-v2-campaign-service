@@ -1211,8 +1211,10 @@ func TestResolveGoogleAdsCampaign_RejectsSystemScope(t *testing.T) {
 // The resolver contacts no platform — the answer is entirely in this service's tables — so
 // routing its error through classifyInsightsError would advertise a local table fault as a
 // retryable Google Ads outage, in a message naming "keyword insights". It would also produce a
-// 503 that means something else entirely: this method DOES declare one, reserved for cold start,
-// which is retryable. A live database fault is not.
+// 503 that means something else entirely: this method DOES declare one, for a backend that is not
+// wired. That is usually cold start and usually clears, but not always — in no-database mode the
+// repository is never bound and the same 503 persists for the life of the process, and a JWKS
+// outage takes the same disposition. A live database fault is none of those: it is a 500.
 func TestResolveGoogleAdsCampaign_StorageFailureIsNotAPlatformOutage(t *testing.T) {
 	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
 	camps := &fakeCampaignRepo{resolveErr: errors.New("connection refused")}

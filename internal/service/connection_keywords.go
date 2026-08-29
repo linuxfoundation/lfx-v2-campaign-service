@@ -180,6 +180,7 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 // would say something different — that the route or the project is wrong. Distinguishing them
 // is the difference between a caller reporting "not your campaign" and one retrying a request
 // that will never work.
+
 // validateGoogleAdsCampaignID mirrors the DSL constraint on `platform_campaign_id`.
 //
 // Kept as a named helper rather than inlined so the two cannot drift silently: if the design
