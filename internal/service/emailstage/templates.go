@@ -348,6 +348,10 @@ WORD COUNT TARGET: 180-250 words`,
 		FooterNote: "Early bird pricing ends [DEADLINE]. Standard pricing applies after that date.",
 	},
 
+	// NOTE: this stage's prompt asks for a `{{ contact.firstname }}` merge token in the greeting.
+	// That renders only in HubSpot, which is where this copy goes -- the dispatcher applies it to
+	// a cloned HubSpot marketing email. Nothing in this service renders or strips it, so a future
+	// consumer that is NOT HubSpot would surface the literal token to a recipient.
 	"Discount Offer": {
 		StageName:      "Discount Offer",
 		Purpose:        "VIP/alumni discount offer",
@@ -715,33 +719,4 @@ WORD COUNT TARGET: 180-240 words`,
 		},
 		FooterNote: "Recordings available [DATE]. Session slides ready now. Thanks for being part of our community!",
 	},
-}
-
-// AIStageOrder preserves AI_STAGE_TEMPLATES' Python insertion order, since
-// get_ai_stage_names() relies on dict key order.
-var AIStageOrder = []string{
-	"CFP Launch",
-	"Schedule Announcement",
-	"Registration Push / Pricing Deadline",
-	"Discount Offer / VIP Access",
-	"Final Countdown",
-	"Post-Event",
-}
-
-// FunnelStageToAITemplate ports FUNNEL_STAGE_TO_AI_TEMPLATE verbatim.
-var FunnelStageToAITemplate = map[string]string{
-	"Event Announcement":               "CFP Launch",
-	"CFP Launch":                       "CFP Launch",
-	"Registration Launch":              "CFP Launch",
-	"Co-Located Events + CFP Reminder": "Schedule Announcement",
-	"DEI & Travel Fund":                "Schedule Announcement",
-	"Schedule Announcement":            "Schedule Announcement",
-	"Main Registration Push":           "Registration Push / Pricing Deadline",
-	"Final Countdown":                  "Final Countdown",
-	"Event Week":                       "Final Countdown",
-	"Thank You + Survey":               "Post-Event",
-	"Content & Recordings Release":     "Post-Event",
-	"Next Event CFP Teaser":            "CFP Launch",
-	"Community Nurture":                "Post-Event",
-	"Unknown":                          "CFP Launch",
 }

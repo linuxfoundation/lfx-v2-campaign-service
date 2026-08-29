@@ -18,9 +18,14 @@ import "strings"
 
 // Template is one stage's complete generation spec.
 //
-// Every field feeds the prompt. `SubjectPattern` and `SubjectExamples` are shown to the model as
-// shape rather than text to copy, and `UrgencyLevel` (1-10) is what separates a Final Countdown
-// from a CFP Launch when the wording alone would not.
+// MOST fields feed the prompt: StageName, Purpose, Tone, UrgencyLevel, SubjectPattern,
+// PreviewPattern, CTAStrategy, FooterNote and ContentPrompt. `SubjectPattern` is shown as shape
+// rather than text to copy, and `UrgencyLevel` (1-10) is what separates a Final Countdown from a
+// CFP Launch when the wording alone would not.
+//
+// `Timing` and `SubjectExamples` are reference metadata and reach no prompt today. They are kept
+// because they describe the stage a reader is editing -- and because dropping them would make the
+// port lossy against the source it was taken from.
 type Template struct {
 	StageName       string
 	Purpose         string

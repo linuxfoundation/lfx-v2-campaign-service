@@ -876,3 +876,71 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 		})
 	}
 }
+
+// A caller that sends NO stage must still succeed. Declaring `stage` in the request BODY made the
+// body itself required -- Goa emits MissingPayloadError on EOF -- so a pre-stage caller POSTing
+// with no body got a 400 instead of the default-stage copy it had always received. It is a query
+// parameter for that reason. Verified against the running service: body-less went 400, then 200.
+func TestGenerateEmailCopy_NilStageIsNotAnError(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","dates":"June 17-20, 2026"}`),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	got, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: nil,
+	})
+	if err != nil {
+		t.Fatalf("a nil stage must resolve to the default, got error: %v", err)
+	}
+	if got == nil || got.Subject == "" {
+		t.Error("expected copy back for a caller that named no stage")
+	}
+}
+
+// The composed-prompt bound must be REACHABLE. An earlier revision set it to 8000 while the true
+// ceiling (3000 caller runes + the 4700-rune worst stage) was 7700, so no input that passed the
+// pre-check could ever trip it -- deleting the whole check broke no test. This drives caller input
+// large enough to cross it with a stage attached, which the input bound alone does not catch.
+func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
+	// Under the 3000-rune INPUT bound, so the pre-check passes and the composed check is what
+	// must reject this.
+	longName := repeatStr("x", 2500)
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"` + longName + `","location":"Barcelona","dates":"June 17-20, 2026"}`),
+	}
+	// An LLM client must be configured, or the call fails on service-unavailable BEFORE the size
+	// check and the test would pass for the wrong reason. The server is never reached: the bound
+	// rejects the request first, which is the claim.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the composed-prompt bound should have rejected this before any LLM call")
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	stage := "Post-Event"
+	_, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: &stage,
+	})
+	if err == nil {
+		t.Fatal("expected the composed-prompt bound to reject this; it is unreachable if this passes")
+	}
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("want BadRequestError, got %T: %v", err, err)
+	}
+}

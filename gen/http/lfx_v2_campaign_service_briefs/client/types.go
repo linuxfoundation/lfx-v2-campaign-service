@@ -61,14 +61,6 @@ type AdoptCampaignRequestBody struct {
 	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
 }
 
-// GenerateEmailCopyRequestBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
-// request body.
-type GenerateEmailCopyRequestBody struct {
-	// Event-lifecycle stage the email belongs to
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
-}
-
 // UpdateCampaignRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // request body.
@@ -2414,16 +2406,6 @@ func NewAdoptCampaignRequestBody(p *lfxv2campaignservicebriefs.AdoptCampaignPayl
 	body := &AdoptCampaignRequestBody{
 		Platform:           p.Platform,
 		PlatformCampaignID: p.PlatformCampaignID,
-	}
-	return body
-}
-
-// NewGenerateEmailCopyRequestBody builds the HTTP request body from the
-// payload of the "generate-email-copy" endpoint of the
-// "lfx-v2-campaign-service-briefs" service.
-func NewGenerateEmailCopyRequestBody(p *lfxv2campaignservicebriefs.GenerateEmailCopyPayload) *GenerateEmailCopyRequestBody {
-	body := &GenerateEmailCopyRequestBody{
-		Stage: p.Stage,
 	}
 	return body
 }
