@@ -57,17 +57,16 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			go func() {
-				<-first
-				time.Sleep(50 * time.Millisecond)
-				cancel()
-			}()
-
+			// Cancel exactly when the client enters the retry sleep, rather than sleeping a
+			// guessed interval and hoping it got there first. The old form slept 50ms after the
+			// handler returned; a descheduled goroutine pushes that past the window and the test
+			// fails with nothing wrong in the code.
 			c := NewClient(
 				Credentials{AccessToken: "tok"},
 				AccountConfig{AccountID: "act_777", CurrencyOffset: 100},
 				WithBaseURL(srv.URL),
 				WithClock(fixedMetaClock()),
+				withOnRetrySleep(cancel),
 				withRetryBaseDelay(30*time.Second),
 			)
 

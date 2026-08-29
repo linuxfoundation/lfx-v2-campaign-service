@@ -91,18 +91,15 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			}))
 			defer tokenSrv.Close()
 
-			go func() {
-				<-first
-				// The handler has written the whole 429 and returned. The client either is in
-				// sleepCtx or is about to be, and the 30s Retry-After guarantees it cannot leave
-				// before this cancel lands.
-				time.Sleep(50 * time.Millisecond)
-				cancel()
-			}()
-
+			// Cancel exactly when the client enters the retry sleep, rather than sleeping a
+			// guessed interval and hoping it got there first. The old form slept 50ms after the
+			// handler returned; a descheduled goroutine pushes that past the window and the test
+			// fails with nothing wrong in the code. withOnRetrySleep makes the wait-point
+			// observable, so the cancel is ordered by a happens-before edge instead of by clock.
 			c := NewClient(testCreds, testAccount,
 				WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
-				withRetryBaseDelay(30*time.Second))
+				withRetryBaseDelay(30*time.Second),
+				withOnRetrySleep(cancel))
 
 			err := c.UpdateCampaignStatus(ctx, "t5_abc123", "PAUSED")
 			if err == nil {

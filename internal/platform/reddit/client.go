@@ -247,6 +247,19 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// withOnRetrySleep registers a callback invoked immediately before the client blocks waiting to
+// retry a throttled request.
+//
+// Unexported and test-only. It exists so a test can cancel exactly when the client is known to be
+// entering the sleep, instead of sleeping an arbitrary wall-clock interval first and hoping the
+// client got there. That hope is what made the regression test flaky: a descheduled goroutine
+// pushes the cancel past the window and the test fails without the code being wrong.
+func withOnRetrySleep(fn func()) Option {
+	return func(c *Client) {
+		c.onRetrySleep = fn
+	}
+}
+
 // Client is a Reddit Ads API v3 client with cached OAuth token refresh.
 // It is safe for concurrent use.
 type Client struct {
@@ -262,6 +275,9 @@ type Client struct {
 	// retryBaseDelay const; tests may shrink it (via withRetryBaseDelay) to keep
 	// retry runs fast.
 	retryBaseDelay time.Duration
+	// onRetrySleep, when set, fires just before the client blocks to retry a throttled request.
+	// Test-only; nil in production, so the check costs a nil compare on an already-slow path.
+	onRetrySleep func()
 
 	mu            sync.Mutex
 	cachedToken   string
@@ -923,11 +939,15 @@ func createOutcomeAmbiguous(err error) bool {
 	if ae.StatusCode >= 500 {
 		return true
 	}
-	// 429 is the one 4xx that is NOT a semantic rejection, and reaching here means the bounded
-	// retry above was EXHAUSTED — Reddit received the request and shed it, which says nothing
-	// about whether the mutation committed first. Without this branch an exhausted throttle
-	// classified as DEFINITELY NOT APPLIED, so a caller retried a create that may already have
-	// run and duplicated a campaign that spends real budget.
+	// 429 is the one 4xx that is NOT a semantic rejection: Reddit received the request and shed
+	// it, which says nothing about whether the mutation committed first. Without this branch a
+	// throttle classified as DEFINITELY NOT APPLIED, so a caller retried a create that may
+	// already have run and duplicated a campaign that spends real budget.
+	//
+	// Two paths arrive here and both are unconfirmed. An idempotent call reaches it with the
+	// bounded retry EXHAUSTED. A non-idempotent create reaches it on the FIRST 429, because
+	// requestNoThrottleRetry does not retry at all — the retry is what would duplicate. The
+	// classification is the same either way, so this must not be written as "exhausted only".
 	//
 	// Deliberately NOT gated on the method, matching the Meta client: a throttled name LOOKUP
 	// confirms no absence either, and a caller told "not found" on the strength of one would
@@ -1026,8 +1046,10 @@ func isPreSendDialError(err error) bool {
 // retryBaseDelay*2^attempt, in both cases clamped to maxRetryWait. If a
 // server-declared reset exceeds maxRetryWait, the request aborts with the
 // rate-limit error rather than sleeping past the point of usefulness. A 429 is
-// retried regardless of HTTP method: Reddit sheds a throttled request, so a retry
-// is worth making on any method.
+// retried for IDEMPOTENT calls: Reddit sheds a throttled request, so a retry is
+// worth making where repeating it cannot create a second object. Non-idempotent
+// POST creates go through requestNoThrottleRetry instead and are NOT retried on a
+// 429 — repeating one is how a throttle turns into a duplicate paid campaign.
 //
 // A 429 is NOT proof that nothing was created. Reddit does not say whether it shed
 // the request before or after processing, so once the bounded retry is exhausted
@@ -1165,6 +1187,9 @@ func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path stri
 						Err:    fmt.Errorf("429: rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", resp.Header.Get("Retry-After"), maxRetryWait),
 					}
 				}
+				if c.onRetrySleep != nil {
+					c.onRetrySleep()
+				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
 					// A request HAS already been sent (the 429 proves Reddit received it), so a
 					// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
@@ -1181,6 +1206,9 @@ func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path stri
 			wait := c.retryBaseDelay * time.Duration(1<<uint(attempt))
 			if wait > maxRetryWait {
 				wait = maxRetryWait
+			}
+			if c.onRetrySleep != nil {
+				c.onRetrySleep()
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
 				// A request HAS already been sent (the 429 proves Reddit received it), so a
