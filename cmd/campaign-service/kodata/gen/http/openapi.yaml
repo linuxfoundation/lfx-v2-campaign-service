@@ -8190,24 +8190,28 @@ definitions:
                 description: Every bucket across all three breakdowns, discriminated by `dimension`. Ordered by dimension then impressions descending.
                 example:
                     - clicks: 742
+                      conversions: 31.25
                       cost_micros: 3120000
                       ctr: 0.0578
                       dimension: device
                       impressions: 12840
                       value: AGE_RANGE_25_34
                     - clicks: 742
+                      conversions: 31.25
                       cost_micros: 3120000
                       ctr: 0.0578
                       dimension: device
                       impressions: 12840
                       value: AGE_RANGE_25_34
                     - clicks: 742
+                      conversions: 31.25
                       cost_micros: 3120000
                       ctr: 0.0578
                       dimension: device
                       impressions: 12840
                       value: AGE_RANGE_25_34
                     - clicks: 742
+                      conversions: 31.25
                       cost_micros: 3120000
                       ctr: 0.0578
                       dimension: device
@@ -8229,12 +8233,14 @@ definitions:
             bucket_count: 18
             buckets:
                 - clicks: 742
+                  conversions: 31.25
                   cost_micros: 3120000
                   ctr: 0.0578
                   dimension: device
                   impressions: 12840
                   value: AGE_RANGE_25_34
                 - clicks: 742
+                  conversions: 31.25
                   cost_micros: 3120000
                   ctr: 0.0578
                   dimension: device
@@ -8254,6 +8260,11 @@ definitions:
                 description: Clicks over the window
                 example: 742
                 format: int64
+            conversions:
+                type: number
+                description: Conversions over the window, fraction intact. Summable WITHIN a dimension for the same reason impressions are; summing across dimensions triple-counts.
+                example: 31.25
+                format: double
             cost_micros:
                 type: integer
                 description: Cost over the window in micro-units of the account's native currency
@@ -8283,6 +8294,7 @@ definitions:
                 example: AGE_RANGE_25_34
         example:
             clicks: 742
+            conversions: 31.25
             cost_micros: 3120000
             ctr: 0.0578
             dimension: device
@@ -8295,6 +8307,7 @@ definitions:
             - clicks
             - cost_micros
             - ctr
+            - conversions
     GoogleAdsConnection:
         title: GoogleAdsConnection
         type: object
@@ -8412,15 +8425,28 @@ definitions:
                 type: string
                 description: 'The ad group this criterion belongs to. Required to address the criterion: a criterion id alone does not identify a keyword.'
                 example: "176216228"
+            ad_group_name:
+                type: string
+                description: The ad group's display name. Not an identifier — names are not unique across campaigns; address the ad group by `ad_group_id`.
+                example: Registration - Exact
             campaign_id:
                 type: string
                 description: The Google Ads campaign this keyword serves under
                 example: "21234567890"
+            campaign_name:
+                type: string
+                description: The campaign's display name. Not an identifier — address the campaign by `campaign_id`.
+                example: KubeCon NA 2026 - Search
             clicks:
                 type: integer
                 description: Clicks over the window
                 example: 311
                 format: int64
+            conversions:
+                type: number
+                description: 'Conversions over the window, fraction intact — Google credits fractional conversions under data-driven and position-based attribution. Absence upstream is a measured 0, not an unmeasured one: this field is always selected.'
+                example: 12.5
+                format: double
             cost_micros:
                 type: integer
                 description: Cost over the window in micro-units of the account's native currency. This service performs no FX conversion, so do not blend it with another account's figures.
@@ -8449,6 +8475,13 @@ definitions:
                     - PHRASE
                     - BROAD
                     - UNKNOWN
+            quality_score:
+                type: integer
+                description: Google's 1-10 quality rating. ABSENT when Google has not rated this keyword yet, which is normal for a keyword with few impressions — absence is not a score of 0, and 0 is not on the scale. Render it as unknown, never as a low score.
+                example: 7
+                format: int64
+                minimum: 1
+                maximum: 10
             status:
                 type: string
                 description: The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.
@@ -8464,19 +8497,25 @@ definitions:
                 example: kubernetes training
         example:
             ad_group_id: "176216228"
+            ad_group_name: Registration - Exact
             campaign_id: "21234567890"
+            campaign_name: KubeCon NA 2026 - Search
             clicks: 311
+            conversions: 12.5
             cost_micros: 1284000
             criterion_id: "305729261"
             ctr: 0.0645
             impressions: 4820
             match_type: BROAD
+            quality_score: 7
             status: REMOVED
             text: kubernetes training
         required:
             - criterion_id
             - ad_group_id
             - campaign_id
+            - ad_group_name
+            - campaign_name
             - text
             - match_type
             - status
@@ -8484,6 +8523,7 @@ definitions:
             - clicks
             - cost_micros
             - ctr
+            - conversions
     GoogleAdsKeywords:
         title: GoogleAdsKeywords
         type: object
@@ -8500,43 +8540,59 @@ definitions:
                 description: Keyword rows, ordered by impressions descending. Capped — see `truncated`.
                 example:
                     - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
                       campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
                       clicks: 311
+                      conversions: 12.5
                       cost_micros: 1284000
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
                       match_type: EXACT
+                      quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
                     - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
                       campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
                       clicks: 311
+                      conversions: 12.5
                       cost_micros: 1284000
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
                       match_type: EXACT
+                      quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
                     - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
                       campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
                       clicks: 311
+                      conversions: 12.5
                       cost_micros: 1284000
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
                       match_type: EXACT
+                      quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
                     - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
                       campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
                       clicks: 311
+                      conversions: 12.5
                       cost_micros: 1284000
                       criterion_id: "305729261"
                       ctr: 0.0645
                       impressions: 4820
                       match_type: EXACT
+                      quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
             truncated:
@@ -8559,33 +8615,45 @@ definitions:
             row_count: 50
             rows:
                 - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
                   campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
                   clicks: 311
+                  conversions: 12.5
                   cost_micros: 1284000
                   criterion_id: "305729261"
                   ctr: 0.0645
                   impressions: 4820
                   match_type: EXACT
+                  quality_score: 7
                   status: UNKNOWN
                   text: kubernetes training
                 - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
                   campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
                   clicks: 311
+                  conversions: 12.5
                   cost_micros: 1284000
                   criterion_id: "305729261"
                   ctr: 0.0645
                   impressions: 4820
                   match_type: EXACT
+                  quality_score: 7
                   status: UNKNOWN
                   text: kubernetes training
                 - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
                   campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
                   clicks: 311
+                  conversions: 12.5
                   cost_micros: 1284000
                   criterion_id: "305729261"
                   ctr: 0.0645
                   impressions: 4820
                   match_type: EXACT
+                  quality_score: 7
                   status: UNKNOWN
                   text: kubernetes training
             truncated: true

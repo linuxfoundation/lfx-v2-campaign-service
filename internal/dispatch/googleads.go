@@ -1870,16 +1870,23 @@ func (d *GoogleAdsDispatcher) ReadKeywordPerformance(ctx context.Context, projec
 	rows := make([]model.KeywordRow, 0, len(kp.Rows))
 	for _, r := range kp.Rows {
 		rows = append(rows, model.KeywordRow{
-			CriterionID: r.CriterionID,
-			AdGroupID:   r.AdGroupID,
-			CampaignID:  r.CampaignID,
-			Text:        r.Text,
-			MatchType:   r.MatchType,
-			Status:      r.Status,
-			Impressions: r.Impressions,
-			Clicks:      r.Clicks,
-			CostMicros:  r.CostMicros,
-			Ctr:         r.Ctr,
+			CriterionID:  r.CriterionID,
+			AdGroupID:    r.AdGroupID,
+			CampaignID:   r.CampaignID,
+			AdGroupName:  r.AdGroupName,
+			CampaignName: r.CampaignName,
+			Text:         r.Text,
+			MatchType:    r.MatchType,
+			Status:       r.Status,
+			// Carried as a pointer the whole way rather than dereferenced with a default:
+			// nil means Google has not rated the keyword, and every layer that flattens it
+			// to 0 turns "unrated" into "rated worst".
+			QualityScore: r.QualityScore,
+			Impressions:  r.Impressions,
+			Clicks:       r.Clicks,
+			CostMicros:   r.CostMicros,
+			Ctr:          r.Ctr,
+			Conversions:  r.Conversions,
 		})
 	}
 	return &model.KeywordPerformance{
@@ -1927,6 +1934,7 @@ func (d *GoogleAdsDispatcher) ReadAudienceInsights(ctx context.Context, projectI
 			Clicks:      b.Clicks,
 			CostMicros:  b.CostMicros,
 			Ctr:         b.Ctr,
+			Conversions: b.Conversions,
 		})
 	}
 	return &model.AudienceInsights{Window: window, Buckets: buckets}, nil

@@ -69,14 +69,29 @@ func (d *keywordActionDispatcher) ReadKeywordPerformance(context.Context, string
 	if d.err != nil {
 		return nil, d.err
 	}
-	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days, Rows: []model.KeywordRow{{CriterionID: "777", AdGroupID: "333"}}}, nil
+	// Every field carries a DISTINCT non-zero value. A zero-valued fixture cannot tell a
+	// mapper that forwards a field from one that drops it, because both produce zero — the
+	// whole point of this stub is to make a dropped field visible in the response.
+	score := int64(7)
+	return &model.KeywordPerformance{Window: model.MetricsWindowLast30Days, Rows: []model.KeywordRow{{
+		CriterionID:  "777",
+		AdGroupID:    "333",
+		AdGroupName:  "Registration - Exact",
+		CampaignName: "KubeCon NA 2026 - Search",
+		QualityScore: &score,
+		Conversions:  12.5,
+	}}}, nil
 }
 
 func (d *keywordActionDispatcher) ReadAudienceInsights(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
-	return &model.AudienceInsights{Window: model.MetricsWindowLast30Days, Buckets: []model.AudienceBucket{{Dimension: model.AudienceDimensionAge, Value: "AGE_RANGE_25_34"}}}, nil
+	return &model.AudienceInsights{Window: model.MetricsWindowLast30Days, Buckets: []model.AudienceBucket{{
+		Dimension:   model.AudienceDimensionAge,
+		Value:       "AGE_RANGE_25_34",
+		Conversions: 31.25,
+	}}}, nil
 }
 
 // keywordActionService wires a BriefService whose campaign repo holds one campaign on the
@@ -565,6 +580,25 @@ func TestGetGoogleAdsKeywords_HappyPath(t *testing.T) {
 	if res.Rows[0].CriterionID != "777" {
 		t.Errorf("row = %+v", res.Rows[0])
 	}
+	// The fields added for the UI cutover must survive the model→wire mapping. This is a
+	// SEPARATE layer from the client decode: the platform client can populate all four and
+	// this mapper still drop them, and because the generated struct's fields are values the
+	// compiler reports nothing — the response simply carries zeros.
+	got := res.Rows[0]
+	if got.AdGroupName != "Registration - Exact" {
+		t.Errorf("AdGroupName = %q, want %q", got.AdGroupName, "Registration - Exact")
+	}
+	if got.CampaignName != "KubeCon NA 2026 - Search" {
+		t.Errorf("CampaignName = %q, want %q", got.CampaignName, "KubeCon NA 2026 - Search")
+	}
+	if got.QualityScore == nil {
+		t.Errorf("QualityScore = nil, want 7")
+	} else if *got.QualityScore != 7 {
+		t.Errorf("QualityScore = %d, want 7", *got.QualityScore)
+	}
+	if got.Conversions != 12.5 {
+		t.Errorf("Conversions = %v, want 12.5", got.Conversions)
+	}
 }
 
 func TestGetGoogleAdsAudience_HappyPath(t *testing.T) {
@@ -578,6 +612,9 @@ func TestGetGoogleAdsAudience_HappyPath(t *testing.T) {
 	}
 	if res.Buckets[0].Dimension != model.AudienceDimensionAge {
 		t.Errorf("bucket = %+v", res.Buckets[0])
+	}
+	if got := res.Buckets[0].Conversions; got != 31.25 {
+		t.Errorf("Conversions = %v, want 31.25", got)
 	}
 }
 
