@@ -49,11 +49,14 @@ Enforces length limits in code, stripping trailing whitespace. Applied after par
 
 That asymmetry is why `GenerateEmailCopy`'s required-field check trims before comparing. `truncateString` is what strips trailing whitespace, so a whitespace-only subject, preheader or CTA already arrived empty; a whitespace-only **body** did not, and used to pass the check and return 200 with a blank email.
 
-### The prompt bound is checked twice, and in runes
+### The prompt bound is checked twice, in runes, against TWO different limits
 
-`maxPromptSize` is 3000 **runes**, and it is enforced once BEFORE `composeEmailCopyPrompt` on
-the three event-detail fields and once after on the composed prompt. Neither check is
-redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
+`maxPromptSize` is 3000 **runes** and bounds the three event-detail fields BEFORE
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 6500 and bounds the composed prompt after.
+They are separate constants because they measure different things — the caller's input versus that
+input plus the stage template — and using one number for both made the post-check unreachable: the
+composed prompt could never be smaller than the input it contains, so a single 3000 would either
+reject valid input at the front or never fire at the back. Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
 `design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
 check formats a 50MB stored event name into a new string before measuring it — the allocation
 the guard exists to prevent, performed by the guard's own input. The three fields alone cannot
@@ -63,8 +66,31 @@ because the fixed template counts too, which is what the second check is for.
 Runes, not bytes, because the limit is stated to the caller and logged as a character count and
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
-different depending on the alphabet. Measured, not estimated: the fixed system prompt is 962
-runes and a realistic user prompt is 245, leaving ~1800 runes of headroom.
+different depending on the alphabet. Measured, not estimated: with the largest stage
+template (Post-Event) and a long real event name the composed prompt reaches 5552 runes, leaving
+roughly 950 of headroom under 6500. Re-measure when the shared prompt changes — adding the
+placeholder instruction moved this figure by over 2000 runes, and a bound above every reachable
+composition can never fire.
+
+### The stage selects the template, and an unrecognised one does not fail
+
+`emailstage.Resolve` maps the requested stage onto one of six templates and falls back to
+Registration Push for anything it does not recognise, including the empty string. That fallback is
+the CONTRACT (LFXV2-1940), not an implementation convenience: a caller is never blocked from
+generating copy by a stage it cannot spell.
+
+The `stage` attribute is therefore free text with no `Enum`. An enum was tried and removed: Goa
+validates it in the generated decoder, so an unrecognised value became a 400 before `Resolve`
+could run, which is the opposite of the specified behaviour.
+
+The cost is real and worth naming — a TYPO produces Registration Push copy under a 200, so a
+caller asking for "Fnal Countdown" gets the wrong kind of email and is told it succeeded. The
+response does not report which stage was actually used, so a caller that needs to know must
+compare what it sent against `emailstage.Names()`.
+
+It is a QUERY parameter, not a body field. As a body attribute it made the whole request body
+mandatory — Goa emits `requestBody.required: true` and the decoder answers `MissingPayloadError`
+on EOF — so every existing body-less POST began failing with a 400.
 
 ### `(s *BriefService) GenerateEmailCopy(ctx, payload)`
 Main handler. Loads the brief, decodes its event details, builds the prompt, calls the LLM client, parses and validates the response, and returns the `EmailCopy` result. Does NOT persist anything to the brief; it is a pure generation call.

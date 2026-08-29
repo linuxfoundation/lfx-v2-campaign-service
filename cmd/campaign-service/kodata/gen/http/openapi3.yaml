@@ -3110,19 +3110,12 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: Event-lifecycle stage the email belongs to
+                  description: Event-lifecycle stage the email belongs to. Unrecognised values resolve to Registration Push rather than failing; see emailstage.Names for the recognised set.
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: Event-lifecycle stage the email belongs to
+                    description: Event-lifecycle stage the email belongs to. Unrecognised values resolve to Registration Push rather than failing; see emailstage.Names for the recognised set.
                     example: Post-Event
-                    enum:
-                        - CFP Launch
-                        - Schedule Announcement
-                        - Registration Push
-                        - Discount Offer
-                        - Final Countdown
-                        - Post-Event
                   example: Post-Event
                 - name: project_id
                   in: path
