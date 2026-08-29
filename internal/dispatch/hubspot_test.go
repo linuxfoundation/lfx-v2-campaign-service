@@ -597,8 +597,9 @@ func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
 // The client tests derive Capped and the service tests map it onto the wire, but nothing
 // exercised the adapter BETWEEN them. Dropping page.Capped here would leave both of those suites
 // green while turning a capped, incomplete search into a plain empty answer — and empty is
-// exactly what the UI acts on by offering to create a campaign, in a namespace every foundation
-// on that portal shares. Every field is asserted for the same reason: a field silently lost at
+// exactly what the UI acts on by offering to create a campaign, in a namespace shared by every
+// project configured against that same HubSpot portal — which is not necessarily the LF's own,
+// since connections are per project. Every field is asserted for the same reason: a field lost at
 // this seam cannot be seen from either side of it.
 func TestHubSpot_SearchCampaignsCrossesTheSeam(t *testing.T) {
 	const searchPath = "/crm/v3/objects/0-35/search"

@@ -1375,8 +1375,10 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 	//
 	// 503, not 500. Reaching here means the create returned NO error: the request was sent and
 	// HubSpot did not refuse it, so the campaign may well exist — this is the one arm where the
-	// service knows least and the write is non-idempotent into a namespace every foundation
-	// shares. 500 is reserved for "definitely not sent", and a caller that reads this as a clean
+	// service knows least and the write is non-idempotent into a namespace shared by every
+	// project configured against the same HubSpot portal — see the Campaign type comment: a
+	// connection is per project with its own portal_id, so "portal-wide" is not "LF-global".
+	// 500 is reserved for "definitely not sent", and a caller that reads this as a clean
 	// failure retries and makes the duplicate. Same wording as the catch-all below it, because
 	// the caller's remedy is identical: look in HubSpot before creating again.
 	if created == nil {
