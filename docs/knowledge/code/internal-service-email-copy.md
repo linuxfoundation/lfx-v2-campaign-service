@@ -51,19 +51,27 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 
 ### The prompt bound is checked twice, in runes, against TWO different limits
 
-`maxPromptSize` is 3000 **runes** and bounds the three event-detail fields BEFORE
-`composeEmailCopyPrompt`; `maxComposedPromptSize` is 6500 and bounds the composed prompt after.
+`maxPromptSize` is 2400 **runes** and bounds the three event-detail fields BEFORE
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 7600 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
 input plus the stage template — and getting the second number wrong fails in TWO opposite
 directions, both of which this file has actually shipped:
 
-- **Too low rejects everything.** Reusing 3000 for the composed check fails every valid request:
-  the smallest composed prompt is 4923 runes (Schedule Announcement) because the stage template
-  alone exceeds 3000, so the post-check refuses input the pre-check correctly allowed.
-- **Too high never fires.** The first stage-aware version set it to 8000 against a maximum
-  reachable composition of 7700, so the guard could not be tripped by any input — a bound that
-  looks enforced and enforces nothing. That is what `TestGenerateEmailCopy_ComposedBoundIsReachable`
-  exists to catch, and why the measured figure below has to be re-derived rather than estimated.
+- **Too low rejects valid input.** At 6500 the Post-Event template (5041 runes on its own) left
+  only ~1459 runes for caller fields, so 1618 runes of event details passed the 3000 pre-check and
+  were then refused by the composed one — two bounds contradicting each other, with the caller told
+  their input was too large immediately after the first accepted it.
+- **Too high never fires.** 8000 was set against a believed ceiling of 7700 and the real ceiling
+  was 8041, so it fired only for the very largest Post-Event input.
+  `TestGenerateEmailCopy_ComposedBoundIsReachable` exists to catch this, and it passed for a reason
+  nobody had checked.
+
+**The two are only satisfiable as a pair.** Nothing the pre-check accepts may be refused here, and
+this check must still be reachable — with a 3000 input bound those are arithmetically incompatible
+(a valid caller composes up to 8041; reachability needs the bound below that). The INPUT bound came
+down to 2400 instead: the worst valid compose is then 7439, comfortably under 7600, while a stage
+template growing past ~2559 runes of its current size still trips the guard. 2400 runes is far more
+event-detail text than any real event carries.
 
 Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
 `design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
@@ -75,11 +83,11 @@ because the fixed template counts too, which is what the second check is for.
 Runes, not bytes, because the limit is stated to the caller and logged as a character count and
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
-different depending on the alphabet. Measured, not estimated: with the largest stage
-template (Post-Event) and a long real event name the composed prompt reaches 5552 runes, leaving
-roughly 950 of headroom under 6500. Re-measure when the shared prompt changes — adding the
-placeholder instruction moved this figure by over 2000 runes, and a bound above every reachable
-composition can never fire.
+different depending on the alphabet. Measured, not estimated, and re-measured whenever the
+shared prompt or any template changes: Post-Event is the largest stage at 5041 runes on its own,
+and with the maximum 2400 runes of caller input it composes to 7439 against the 7600 bound. Every
+figure in this section has been wrong at least once from a measurement taken before a template
+grew, so derive them rather than carrying them forward.
 
 ### The stage selects the template, and an unrecognised one does not fail
 

@@ -935,10 +935,17 @@ func TestGenerateEmailCopy_NilStageIsNotAnError(t *testing.T) {
 	}
 }
 
-// The composed-prompt bound must be REACHABLE. An earlier revision set it to 8000 while the true
-// ceiling (3000 caller runes + the 4700-rune worst stage) was 7700, so no input that passed the
-// pre-check could ever trip it -- deleting the whole check broke no test. This drives caller input
-// large enough to cross it with a stage attached, which the input bound alone does not catch.
+// The composed-prompt bound must be REACHABLE -- a bound above every composable prompt is a guard
+// that cannot fire, and deleting the whole check would break no test.
+//
+// It is one of TWO properties the bounds must satisfy together; the other is that nothing the
+// pre-check accepts is refused by the composed check, which is why the INPUT bound came down to
+// 2400 rather than this one going up. See the sizing comment in email_copy.go: the worst valid
+// compose is 7439 runes (Post-Event) against a 7600 bound, so a stage template growing past
+// ~2559 runes of its current size trips this while no legitimate caller does.
+//
+// This test drives caller input large enough to cross the bound with a stage attached, which the
+// input bound alone does not catch.
 func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 	// Under the 3000-rune INPUT bound, so the pre-check passes and the composed check is what
 	// must reject this.

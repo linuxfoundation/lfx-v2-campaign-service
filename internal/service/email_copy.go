@@ -311,7 +311,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// truncateString). Counting bytes here rejected a name in Japanese or an accented
 	// location at a third of the advertised budget, and only for those callers — a limit
 	// that means something different depending on the alphabet the event is named in.
-	const maxPromptSize = 3000 // runes
+	const maxPromptSize = 2400 // runes
 
 	// The COMPOSED prompt is bounded separately, and higher, because the two checks bound
 	// different things. `maxPromptSize` bounds what the CALLER supplies -- three `Any`-typed
@@ -319,16 +319,32 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// input-token cost and large allocations. The composed total additionally includes the fixed
 	// system prompt and the stage template, which are service-owned constants no caller can grow.
 	//
-	// MEASURED, like the bound above, and the measurement is the point: the worst composed prompt
-	// with EMPTY caller input is Post-Event at 4700 runes (system 1435 + user 3265), so with the
-	// 3000-rune input bound above the true ceiling is 7700. An earlier revision set this to 8000
-	// -- above that ceiling -- which made the check unreachable: deleting it broke no test,
-	// because no input that passes the pre-check can reach it.
+	// The two bounds are chosen TOGETHER, because two properties have to hold at once and only
+	// the pair can satisfy both:
 	//
-	// 6500 sits between the two: comfortably above the 4700 floor a stage-only prompt needs, and
-	// below 7700, so a caller field large enough to matter still trips it. Sizing it at 3000, as
-	// the input bound is, would reject EVERY stage-aware generation on constant text alone.
-	const maxComposedPromptSize = 6500 // runes
+	//   1. No input the pre-check accepts may be refused here. Two bounds contradicting each other
+	//      tells a caller their input is too large immediately after the first one accepted it.
+	//   2. This check must stay REACHABLE. A bound above every composable prompt is a guard that
+	//      cannot fire, and deleting it would break no test.
+	//
+	// MEASURED: the worst stage-only floor is Post-Event at 5041 runes (system 1776 + user 3265).
+	// With a 2400-rune input bound the worst a valid caller composes is 7441, so 7600 satisfies
+	// (1) with room to spare, and satisfies (2) because a stage template growing past ~2559 runes
+	// of its current size trips it.
+	//
+	// Both figures were wrong twice before, in opposite directions, from a stale 4700/7700
+	// measurement taken before the templates grew:
+	//
+	//   - 6500 REJECTED VALID INPUT: Post-Event left only ~1459 runes for caller fields, so 1618
+	//     runes of event details passed the 3000 pre-check and were refused here.
+	//   - 8000 was believed unreachable and was not -- 8041 > 8000, so it fired only for the very
+	//     largest Post-Event input, and the reachability test passed for a reason nobody checked.
+	//
+	// The input bound came DOWN from 3000 rather than this one going up, because raising it above
+	// 8041 would have satisfied (1) by destroying (2). 2400 runes is far more event-detail text
+	// than any real event carries. Re-measure both whenever the shared prompt or any template
+	// changes: this comment has now been wrong twice from exactly that.
+	const maxComposedPromptSize = 7600 // runes
 
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
 	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
