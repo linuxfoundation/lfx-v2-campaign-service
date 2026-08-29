@@ -254,7 +254,7 @@ type Service interface {
 	// rather than one this service guessed. **A 2xx carrying no id is reported as
 	// an error**, because the campaign may or may not exist and cannot be
 	// addressed either way: the caller must check HubSpot rather than retry into a
-	// second copy. Other failures fall into THREE classes, and the status tells
+	// second copy. Other failures fall into FOUR classes, and the status tells
 	// them apart. **400 — nothing was created, and the request is correctable.**
 	// Either HubSpot rejected it on the merits (a definite non-429 4xx), or the
 	// stored connection EXISTS but is not usable as configured. A 401/403 says so
@@ -262,22 +262,26 @@ type Service interface {
 	// problem. **404 — no HubSpot connection is configured for this project.**
 	// Distinct from the 400 above, which means one exists and is broken: the
 	// remedy is to connect HubSpot, not to fix a credential. **500 — the stored
-	// credential could not be decrypted**, or the service is otherwise faulted.
-	// Not the operator's to fix, and not retryable by them. All three prove
-	// nothing reached HubSpot, which is why they are reported as themselves rather
-	// than as an unconfirmed outcome: sending an operator to look for a campaign
-	// that was never attempted hides the remedy they actually need. **503 — the
-	// outcome could not be confirmed, OR the request never left this service.**
-	// Those two share a status because both are retryable-when-things-recover
-	// rather than correctable by the caller, and the MESSAGE distinguishes them: a
-	// pre-send failure (DNS, dial, an already-cancelled context) can promise
-	// nothing was created, which the unconfirmed case cannot. Everything else
-	// lands here too, including any failure this service cannot positively
-	// classify: a non-idempotent write into a shared namespace fails CLOSED, so an
-	// unrecognised error is treated as possibly-committed rather than reported as
-	// a clean failure. HubSpot marks mutating transport, 429, 3xx and 5xx failures
-	// as possibly-committed, and so is a 2xx whose body could not be decoded.
-	// Verify in HubSpot before creating it again.
+	// credential could not be decrypted**, or the service is otherwise faulted
+	// BEFORE the request went out. Not the operator's to fix, and not retryable by
+	// them. 500 is reserved for that pre-send position: a fault discovered AFTER
+	// the create returned without error is a 503, because by then the campaign may
+	// exist and only this service's reading of the outcome failed. Those three
+	// prove nothing reached HubSpot, which is why they are reported as themselves
+	// rather than as an unconfirmed outcome: sending an operator to look for a
+	// campaign that was never attempted hides the remedy they actually need. **503
+	// — the outcome could not be confirmed, OR the request never left this
+	// service.** Those two share a status because both are
+	// retryable-when-things-recover rather than correctable by the caller, and the
+	// MESSAGE distinguishes them: a pre-send failure (DNS, dial, an
+	// already-cancelled context) can promise nothing was created, which the
+	// unconfirmed case cannot. Everything else lands here too, including any
+	// failure this service cannot positively classify: a non-idempotent write into
+	// a shared namespace fails CLOSED, so an unrecognised error is treated as
+	// possibly-committed rather than reported as a clean failure. HubSpot marks
+	// mutating transport, 429, 3xx and 5xx failures as possibly-committed, and so
+	// is a 2xx whose body could not be decoded. Verify in HubSpot before creating
+	// it again.
 	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
 }
 

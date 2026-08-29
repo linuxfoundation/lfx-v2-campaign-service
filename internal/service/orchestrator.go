@@ -312,7 +312,13 @@ type CampaignSearcher interface {
 	// silently returned nothing.
 	SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error)
 
-	// CreateCampaign creates a campaign and returns it with the token the platform assigned.
+	// CreateCampaign creates a campaign and returns it with the token the platform assigned, if
+	// the platform assigned one. An EMPTY token is a successful create, not a failure: HubSpot's
+	// marketing create is not documented to return `hs_utm`, and this method deliberately does
+	// no follow-up search to fetch it — a second call after a non-idempotent write is another
+	// failure point, and its failure would make a campaign that EXISTS look like a create that
+	// did not happen. The token becomes visible through the ordinary lookup on a later read, so
+	// a caller must not treat an absent token as an unsuccessful create.
 	//
 	// It ALWAYS creates: it performs no existence check, because a search-then-create inside
 	// one call still races a concurrent caller and cannot prevent a duplicate. The check belongs

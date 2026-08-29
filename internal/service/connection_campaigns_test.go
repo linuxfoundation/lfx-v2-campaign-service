@@ -93,8 +93,11 @@ func TestSearchHubspotCampaigns_ReturnsMatchesInOrder(t *testing.T) {
 	if len(res.Campaigns) != 2 {
 		t.Fatalf("campaigns = %d, want 2", len(res.Campaigns))
 	}
-	// Relevance order must survive: the caller shows these to a human picking between similar
-	// names, and reordering would put a worse match first.
+	// HubSpot's ORDER must survive — not "relevance order": this search is explicitly not
+	// relevance-ranked, and rows arrive in HubSpot's default order (by object creation). The
+	// caller shows them to a human picking between similar names, so reordering here would
+	// invent a ranking the API never provided and invite treating the first row as the best
+	// match, which is exactly what the endpoint's contract warns against.
 	if res.Campaigns[0].ID != "11" || res.Campaigns[1].ID != "22" {
 		t.Errorf("order not preserved: %+v", res.Campaigns)
 	}
