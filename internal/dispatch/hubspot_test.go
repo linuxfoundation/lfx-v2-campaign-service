@@ -573,12 +573,20 @@ func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("a cancelled context was reported as a successful create")
 	}
-	if !errors.Is(err, domain.ErrPlatformRejected) {
-		t.Errorf("a never-sent failure is not tagged rejected, so the service reports it as "+
-			"unconfirmed and tells the operator a campaign may exist: %v", err)
+	// The SPECIFIC sentinel, which is what the service branches on. Asserting the broader
+	// rejection tag would pass even if this arm stopped tagging never-sent at all, and the
+	// service would then answer the name-rejection remedy for a dial failure.
+	if !errors.Is(err, domain.ErrPlatformNeverSent) {
+		t.Errorf("a never-sent failure is not tagged ErrPlatformNeverSent, so the service cannot "+
+			"tell it apart from a rejection and answers the wrong remedy: %v", err)
 	}
-	// NOT a permission problem: the campaign definitely does not exist, but nothing about the
-	// request or the credential was at fault.
+	// And NOT tagged rejected: the two are mutually exclusive events — HubSpot refusing on the
+	// merits versus HubSpot never seeing the request. Reporting both made `definite_rejection`
+	// true for a DNS failure in the create's own telemetry.
+	if errors.Is(err, domain.ErrPlatformRejected) {
+		t.Errorf("a never-sent failure also tagged as a definite rejection, which corrupts "+
+			"rejection telemetry and any generic rejection handling: %v", err)
+	}
 	if errors.Is(err, domain.ErrPlatformPermission) {
 		t.Errorf("a never-sent failure tagged as a permission refusal: %v", err)
 	}

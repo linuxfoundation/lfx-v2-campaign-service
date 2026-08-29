@@ -470,9 +470,12 @@ func TestCreateHubspotCampaign_ClassifiesByDomainSentinel(t *testing.T) {
 	}
 }
 
-// A never-sent failure must not be reported as a rejection of the NAME. Nothing was created
-// either way, so both are 400s — but the remedies are different jobs, and "check the name"
-// sends an operator to change the one thing HubSpot never saw.
+// A never-sent failure must not be reported as a rejection of the NAME.
+//
+// It is a 503, not a 400: api-catalog rule 6 makes 400 mean "retrying unchanged will fail
+// again", and a dial failure retries successfully once connectivity returns. The remedies are
+// different jobs too — "check the name" sends an operator to change the one thing HubSpot
+// never saw.
 func TestCreateHubspotCampaign_NeverSentDoesNotBlameTheName(t *testing.T) {
 	d := &mockCampaignSearcherDispatcher{createErr: fmt.Errorf("create: %w",
 		errors.Join(domain.ErrPlatformNeverSent, domain.ErrPlatformRejected))}

@@ -133,7 +133,7 @@ Metrics are read-through from the ad platforms, scoped by project. There are no 
 
 HubSpot campaigns are an **LF-wide, global namespace** — HubSpot is a single foundation-wide instance, not partitioned by project. This service does **not** attempt to scope UTM search to a project: a lookup searches all HubSpot campaigns, and a created UTM is visible to campaign managers on every project. The `{projectId}` in the path exists **only to gate the permission lookup** (the caller must be a `campaign_manager` on *some* project to use the integration at all); it does not filter results.
 
-Lookup is a query by event name, passed as the `q` query parameter (loose name match over HubSpot's default searchable properties, NOT relevance-ranked — see [Platform-Specific Gotchas](#hubspot)). Because the namespace is global and cross-project, the UI **must caveat at create time** that a new UTM will be visible across foundations, so users do not put anything project-sensitive in a UTM name.
+Lookup is a query by event name, passed as the `q` query parameter (loose name match over HubSpot's default searchable properties, NOT relevance-ranked — see [Platform-Specific Gotchas](#hubspot)). Because the namespace is portal-wide — every campaign in the HubSpot portal the project's connection authenticates against, which is not necessarily the LF's own — the UI **must caveat at create time** that a new UTM will be visible to everyone working in that portal, so users do not put anything project-sensitive in a UTM name. Projects configured against different portals do not see each other's campaigns.
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|

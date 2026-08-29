@@ -730,7 +730,13 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 			// request never left this process. Tagged as rejected, NOT as a permission problem:
 			// the campaign definitely does not exist, but the cause is the network or a
 			// shutdown rather than anything about the request.
-			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformNeverSent, domain.ErrPlatformRejected, err))
+			// ErrPlatformNeverSent ALONE. Joining ErrPlatformRejected too made
+			// errors.Is(err, ErrPlatformRejected) true for a request that provably never
+			// reached HubSpot — two mutually exclusive events reported as one, which showed up
+			// immediately as `definite_rejection=true` in the create's own telemetry for a DNS
+			// failure. The service handles this sentinel first, and anything reading the
+			// rejection tag alone stays correct.
+			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformNeverSent, err))
 		}
 		return nil, fmt.Errorf("create hubspot campaign: %w", err)
 	}

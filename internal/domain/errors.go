@@ -252,11 +252,15 @@ var (
 	// ErrPlatformNeverSent marks a failure that PROVES the request never left this process: a DNS
 	// or dial failure before anything was written, or a context already cancelled at the call.
 	//
-	// It joins ErrPlatformRejected because both mean nothing was created — but it is a separate
-	// sentinel because the REMEDY differs, and that is what reaches the operator. A rejection is
-	// about the request (fix the name); this is about the network or a shutdown, and telling
-	// someone to "check the name" for a dial failure sends them to change the one thing that was
-	// never at fault.
+	// It does NOT join ErrPlatformRejected, deliberately. Both mean nothing was created, but they
+	// are mutually exclusive events: a rejection is HubSpot answering on the merits, and this is
+	// HubSpot never seeing the request at all. Reporting both made errors.Is(err, Rejected) true
+	// for a dial failure and put `definite_rejection=true` in the create's telemetry for it.
+	//
+	// A caller that wants "nothing was created" must therefore check BOTH sentinels — which is
+	// the honest shape, since the remedies differ: a rejection is about the request (fix the
+	// name), while this is about the network or a shutdown, and telling someone to "check the
+	// name" for a dial failure sends them to change the one thing that was never at fault.
 	ErrPlatformNeverSent = errors.New("the request never reached the platform")
 
 	// ErrPlatformPermission narrows ErrPlatformRejected to a refusal on AUTHORISATION (401/403).
