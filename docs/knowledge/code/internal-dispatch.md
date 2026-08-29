@@ -1879,3 +1879,28 @@ dispatch searched for the Search campaign's name, and an unsupported channel was
 after adoption could already have bound a campaign. `googleads.CampaignKindSearch` and
 `CampaignKindDemandGen` are exported so the dispatcher composes the same name the client writes.
 
+
+## HubSpot campaign capability
+
+`HubSpotDispatcher` implements `service.CampaignSearcher`: `SearchCampaigns` and
+`CreateCampaign`, backed by the client's two campaign operations. `projectID` selects which
+connection's credential to use — and therefore which PORTAL is visible, since HubSpot connections
+are stored per project with their own token and `portal_id` and `credsSource` refuses the LF
+system fallback for HubSpot.
+
+**The create translates platform errors into domain sentinels HERE**, which is the layer that
+talks to the platform. The service must tell a definite rejection (nothing created, report it as
+such) from an unconfirmed outcome (verify before retrying) from a failure that never left this
+process — and it must do so without importing a platform client to read its unexported error
+types, which would invert service → dispatch → platform.
+
+Three sentinels carry it: `ErrPlatformRejected` (HubSpot answered and refused),
+`ErrPlatformPermission` (narrowing that to 401/403, because retrying another name cannot fix a
+permission problem) and `ErrPlatformNeverSent` (a dial failure or already-cancelled context,
+joined with `ErrPlatformRejected` since nothing was created either way).
+
+Anything not POSITIVELY identified is left untagged and treated as unconfirmed upstream. That
+default is the safe direction for a non-idempotent write, and
+`TestHubSpot_CreateCampaignTagsDomainSentinels` pins it with a 500 case — because a translation
+that silently stopped happening would leave the service's own tests passing against sentinels
+nothing produces.

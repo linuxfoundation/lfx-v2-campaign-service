@@ -258,14 +258,18 @@ type Service interface {
 	// Not the operator's to fix, and not retryable by them. All three prove
 	// nothing reached HubSpot, which is why they are reported as themselves rather
 	// than as an unconfirmed outcome: sending an operator to look for a campaign
-	// that was never attempted hides the remedy they actually need. **503 —
-	// UNCONFIRMED, and never "try again".** Everything else lands here, including
-	// any failure this service cannot positively classify: a non-idempotent write
-	// into a shared namespace fails CLOSED, so an unrecognised error is treated as
-	// possibly-committed rather than reported as a clean failure. HubSpot marks
-	// mutating transport, 429, 3xx and 5xx failures as possibly-committed, and so
-	// is a 2xx whose body could not be decoded. Verify in HubSpot before creating
-	// it again.
+	// that was never attempted hides the remedy they actually need. **503 — the
+	// outcome could not be confirmed, OR the request never left this service.**
+	// Those two share a status because both are retryable-when-things-recover
+	// rather than correctable by the caller, and the MESSAGE distinguishes them: a
+	// pre-send failure (DNS, dial, an already-cancelled context) can promise
+	// nothing was created, which the unconfirmed case cannot. Everything else
+	// lands here too, including any failure this service cannot positively
+	// classify: a non-idempotent write into a shared namespace fails CLOSED, so an
+	// unrecognised error is treated as possibly-committed rather than reported as
+	// a clean failure. HubSpot marks mutating transport, 429, 3xx and 5xx failures
+	// as possibly-committed, and so is a 2xx whose body could not be decoded.
+	// Verify in HubSpot before creating it again.
 	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
 }
 

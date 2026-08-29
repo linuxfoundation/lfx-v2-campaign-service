@@ -482,9 +482,11 @@ func TestCreateHubspotCampaign_NeverSentDoesNotBlameTheName(t *testing.T) {
 	if err == nil {
 		t.Fatal("a never-sent create was reported as success")
 	}
-	be, ok := err.(*conn.BadRequestError)
+	// A 503, not a 400: api-catalog rule 6 makes 400 mean "retrying unchanged will fail again",
+	// and a dial failure retries successfully once connectivity returns.
+	be, ok := err.(*conn.ConnServiceUnavailableError)
 	if !ok {
-		t.Fatalf("error = %T, want *conn.BadRequestError (nothing was created)", err)
+		t.Fatalf("error = %T, want *conn.ConnServiceUnavailableError (retryable once connectivity returns)", err)
 	}
 	if strings.Contains(strings.ToLower(be.Message), "check the name") {
 		t.Errorf("a dial failure blamed the campaign name: %q", be.Message)

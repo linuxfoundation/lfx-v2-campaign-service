@@ -1340,12 +1340,19 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 			// A PERMISSION rejection gets its own remedy. Retrying with another name cannot fix
 			// a 401/403, so the "check the name" message would send the operator to change the
 			// one thing that was never at fault.
-			// NEVER SENT gets its own words. Nothing was created, so this is still a 400 — but
-			// HubSpot never saw the request, and "check the name" would send the operator to
-			// change the one thing that was not at fault.
+			// NEVER SENT is a 503, not a 400, even though nothing was created. api-catalog rule 6
+			// draws the line by what a client should DO: a 400 says the request was wrong and
+			// retrying it unchanged will fail again, while 503 says retry when the dependency
+			// recovers. A dial failure or a cancelled context is the second — the request was
+			// fine, the network was not, and the identical retry succeeds once connectivity
+			// returns. Calling it a 400 would tell a caller to change a request that needs no
+			// change.
+			//
+			// It is still distinguished from the ordinary unconfirmed 503 below by its MESSAGE:
+			// this one can promise nothing was created, which the general case cannot.
 			if errors.Is(cerr, domain.ErrPlatformNeverSent) {
-				return nil, &conn.BadRequestError{
-					Code:    "400",
+				return nil, &conn.ConnServiceUnavailableError{
+					Code:    "503",
 					Message: "the campaign creation never reached hubspot; nothing was created — retry, and check connectivity if it persists",
 				}
 			}
