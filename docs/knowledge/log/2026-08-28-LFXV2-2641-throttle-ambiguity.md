@@ -22,6 +22,19 @@ Reddit's classifier had NO 429 BRANCH at all, so an EXHAUSTED retry classified
 as definitely-not-applied even though the 429 proves receipt. Meta already had
 that branch with the reasoning written out; Reddit was the outlier.
 
+**A fourth change, found in review after the first three shipped** — the
+classification was only half the fix. It describes the error the CALLER sees
+and says nothing about what happens inside `request`, where the automatic retry
+was itself the duplicate: a 429 on a create may already have made the campaign,
+and the retry makes a second one before any classification runs. With retries
+enabled a throttled create is sent FOUR times — measured, not reasoned.
+
+The five non-idempotent POSTs now use `requestNoThrottleRetry`; reads and
+PATCHes keep the backoff. Meta had already made this split (`doCreate` passes
+`retryThrottle=false`), so once again Reddit was the outlier — the same shape as
+the missing 429 branch above, and worth noticing as a pattern: when these two
+clients disagree, Reddit has usually been the one left behind.
+
 **Verification** — The first version of the regression tests did not bind, and
 that is worth recording. They raced a 20 ms context deadline against a real
 backoff sleep, so the cancellation could land inside `httpClient.Do` instead —

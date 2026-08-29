@@ -136,6 +136,27 @@ therefore UNCONFIRMED — the exhausted retry, the over-cap `Retry-After` abort,
 and a context cancelled inside the backoff sleep. This matches the Meta client,
 which documents the same reasoning.
 
+**CREATES DO NOT RETRY A THROTTLE, and that is a separate rule from the
+classification above.** Classifying the exhausted outcome describes the error a
+caller finally sees; it says nothing about what happened inside `request`, and
+there the automatic retry was itself the duplicate — a 429 on a create may
+already have made the campaign, and the retry makes a second one before any
+classification runs. Measured rather than reasoned: with retries enabled a
+throttled create is sent FOUR times.
+
+So the five non-idempotent POSTs — campaign, ad group and its community
+fallback, ad, promoted post — go through `requestNoThrottleRetry`, while every
+read and PATCH keeps the backoff, because retrying those is safe and is what
+the backoff exists for. Meta reached the same split first: its `doCreate`
+passes `retryThrottle=false`.
+
+Two tests hold it, and they cover different things. One counts REQUESTS on a
+throttled create, since an assertion on the returned error passes whether the
+retry ran or not. The other reads the source for `c.request(ctx,
+http.MethodPost` call sites, because the behavioural test invokes the helper
+directly and would stay green if a call site were switched back — and the
+guarantee depends entirely on which helper each site picked.
+
 ## Authoring a promoted post (brief -> servable ad)
 
 `CreateCampaign` can create the ad's creative itself, so a caller can go from a

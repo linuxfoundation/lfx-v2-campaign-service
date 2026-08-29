@@ -6,8 +6,10 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -200,5 +202,41 @@ func TestCreateIsNotRetriedOnAThrottle(t *testing.T) {
 	// And the outcome is still UNCONFIRMED — not retrying does not make it a clean failure.
 	if !createOutcomeAmbiguous(err) {
 		t.Errorf("a throttled create is not ambiguous, so a caller is told nothing was created: %v", err)
+	}
+}
+
+// TestEveryCreateUsesTheNonRetryingRequest pins the CALL SITES, which the behavioural test above
+// cannot.
+//
+// That test invokes requestNoThrottleRetry directly, so it stays green if a create is later
+// switched back to the retrying request — and duplicate-spend prevention depends entirely on
+// which helper each call site picked. This reads the source instead, so the guarantee is about
+// the code that ships rather than about a helper called in isolation.
+//
+// Reads and PATCHes are deliberately NOT covered: retrying those is safe and is what the backoff
+// exists for. Only a POST creates.
+func TestEveryCreateUsesTheNonRetryingRequest(t *testing.T) {
+	src, err := os.ReadFile("client.go")
+	if err != nil {
+		t.Fatalf("reading client.go: %v", err)
+	}
+
+	var offenders []string
+	for i, line := range strings.Split(string(src), "\n") {
+		// The retrying helper, called with a POST. `requestNoThrottleRetry` does not match
+		// because the substring searched for includes the opening paren of `request(`.
+		if strings.Contains(line, "c.request(ctx, http.MethodPost") {
+			offenders = append(offenders, fmt.Sprintf("client.go:%d: %s", i+1, strings.TrimSpace(line)))
+		}
+	}
+	if len(offenders) > 0 {
+		t.Errorf("these creates retry throttles, so a 429 that already committed is retried into "+
+			"a duplicate campaign; use requestNoThrottleRetry:\n%s", strings.Join(offenders, "\n"))
+	}
+
+	// And the guard itself must still exist — a test that only counts zero offenders would pass
+	// if requestNoThrottleRetry were deleted and every call site rewritten to request().
+	if !strings.Contains(string(src), "func (c *Client) requestNoThrottleRetry(") {
+		t.Error("requestNoThrottleRetry is gone; creates have no way to opt out of throttle retries")
 	}
 }

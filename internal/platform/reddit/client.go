@@ -56,23 +56,33 @@ const (
 	// the requested start date is already in the past (e.g. a same-day start,
 	// whose midnight-UTC timestamp has passed).
 	//
-	// The buffer must keep the timestamp in the future across the WHOLE retryable
-	// campaign->ad-group workflow, not just at the instant it is computed: request
-	// can honor a Retry-After (up to maxRetryWait) and resend the same encoded body
-	// on a 429, and this one timestamp is reused for both the campaign POST and the
-	// (possibly retried) ad-group POST. Each mutating call can spend up to
-	// retryMax*maxRetryWait waiting on 429 backoffs plus retryMax+1 request
-	// timeouts; the ad-group step may run twice (the community fallback). Size the
-	// buffer to cover that worst case with margin so a nudged start can't have
-	// slipped into the past by the time either request is finally accepted.
-	// redditWorstCaseCreateWait is the worst-case wall-clock a single mutating
-	// create can consume before it is accepted: every 429 backoff (retryMax waits
-	// clamped to maxRetryWait), every attempt's HTTP round-trip (retryMax+1
-	// request timeouts), AND a token refresh per attempt — refreshToken runs at
-	// the start of each attempt and, when the cached token is within the expiry
-	// buffer, performs its own bounded HTTP fetch (one request timeout). Counting
-	// (retryMax+1) token fetches keeps the buffer conservative so a nudged start
-	// can't slip into the past even if every attempt re-fetches the token.
+	// The buffer must keep the timestamp in the future across the WHOLE
+	// campaign->ad-group workflow, not just at the instant it is computed: one
+	// timestamp is reused for the campaign POST and the (possibly re-run) ad-group
+	// POST, and each can spend a full request timeout. The ad-group step may run
+	// twice, via the community fallback. Size the buffer to cover that worst case
+	// with margin so a nudged start can't have slipped into the past by the time
+	// either request is finally accepted.
+	//
+	// NOTE ON THE 429 TERM BELOW. Creates no longer retry throttles — see
+	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on this
+	// path any more, and the buffer is now larger than the worst case it derives
+	// from. That is left DELIBERATELY: the term is retained rather than removed
+	// because over-sizing this buffer costs a slightly later start time, while
+	// under-sizing it makes Reddit reject the create outright for a start in the
+	// past. The asymmetry is the whole reason the derivation is conservative, and
+	// a retryable path could return here (a future idempotency key would make
+	// create retries safe again). What matters is that the comment no longer
+	// claims a 429 backoff happens on a create when it does not.
+	// redditWorstCaseCreateWait bounds the wall-clock a single mutating create can
+	// consume before it is accepted: its HTTP round-trip and a token refresh, which
+	// refreshToken performs when the cached token is inside the expiry buffer.
+	//
+	// The retryMax terms are a deliberate over-estimate on the create path, which no
+	// longer retries throttles (see redditPastStartBuffer). They are kept because
+	// this constant also bounds the RETRYABLE calls that share the workflow, and
+	// because over-sizing costs a later start while under-sizing costs a rejected
+	// create.
 	redditWorstCaseCreateWait = retryMax*maxRetryWait + (retryMax+1)*redditRequestTimeout + (retryMax+1)*redditRequestTimeout
 	// redditStartWorkflowBuffer covers the full campaign + up-to-two ad-group
 	// creates (the community fallback re-POSTs the ad group) plus a 60s margin, so
