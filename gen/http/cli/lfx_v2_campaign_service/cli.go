@@ -168,6 +168,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsGetBriefMetricsBearerTokenFlag = lfxV2CampaignServiceBriefsGetBriefMetricsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceBriefsGenerateEmailCopyFlags           = flag.NewFlagSet("generate-email-copy", flag.ExitOnError)
+		lfxV2CampaignServiceBriefsGenerateEmailCopyBodyFlag        = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag   = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag     = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("brief-id", "REQUIRED", "Brief UUID")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("bearer-token", "", "")
@@ -902,7 +903,7 @@ func ParseEndpoint(
 				data, err = lfxv2campaignservicebriefsc.BuildGetBriefMetricsPayload(*lfxV2CampaignServiceBriefsGetBriefMetricsProjectIDFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsBriefIDFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsWindowFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsBearerTokenFlag)
 			case "generate-email-copy":
 				endpoint = c.GenerateEmailCopy()
-				data, err = lfxv2campaignservicebriefsc.BuildGenerateEmailCopyPayload(*lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag)
+				data, err = lfxv2campaignservicebriefsc.BuildGenerateEmailCopyPayload(*lfxV2CampaignServiceBriefsGenerateEmailCopyBodyFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag)
 			case "update-campaign":
 				endpoint = c.UpdateCampaign()
 				data, err = lfxv2campaignservicebriefsc.BuildUpdateCampaignPayload(*lfxV2CampaignServiceBriefsUpdateCampaignBodyFlag, *lfxV2CampaignServiceBriefsUpdateCampaignProjectIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignBriefIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignCampaignIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignBearerTokenFlag, *lfxV2CampaignServiceBriefsUpdateCampaignIfMatchFlag)
@@ -1588,6 +1589,7 @@ func lfxV2CampaignServiceBriefsGetBriefMetricsUsage() {
 func lfxV2CampaignServiceBriefsGenerateEmailCopyUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-briefs generate-email-copy", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -brief-id STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
@@ -1598,13 +1600,14 @@ func lfxV2CampaignServiceBriefsGenerateEmailCopyUsage() {
 	fmt.Fprintln(os.Stderr, `Generate AI-written email copy (subject, preheader, body, CTA) for a campaign brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503.`)
 
 	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-email-copy --project-id \"cncf\" --brief-id \"5784f60b-3291-407a-a474-d42756f54c70\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-email-copy --body '{\n      \"stage\": \"Post-Event\"\n   }' --project-id \"cncf\" --brief-id \"5784f60b-3291-407a-a474-d42756f54c70\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsUpdateCampaignUsage() {

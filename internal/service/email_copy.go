@@ -276,6 +276,9 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		eventName: strings.TrimSpace(details.EventName),
 		location:  strings.TrimSpace(details.Location),
 		dates:     resolveEventDates(details),
+		// Absent is not an error: the design leaves `stage` optional, and Resolve reads an empty
+		// string as "the caller did not say" -> Registration Push, the pre-stage behaviour.
+		stage: strVal(p.Stage),
 	}
 	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
 	// allocations. Only three strings from event_details reach the prompt — eventName,

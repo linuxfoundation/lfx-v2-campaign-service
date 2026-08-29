@@ -3127,6 +3127,14 @@ paths:
                     example: fa538fb2-2d01-4e47-9b0a-8a237cb64fc4
                     format: uuid
                   example: 8ca8350e-2882-4b7a-bc16-23c798ae67da
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GenerateEmailCopyRequestBody'
+                        example:
+                            stage: Post-Event
             responses:
                 "200":
                     description: OK response.
@@ -11563,6 +11571,22 @@ components:
                 url: https://events.linuxfoundation.org/kubecon-cloudnativecon-europe/
             required:
                 - url
+        GenerateEmailCopyRequestBody:
+            type: object
+            properties:
+                stage:
+                    type: string
+                    description: Event-lifecycle stage the email belongs to
+                    example: Post-Event
+                    enum:
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
+            example:
+                stage: Post-Event
         GoogleAdsAudience:
             type: object
             properties:

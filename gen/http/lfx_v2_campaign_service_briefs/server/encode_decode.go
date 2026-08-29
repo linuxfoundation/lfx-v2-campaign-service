@@ -2466,10 +2466,29 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 	return func(r *http.Request) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
 		var payload *lfxv2campaignservicebriefs.GenerateEmailCopyPayload
 		var (
+			body GenerateEmailCopyRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateGenerateEmailCopyRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
 			projectID   string
 			briefID     string
 			bearerToken *string
-			err         error
 
 			params = mux.Vars(r)
 		)
@@ -2483,7 +2502,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if err != nil {
 			return payload, err
 		}
-		payload = NewGenerateEmailCopyPayload(projectID, briefID, bearerToken)
+		payload = NewGenerateEmailCopyPayload(&body, projectID, briefID, bearerToken)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")

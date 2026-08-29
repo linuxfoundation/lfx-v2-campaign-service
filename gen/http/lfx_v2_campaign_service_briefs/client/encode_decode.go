@@ -3108,6 +3108,10 @@ func EncodeGenerateEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder)
 				req.Header.Set("Authorization", head)
 			}
 		}
+		body := NewGenerateEmailCopyRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+		}
 		return nil
 	}
 }
