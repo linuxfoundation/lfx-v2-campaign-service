@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -138,12 +139,16 @@ func TestSearchEmails_StopsOnTheRowBoundWhenPagesAreOversized(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"results":[%s],"paging":{"next":{"after":"CUR%d"}}}`, strings.Join(rows, ","), pages)
 	})
 
+	// The bound is reached having matched NOTHING, which must be an error rather than an empty
+	// result: `(empty, nil)` claims the portal authoritatively holds no such email, about one
+	// that may sit on the next unread page. Asserting the error is what stops this test pinning
+	// the false absence it used to.
 	got, err := c.SearchEmails(context.Background(), "no-such-template")
-	if err != nil {
-		t.Fatalf("SearchEmails: %v", err)
+	if !errors.Is(err, ErrSearchIncomplete) {
+		t.Fatalf("SearchEmails err = %v, want ErrSearchIncomplete for a truncated walk with no matches", err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("a query matching nothing must return nothing, got %d", len(got))
+	if got != nil {
+		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
 	}
 	// 2000 rows / 300 per page = 7 pages, well short of maxFilteredPages (20). If the page bound
 	// were the only one, this would run to 20 pages and 6000 rows.
@@ -167,11 +172,11 @@ func TestSearchEmails_StopsScanningAQueryThatMatchesNothing(t *testing.T) {
 	})
 
 	got, err := c.SearchEmails(context.Background(), "no-such-template")
-	if err != nil {
-		t.Fatalf("SearchEmails: %v", err)
+	if !errors.Is(err, ErrSearchIncomplete) {
+		t.Fatalf("SearchEmails err = %v, want ErrSearchIncomplete for a truncated walk with no matches", err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("a query matching nothing must return nothing, got %d", len(got))
+	if got != nil {
+		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
 	}
 	// The bound is on rows SCANNED, not rows matched -- matched is zero here, which is exactly
 	// the case that ran longest. This stub returns ONE row per page, the small-page shape the

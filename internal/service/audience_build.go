@@ -620,15 +620,35 @@ func unrecordedListsErr(cause error, audienceID string, ids []string, exposeCaus
 // field. Mirrors audience.SafeErrorCause's pattern for warehouse errors.
 // buildLogError is the build failure as it may be LOGGED.
 //
-// A credential failure collapses to its sentinel: the wrapped cause can carry ciphertext or key
-// material (see the standing rule in `dispatch/creds.go`), and no diagnostic value in it is worth
-// that. Everything else is returned raw, because the errors that reach here otherwise are HubSpot
-// API errors, which render as method/path/status and never quote a response body.
+// DEFAULT-DENY. Only errors this package can name are logged with their text; anything else
+// collapses to a sentinel.
+//
+// The previous version was default-ALLOW, on the reasoning that whatever else reached here was a
+// HubSpot API error rendering as method/path/status. That reasoning holds for the errors that
+// arrive TODAY and is falsified by the next one added: `AudienceBuilder.client` JSON-decodes the
+// DECRYPTED credential blob, and a decode error is shaped by the struct it decodes into — a shape
+// this function does not control and cannot see. On a credential path the safe default is the
+// other way round, because the cost of being wrong is a token in a log rather than a thinner
+// diagnostic.
+//
+// The named arms are the ones whose text is known to be safe: sentinels this package declares,
+// context errors, and HubSpot's own API errors, which render as method/path/status and never
+// quote a response body.
 func buildLogError(err error) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, domain.ErrCredentialDecryptionFailed) || errors.Is(err, domain.ErrCredentialsMalformed) {
 		return domain.ErrCredentialDecryptionFailed
 	}
-	return err
+	// Errors whose rendering this package or the hubspot client controls.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, errUnconfirmedCreate) || hubspot.IsAPIError(err) {
+		return err
+	}
+	// Anything else: report the CLASS, not the text. `safeBuildCause` already gives an operator a
+	// consumer-safe sentence for the same failure, so no diagnostic is lost that they could act on.
+	return errors.New(safeBuildCause(err))
 }
 
 func safeBuildCause(err error) string {

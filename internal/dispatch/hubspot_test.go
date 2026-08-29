@@ -70,6 +70,10 @@ type hubspotRec struct {
 	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
 	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
 	extraWidget bool
+	// emptyExtraWidget adds a second rich-text widget with an EMPTY body. The client omits such
+	// widgets from the map it returns, so a guard counting only populated widgets sees 1 and
+	// rewrites the populated body — the ambiguity the single-widget guard exists to refuse.
+	emptyExtraWidget bool
 }
 
 func (r *hubspotRec) markClone() {
@@ -175,6 +179,9 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			// A template with a SECOND rich-text widget, when the test asks for one. There is no
 			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
 			// must decline rather than guess -- see its `len(widgets) != 1` guard.
+			if rec.emptyExtraWidget {
+				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "   "}}
+			}
 			if rec.extraWidget {
 				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "<p>second block</p>"}}
 			}
@@ -329,6 +336,36 @@ func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
 	}
 	if !strings.Contains(tagged, "Join us") {
 		t.Errorf("the tagged html must be the GENERATED body, not the template's; got %q", tagged)
+	}
+}
+
+// An EMPTY second rich-text widget is still a second widget.
+//
+// `GetEmailHTMLWidgets` omits widgets whose body trims to empty, so a guard counting only the
+// widgets it CAN write saw 1 for a template with one populated body and one empty block, and
+// rewrote the populated one — the exact ambiguity the single-widget guard exists to refuse. An
+// empty block is one an operator can see and fill; it is part of the template's structure, not
+// an absence.
+//
+// This is the case the populated-second-widget test above cannot reach: there the map itself has
+// two entries, so a count of either kind refuses.
+func TestHubSpot_EmptySecondWidgetKeepsItsBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.emptyExtraWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the subject applied even where the body cannot be", subject)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want no body write when an empty second rich-text block exists", body)
 	}
 }
 

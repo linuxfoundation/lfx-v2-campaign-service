@@ -239,6 +239,17 @@ type apiError struct {
 	Ambiguous bool
 }
 
+// IsAPIError reports whether err is one of this client's HTTP-status errors.
+//
+// Exists so a caller deciding what is SAFE TO LOG can name this class rather than defaulting to
+// allow. An apiError renders as method, path and status only — it never quotes a response body or
+// any credential — so its text is safe verbatim. A caller cannot establish that about an
+// arbitrary error, which is why the distinction has to be drawn here, where the type is known.
+func IsAPIError(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae)
+}
+
 // IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
 // request — the server may or may not have applied the change. This is true for an
 // ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply

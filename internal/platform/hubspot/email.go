@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -128,6 +129,17 @@ const maxUnfilteredEmails = 500
 // Bounded by PAGES as well, because a provider that ignores `limit` and returns a handful of rows
 // per page would otherwise still walk to maxListPages before the row bound was reached -- the
 // runaway this exists to stop.
+// ErrSearchIncomplete reports that a FILTERED search hit its scan bound having matched nothing.
+//
+// It is deliberately an error rather than an empty result. `(nil-error, empty-slice)` states that
+// the portal authoritatively holds no such email, and the caller acts on that by telling an
+// operator the template does not exist — about a template that may sit on the next unread page.
+// The published contract for the emails endpoint prefers a recoverable failure to that claim.
+//
+// Only the ZERO-match case qualifies. A bounded walk that found rows returns them: the caller has
+// something true to show, and the listing is documented as bounded.
+var ErrSearchIncomplete = errors.New("hubspot: email search reached its scan bound before finding any match; the result would be indistinguishable from an authoritative absence")
+
 const maxFilteredScan = 2000
 
 // maxFilteredPages caps the same walk in pages, for the small-page case described above.
@@ -213,12 +225,24 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// server hint, so the pages read are the ones most likely to contain what a user wants.
 		enoughScanned := needle != "" && (scanned >= maxFilteredScan || page+1 >= maxFilteredPages)
 		if enoughScanned && !lastPage {
-			// Say so. The caller gets `(out, nil)` either way, so a truncated walk and an
-			// exhausted one are indistinguishable to it -- and "no matches" on a large portal is
-			// exactly the confusion this bound was added to remove, which would otherwise just
-			// move rather than go away.
 			slog.WarnContext(ctx, "hubspot email search stopped at its scan bound; results may be incomplete",
 				"query_len", len(needle), "scanned", scanned, "pages", page+1, "matched", len(out))
+
+			// ZERO matches at the bound is a FALSE ABSENCE, and must not be returned as one.
+			//
+			// `(out, nil)` with an empty `out` says "the portal authoritatively has no such
+			// email" — the published contract for this endpoint prefers a recoverable 503 over
+			// exactly that claim, because the caller acts on the absence by concluding the
+			// template does not exist. The warning above reaches an operator's logs; it does not
+			// reach the caller, so on its own it moved the confusion rather than removing it.
+			//
+			// With matches IN HAND the bound is a partial answer rather than a false one: the
+			// caller has real rows to show, sorted newest-first, and the endpoint documents the
+			// listing as bounded. Only the empty case is a lie.
+			if len(out) == 0 {
+				return nil, fmt.Errorf("hubspot: email search scanned %d emails across %d pages without finding a match and could not read further: %w",
+					scanned, page+1, ErrSearchIncomplete)
+			}
 		}
 		if lastPage || enoughScanned || (needle == "" && len(out) >= maxUnfilteredEmails) {
 			// SORT then trim, deliberately, and not the other way round. The trim is only
@@ -477,32 +501,46 @@ type widgetBody struct {
 	} `json:"body"`
 }
 
-// GetEmailHTMLWidgets returns the draft's rich-text widget bodies keyed by widget id.
-// IDEMPOTENT (a GET). Widgets with no html body are omitted, so a caller can range over
-// exactly the ones it can rewrite.
-func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string]string, error) {
+// GetEmailHTMLWidgets returns the draft's rich-text widget bodies keyed by widget id, and the
+// TOTAL number of rich-text widgets the draft carries.
+//
+// IDEMPOTENT (a GET). Widgets with no html body are omitted from the map, so a caller can range
+// over exactly the ones it can rewrite — but the count includes them, and the two are returned
+// separately because they answer different questions.
+//
+// Conflating them was a real defect: a caller deciding "does this template have exactly one
+// rich-text block?" from `len(map)` sees 1 for a template with one populated body AND an empty
+// second block, and rewrites the populated one — the very ambiguity the single-widget guard
+// exists to refuse. "How many blocks are there" must count every block; "which can I write"
+// must not.
+func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string]string, int, error) {
 	if id = strings.TrimSpace(id); id == "" {
-		return nil, fmt.Errorf("hubspot: GetEmailHTMLWidgets requires a non-empty id")
+		return nil, 0, fmt.Errorf("hubspot: GetEmailHTMLWidgets requires a non-empty id")
 	}
 	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(id)+"/draft", nil, true)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var ec emailContent
 	if uerr := json.Unmarshal(raw, &ec); uerr != nil {
-		return nil, fmt.Errorf("hubspot: decode email %s draft content: %w", id, uerr)
+		return nil, 0, fmt.Errorf("hubspot: decode email %s draft content: %w", id, uerr)
 	}
 	out := make(map[string]string, len(ec.Content.Widgets))
+	total := 0
 	for key, rawWidget := range ec.Content.Widgets {
 		var w widgetBody
 		if json.Unmarshal(rawWidget, &w) != nil {
 			continue // a widget that isn't this shape (image, divider, …) is not ours to touch
 		}
+		// Counted whether or not it carries html: an EMPTY rich-text block is still a block the
+		// operator can see and fill, so a template holding one is not the unambiguous
+		// single-body shape the caller's guard is asking about.
+		total++
 		if strings.TrimSpace(w.Body.HTML) != "" {
 			out[key] = w.Body.HTML
 		}
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // SetEmailHTMLWidgets replaces the html body of the given widgets on an email's DRAFT.

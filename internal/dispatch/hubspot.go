@@ -427,17 +427,25 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 		return
 	}
 
-	widgets, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	widgets, totalWidgets, err := client.GetEmailHTMLWidgets(ctx, emailID)
 	if err != nil {
 		slog.WarnContext(ctx, "could not read the email draft to set its body; it keeps the template's body",
 			"email_id", emailID, "error", err)
 		return
 	}
 
-	if len(widgets) != 1 {
+	// Guarded on the TOTAL, not on the writable map. An EMPTY rich-text block is still a block —
+	// one an operator can see and fill — so a template with one populated body and one empty
+	// second block is not the unambiguous single-body shape this guard is asking about. Counting
+	// only populated widgets reported 1 for exactly that template and rewrote the populated one,
+	// which is the ambiguity the guard exists to refuse.
+	//
+	// `len(widgets) != 1` is checked too: with a total of 1 and nothing writable there is no
+	// widget to write, and ranging over an empty map would silently no-op.
+	if totalWidgets != 1 || len(widgets) != 1 {
 		// Not an error: a template this shape is simply one this cannot safely rewrite.
 		slog.InfoContext(ctx, "email draft does not have exactly one rich-text widget; leaving its body as the template wrote it",
-			"email_id", emailID, "widget_count", len(widgets))
+			"email_id", emailID, "widget_count", totalWidgets, "writable_widget_count", len(widgets))
 		return
 	}
 
@@ -458,7 +466,9 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailName, campaignUTM string) {
 	res := utm.Resolve(campaignUTM, emailName)
 
-	widgets, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	// The count is discarded here, deliberately: tagging rewrites the widgets it CAN write, and
+	// an empty block has no links to tag. Only the body-write guard cares how many blocks exist.
+	widgets, _, err := client.GetEmailHTMLWidgets(ctx, emailID)
 	if err != nil {
 		slog.WarnContext(ctx, "could not read the email draft to tag its links; the email will send untagged",
 			"email_id", emailID, "error", err)

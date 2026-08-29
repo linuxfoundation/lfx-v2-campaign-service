@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/stretchr/testify/assert"
@@ -1011,4 +1013,40 @@ func TestBuildAudience_UnreadableBriefIsNotAStaleApproval(t *testing.T) {
 		"and a 400 blames the caller for a failure that is entirely the service's")
 
 	assert.Empty(t, arepo.rows(), "a refused claim inserts nothing")
+}
+
+// TestBuildLogError_DefaultDeny: only errors this package can NAME are logged with their text.
+//
+// The previous version was default-allow, on the reasoning that whatever else reached it was a
+// HubSpot API error rendering as method/path/status. That holds for the errors arriving today and
+// is falsified by the next one added — `AudienceBuilder.client` JSON-decodes the DECRYPTED
+// credential blob, and a decode error's text is shaped by the struct it decodes into, which this
+// function does not control. On a credential path the safe default is deny.
+func TestBuildLogError_DefaultDeny(t *testing.T) {
+	// An error carrying something that must never be logged. It is not one of the named arms, so
+	// default-allow would return it verbatim.
+	secret := errors.New(`decode hubspot credentials: bad value "pat-na1-SECRET-TOKEN-VALUE"`)
+
+	got := buildLogError(secret)
+	if got == nil {
+		t.Fatalf("buildLogError(non-nil) = nil")
+	}
+	if strings.Contains(got.Error(), "SECRET-TOKEN-VALUE") {
+		t.Errorf("buildLogError leaked the wrapped text: %q", got.Error())
+	}
+
+	// A credential sentinel still collapses to its own sentinel, not to the generic cause.
+	if got := buildLogError(fmt.Errorf("wrapped: %w", domain.ErrCredentialDecryptionFailed)); !errors.Is(got, domain.ErrCredentialDecryptionFailed) {
+		t.Errorf("credential failure = %v, want the decryption sentinel", got)
+	}
+
+	// A context error keeps its text: this package names it, and an operator needs to tell a
+	// cancellation from a deadline.
+	if got := buildLogError(context.DeadlineExceeded); !errors.Is(got, context.DeadlineExceeded) {
+		t.Errorf("deadline error = %v, want it preserved", got)
+	}
+
+	if buildLogError(nil) != nil {
+		t.Errorf("buildLogError(nil) must stay nil")
+	}
 }
