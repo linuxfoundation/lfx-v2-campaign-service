@@ -168,8 +168,9 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 // only case. In the supported no-database mode NewContainer leaves the repository and
 // orchestrator nil deliberately, so its routes stay mounted and answer this typed 503 rather
 // than a bare 404 — and there the same status persists for the life of the process, however
-// long a caller retries. A client must treat 503 as "not available yet", never as a promise
-// that waiting will change it.
+// long a caller retries. A client must treat 503 as "not available", never as "not available
+// yet" — the word "yet" is a promise this route cannot keep, and a client that hears it retries
+// a status that will outlive the retry budget.
 //
 // A storage FAULT is a 500 instead — a failure in a service already up, where retrying does not
 // help. Both reach the caller from this one method, so both are declared and kept
@@ -224,8 +225,9 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err
 	}
-	// The DSL's `^[0-9]+$` / MaxLength(19) is enforced by the generated HTTP DECODER only, so a
-	// direct service or endpoint caller bypasses it entirely. Unchecked, "abc" or a 20-digit id
+	// The DSL's `^[1-9][0-9]{0,18}$` / MaxLength(19) is enforced by the generated HTTP DECODER
+	// only, so a direct service or endpoint caller bypasses it entirely. Unchecked, "abc", "007"
+	// or a 20-digit id
 	// reaches the query and comes back as a 200 with no matches — which this route documents as
 	// "this project owns no campaign with that id", a claim the input never justified. The
 	// caller then refuses an action for the wrong reason and cannot tell a typo from an

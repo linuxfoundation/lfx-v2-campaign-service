@@ -1160,8 +1160,8 @@ retrying is then the right answer — but not always. In the supported
 no-database mode `NewContainer` leaves the repository and orchestrator nil
 deliberately, so these routes stay mounted and answer this same typed 503
 rather than a bare 404, and there it persists for the life of the process. A
-client must read 503 as "not available yet", never as a promise that waiting
-changes it. A
+client must read 503 as "not available", never as "not available yet" — the word
+"yet" is a promise this route cannot keep. A
 storage FAULT is a 500 instead — a failure in a service already up, where
 retrying does not help — and is reported directly rather than through
 `classifyInsightsError`: every arm of that classifier describes a platform
