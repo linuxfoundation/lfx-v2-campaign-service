@@ -45,8 +45,15 @@ Cancelling from inside the HTTP handler does not fix it either: the client is
 still mid-exchange there, so the cancel kills the NEXT request and the error
 reads `Post "...": context canceled`.
 
-What works is releasing a goroutine once the handler has written the 429, then
-cancelling after a short pause — the client is in `sleepCtx` by then. The tests
-also assert the error is not a `Post "..."` failure, so a future change that
-reintroduces the race fails loudly rather than passing vacuously. Reverting each
-guard now fails its own test.
+Releasing a goroutine once the handler had written the 429 and cancelling after a
+short pause was closer, but still timed: the pause was a guess about where the
+client had got to, and a descheduled goroutine spends it before the client
+reaches the sleep, failing the test with nothing wrong in the code.
+
+What works is making the wait-point observable. Both clients take an unexported,
+test-only `withOnRetrySleep` callback that fires as they enter `sleepCtx`, and
+the tests pass `cancel` directly to it — so the cancellation is ordered by a
+happens-before edge rather than by the clock, with no pause and no goroutine.
+The tests also assert the error is not a `Post "..."` failure, so a future change
+that reintroduces the race fails loudly rather than passing vacuously. Reverting
+each guard now fails its own test, and 30 runs under `-race` pass.

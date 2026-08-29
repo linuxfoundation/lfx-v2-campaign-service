@@ -64,26 +64,22 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// DETERMINISTIC, not timed. The handler counts requests: the first serves the 429
-			// and hands the client into the backoff sleep; the SECOND can only be reached once
-			// that sleep completes. So cancelling from a goroutine that waits on the first
-			// request — and blocking the client's only escape from the sleep — puts the cancel
-			// unambiguously inside sleepCtx.
+			// DETERMINISTIC, not timed. withOnRetrySleep(cancel) below fires as the client
+			// enters sleepCtx, so the cancellation is ordered by a happens-before edge and
+			// lands unambiguously inside the sleep.
 			//
-			// Neither of my earlier attempts did this. A wall-clock deadline could expire while
+			// Two earlier attempts did not. A wall-clock deadline could expire while
 			// httpClient.Do was still reading the 429, and cancelling inside the handler kills
 			// the NEXT request instead; both land in a path that already wrapped its error
 			// before this fix, so the test passed with the fix reverted. The long Retry-After
-			// (and tinyBackoff on the other arm) is what makes the sleep the only place left.
-			first := make(chan struct{})
-			var once sync.Once
+			// (and tinyBackoff on the other arm) keeps the sleep long enough to be the only
+			// place the cancel can land.
 			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.retryAfter != "" {
 					w.Header().Set("Retry-After", tc.retryAfter)
 				}
 				w.WriteHeader(http.StatusTooManyRequests)
 				_, _ = w.Write([]byte(`{"error":"rate limited"}`))
-				once.Do(func() { close(first) })
 			}))
 			defer apiSrv.Close()
 			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -91,11 +87,6 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			}))
 			defer tokenSrv.Close()
 
-			// Cancel exactly when the client enters the retry sleep, rather than sleeping a
-			// guessed interval and hoping it got there first. The old form slept 50ms after the
-			// handler returned; a descheduled goroutine pushes that past the window and the test
-			// fails with nothing wrong in the code. withOnRetrySleep makes the wait-point
-			// observable, so the cancel is ordered by a happens-before edge instead of by clock.
 			c := NewClient(testCreds, testAccount,
 				WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
 				withRetryBaseDelay(30*time.Second),

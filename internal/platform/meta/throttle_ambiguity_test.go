@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -36,31 +35,24 @@ func TestThrottleBackoffCancellation_IsAmbiguousNotFailed(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// DETERMINISTIC, not timed. The first request serves the 429 and hands the client
-			// into the backoff sleep; a long Retry-After (and a long backoff base on the other
-			// arm) means it cannot leave that sleep on its own. Cancelling from a goroutine
-			// released by the first request therefore lands inside sleepCtx.
+			// DETERMINISTIC, not timed. withOnRetrySleep(cancel) below fires as the client
+			// enters sleepCtx, so the cancellation is ordered by a happens-before edge and
+			// lands unambiguously inside the sleep. A long Retry-After (and a long backoff base
+			// on the other arm) keeps that sleep the only place it can land.
 			//
-			// Neither of my earlier attempts did this. A wall-clock deadline could expire while
+			// Two earlier attempts did not. A wall-clock deadline could expire while
 			// httpClient.Do was still reading the 429, and cancelling inside the handler kills
 			// the NEXT request instead; both land in a path that already wrapped its error
 			// before this fix, so the test passed with the fix reverted.
-			first := make(chan struct{})
-			var once sync.Once
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.retryAfterS != "" {
 					w.Header().Set("Retry-After", tc.retryAfterS)
 				}
 				w.WriteHeader(http.StatusTooManyRequests)
 				_, _ = w.Write([]byte(`{"error":{"message":"rate limited","code":17}}`))
-				once.Do(func() { close(first) })
 			}))
 			defer srv.Close()
 
-			// Cancel exactly when the client enters the retry sleep, rather than sleeping a
-			// guessed interval and hoping it got there first. The old form slept 50ms after the
-			// handler returned; a descheduled goroutine pushes that past the window and the test
-			// fails with nothing wrong in the code.
 			c := NewClient(
 				Credentials{AccessToken: "tok"},
 				AccountConfig{AccountID: "act_777", CurrencyOffset: 100},
