@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"sort"
 	"strings"
 	"time"
@@ -397,7 +398,8 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 }
 
 // applyEmailContent writes generated copy onto a cloned draft: the subject via
-// PatchEmailSettings, the body by replacing the draft's single rich-text widget.
+// PatchEmailSettings -- which also carries the connection's configured sender -- and the body by
+// replacing the draft's single rich-text widget.
 //
 // BEST-EFFORT, like tagEmailLinks and for the same reason: by the time this runs the email is
 // cloned and pointed at the right audience, so it is already a working campaign. A failure here
@@ -410,7 +412,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 // which is "the" body — a heuristic like "the longest" would silently overwrite a footer on some
 // templates and the body on others. Writing nothing is recoverable by hand; writing the wrong
 // widget destroys template content the operator did not choose to replace. The subject is applied
-// regardless, since it has exactly one home.
+// regardless, since it has exactly one home; the sender rides in that same patch.
 //
 // Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
 // hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
@@ -436,7 +438,24 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 		settings.FromName = &senderName
 	}
 	if senderEmail := strings.TrimSpace(providerConfig["sender_email"]); senderEmail != "" {
-		settings.FromEmail = &senderEmail
+		// PARSED before it is sent, and dropped rather than forwarded if it does not parse.
+		// Nothing validates this on the way in — the Goa attribute declares no Format(FormatEmail)
+		// and connection.go writes the operator's string through unchanged — so a malformed
+		// address really can be stored. It matters here more than it looks: the subject and the
+		// sender travel in ONE patch, and HubSpot answers a bad `replyTo` with a 400, which is a
+		// terminal failure rather than a retryable one. Forwarding it would therefore lose the
+		// generated SUBJECT as well, leaving a draft that kept the template's copy for a defect in
+		// an unrelated field.
+		//
+		// Dropping only the address keeps everything that is still valid: the subject lands, and
+		// so does `fromName`. The draft falls back to the template's sender, which is the same
+		// behaviour as configuring none — a working LF-owned address, not a broken send.
+		if _, perr := mail.ParseAddress(senderEmail); perr != nil {
+			slog.WarnContext(ctx, "connection has a sender_email that is not a valid address; leaving the draft with the template's sender",
+				"email_id", emailID)
+		} else {
+			settings.FromEmail = &senderEmail
+		}
 	}
 	if settings.Subject != nil || settings.FromName != nil || settings.FromEmail != nil {
 		if _, err := client.PatchEmailSettings(ctx, emailID, settings); err != nil {

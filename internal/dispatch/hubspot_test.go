@@ -367,6 +367,41 @@ func TestHubSpot_AppliesConfiguredSender(t *testing.T) {
 	}
 }
 
+// TestHubSpot_DropsInvalidSenderButKeepsSubject: a malformed sender_email must not take the
+// subject down with it.
+//
+// Nothing validates this field on the way in — the Goa attribute declares no Format(FormatEmail)
+// and connection.go stores the operator's string unchanged — so a bad address really can reach
+// dispatch. Because the subject and sender share ONE patch and HubSpot answers a bad replyTo with
+// a terminal 400, forwarding it would lose the generated subject too: a defect in one field
+// silently reverting an unrelated one.
+func TestHubSpot_DropsInvalidSenderButKeepsSubject(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	conn := activeHubSpotConn(goodHubSpotCreds)
+	conn.ProviderConfig["sender_name"] = "LF Events"
+	conn.ProviderConfig["sender_email"] = "not-an-address"
+	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The subject still lands — that is the whole point.
+	if subject, _ := rec.snapshotContent(); subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want it applied despite the invalid sender address", subject)
+	}
+	name, replyTo := rec.snapshotFrom()
+	// The VALID half is kept; only the address is dropped.
+	if name != "LF Events" {
+		t.Errorf("from.fromName = %q, want the valid sender_name to survive", name)
+	}
+	if replyTo != "" && replyTo != "<nil>" {
+		t.Errorf("from.replyTo = %q, want the malformed address dropped rather than forwarded", replyTo)
+	}
+}
+
 // TestHubSpot_LeavesSenderAloneWhenUnconfigured: a connection that configures NO sender must not
 // blank the template's. Absent means "saying nothing about the sender", not "clear it" — and an
 // empty From on a marketing email is not a state to push HubSpot into.
