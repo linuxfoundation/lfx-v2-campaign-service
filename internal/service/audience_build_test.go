@@ -4,10 +4,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1102,5 +1104,41 @@ func TestBuildLogError_DefaultDeny(t *testing.T) {
 
 	if buildLogError(nil) != nil {
 		t.Errorf("buildLogError(nil) must stay nil")
+	}
+}
+
+// The redaction must hold at the CALL SITE, not merely in the helper.
+//
+// TestBuildLogError_DefaultDeny calls buildLogError directly, so it proves the helper is correct
+// and nothing more: an edit that logged `buildErr` instead would leave every one of those
+// assertions passing. This drives a failing build through BuildAudience and reads the log the
+// service actually emitted.
+func TestBuildAudience_FailureLogIsRedactedEndToEnd(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// The shape the redactor exists for: a credential blob quoted into an error that ALSO wraps
+	// a context sentinel, so the named arm matches and would return the wrapper if it returned
+	// its argument.
+	secret := "pat-na1-SECRET-TOKEN-VALUE"
+	b := &fakeBuilder{
+		createErr: fmt.Errorf("decode hubspot credentials: bad value %q: %w", secret, context.Canceled),
+		failOnNth: 1,
+	}
+	s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	_, _ = s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+
+	logged := buf.String()
+	if strings.Contains(logged, secret) {
+		t.Errorf("the build failure log leaked the credential blob:\n%s", logged)
+	}
+	// Guard against the assertion passing because nothing was logged at all.
+	if !strings.Contains(logged, "audience build failed") && !strings.Contains(logged, "build") {
+		t.Fatalf("fixture precondition: expected a build failure log, got:\n%s", logged)
 	}
 }
