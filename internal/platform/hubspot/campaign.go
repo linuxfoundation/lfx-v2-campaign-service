@@ -11,10 +11,13 @@ import (
 	"strings"
 )
 
-// HubSpot models marketing campaigns as the CRM object type `0-35`, which is why these calls go
+// HubSpot models marketing campaigns as the CRM object type `0-35`, which is why the SEARCH goes
 // through /crm/v3/objects rather than the /marketing/v3 surface the email endpoints use. The
-// object carries `hs_utm`: the campaign's UTM token, which is what makes a send attributable to
-// a campaign in HubSpot's own reporting rather than only in ours.
+// CREATE does not: HubSpot documents campaign creation at /marketing/v3/campaigns and the CRM
+// object type has no create operation at all, so the two calls in this file deliberately sit on
+// different surfaces. The const block below carries the detail. The object carries `hs_utm`:
+// the campaign's UTM token, which is what makes a send attributable to a campaign in HubSpot's
+// own reporting rather than only in ours.
 const (
 	campaignObjectType = "0-35"
 	campaignSearchPath = "/crm/v3/objects/" + campaignObjectType + "/search"

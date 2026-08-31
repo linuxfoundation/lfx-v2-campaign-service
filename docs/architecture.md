@@ -343,7 +343,9 @@ The Query Service maintains revision history on each (re)index, so listing and a
    at the gateway, not in this service. See the identity/authorization split in (2).
 4. **Frontend** — Angular components in lfx-v2-ui
 5. **Snowflake marketing KPIs** — read from the data lake via query service, not from this service
-6. **HubSpot UTM integration** — stays in the UI Express layer initially
+6. **HubSpot UTM integration** — owned by THIS service. Campaign lookup and create live behind
+   `GET/POST /projects/{projectId}/connection-hubspot/campaigns`; the UI Express layer proxies
+   them and no longer talks to HubSpot for campaign UTM itself.
 
 ## Persistence
 
