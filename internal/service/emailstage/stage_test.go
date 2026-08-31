@@ -4,6 +4,7 @@
 package emailstage
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -70,4 +71,57 @@ func TestResolveNeverReturnsAnEmptyTemplate(t *testing.T) {
 			t.Errorf("Resolve(%q) returned an empty template", in)
 		}
 	}
+}
+
+// A claim about an unsupplied fact must carry a PLACEHOLDER, or nothing can remove it.
+//
+// The composed prompt tells the model to OMIT any sentence whose [BRACKETED] placeholder has no
+// supplied value. That rule reaches placeholders only. "Early bird pricing available now" carried
+// none, so the model was told as FACT that early pricing exists -- for an event whose price is
+// never supplied, on the DEFAULT stage every unrecognised value resolves to.
+//
+// Only pricing/discount/code words are checked. A generic line ("Event guide and schedule
+// inside") asserts nothing the brief has to supply, and requiring a placeholder in every preview
+// would be noise rather than a guard.
+func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
+	// Words that name a fact NOTHING in the pipeline supplies: only eventName, location and dates
+	// are ever filled. A pattern using one of these must wrap it in a placeholder so the OMIT rule
+	// can drop the sentence.
+	commercial := []string{"price", "pricing", "rate", "discount", "early bird", "promo", "coupon", "code", "save"}
+
+	for name, tpl := range Templates {
+		for field, text := range map[string]string{
+			"SubjectPattern": tpl.SubjectPattern,
+			"PreviewPattern": tpl.PreviewPattern,
+			"FooterNote":     tpl.FooterNote,
+		} {
+			lower := strings.ToLower(text)
+			for _, w := range commercial {
+				if !strings.Contains(lower, w) {
+					continue
+				}
+				// The SENTENCE carrying the claim must hold the placeholder -- not merely the
+				// string. "Registration closes [DATE]. Early bird pricing available now." has a
+				// bracket, but it belongs to a different sentence, so the OMIT rule still cannot
+				// touch the pricing claim. Checking the whole string let exactly that through.
+				sentence := claimSentence(text, w)
+				if !strings.Contains(sentence, "[") {
+					t.Errorf("stage %q %s asserts %q in a sentence with no placeholder, so the OMIT rule cannot remove it: %q",
+						name, field, w, sentence)
+				}
+			}
+		}
+	}
+}
+
+// claimSentence returns the sentence of text containing needle (case-insensitive), or text when
+// it cannot be split. Sentence-scoped because the OMIT rule drops a SENTENCE, so a placeholder
+// elsewhere in the string does not make this claim removable.
+func claimSentence(text, needle string) string {
+	for _, s := range strings.Split(text, ".") {
+		if strings.Contains(strings.ToLower(s), needle) {
+			return s
+		}
+	}
+	return text
 }

@@ -148,7 +148,9 @@ The LLM client is optional: it is injected via `SetLLMClient()` in the container
 
 ## Testing
 
-The test suite (`internal/service/email_copy_test.go`) includes 20 test functions:
+The test suite lives in `internal/service/email_copy_test.go`. The inventory below names every
+test rather than counting them: a count goes stale on the next commit and, unlike a missing name,
+nothing greps for it.
 
 - **TestDecodeEmailCopyEventDetails**: Validates the opportunistic event-details decoder handles valid, partial, empty, invalid, and missing-name inputs.
 - **TestParseEmailCopyResponse**: Validates JSON parsing with fence stripping and truncation of plain-text fields (subject, preheader, CTA).
@@ -171,6 +173,9 @@ The test suite (`internal/service/email_copy_test.go`) includes 20 test function
 - **TestFormatEventDates_RangeFormat**: Mutation test for date range format.
 - **TestTruncateString_EnforcesLimit**: Mutation test for truncation limits.
 - **TestParseEmailCopyResponse_EnforcesMaxLengths**: Mutation test for plain-text field truncation limits.
+- **TestResolveEventDates**: Pins the fallback order — the structured `startDate`/`endDate` pair wins, the scraper's combined `dates` string is the fallback, and "Date TBD" is the answer when neither exists.
+- **TestGenerateEmailCopy_StageReachesThePrompt**: Pins that the caller's `stage` actually reaches the composed prompt, rather than being accepted and dropped.
+- **TestGenerateEmailCopy_NilStageIsNotAnError**: A caller that names no stage gets the default (Registration Push), not a 400 — the stage is optional by contract.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 

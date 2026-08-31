@@ -230,17 +230,22 @@ WORD COUNT TARGET: 200-280 words`,
 	},
 
 	"Registration Push": {
-		StageName:      "Registration Push",
-		Purpose:        "Drive registrations before deadline",
-		Timing:         "2-4 weeks before event",
-		Tone:           "Direct, value-focused, factual",
-		UrgencyLevel:   7,
-		SubjectPattern: "🎟️ Early bird ends [DATE]: Register for [EVENT_NAME]",
+		StageName:    "Registration Push",
+		Purpose:      "Drive registrations before deadline",
+		Timing:       "2-4 weeks before event",
+		Tone:         "Direct, value-focused, factual",
+		UrgencyLevel: 7,
+		// Every pricing claim carries a PLACEHOLDER, so the OMIT rule can drop it when nothing
+		// supplies one -- and nothing does today. "Early bird pricing available now" had no
+		// placeholder, so the rule could not reach it and the model was told, as fact, that early
+		// pricing exists for an event whose price was never supplied. This is the DEFAULT stage
+		// that every unrecognised value resolves to, so that assertion rode on most generations.
+		SubjectPattern: "🎟️ Register for [EVENT_NAME] by [DATE]",
 		SubjectExamples: []string{
 			"🎟️ Early bird pricing ends [DATE]",
 			"Register before [DATE] and save [AMOUNT]",
 		},
-		PreviewPattern: "Registration closes [DATE]. Early bird pricing available now.",
+		PreviewPattern: "Registration closes [DATE]. [EARLY_PRICE] pricing available now.",
 		ContentPrompt: `Generate a Registration Push email for open-source community.
 
 PRIMARY OBJECTIVE: Drive registrations. EVERY section must support this. NO other objectives.
@@ -363,7 +368,10 @@ WORD COUNT TARGET: 180-250 words`,
 			"We'd love to see you again at [EVENT_NAME]",
 			"Exclusive rate for [SEGMENT]: [DISCOUNT_AMOUNT] off",
 		},
-		PreviewPattern: "Special rate just for you. Code inside.",
+		// Placeholdered for the same reason as Registration Push: unqualified, this asserted both a
+		// discount and a promo code, neither of which anything supplies, so the OMIT rule could not
+		// reach either claim.
+		PreviewPattern: "[DISCOUNT_AMOUNT] rate just for you. [PROMO_CODE] inside.",
 		ContentPrompt: `Generate a VIP/Alumni discount email for open-source community.
 
 PRIMARY OBJECTIVE: Offer exclusive rate to segment. EVERY section supports this. NO other objectives.
