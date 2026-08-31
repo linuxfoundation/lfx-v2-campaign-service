@@ -434,18 +434,15 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 		return
 	}
 
-	// Guarded on the TOTAL, not on the writable map. An EMPTY rich-text block is still a block —
-	// one an operator can see and fill — so a template with one populated body and one empty
-	// second block is not the unambiguous single-body shape this guard is asking about. Counting
-	// only populated widgets reported 1 for exactly that template and rewrote the populated one,
-	// which is the ambiguity the guard exists to refuse.
+	// One rich-text widget, empty or not. A template with one populated body and one EMPTY second
+	// block is not the unambiguous single-body shape this guard is asking about -- the empty block
+	// is still one an operator can see and fill -- so both are counted and such a template is
+	// refused.
 	//
-	// `len(widgets) != 1` is checked too: with a total of 1 and nothing writable there is no
-	// widget to write, and ranging over an empty map would silently no-op.
-	// One rich-text widget, empty or not. `GetEmailHTMLWidgets` now returns every rich-text
-	// widget rather than only the populated ones, so these two counts are the same number -- but
-	// the pair is kept because they answer different questions and a future change to either
-	// should not silently re-couple them.
+	// `GetEmailHTMLWidgets` returns every rich-text widget rather than only the populated ones, so
+	// these two counts are the same number today. The pair is kept because they answer different
+	// questions -- "how many blocks does the draft have" vs "how many can be written" -- and a
+	// future change to either should not silently re-couple them.
 	if totalWidgets != 1 || len(widgets) != 1 {
 		// Not an error: a template this shape is simply one this cannot safely rewrite.
 		slog.InfoContext(ctx, "email draft does not have exactly one rich-text widget; leaving its body as the template wrote it",

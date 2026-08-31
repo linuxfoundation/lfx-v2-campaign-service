@@ -641,9 +641,23 @@ func buildLogError(err error) error {
 	if errors.Is(err, domain.ErrCredentialDecryptionFailed) || errors.Is(err, domain.ErrCredentialsMalformed) {
 		return domain.ErrCredentialDecryptionFailed
 	}
-	// Errors whose rendering this package or the hubspot client controls.
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, errUnconfirmedCreate) || hubspot.IsAPIError(err) {
+	// Context and package sentinels: return the SENTINEL, never the error that wraps it.
+	// `errors.Is` matches through the whole chain, so returning `err` here would log the outer
+	// text verbatim -- `fmt.Errorf("token %s: %w", secret, context.Canceled)` satisfies this arm
+	// and would defeat the default-deny above on exactly the credential path it exists to guard.
+	// The sentinel carries everything an operator acts on: which class of failure it was.
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, errUnconfirmedCreate) {
+		return errUnconfirmedCreate
+	}
+	// HubSpot API errors render as method/path/status and never quote a response body, so their
+	// own text is safe -- and unlike a sentinel it names the call that failed.
+	if hubspot.IsAPIError(err) {
 		return err
 	}
 	// Anything else: report the CLASS, not the text. `safeBuildCause` already gives an operator a

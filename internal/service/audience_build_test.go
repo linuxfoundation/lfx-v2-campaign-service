@@ -1040,10 +1040,24 @@ func TestBuildLogError_DefaultDeny(t *testing.T) {
 		t.Errorf("credential failure = %v, want the decryption sentinel", got)
 	}
 
-	// A context error keeps its text: this package names it, and an operator needs to tell a
-	// cancellation from a deadline.
+	// A context error keeps its CLASS: an operator needs to tell a cancellation from a deadline.
 	if got := buildLogError(context.DeadlineExceeded); !errors.Is(got, context.DeadlineExceeded) {
 		t.Errorf("deadline error = %v, want it preserved", got)
+	}
+
+	// ...but only the sentinel, never the chain that wraps it. `errors.Is` matches through the
+	// whole chain, so returning the argument on this arm logged the OUTER text verbatim -- and a
+	// credential decode failure cancelled by its context takes exactly this path. Default-deny
+	// above is no protection when a named arm hands back the wrapper.
+	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, errUnconfirmedCreate} {
+		wrapped := fmt.Errorf(`decode hubspot credentials: bad value "pat-na1-SECRET-TOKEN-VALUE": %w`, sentinel)
+		got := buildLogError(wrapped)
+		if !errors.Is(got, sentinel) {
+			t.Errorf("wrapped %v lost its class: got %v", sentinel, got)
+		}
+		if strings.Contains(got.Error(), "SECRET-TOKEN-VALUE") {
+			t.Errorf("buildLogError leaked the wrapper around %v: %q", sentinel, got.Error())
+		}
 	}
 
 	if buildLogError(nil) != nil {

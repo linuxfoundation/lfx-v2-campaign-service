@@ -570,9 +570,6 @@ func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string
 		if !isRichText {
 			continue
 		}
-		// Counted whether or not it carries html: an EMPTY rich-text block is still a block the
-		// operator can see and fill, so a template holding one is not the unambiguous
-		// single-body shape the caller's guard is asking about.
 		// EVERY rich-text widget goes in the map, empty ones included, and the count is simply its
 		// size. Omitting the empties made a template with exactly ONE empty rich-text block --
 		// the most unambiguous shape there is, and the one an operator most expects to be filled
