@@ -275,8 +275,12 @@ func TestGetKeywordPerformance_ParseErrorNamesFieldNotValue(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"results": []any{map[string]any{
 			"adGroupCriterion": map[string]any{"criterionId": "1", "status": "ENABLED",
 				"keyword": map[string]any{"text": "x", "matchType": "EXACT"}},
-			"adGroup":  map[string]any{"id": "2"},
-			"campaign": map[string]any{"id": "3"},
+			"adGroup": map[string]any{"id": "2"},
+			// IN SCOPE, deliberately. The metrics parse now runs after the scope check, so a
+			// fixture naming an out-of-scope campaign would fail on the scope error and prove
+			// nothing about how a parse failure is reported. It passed that way only while the
+			// parse happened to run first.
+			"campaign": map[string]any{"id": "555"},
 			"metrics":  map[string]any{"impressions": poison, "clicks": "1", "costMicros": "1"},
 		}}})
 		_, _ = w.Write(body)
@@ -545,6 +549,95 @@ func TestGetAudienceInsights_QuerySelectsCampaignIDForEveryDimension(t *testing.
 			t.Errorf("query %d (%s) does not SELECT campaign.id, so the scope check cannot run; select list = %q",
 				i, audienceQueries[i].dimension, sel)
 		}
+		// metrics.conversions for the same reason and with the same blind spot: the audience
+		// fixtures return a conversions value regardless of what was asked for, so the
+		// aggregation tests stay green if this field is dropped from the projection — every
+		// bucket would simply report a measured zero. Only asserting the SELECT can catch it.
+		if !strings.Contains(sel, "metrics.conversions") {
+			t.Errorf("query %d (%s) does not SELECT metrics.conversions, so every bucket would report zero; select list = %q",
+				i, audienceQueries[i].dimension, sel)
+		}
+	}
+}
+
+// A conversions value that is not a usable count fails the WHOLE response rather than being
+// folded into a total.
+//
+// NaN and ±Inf survive JSON decoding of a bare number in some encoders, and a negative count is
+// upstream corruption rather than a small number. Unchecked, each reaches a keyword row as a
+// rendered measurement — and on the audience path it is SUMMED into a bucket, where one bad row
+// corrupts every figure in that bucket rather than just its own.
+//
+// This mirrors the guard GetCampaignMetrics already applies; the shared helper had bypassed it.
+func TestParseRowMetrics_RejectsUnusableConversionCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"negative", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":-5}}]}`},
+		{"beyond int64", `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},` +
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":1e19}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.body)
+			})
+			// The whole call fails — asserted rather than checking the row was dropped, because
+			// a silently dropped row is its own defect: the caller would total a set missing a
+			// keyword and never know.
+			if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+				t.Fatal("an unusable conversion count was accepted")
+			}
+		})
+	}
+}
+
+// The NON-FINITE arms, driven directly rather than over HTTP.
+//
+// They cannot be reached through the transport: `encoding/json` rejects the bare literals `NaN`,
+// `Infinity` and `-Infinity` before any handler runs, so an HTTP-level case would test the
+// DECODER and stay green with the guard deleted — which is exactly what an earlier version of
+// this test did. A non-finite value can still arrive from a different decoder or a future direct
+// caller, so the guard is real; calling the helper directly is the only way to bind it.
+func TestParseRowMetrics_RejectsNonFiniteConversions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conv float64
+	}{
+		{"NaN", math.NaN()},
+		{"+Inf", math.Inf(1)},
+		{"-Inf", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := gaqlMetricRowMetrics{Impressions: "10", Clicks: "1", CostMicros: "100", Conversions: tc.conv}
+			if _, _, _, _, err := parseRowMetrics(m, "test"); err == nil {
+				t.Fatalf("a %s conversion count was accepted", tc.name)
+			}
+		})
+	}
+}
+
+// A fractional count is NOT rejected. Google credits fractional conversions under data-driven
+// and position-based attribution, so 0.5 is an ordinary measurement — a guard that treated
+// "not a whole number" as corruption would refuse the common case.
+func TestParseRowMetrics_AcceptsFractionalConversions(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","keyword":{"text":"x","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":0.5}}]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("a fractional conversion count was rejected: %v", err)
+	}
+	if got := kp.Rows[0].Conversions; got != 0.5 {
+		t.Errorf("Conversions = %v, want 0.5", got)
 	}
 }
 
@@ -1915,5 +2008,333 @@ func TestGetKeywordPerformance_NegativeProbeRowIsStillScopeChecked(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "outside the requested campaign scope") {
 		t.Errorf("error does not name the out-of-scope campaign: %v", err)
+	}
+}
+
+// enrichedKeywordRowJSON builds a keyword_view row carrying the fields added for the UI
+// cutover: the two display names, the quality score, and conversions.
+//
+// It renders conversions as a bare JSON NUMBER and the quality score as a nested number,
+// because that is what Google sends: int64-valued fields are string-encoded to protect them
+// from float64 precision loss, while metrics.conversions is DOUBLE upstream and
+// quality_info.quality_score is int32, so neither gets the string treatment. A fixture that
+// quoted them would agree with a decoder that expected strings instead of checking it.
+func enrichedKeywordRowJSON(criterionID, adGroupID, adGroupName, campaignID, campaignName string, qualityScore int, conversions float64) string {
+	return fmt.Sprintf(`{"adGroupCriterion":{"criterionId":%q,"status":"ENABLED",`+
+		`"keyword":{"text":"kubernetes training","matchType":"EXACT"},`+
+		`"qualityInfo":{"qualityScore":%d}},`+
+		`"adGroup":{"id":%q,"name":%q},"campaign":{"id":%q,"name":%q},`+
+		`"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":%v}}`,
+		criterionID, qualityScore, adGroupID, adGroupName, campaignID, campaignName, conversions)
+}
+
+// The four fields the UI needs must survive decoding with their VALUES intact, not merely
+// be present on the struct. Asserting the values is what makes this test able to fail if a
+// later change maps the wrong source field onto one of them — a presence check would pass
+// against a decoder that assigned the campaign's name to the ad group.
+func TestGetKeywordPerformance_CarriesNamesQualityScoreAndConversions(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+
+			enrichedKeywordRowJSON("305729261", "176216228", "Registration - Exact", "555", "KubeCon NA 2026 - Search", 7, 12.5)+
+			`]}`)
+	})
+
+	kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	if len(kp.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(kp.Rows))
+	}
+	got := kp.Rows[0]
+	// Distinct expected values per field: the ad group and campaign names differ, so a
+	// decoder that crossed them fails here rather than passing on a shared placeholder.
+	if got.AdGroupName != "Registration - Exact" {
+		t.Errorf("AdGroupName = %q, want %q", got.AdGroupName, "Registration - Exact")
+	}
+	if got.CampaignName != "KubeCon NA 2026 - Search" {
+		t.Errorf("CampaignName = %q, want %q", got.CampaignName, "KubeCon NA 2026 - Search")
+	}
+	if got.QualityScore == nil {
+		t.Fatalf("QualityScore = nil, want 7")
+	}
+	if *got.QualityScore != 7 {
+		t.Errorf("QualityScore = %d, want 7", *got.QualityScore)
+	}
+	// The FRACTION must survive. Google credits fractional conversions under data-driven
+	// attribution, so a decode into an integer type would silently truncate 12.5 to 12.
+	if got.Conversions != 12.5 {
+		t.Errorf("Conversions = %v, want 12.5", got.Conversions)
+	}
+
+	mu.Lock()
+	body := gotBody
+	mu.Unlock()
+	// The query must ASK for every field the struct decodes. A decoder that can parse a
+	// field Google was never asked for returns a zero value on every real response, which
+	// is exactly the failure this half of the test exists to catch: the struct assertions
+	// above pass against a hand-written fixture regardless of what the SELECT contains.
+	for _, field := range []string{
+		"ad_group_criterion.quality_info.quality_score",
+		"ad_group.name",
+		"campaign.name",
+		"metrics.conversions",
+	} {
+		if !strings.Contains(body, field) {
+			t.Errorf("query does not select %s: %s", field, body)
+		}
+	}
+}
+
+// An unrated keyword must arrive as nil, NOT as a score of 0. Google withholds the rating
+// until a keyword has accrued enough impressions, so this is the ordinary state of a new
+// keyword rather than an edge case — and 0 is off the 1-10 scale, so a caller shown zero
+// reads it as the worst possible rating.
+//
+// Absence is asserted at BOTH levels because Google produces both: `qualityInfo` is omitted
+// entirely for an unrated keyword, and the score within it can be omitted when the block is
+// present. A guard covering only one level leaves the other returning a fabricated zero.
+func TestGetKeywordPerformance_UnratedKeywordHasNoQualityScore(t *testing.T) {
+	cases := []struct {
+		name string
+		row  string
+	}{
+		{
+			// The whole qualityInfo block absent — an ordinary new keyword.
+			name: "quality info block omitted",
+			row: `{"adGroupCriterion":{"criterionId":"1","status":"ENABLED",` +
+				`"keyword":{"text":"x","matchType":"EXACT"}},` +
+				`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+				`"metrics":{"impressions":"10","clicks":"1","costMicros":"100"}}`,
+		},
+		{
+			// The block present but carrying no score.
+			name: "quality score omitted within the block",
+			row: `{"adGroupCriterion":{"criterionId":"1","status":"ENABLED",` +
+				`"keyword":{"text":"x","matchType":"EXACT"},"qualityInfo":{}},` +
+				`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},` +
+				`"metrics":{"impressions":"10","clicks":"1","costMicros":"100"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+tc.row+`]}`)
+			})
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+			if err != nil {
+				t.Fatalf("GetKeywordPerformance: %v", err)
+			}
+			if len(kp.Rows) != 1 {
+				t.Fatalf("rows = %d, want 1", len(kp.Rows))
+			}
+			if got := kp.Rows[0].QualityScore; got != nil {
+				t.Errorf("QualityScore = %d, want nil — an unrated keyword must not report a score", *got)
+			}
+			// An omitted conversions field is a MEASURED zero, unlike the quality score:
+			// Google always measures conversions for a served keyword, so absence here
+			// carries no ambiguity and is correctly reported as 0.
+			if got := kp.Rows[0].Conversions; got != 0 {
+				t.Errorf("Conversions = %v, want 0 for an omitted field", got)
+			}
+		})
+	}
+}
+
+// The device breakdown returns one row per (campaign, device) pair, so a bucket's
+// conversions arrive spread across rows. They must be SUMMED like the other counters —
+// taking any single row's figure reports one campaign's conversions as the whole device's.
+func TestGetAudienceInsights_SumsConversionsAcrossRows(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		// Only the device query is given two rows for one bucket; the other two
+		// breakdowns answer empty so this asserts the aggregation in isolation.
+		if strings.Contains(string(b), "FROM campaign") {
+			_, _ = io.WriteString(w, `{"results":[`+
+				`{"segments":{"device":"MOBILE"},"campaign":{"id":"555"},`+
+				`"metrics":{"impressions":"100","clicks":"10","costMicros":"1000","conversions":1.5}},`+
+				`{"segments":{"device":"MOBILE"},"campaign":{"id":"555"},`+
+				`"metrics":{"impressions":"200","clicks":"20","costMicros":"2000","conversions":2.25}}`+
+				`]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+
+	ai, err := c.GetAudienceInsights(context.Background(), WindowLast30Days, []string{"555"})
+	if err != nil {
+		t.Fatalf("GetAudienceInsights: %v", err)
+	}
+	if len(ai.Buckets) != 1 {
+		t.Fatalf("buckets = %d, want 1", len(ai.Buckets))
+	}
+	got := ai.Buckets[0]
+	// 1.5 + 2.25: a sum that is neither row's value and is not an integer, so neither
+	// "took the first row" nor "took the last row" nor a truncating decode can pass.
+	if want := 3.75; got.Conversions != want {
+		t.Errorf("Conversions = %v, want %v", got.Conversions, want)
+	}
+	// The counters it is summed alongside, to pin that this row really is the aggregate.
+	if got.Impressions != 300 || got.Clicks != 30 {
+		t.Errorf("aggregated counters = %+v", got)
+	}
+}
+
+// A quality score OUTSIDE the 1-10 scale must not be published as a score.
+//
+// This is a response-validation hazard, not a cosmetic one. The design declares
+// quality_score with Minimum(1)/Maximum(10), and Goa emits response validation in the
+// generated CLIENT — so a single out-of-range row would make the client reject the ENTIRE
+// keywords response, taking down a whole report over one keyword. That is the same failure
+// the match_type enum comment warns about, reached from the other direction.
+//
+// Google should never send 0 on the 1-10 scale, so this is defensive: the point is that the
+// blast radius of being wrong is the whole response, which is worth one guard.
+func TestGetKeywordPerformance_OutOfRangeQualityScoreIsNotPublished(t *testing.T) {
+	for _, score := range []int{0, 11, -1} {
+		t.Run(fmt.Sprintf("score %d", score), func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, fmt.Sprintf(`{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED",`+
+					`"keyword":{"text":"x","matchType":"EXACT"},"qualityInfo":{"qualityScore":%d}},`+
+					`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+					`"metrics":{"impressions":"10","clicks":"1","costMicros":"100"}}]}`, score))
+			})
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+			if err != nil {
+				t.Fatalf("GetKeywordPerformance: %v", err)
+			}
+			if len(kp.Rows) != 1 {
+				t.Fatalf("rows = %d, want 1 — an out-of-range score must drop the SCORE, not the row", len(kp.Rows))
+			}
+			if got := kp.Rows[0].QualityScore; got != nil {
+				t.Errorf("QualityScore = %d, want nil for an out-of-scale score", *got)
+			}
+			// The rest of the row must survive. Dropping the whole row over an unusable
+			// score would lose real spend and impressions from the report.
+			if kp.Rows[0].Impressions != 10 {
+				t.Errorf("row metrics lost: %+v", kp.Rows[0])
+			}
+		})
+	}
+}
+
+// The guard's bounds must equal the bounds the DESIGN declares, because the generated
+// client validates the response against the design and rejects the whole body on a
+// violation. Nothing else ties them together: widening Maximum(10) to 11 in design/brief.go
+// while these constants stay at 10 leaves every test green and merely under-reports, but
+// NARROWING the design below these constants publishes a value the client refuses — and the
+// failure appears at a consumer, on a real Google response, not here.
+//
+// Asserted by reading the design source rather than by restating the numbers, so the two
+// cannot drift apart in the direction that breaks the response.
+func TestKeywordQualityScoreBoundsMatchTheDesign(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "design", "brief.go"))
+	if err != nil {
+		t.Fatalf("read design: %v", err)
+	}
+	// Scoped to the quality_score attribute's own func literal: the file declares Minimum
+	// and Maximum on other attributes too, so an unscoped search would match whichever
+	// happened to come first and pass regardless of what quality_score says.
+	block := regexp.MustCompile(`(?s)Attribute\("quality_score".*?\n\t\}\)`).Find(src)
+	if block == nil {
+		t.Fatal("design no longer declares a quality_score attribute — this guard is now unpinned")
+	}
+	for _, tc := range []struct {
+		name  string
+		re    *regexp.Regexp
+		guard int64
+	}{
+		{"Minimum", regexp.MustCompile(`Minimum\((\d+)\)`), minQualityScore},
+		{"Maximum", regexp.MustCompile(`Maximum\((\d+)\)`), maxQualityScore},
+	} {
+		m := tc.re.FindSubmatch(block)
+		if m == nil {
+			t.Errorf("design's quality_score declares no %s — the guard is unpinned in that direction", tc.name)
+			continue
+		}
+		want, convErr := strconv.ParseInt(string(m[1]), 10, 64)
+		if convErr != nil {
+			t.Fatalf("parse design %s: %v", tc.name, convErr)
+		}
+		if want != tc.guard {
+			t.Errorf("design %s(%d) != guard constant %d — an out-of-range score would fail the whole response", tc.name, want, tc.guard)
+		}
+	}
+}
+
+// A NEGATIVE keyword carrying an unusable conversions value must not fail the whole report.
+//
+// The row is dropped either way — this endpoint publishes only positive keywords — so
+// validating its counters can only ever turn a droppable row into a total failure. That is
+// exactly the outcome the polarity-drop comment says dropping exists to avoid: "erroring would
+// let one exclusion in an ad group take down the whole keyword report."
+//
+// The fixture pairs the poisoned exclusion with a HEALTHY positive row, so the assertion is not
+// merely "no error" — it is that the good row still comes back. A version that dropped both
+// would satisfy a bare error check while silently losing real keywords.
+func TestGetKeywordPerformance_CorruptNegativeRowDoesNotFailTheReport(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conv string
+	}{
+		{"negative count", "-5"},
+		{"beyond int64", "1e19"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+
+					// An exclusion whose conversions cannot be parsed. In scope, so the scope
+					// check passes and the polarity drop is what decides its fate.
+					`{"adGroupCriterion":{"criterionId":"1","status":"ENABLED","negative":true,`+
+					`"keyword":{"text":"free","matchType":"BROAD"}},`+
+					`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+					`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":`+tc.conv+`}},`+
+					// A healthy positive row that must survive.
+					`{"adGroupCriterion":{"criterionId":"9","status":"ENABLED",`+
+					`"keyword":{"text":"kubernetes training","matchType":"EXACT"}},`+
+					`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+					`"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":12.5}}`+
+					`]}`)
+			})
+
+			kp, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"})
+			if err != nil {
+				t.Fatalf("a corrupt EXCLUSION failed the whole report: %v", err)
+			}
+			if len(kp.Rows) != 1 {
+				t.Fatalf("rows = %d, want the one positive keyword to survive", len(kp.Rows))
+			}
+			if kp.Rows[0].CriterionID != "9" {
+				t.Errorf("wrong row survived: %+v", kp.Rows[0])
+			}
+		})
+	}
+}
+
+// The same corruption on a POSITIVE row still fails the whole response. The two cases are
+// different facts: an exclusion is a row this endpoint does not publish, while a published row
+// with an unusable counter would be rendered as a measurement.
+func TestGetKeywordPerformance_CorruptPositiveRowStillFailsTheReport(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"1","status":"ENABLED",`+
+			`"keyword":{"text":"x","matchType":"EXACT"}},`+
+			`"adGroup":{"id":"2","name":"AG"},"campaign":{"id":"555","name":"C"},`+
+			`"metrics":{"impressions":"10","clicks":"1","costMicros":"100","conversions":-5}}]}`)
+	})
+
+	if _, err := c.GetKeywordPerformance(context.Background(), WindowLast30Days, []string{"555"}); err == nil {
+		t.Fatal("a corrupt POSITIVE row was published rather than failing the response")
 	}
 }

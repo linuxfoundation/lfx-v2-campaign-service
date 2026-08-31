@@ -8078,16 +8078,20 @@ func marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountR
 // *lfxv2campaignserviceconnections.GoogleAdsKeyword.
 func marshalLfxv2campaignserviceconnectionsGoogleAdsKeywordToGoogleAdsKeywordResponseBody(v *lfxv2campaignserviceconnections.GoogleAdsKeyword) *GoogleAdsKeywordResponseBody {
 	res := &GoogleAdsKeywordResponseBody{
-		CriterionID: v.CriterionID,
-		AdGroupID:   v.AdGroupID,
-		CampaignID:  v.CampaignID,
-		Text:        v.Text,
-		MatchType:   v.MatchType,
-		Status:      v.Status,
-		Impressions: v.Impressions,
-		Clicks:      v.Clicks,
-		CostMicros:  v.CostMicros,
-		Ctr:         v.Ctr,
+		CriterionID:  v.CriterionID,
+		AdGroupID:    v.AdGroupID,
+		CampaignID:   v.CampaignID,
+		Text:         v.Text,
+		MatchType:    v.MatchType,
+		Status:       v.Status,
+		AdGroupName:  v.AdGroupName,
+		CampaignName: v.CampaignName,
+		Impressions:  v.Impressions,
+		Clicks:       v.Clicks,
+		CostMicros:   v.CostMicros,
+		Ctr:          v.Ctr,
+		Conversions:  v.Conversions,
+		QualityScore: v.QualityScore,
 	}
 
 	return res
@@ -8104,6 +8108,7 @@ func marshalLfxv2campaignserviceconnectionsGoogleAdsAudienceBucketToGoogleAdsAud
 		Clicks:      v.Clicks,
 		CostMicros:  v.CostMicros,
 		Ctr:         v.Ctr,
+		Conversions: v.Conversions,
 	}
 
 	return res

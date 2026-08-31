@@ -296,6 +296,9 @@ type Client struct {
 	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
 	// retryBaseDelay const; tests may shrink it to keep runs fast.
 	retryBaseDelay time.Duration
+	// onRetrySleep, when set, fires just before the client blocks to retry a throttled request.
+	// Test-only; nil in production, so the check costs a nil compare on an already-slow path.
+	onRetrySleep func()
 	// sleepFn is the wait used between throttle retries. Defaults to sleepCtx.
 	// Tests replace it to OBSERVE the requested delays without spending them: the
 	// backoff schedule is then asserted as a sequence of values rather than as
@@ -348,6 +351,19 @@ func WithClock(now func() time.Time) Option {
 		if now != nil {
 			c.timeNow = now
 		}
+	}
+}
+
+// withOnRetrySleep registers a callback invoked immediately before the client blocks waiting to
+// retry a throttled request.
+//
+// Unexported and test-only. It exists so a test can cancel exactly when the client is known to be
+// entering the sleep, instead of sleeping an arbitrary wall-clock interval first and hoping the
+// client got there. That hope is what made the regression test flaky: a descheduled goroutine
+// pushes the cancel past the window and the test fails without the code being wrong.
+func withOnRetrySleep(fn func()) Option {
+	return func(c *Client) {
+		c.onRetrySleep = fn
 	}
 }
 
@@ -1639,6 +1655,9 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 					}
 					return abortErr
 				}
+				if c.onRetrySleep != nil {
+					c.onRetrySleep()
+				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
 					// A request HAS already been sent (the 429 proves the platform received it), so a
 					// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
@@ -1653,6 +1672,9 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			}
 			// No server-declared reset: capped exponential backoff, from the shared
 			// helper the /adimages upload loop also uses.
+			if c.onRetrySleep != nil {
+				c.onRetrySleep()
+			}
 			if err := sleepCtx(ctx, c.backoffDelay(attempt)); err != nil {
 				// A request HAS already been sent (the 429 proves the platform received it), so a
 				// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,

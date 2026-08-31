@@ -315,13 +315,27 @@ type KeywordRow struct {
 	CriterionID string
 	AdGroupID   string
 	CampaignID  string
-	Text        string
-	MatchType   string
-	Status      string
-	Impressions int64
-	Clicks      int64
-	CostMicros  int64
-	Ctr         float64
+	// AdGroupName and CampaignName accompany the ids for display. They are NOT identifiers:
+	// names are not unique across campaigns, so anything acting on a keyword addresses it by
+	// AdGroupID plus CriterionID, which is the pair keyword-actions takes.
+	AdGroupName  string
+	CampaignName string
+	Text         string
+	MatchType    string
+	Status       string
+	// QualityScore is Google's 1-10 rating, nil when Google has not rated the keyword yet —
+	// normal for one with few impressions. A POINTER because absence is neither an error nor
+	// a zero: 0 is off the 1-10 scale, so flattening nil to 0 would present every unrated
+	// keyword as the worst-rated one.
+	QualityScore *int64
+	Impressions  int64
+	Clicks       int64
+	CostMicros   int64
+	Ctr          float64
+	// Conversions keeps its fraction — Google credits fractional conversions under
+	// data-driven and position-based attribution. Not a pointer: Google always measures
+	// conversions for a served keyword, so an absent upstream field is a measured zero.
+	Conversions float64
 }
 
 // KeywordPerformance is a keyword read over one window, confined to the CALLING PROJECT'S
@@ -358,6 +372,10 @@ type AudienceBucket struct {
 	Clicks      int64
 	CostMicros  int64
 	Ctr         float64
+	// Conversions is summed across every row folded into this bucket, fraction intact.
+	// Summable WITHIN a dimension exactly as impressions are; summing across the three
+	// dimensions triple-counts the same traffic.
+	Conversions float64
 }
 
 // AudienceInsights is a demographic read across every breakdown, over the CALLING PROJECT'S

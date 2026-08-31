@@ -56,23 +56,33 @@ const (
 	// the requested start date is already in the past (e.g. a same-day start,
 	// whose midnight-UTC timestamp has passed).
 	//
-	// The buffer must keep the timestamp in the future across the WHOLE retryable
-	// campaign->ad-group workflow, not just at the instant it is computed: request
-	// can honor a Retry-After (up to maxRetryWait) and resend the same encoded body
-	// on a 429, and this one timestamp is reused for both the campaign POST and the
-	// (possibly retried) ad-group POST. Each mutating call can spend up to
-	// retryMax*maxRetryWait waiting on 429 backoffs plus retryMax+1 request
-	// timeouts; the ad-group step may run twice (the community fallback). Size the
-	// buffer to cover that worst case with margin so a nudged start can't have
-	// slipped into the past by the time either request is finally accepted.
-	// redditWorstCaseCreateWait is the worst-case wall-clock a single mutating
-	// create can consume before it is accepted: every 429 backoff (retryMax waits
-	// clamped to maxRetryWait), every attempt's HTTP round-trip (retryMax+1
-	// request timeouts), AND a token refresh per attempt — refreshToken runs at
-	// the start of each attempt and, when the cached token is within the expiry
-	// buffer, performs its own bounded HTTP fetch (one request timeout). Counting
-	// (retryMax+1) token fetches keeps the buffer conservative so a nudged start
-	// can't slip into the past even if every attempt re-fetches the token.
+	// The buffer must keep the timestamp in the future across the WHOLE
+	// campaign->ad-group workflow, not just at the instant it is computed: one
+	// timestamp is reused for the campaign POST and the (possibly re-run) ad-group
+	// POST, and each can spend a full request timeout. The ad-group step may run
+	// twice, via the community fallback. Size the buffer to cover that worst case
+	// with margin so a nudged start can't have slipped into the past by the time
+	// either request is finally accepted.
+	//
+	// NOTE ON THE 429 TERM BELOW. Creates no longer retry throttles — see
+	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on this
+	// path any more, and the buffer is now larger than the worst case it derives
+	// from. That is left DELIBERATELY: the term is retained rather than removed
+	// because over-sizing this buffer costs a slightly later start time, while
+	// under-sizing it makes Reddit reject the create outright for a start in the
+	// past. The asymmetry is the whole reason the derivation is conservative, and
+	// a retryable path could return here (a future idempotency key would make
+	// create retries safe again). What matters is that the comment no longer
+	// claims a 429 backoff happens on a create when it does not.
+	// redditWorstCaseCreateWait bounds the wall-clock a single mutating create can
+	// consume before it is accepted: its HTTP round-trip and a token refresh, which
+	// refreshToken performs when the cached token is inside the expiry buffer.
+	//
+	// The retryMax terms are a deliberate over-estimate on the create path, which no
+	// longer retries throttles (see redditPastStartBuffer). They are kept because
+	// this constant also bounds the RETRYABLE calls that share the workflow, and
+	// because over-sizing costs a later start while under-sizing costs a rejected
+	// create.
 	redditWorstCaseCreateWait = retryMax*maxRetryWait + (retryMax+1)*redditRequestTimeout + (retryMax+1)*redditRequestTimeout
 	// redditStartWorkflowBuffer covers the full campaign + up-to-two ad-group
 	// creates (the community fallback re-POSTs the ad group) plus a 60s margin, so
@@ -237,6 +247,19 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// withOnRetrySleep registers a callback invoked immediately before the client blocks waiting to
+// retry a throttled request.
+//
+// Unexported and test-only. It exists so a test can cancel exactly when the client is known to be
+// entering the sleep, instead of sleeping an arbitrary wall-clock interval first and hoping the
+// client got there. That hope is what made the regression test flaky: a descheduled goroutine
+// pushes the cancel past the window and the test fails without the code being wrong.
+func withOnRetrySleep(fn func()) Option {
+	return func(c *Client) {
+		c.onRetrySleep = fn
+	}
+}
+
 // Client is a Reddit Ads API v3 client with cached OAuth token refresh.
 // It is safe for concurrent use.
 type Client struct {
@@ -252,6 +275,9 @@ type Client struct {
 	// retryBaseDelay const; tests may shrink it (via withRetryBaseDelay) to keep
 	// retry runs fast.
 	retryBaseDelay time.Duration
+	// onRetrySleep, when set, fires just before the client blocks to retry a throttled request.
+	// Test-only; nil in production, so the check costs a nil compare on an already-slow path.
+	onRetrySleep func()
 
 	mu            sync.Mutex
 	cachedToken   string
@@ -892,11 +918,15 @@ func (e *transportError) Unwrap() error { return e.Err }
 //     resource was committed before the redirect, so it is UNCONFIRMED. A 3xx on a
 //     GET carries no create and is NOT ambiguous.
 //
-// A definite 4xx (Reddit rejected it), a 3xx on a non-mutating method, or any
-// pre-send failure (token refresh, body encode/build, a pre-connect DNS/dial
-// failure, or a caller-cancel that surfaces raw BEFORE the POST — e.g. from
-// refreshToken), means NOT applied → returns false so the caller returns a clean
-// (nil, err) / "failed" rather than "may exist".
+// A definite 4xx OTHER THAN 429 (Reddit rejected it on the merits), a 3xx on a
+// non-mutating method, or any pre-send failure (token refresh, body encode/build,
+// a pre-connect DNS/dial failure, or a caller-cancel that surfaces raw BEFORE the
+// POST — e.g. from refreshToken), means NOT applied → returns false so the caller
+// returns a clean (nil, err) / "failed" rather than "may exist".
+//
+// 429 is the exception and is treated as AMBIGUOUS: reaching the classifier means
+// the bounded retry was exhausted, and a shed request says nothing about whether
+// the mutation committed first. See the branch below.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -907,6 +937,25 @@ func createOutcomeAmbiguous(err error) bool {
 		return false
 	}
 	if ae.StatusCode >= 500 {
+		return true
+	}
+	// 429 is the one 4xx that is NOT a semantic rejection: Reddit received the request and shed
+	// it, which says nothing about whether the mutation committed first. Without this branch a
+	// throttle classified as DEFINITELY NOT APPLIED, so a caller retried a create that may
+	// already have run and duplicated a campaign that spends real budget.
+	//
+	// Two paths arrive here and both are unconfirmed. An idempotent call reaches it with the
+	// bounded retry EXHAUSTED. A non-idempotent create reaches it on the FIRST 429, because
+	// requestNoThrottleRetry does not retry at all — the retry is what would duplicate. The
+	// classification is the same either way, so this must not be written as "exhausted only".
+	//
+	// Deliberately NOT gated on the method, matching the Meta client: a throttled name LOOKUP
+	// confirms no absence either, and a caller told "not found" on the strength of one would
+	// create a second campaign for an event that already has one.
+	//
+	// This is the same hazard the over-cap abort and the cancelled backoff sleep carry — all
+	// three follow a 429 — so all three now answer the same way.
+	if ae.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
 	// A 3xx on a mutating request reached a responder and may have committed a
@@ -997,9 +1046,37 @@ func isPreSendDialError(err error) bool {
 // retryBaseDelay*2^attempt, in both cases clamped to maxRetryWait. If a
 // server-declared reset exceeds maxRetryWait, the request aborts with the
 // rate-limit error rather than sleeping past the point of usefulness. A 429 is
-// retried regardless of HTTP method: a 429 means the request was REJECTED
-// before processing (nothing was created), so retrying a create POST is safe.
+// retried for IDEMPOTENT calls: Reddit sheds a throttled request, so a retry is
+// worth making where repeating it cannot create a second object. Non-idempotent
+// POST creates go through requestNoThrottleRetry instead and are NOT retried on a
+// 429 — repeating one is how a throttle turns into a duplicate paid campaign.
+//
+// A 429 is NOT proof that nothing was created. Reddit does not say whether it shed
+// the request before or after processing, so once the bounded retry is exhausted
+// (or the backoff is cancelled, or the declared reset is over cap) the outcome is
+// UNCONFIRMED — createOutcomeAmbiguous reports true for it, and a caller must
+// verify before retrying rather than assume a clean failure.
 func (c *Client) request(ctx context.Context, method, path string, body any) (*apiResponse, error) {
+	// Retries throttles. Every caller that CREATES must use requestNoThrottleRetry instead.
+	return c.requestWithThrottleRetry(ctx, method, path, body, true)
+}
+
+// requestNoThrottleRetry issues a request that is NOT retried on a 429.
+//
+// For a CREATE, the automatic retry is itself the duplicate. Reddit does not say whether it shed
+// a throttled request before or after processing, so a 429 on a create may already have made the
+// campaign — and retrying it then makes a second one that spends real budget. Marking the
+// exhausted outcome UNCONFIRMED (see createOutcomeAmbiguous) is not enough on its own: it
+// describes the error the CALLER finally sees, while the retry has already run inside this
+// method. Mirrors Meta, whose doCreate passes retryThrottle=false for the same reason.
+//
+// The trade is deliberate: a throttled create now fails sooner and is reported as unconfirmed
+// for a human to verify, rather than being retried into a duplicate nobody asked for.
+func (c *Client) requestNoThrottleRetry(ctx context.Context, method, path string, body any) (*apiResponse, error) {
+	return c.requestWithThrottleRetry(ctx, method, path, body, false)
+}
+
+func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path string, body any, retryThrottle bool) (*apiResponse, error) {
 	// Split any query string off before sanitizing: sanitizePath escapes each
 	// PATH segment (turning a literal '?'/'=' into %3F/%3D), which would corrupt a
 	// query. The query (built by the caller via url.Values.Encode) is already
@@ -1086,7 +1163,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		// keeps a hostile/oversized body from being read unbounded. On the final
 		// attempt we fall through and surface the 429 as an ordinary non-2xx error
 		// below rather than looping forever.
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+		if resp.StatusCode == http.StatusTooManyRequests && retryThrottle && attempt < retryMax {
 			retryAfter, ok := c.parseRetryAfter(resp)
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 			_ = resp.Body.Close()
@@ -1110,6 +1187,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 						Err:    fmt.Errorf("429: rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", resp.Header.Get("Retry-After"), maxRetryWait),
 					}
 				}
+				if c.onRetrySleep != nil {
+					c.onRetrySleep()
+				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
 					// A request HAS already been sent (the 429 proves Reddit received it), so a
 					// cancellation or deadline while waiting to retry leaves the outcome AMBIGUOUS,
@@ -1126,6 +1206,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			wait := c.retryBaseDelay * time.Duration(1<<uint(attempt))
 			if wait > maxRetryWait {
 				wait = maxRetryWait
+			}
+			if c.onRetrySleep != nil {
+				c.onRetrySleep()
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
 				// A request HAS already been sent (the 429 proves Reddit received it), so a
@@ -1774,7 +1857,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		campaignData["conversion_pixel_id"] = conversionPixelID
 	}
 
-	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
+	campaignResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
 		// Classify AMBIGUITY FIRST, before the ctx check: a cancellation that
 		// interrupts THIS create's in-flight round-trip surfaces as a transportError,
@@ -1787,8 +1870,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if !createOutcomeAmbiguous(err) {
 			// Not ambiguous → the campaign was definitely NOT created: a pre-send
 			// failure (token refresh, body encode/build, a pre-connect dial error), a
-			// 429 over-cap abort, a definite 4xx, or a cancellation before the request
-			// went out. Return (nil, err) so a caller can retry safely. If a caller
+			// definite 4xx other than 429, or a cancellation before the request went
+			// out. Return (nil, err) so a caller can retry safely.
+			//
+			// The 429 over-cap abort is NO LONGER in this list: it is classified
+			// ambiguous, because an over-cap reset means Reddit shed a request it may
+			// already have processed. It now takes the unconfirmed branch below. If a caller
 			// cancellation is the cause, surface it as an abort.
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
@@ -1926,7 +2013,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// place.
 	rejectedCommunitiesByReddit := false
 	rejectedInterestsByReddit := false
-	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(optionalTargeting))
+	adGroupResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(optionalTargeting))
 	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
 	// ambiguous (transportError / 5xx / mutating 3xx — the ad group MAY exist, and partialResult
 	// carries its deterministic name for reconciliation) vs a flat "failed" for a
@@ -1989,7 +2076,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// Carry the rejected-vs-collateral distinction to the persisted summary.
 			rejectedCommunitiesByReddit = rejectedCommunities
 			rejectedInterestsByReddit = rejectedInterests
-			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
+			adGroupResp, err = c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
 				return partialResult(), adGroupErr(err)
 			}
@@ -2103,7 +2190,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			},
 		}
 
-		adResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ads", adBody)
+		adResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ads", adBody)
 		if err != nil {
 			// A caller context cancellation is fatal (return an error, not just a
 			// warning). Whether the ad "may exist" depends on whether the request was
@@ -2265,7 +2352,7 @@ func (c *Client) createPromotedPost(ctx context.Context, accountID string, in Ca
 			}},
 		},
 	}
-	resp, err := c.request(ctx, http.MethodPost, "/profiles/"+accountID+"/posts", body)
+	resp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/profiles/"+accountID+"/posts", body)
 	if err != nil {
 		return "", err
 	}

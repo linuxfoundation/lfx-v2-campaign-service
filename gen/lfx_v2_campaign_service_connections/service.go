@@ -599,6 +599,9 @@ type GoogleAdsAudienceBucket struct {
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
+	// Conversions over the window, fraction intact. Summable WITHIN a dimension
+	// for the same reason impressions are; summing across dimensions triple-counts.
+	Conversions float64
 }
 
 // GoogleAdsConnection is the result type of the
@@ -668,6 +671,12 @@ type GoogleAdsKeyword struct {
 	// member is retained so the type stays usable if a future caller reads
 	// tombstones.
 	Status string
+	// The ad group's display name. Not an identifier — names are not unique across
+	// campaigns; address the ad group by `ad_group_id`.
+	AdGroupName string
+	// The campaign's display name. Not an identifier — address the campaign by
+	// `campaign_id`.
+	CampaignName string
 	// Impressions over the window
 	Impressions int64
 	// Clicks over the window
@@ -678,6 +687,16 @@ type GoogleAdsKeyword struct {
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0 (never divides by zero)
 	Ctr float64
+	// Conversions over the window, fraction intact — Google credits fractional
+	// conversions under data-driven and position-based attribution. Absence
+	// upstream is a measured 0, not an unmeasured one: this field is always
+	// selected.
+	Conversions float64
+	// Google's 1-10 quality rating. ABSENT when Google has not rated this keyword
+	// yet, which is normal for a keyword with few impressions — absence is not a
+	// score of 0, and 0 is not on the scale. Render it as unknown, never as a low
+	// score.
+	QualityScore *int64
 }
 
 // GoogleAdsKeywords is the result type of the
