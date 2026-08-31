@@ -110,7 +110,8 @@ The service treated 500 as a definite pre-send failure; the UI treated every 500
 as unconfirmed. Both readings were defensible on their own, and the BFF made it
 worse by emitting its own network failures as 500 — so a transport failure
 AFTER the request went out was indistinguishable from a clean rejection before
-it did. On a non-idempotent create into a namespace every foundation shares,
+it did. On a non-idempotent create into a namespace shared by every project
+configured against the same portal,
 that ambiguity is the duplicate.
 
 Resolved by giving the two statuses non-overlapping positions rather than

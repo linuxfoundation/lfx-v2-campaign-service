@@ -1362,8 +1362,9 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 			}
 		}
 		// Everything else is UNCONFIRMED, and the message sends the operator to HubSpot rather
-		// than back through the button: this is a NON-IDEMPOTENT write into a namespace every
-		// foundation shares, so a retry on an unconfirmed outcome is how a duplicate gets made.
+		// than back through the button: this is a NON-IDEMPOTENT write into a namespace shared by
+		// every project configured against the same HubSpot portal — see the created == nil arm
+		// below — so a retry on an unconfirmed outcome is how a duplicate gets made.
 		return nil, &conn.ConnServiceUnavailableError{
 			Code:    "503",
 			Message: "the campaign creation could not be confirmed — check HubSpot before creating it again, as it may already exist",

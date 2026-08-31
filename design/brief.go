@@ -593,7 +593,6 @@ var HubSpotCampaign = Type("hubspot-campaign", func() {
 	Required("id", "name")
 })
 
-
 // CampaignRef points at one of this service's campaigns, for a caller that holds only the
 // platform's own campaign id.
 //
@@ -670,6 +669,7 @@ var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
 		"match_count": 1,
 	})
 })
+
 // KeywordActionInput is one requested keyword mutation.
 //
 // Both ids are required and neither is inferable. A criterion id is unique only within its ad

@@ -204,8 +204,8 @@ func TestCreateHubspotCampaign_NilWithoutErrorIsRefused(t *testing.T) {
 	}
 	// 503, not 500. Reaching this arm means the create returned NO error, so the request was
 	// sent and HubSpot did not refuse it — the campaign may exist. 500 would read as a clean
-	// pre-send failure and invite the retry that makes a duplicate in a namespace every
-	// foundation shares.
+	// pre-send failure and invite the retry that makes a duplicate in a namespace shared by
+	// every project configured against the same HubSpot portal.
 	unavailable, ok := err.(*conn.ConnServiceUnavailableError)
 	if !ok {
 		t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
@@ -269,6 +269,25 @@ func TestSearchHubspotCampaigns_WhitespaceQueryIsABadRequest(t *testing.T) {
 	}
 	if d.gotQuery != "" {
 		t.Error("the platform was contacted for an empty query")
+	}
+}
+
+// The CREATE side needs the same whitespace guard as the search, and for a sharper reason: a
+// whitespace-only NAME would reach HubSpot and create a real, portal-visible campaign that no
+// operator can find by name afterwards. The search guard only wastes a lookup.
+func TestCreateHubspotCampaign_WhitespaceNameIsABadRequest(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{}
+
+	_, err := newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+		&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "   "})
+	if err == nil {
+		t.Fatal("a whitespace-only name was accepted")
+	}
+	if _, ok := err.(*conn.BadRequestError); !ok {
+		t.Errorf("error = %T (%v), want *conn.BadRequestError — a 503 would invite a retry of a create that will fail identically", err, err)
+	}
+	if d.gotName != "" {
+		t.Errorf("the platform was contacted with name %q; a blank name must never reach HubSpot", d.gotName)
 	}
 }
 
