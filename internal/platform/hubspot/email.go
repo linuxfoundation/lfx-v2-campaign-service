@@ -526,15 +526,20 @@ func (w widgetBody) html() (string, bool) {
 // GetEmailHTMLWidgets returns the draft's rich-text widget bodies keyed by widget id, and the
 // TOTAL number of rich-text widgets the draft carries.
 //
-// IDEMPOTENT (a GET). Widgets with no html body are omitted from the map, so a caller can range
-// over exactly the ones it can rewrite — but the count includes them, and the two are returned
-// separately because they answer different questions.
+// IDEMPOTENT (a GET). EVERY rich-text widget is returned, empty ones included, and the count is
+// the map's size. The pair is still returned separately because callers ask two different
+// questions of it, and both have been got wrong here:
 //
-// Conflating them was a real defect: a caller deciding "does this template have exactly one
-// rich-text block?" from `len(map)` sees 1 for a template with one populated body AND an empty
-// second block, and rewrites the populated one — the very ambiguity the single-widget guard
-// exists to refuse. "How many blocks are there" must count every block; "which can I write"
-// must not.
+//   - Omitting empty bodies UNDERCOUNTED: a template with one populated block and one empty block
+//     looked like a single-block template, so a caller rewrote the populated one — the ambiguity
+//     the single-widget guard exists to refuse.
+//   - Counting every object-bodied module OVERCOUNTED: an image decodes into the same shape with
+//     an empty html field, so the ordinary template (rich text + header image) looked like two
+//     blocks and the body write was silently skipped.
+//   - Omitting empties again made the ONE unambiguous case unaddressable: a template whose only
+//     rich-text block is empty had a count of 1 and an empty map, so nothing could be written.
+//
+// A rich-text widget is identified by the PRESENCE of the `html` key, never by its value.
 func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string]string, int, error) {
 	if id = strings.TrimSpace(id); id == "" {
 		return nil, 0, fmt.Errorf("hubspot: GetEmailHTMLWidgets requires a non-empty id")
@@ -565,13 +570,15 @@ func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string
 		if !isRichText {
 			continue
 		}
-		// Counted whether or not it carries html: an EMPTY rich-text block is still a block the
-		// operator can see and fill, so a template holding one is not the unambiguous
-		// single-body shape the caller's guard is asking about.
+		// EVERY rich-text widget goes in the map, empty ones included, and the count is simply its
+		// size. Omitting the empties made a template with exactly ONE empty rich-text block --
+		// the most unambiguous shape there is, and the one an operator most expects to be filled
+		// -- unaddressable: total was 1, the map was empty, and the caller's guard refused a write
+		// it could have made safely.
+		//
+		// The caller decides what to do with an empty body; this reports what the draft HAS.
 		total++
-		if strings.TrimSpace(body) != "" {
-			out[key] = body
-		}
+		out[key] = body
 	}
 	return out, total, nil
 }

@@ -70,10 +70,14 @@ type hubspotRec struct {
 	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
 	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
 	extraWidget bool
-	// emptyExtraWidget adds a second rich-text widget with an EMPTY body. The client omits such
-	// widgets from the map it returns, so a guard counting only populated widgets sees 1 and
-	// rewrites the populated body — the ambiguity the single-widget guard exists to refuse.
+	// emptyExtraWidget adds a second rich-text widget with an EMPTY body. The client USED TO omit
+	// such widgets from the map it returned, so a guard counting only populated widgets saw 1 and
+	// rewrote the populated body — the ambiguity the single-widget guard exists to refuse. Empty
+	// rich-text widgets are now returned like any other, and this fixture pins that they count.
 	emptyExtraWidget bool
+	// onlyEmptyWidget makes the draft's SINGLE rich-text widget empty -- the most unambiguous
+	// shape there is, and the one an operator most expects the generated body to fill.
+	onlyEmptyWidget bool
 	// imageWidget adds a header IMAGE module beside the rich-text block -- the ordinary template
 	// shape. It has a body object but no `html` key, so counting object-bodied modules reported
 	// two widgets and the body write silently no-opped.
@@ -179,7 +183,11 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			// earlier write. A stub that always replayed the template made write ORDER
 			// unobservable — and order is the whole claim of the content-vs-tagging test.
 			html := rec.currentBody()
-			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": html}}}
+			body1 := html
+			if rec.onlyEmptyWidget {
+				body1 = "   "
+			}
+			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": body1}}}
 			// A template with a SECOND rich-text widget, when the test asks for one. There is no
 			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
 			// must decline rather than guess -- see its `len(widgets) != 1` guard.
@@ -346,6 +354,28 @@ func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
 	}
 }
 
+// A template whose ONLY rich-text block is empty must still receive the generated body.
+//
+// It is the most unambiguous shape there is -- one block, nothing to overwrite -- and it was the
+// one case the guard refused: GetEmailHTMLWidgets omitted empty bodies, so `total` was 1 while the
+// writable map was empty, leaving the widget unaddressable. Every rich-text widget is now
+// returned, empty included, and the caller decides.
+func TestHubSpot_SingleEmptyWidgetReceivesTheBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.onlyEmptyWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if _, body := rec.snapshotContent(); !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written into the single empty rich-text block", body)
+	}
+}
+
 // A header IMAGE beside the rich-text block must NOT count as a second widget.
 //
 // This is the ordinary template shape, and it was silently broken: an image module decodes into
@@ -375,11 +405,11 @@ func TestHubSpot_HeaderImageDoesNotBlockTheBodyWrite(t *testing.T) {
 
 // An EMPTY second rich-text widget is still a second widget.
 //
-// `GetEmailHTMLWidgets` omits widgets whose body trims to empty, so a guard counting only the
-// widgets it CAN write saw 1 for a template with one populated body and one empty block, and
+// `GetEmailHTMLWidgets` USED TO omit widgets whose body trims to empty, so a guard counting only
+// the widgets it CAN write saw 1 for a template with one populated body and one empty block, and
 // rewrote the populated one — the exact ambiguity the single-widget guard exists to refuse. An
 // empty block is one an operator can see and fill; it is part of the template's structure, not
-// an absence.
+// an absence, so every rich-text widget is now returned and this test pins that it counts.
 //
 // This is the case the populated-second-widget test above cannot reach: there the map itself has
 // two entries, so a count of either kind refuses.
@@ -719,3 +749,40 @@ func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testin
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// ConfigSnapshot must not carry the generated copy.
+//
+// The snapshot column is UNENCRYPTED and is returned through the API, and its purpose is
+// provenance: what this campaign was cloned from, and how its links attribute. The generated
+// subject and body are caller-supplied content whose `href`s can carry query tokens, and the
+// HubSpot draft is the system of record for them -- so persisting them here would put arbitrary
+// caller content in a column nobody reading a reconcile row expects to hold any.
+//
+// Passing `cfg` wholesale to applyCampaignConfig did exactly that.
+func TestHubSpot_ConfigSnapshotOmitsTheGeneratedCopy(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	// A body carrying a tokenised link -- the shape that makes this a leak rather than bloat.
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","utmCampaign":"kubecon","subject":"Three days in Amsterdam","bodyHtml":"<a href=\"https://x.example/rsvp?token=SECRET-LINK-TOKEN\">RSVP</a>"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	snapshot := string(out.ConfigSnapshot)
+	if strings.Contains(snapshot, "SECRET-LINK-TOKEN") || strings.Contains(snapshot, "bodyHtml") {
+		t.Errorf("ConfigSnapshot carried the generated body: %s", snapshot)
+	}
+	if strings.Contains(snapshot, "Three days in Amsterdam") || strings.Contains(snapshot, "subject") {
+		t.Errorf("ConfigSnapshot carried the generated subject: %s", snapshot)
+	}
+	// The provenance fields it EXISTS for must survive, or this test would pass on an empty snapshot.
+	if !strings.Contains(snapshot, "555") {
+		t.Errorf("ConfigSnapshot lost the source template id: %s", snapshot)
+	}
+	if !strings.Contains(snapshot, "kubecon") {
+		t.Errorf("ConfigSnapshot lost the utm campaign: %s", snapshot)
+	}
+}

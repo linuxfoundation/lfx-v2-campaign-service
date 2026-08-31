@@ -44,14 +44,18 @@ is indistinguishable from a correct empty audience:
 
 ## Filter-shape invariants (HubSpot rejects violations)
 
-The client documents these on `internal/platform/hubspot/lists.go`, and all three were violated
-in the first cut:
+The client documents these on `internal/platform/hubspot/lists.go`. The first three were violated
+in the first cut; the fourth surfaced later, against the live API:
 
 - **OR root, AND children, NO nested ORs.** Each past edition contributes its AND branches
   DIRECTLY to the single OR root — wrapping each edition in its own OR produced OR-of-OR.
 - **`IN_LIST`, not `LIST_MEMBERSHIP`.** The latter is explicitly rejected.
 - **Sibling filters inside one AND branch are ANDed.** So each list in the master needs its OWN
   branch; putting them side by side built an INTERSECTION (typically empty) rather than a union.
+- **`operator` is required at the FILTER level too**, not only inside `operation`. Omitting it
+  fails the whole create with `Some required fields were not set: [operator]` — a 400 that names
+  no field path, so it reads as a malformed request rather than a missing key. Confirmed against
+  the live API: the identical payload succeeds with it and 400s without.
 
 Country values are also canonicalized through `DisplayName` before reaching a filter: the region
 map keys are lowercase for case-insensitive LOOKUP, but `IS_ANY_OF` is an EXACT match, so raw

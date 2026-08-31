@@ -4,10 +4,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1040,13 +1042,103 @@ func TestBuildLogError_DefaultDeny(t *testing.T) {
 		t.Errorf("credential failure = %v, want the decryption sentinel", got)
 	}
 
-	// A context error keeps its text: this package names it, and an operator needs to tell a
-	// cancellation from a deadline.
+	// A context error keeps its CLASS: an operator needs to tell a cancellation from a deadline.
 	if got := buildLogError(context.DeadlineExceeded); !errors.Is(got, context.DeadlineExceeded) {
 		t.Errorf("deadline error = %v, want it preserved", got)
 	}
 
+	// ...but only the sentinel, never the chain that wraps it. `errors.Is` matches through the
+	// whole chain, so returning the argument on this arm logged the OUTER text verbatim -- and a
+	// credential decode failure cancelled by its context takes exactly this path. Default-deny
+	// above is no protection when a named arm hands back the wrapper.
+	for _, sentinel := range []error{
+		context.Canceled,
+		context.DeadlineExceeded,
+		errUnconfirmedCreate,
+		domain.ErrCredentialsMalformed,
+		domain.ErrCredentialDecryptionFailed,
+	} {
+		wrapped := fmt.Errorf(`decode hubspot credentials: bad value "pat-na1-SECRET-TOKEN-VALUE": %w`, sentinel)
+		got := buildLogError(wrapped)
+		if !errors.Is(got, sentinel) {
+			t.Errorf("wrapped %v lost its class: got %v", sentinel, got)
+		}
+		if strings.Contains(got.Error(), "SECRET-TOKEN-VALUE") {
+			t.Errorf("buildLogError leaked the wrapper around %v: %q", sentinel, got.Error())
+		}
+	}
+
+	// The two credential classes stay DISTINCT. Merging them gave one log line to two failures
+	// with opposite remedies: re-store the credential row vs. check the application key the
+	// service booted with.
+	if got := buildLogError(fmt.Errorf("wrapped: %w", domain.ErrCredentialsMalformed)); errors.Is(got, domain.ErrCredentialDecryptionFailed) {
+		t.Errorf("a malformed blob reported as a decryption failure: %v", got)
+	}
+
+	// The API-error arm has the SAME wrapper hazard: `IsAPIError` is `errors.As`, which matches
+	// through any outer wrapper, so returning the argument would log that wrapper's text.
+	//
+	// Driven through a real client call rather than a fabricated value: `apiError` is unexported,
+	// so a fake would test the fake rather than the classification that runs in production.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	hc := hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	_, apiErr := hc.CreateList(context.Background(), "probe", json.RawMessage(`{"filterBranches":[]}`))
+	if !hubspot.IsAPIError(apiErr) {
+		t.Fatalf("fixture precondition: a 400 must render as an api error, got %v", apiErr)
+	}
+
+	wrappedAPI := fmt.Errorf(`decode hubspot credentials: bad value "pat-na1-SECRET-TOKEN-VALUE": %w`, apiErr)
+	loggedAPI := buildLogError(wrappedAPI)
+	if !hubspot.IsAPIError(loggedAPI) {
+		t.Errorf("wrapped api error lost its class: %v", loggedAPI)
+	}
+	if strings.Contains(loggedAPI.Error(), "SECRET-TOKEN-VALUE") {
+		t.Errorf("buildLogError leaked the wrapper around an api error: %q", loggedAPI.Error())
+	}
+
 	if buildLogError(nil) != nil {
 		t.Errorf("buildLogError(nil) must stay nil")
+	}
+}
+
+// The redaction must hold at the CALL SITE, not merely in the helper.
+//
+// TestBuildLogError_DefaultDeny calls buildLogError directly, so it proves the helper is correct
+// and nothing more: an edit that logged `buildErr` instead would leave every one of those
+// assertions passing. This drives a failing build through BuildAudience and reads the log the
+// service actually emitted.
+func TestBuildAudience_FailureLogIsRedactedEndToEnd(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// The shape the redactor exists for: a credential blob quoted into an error that ALSO wraps
+	// a context sentinel, so the named arm matches and would return the wrapper if it returned
+	// its argument.
+	secret := "pat-na1-SECRET-TOKEN-VALUE"
+	b := &fakeBuilder{
+		createErr: fmt.Errorf("decode hubspot credentials: bad value %q: %w", secret, context.Canceled),
+		failOnNth: 1,
+	}
+	s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	_, _ = s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+
+	logged := buf.String()
+	if strings.Contains(logged, secret) {
+		t.Errorf("the build failure log leaked the credential blob:\n%s", logged)
+	}
+	// Guard against the assertion passing because nothing was logged at all.
+	if !strings.Contains(logged, "audience build failed") && !strings.Contains(logged, "build") {
+		t.Fatalf("fixture precondition: expected a build failure log, got:\n%s", logged)
 	}
 }

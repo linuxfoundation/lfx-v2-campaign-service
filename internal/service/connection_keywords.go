@@ -123,16 +123,23 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 	rows := make([]*conn.GoogleAdsKeyword, 0, len(kp.Rows))
 	for _, r := range kp.Rows {
 		rows = append(rows, &conn.GoogleAdsKeyword{
-			CriterionID: r.CriterionID,
-			AdGroupID:   r.AdGroupID,
-			CampaignID:  r.CampaignID,
-			Text:        r.Text,
-			MatchType:   r.MatchType,
-			Status:      r.Status,
-			Impressions: r.Impressions,
-			Clicks:      r.Clicks,
-			CostMicros:  r.CostMicros,
-			Ctr:         r.Ctr,
+			CriterionID:  r.CriterionID,
+			AdGroupID:    r.AdGroupID,
+			CampaignID:   r.CampaignID,
+			AdGroupName:  r.AdGroupName,
+			CampaignName: r.CampaignName,
+			Text:         r.Text,
+			MatchType:    r.MatchType,
+			Status:       r.Status,
+			// Optional on the wire, so nil serialises as an ABSENT key rather than 0 — the
+			// distinction the whole pointer chain exists to preserve. A caller renders the
+			// absent case as unknown, never as a low score.
+			QualityScore: r.QualityScore,
+			Impressions:  r.Impressions,
+			Clicks:       r.Clicks,
+			CostMicros:   r.CostMicros,
+			Ctr:          r.Ctr,
+			Conversions:  r.Conversions,
 		})
 	}
 	return &conn.GoogleAdsKeywords{
@@ -174,6 +181,7 @@ func (s *ConnectionService) GetGoogleAdsAudience(ctx context.Context, p *conn.Ge
 			Clicks:      b.Clicks,
 			CostMicros:  b.CostMicros,
 			Ctr:         b.Ctr,
+			Conversions: b.Conversions,
 		})
 	}
 	return &conn.GoogleAdsAudience{

@@ -30,7 +30,9 @@ The implementation follows six principles from the reference lfx-one implementat
 ## Key Types and Functions
 
 ### `emailCopyEventDetails`
-Decode target for the brief's opaque `EventDetails` blob. Contains `eventName`, `location`, `startDate`, `endDate`. Only `eventName` is required (validated in `decodeEmailCopyEventDetails`).
+Decode target for the brief's opaque `EventDetails` blob. Contains `eventName`, `location`, `startDate`, `endDate` and `dates`. Only `eventName` is required (validated in `decodeEmailCopyEventDetails`).
+
+`dates` is the COMBINED free-text form the scraper produces ("19-20 November 2026"), and it is what briefs written by the UI actually carry: `startDate`/`endDate` are paid-platform config fields and are empty on an email brief. Reading only the structured pair yielded "Date TBD" for every email while the real dates sat in the brief beside them.
 
 ### `decodeEmailCopyEventDetails(blob)`
 Decodes the brief's `EventDetails` and validates that at least an event name is present. Unlike `audience_build.go` (which skips mismatched shapes), returns an error for missing or invalid event details, causing `GenerateEmailCopy` to return 400 BadRequest.
@@ -38,8 +40,11 @@ Decodes the brief's `EventDetails` and validates that at least an event name is 
 ### `composeEmailCopyPrompt(vars)`
 Returns (systemPrompt, userPrompt) built from fixed blocks. The system prompt contains role instruction, constraints, and the scrape-not-recall mandate. The user prompt carries the specific event details (name, location, dates). Prompt composition is deterministic and auditable.
 
+### `resolveEventDates(details)`
+Picks the best date string the brief actually carries. The structured `startDate`/`endDate` pair wins when present — a caller that set it meant it. The combined `dates` string is the fallback rather than the primary because it is free text from a scrape. Returns "Date TBD" when neither exists: the prompt instructs the model never to invent dates, so a wrong string is worse than an absent one.
+
 ### `formatEventDates(startDate, endDate)`
-Formats start/end dates into a human-readable string. If both dates are present, joins them with " - ". If only one, returns it. If neither, returns "Date TBD".
+Formats the structured pair into a human-readable string. Both present and equal returns the single date; both present and different joins them with " - "; one present returns it; neither returns "Date TBD".
 
 ### `parseEmailCopyResponse(raw)`
 Parses the model's JSON response, stripping code fences (e.g., ```json). Returns `(*briefs.EmailCopy, error)`. If JSON parsing fails, returns an error; this is fail-closed because email copy is the primary output of this endpoint (no fallback to raw text).

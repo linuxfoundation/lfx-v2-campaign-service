@@ -10323,16 +10323,20 @@ func unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAcce
 // from a value of type *GoogleAdsKeywordResponseBody.
 func unmarshalGoogleAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsKeyword(v *GoogleAdsKeywordResponseBody) *lfxv2campaignserviceconnections.GoogleAdsKeyword {
 	res := &lfxv2campaignserviceconnections.GoogleAdsKeyword{
-		CriterionID: *v.CriterionID,
-		AdGroupID:   *v.AdGroupID,
-		CampaignID:  *v.CampaignID,
-		Text:        *v.Text,
-		MatchType:   *v.MatchType,
-		Status:      *v.Status,
-		Impressions: *v.Impressions,
-		Clicks:      *v.Clicks,
-		CostMicros:  *v.CostMicros,
-		Ctr:         *v.Ctr,
+		CriterionID:  *v.CriterionID,
+		AdGroupID:    *v.AdGroupID,
+		CampaignID:   *v.CampaignID,
+		Text:         *v.Text,
+		MatchType:    *v.MatchType,
+		Status:       *v.Status,
+		AdGroupName:  *v.AdGroupName,
+		CampaignName: *v.CampaignName,
+		Impressions:  *v.Impressions,
+		Clicks:       *v.Clicks,
+		CostMicros:   *v.CostMicros,
+		Ctr:          *v.Ctr,
+		Conversions:  *v.Conversions,
+		QualityScore: v.QualityScore,
 	}
 
 	return res
@@ -10350,6 +10354,7 @@ func unmarshalGoogleAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectio
 		Clicks:      *v.Clicks,
 		CostMicros:  *v.CostMicros,
 		Ctr:         *v.Ctr,
+		Conversions: *v.Conversions,
 	}
 
 	return res
