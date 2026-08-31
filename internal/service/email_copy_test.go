@@ -324,7 +324,9 @@ func TestGenerateEmailCopy_BriefNotFound(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("LLM should not be called when the brief lookup fails")
+			// t.Error, not t.Fatal: this runs on the HANDLER goroutine, where Fatal calls
+			// runtime.Goexit on the wrong goroutine instead of failing the test cleanly.
+			t.Error("LLM should not be called when the brief lookup fails")
 		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
@@ -356,7 +358,7 @@ func TestGenerateEmailCopy_InvalidEventDetails(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("LLM should not be called when event details are invalid")
+			t.Error("LLM should not be called when event details are invalid") // handler goroutine -- see above
 		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
@@ -634,12 +636,12 @@ func TestGenerateEmailCopy_RejectsOverlongBody(t *testing.T) {
 }
 
 // TestGenerateEmailCopy_RejectsOversizedPrompt verifies that event details large enough
-// to create an oversized prompt (>3000 chars total) are rejected as 400 BadRequest before
+// to create oversized event details (>2400 runes across the three fields) are rejected as 400
 // calling the LLM. This prevents unbounded input-token cost and large allocations from
 // unsized event_details fields.
 func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
 	repo := newFakeBriefRepo()
-	// Create a brief with event details sized to exceed the 3000-char prompt limit.
+	// Create a brief with event details sized to exceed the 2400-rune input limit.
 	hugeName := repeatStr("KubeCon ", 500) // ~4000 chars
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
@@ -649,7 +651,7 @@ func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("LLM should not be called when prompt exceeds size limit")
+			t.Error("LLM should not be called when prompt exceeds size limit") // handler goroutine -- see above
 		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
@@ -671,11 +673,11 @@ func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
 }
 
 // TestGenerateEmailCopy_AcceptsSizeablePrompt verifies that normally-sized event details
-// (within the 3000-char prompt limit) pass validation and reach the LLM.
+// (within the 2400-rune input limit) pass validation and reach the LLM.
 func TestGenerateEmailCopy_AcceptsSizeablePrompt(t *testing.T) {
 	repo := newFakeBriefRepo()
 	// Create a brief with large but acceptable event details.
-	reasonablyLongName := repeatStr("x", 500) // 500 chars is well within the 3000 limit
+	reasonablyLongName := repeatStr("x", 500) // 500 runes is well within the 2400 limit
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
 		ProjectID:    "proj-123",
@@ -763,7 +765,7 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("GenerateEmailCopy() error = %v; a %d-rune (%d-byte) name is within the "+
-			"3000-CHARACTER limit and must not be rejected",
+			"2400-RUNE input limit and must not be rejected",
 			err, utf8.RuneCountInString(multibyteName), len(multibyteName))
 	}
 	if !llmCalled.Load() {
@@ -787,7 +789,7 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 // of the composed prompt. Asserting on the former is what makes deleting the pre-check fail.
 func TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing(t *testing.T) {
 	repo := newFakeBriefRepo()
-	hugeName := repeatStr("KubeCon ", 500) // 4000 runes, over the 3000 limit on its own
+	hugeName := repeatStr("KubeCon ", 500) // 4000 runes, over the 2400 limit on its own
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
 		ProjectID:    "proj-123",
@@ -991,13 +993,16 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the composed-prompt bound to reject an oversized stage template")
 	}
-	var bad *briefs.BadRequestError
-	if !errors.As(err, &bad) {
-		t.Fatalf("want BadRequestError, got %T: %v", err, err)
+	// 503, not 400, and the TYPE is now what distinguishes the two guards. This branch is
+	// unreachable by caller input, so if it fires a service-owned template has outgrown its
+	// budget -- a service defect, not a client error. The pre-check still answers 400, so a
+	// pre-check rejection can no longer masquerade as coverage here.
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("want ConnServiceUnavailableError (503) for a service-side overflow, got %T: %v", err, err)
 	}
-	// The COMPOSED guard specifically. Asserting only the type would pass if the pre-check
-	// rejected instead, which is exactly how the previous version went green.
-	if !strings.Contains(bad.Message, "service-side limit") {
-		t.Errorf("want the composed-bound message, got %q -- the PRE-check may have rejected first", bad.Message)
+	var bad *briefs.BadRequestError
+	if errors.As(err, &bad) {
+		t.Errorf("got a 400 -- the PRE-check rejected first, so this does not exercise the composed bound")
 	}
 }

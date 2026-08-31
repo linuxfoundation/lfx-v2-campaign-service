@@ -300,11 +300,17 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// design/brief.go, so none of the three carries a length constraint of its own and a
 	// single one of them can be arbitrarily large.
 	//
-	// MEASURED, not estimated: the fixed system prompt is 962 runes and a realistic user
-	// prompt ("KubeCon + CloudNativeCon North America 2026", "Salt Lake City, Utah",
-	// "November 10-13, 2026") is 245, for 1207 total. 3000 leaves roughly 1800 runes of
-	// headroom across the three fields — far above any real event name, far below a payload
-	// worth paying input tokens for. Oversized prompts are rejected as 400 BadRequest.
+	// MEASURED, not estimated, and this bound counts ONLY what the caller supplies: the three
+	// event-detail strings. A realistic set ("KubeCon + CloudNativeCon North America 2026",
+	// "Salt Lake City, Utah", "November 10-13, 2026") is 83 runes, so 2400 leaves ~2317 of
+	// headroom across the three — far above any real event name, far below a payload worth
+	// paying input tokens for. Oversized input is rejected as 400 BadRequest, which is correct
+	// here: the caller CAN edit these fields, unlike the composed bound below.
+	//
+	// The fixed prompt (1751 runes of system text plus the stage template) is deliberately NOT
+	// in this figure -- it is service-owned and no caller can grow it, which is exactly why the
+	// composed bound is a separate constant with a separate status code. Re-measure both when
+	// the shared prompt or a template changes; the numbers here have gone stale twice.
 	//
 	// RUNES, not bytes. The limit is stated to the caller and logged as a character count,
 	// and every other limit in this file counts runes (parseEmailCopyResponse's body bound,
@@ -373,12 +379,19 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
 	if totalPromptSize > maxComposedPromptSize {
-		slog.WarnContext(ctx, "email copy generation blocked: composed prompt exceeds size limit",
+		// ERROR, not Warn, and 503 rather than 400. This branch is unreachable by caller input --
+		// the worst valid composition is 7441 against a 7600 bound -- so if it fires, a
+		// service-owned stage template has outgrown its budget. That is a service defect, and a
+		// 400 would file it under client error on every 4xx/5xx dashboard while telling the caller
+		// to edit a brief that is not the problem. The message already said as much; the status
+		// code contradicted it.
+		slog.ErrorContext(ctx, "email copy generation blocked: composed prompt exceeds size limit; a stage template has outgrown the budget",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
+			"stage", emailstage.Resolve(promptVars.stage).StageName,
 			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
-		return nil, &briefs.BadRequestError{
-			Code:    "400",
-			Message: "the generated prompt for this email stage is too large to send; this is a service-side limit, not something the brief can be edited to fix",
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "email copy generation is temporarily unavailable for this stage",
 		}
 	}
 

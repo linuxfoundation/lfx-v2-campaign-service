@@ -157,9 +157,10 @@ The test suite (`internal/service/email_copy_test.go`) includes 20 test function
 - **TestGenerateEmailCopy_HappyPath**: Validates the full flow with valid brief and LLM response.
 - **TestGenerateEmailCopy_RejectsIncompleteCopy**: Validates 503 when any required field (subject/preheader/body/CTA) is blank.
 - **TestGenerateEmailCopy_RejectsOverlongBody**: Validates 503 when body HTML exceeds 8000 chars (not truncated, as truncation corrupts markup).
-- **TestGenerateEmailCopy_RejectsOversizedPrompt**: Validates 400 when composed prompt exceeds 3000 runes (prevents unbounded input-token cost).
+- **TestGenerateEmailCopy_RejectsOversizedPrompt**: Validates 400 when the caller's EVENT DETAILS exceed 2400 runes (prevents unbounded input-token cost). This is the input pre-check, not the composed bound — it drives a ~4000-rune name, which never reaches composition.
 - **TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes**: Pins the UNIT of that limit. A 998-rune / 2994-byte Japanese event name is inside the documented allowance and must reach the model; counting bytes rejected it, giving a caller who names their event in Japanese a third of the budget an English name gets.
-- **TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing**: Pins WHERE the limit is enforced. Both checks return the same 400 with the same message, so the outcome cannot distinguish them; the assertion is on the warn line, which names `input_size` for the pre-composition check and `prompt_size` for the post-composition one.
+- **TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing**: Pins WHERE the limit is enforced, by asserting the warn line — `input_size` for the pre-composition check, `prompt_size` for the post-composition one. The two outcomes are now distinguishable from outside as well (400 vs 503, different messages), but the log assertion is the sharper one and stays.
+- **TestGenerateEmailCopy_ComposedBoundIsReachable**: Validates 503 when a STAGE TEMPLATE overflows the composed bound, by injecting an oversized stage into `emailstage.Templates`. It cannot be driven by caller input — see the two-bound section above — and it asserts the 503 specifically, so a pre-check 400 cannot masquerade as coverage.
 - **TestGenerateEmailCopy_AcceptsSizeablePrompt**: Validates the full path for normally-sized event details (within prompt limit).
 - **TestDecodeEmailCopyEventDetails_FailsWithoutName**: Mutation test validating scrape principle (no name → no generation).
 - **TestFormatEventDates_RangeFormat**: Mutation test for date range format.
