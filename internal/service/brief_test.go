@@ -667,6 +667,13 @@ func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, strin
 	return nil, nil
 }
 
+// ResolvePlatformCampaign is unused by this fake's tests — they exercise brief editing, which
+// never resolves an upstream id. Returns no matches rather than a canned ref so a test that
+// starts using it fails loudly instead of quietly acting on a fabricated campaign.
+func (r *campaignEditRepo) ResolvePlatformCampaign(context.Context, string, model.Provider, string) ([]model.LocalCampaignRef, error) {
+	return nil, nil
+}
+
 // ListCampaignsForBrief returns the single stored campaign, matching what this fake's
 // GetCampaign serves. Returns an empty slice rather than nil when there is none, mirroring
 // the real repository's "a brief with no campaigns is an ordinary state" contract.

@@ -693,3 +693,23 @@ type ProjectCampaignScope struct {
 	// tracking existed — and per the service-wide convention a READ may proceed on it.
 	Result json.RawMessage
 }
+
+// LocalCampaignRef addresses one of THIS SERVICE'S campaign rows by the pair its mutation
+// routes require.
+//
+// It exists because the two id spaces do not meet anywhere else: a keyword row published by
+// the Google Ads reads carries the PLATFORM's numeric campaign id, while every mutation route
+// is keyed by this service's own campaign UUID under its brief. Resolving between them is a
+// database lookup, not a transformation, so a caller holding a keyword row cannot do it.
+//
+// Deliberately NOT PlatformCampaignRef, which points the other way: that one describes a
+// campaign as the PLATFORM holds it (id, name, provenance) and is what an adapter returns
+// during adoption. This one is a pointer into local storage. Naming both the same would make
+// the adoption guards and the mutation routes look interchangeable.
+type LocalCampaignRef struct {
+	// CampaignID is this service's own campaign UUID.
+	CampaignID string
+	// BriefID is the brief the campaign belongs to. Required because the mutation routes are
+	// brief-scoped, and a caller holding only a platform id has no way to know it.
+	BriefID string
+}
