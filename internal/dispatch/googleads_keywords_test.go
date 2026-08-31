@@ -385,8 +385,10 @@ func TestGoogleAdsInsightReads_UnknownProvenanceIsStillRead(t *testing.T) {
 func TestGoogleAdsReadKeywordPerformance_MapsRowsAndKeepsRequestWindow(t *testing.T) {
 	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777","status":"ENABLED","keyword":{"text":"kw","matchType":"EXACT"}},`+
-			`"adGroup":{"id":"333"},"campaign":{"id":"555"},"metrics":{"impressions":"200","clicks":"10","costMicros":"1000"}}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"criterionId":"777","status":"ENABLED","keyword":{"text":"kw","matchType":"EXACT"},`+
+			`"qualityInfo":{"qualityScore":7}},`+
+			`"adGroup":{"id":"333","name":"Registration - Exact"},"campaign":{"id":"555","name":"KubeCon NA 2026 - Search"},`+
+			`"metrics":{"impressions":"200","clicks":"10","costMicros":"1000","conversions":12.5}}]}`)
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
@@ -404,6 +406,22 @@ func TestGoogleAdsReadKeywordPerformance_MapsRowsAndKeepsRequestWindow(t *testin
 	}
 	if kp.Rows[0].Impressions != 200 || kp.Rows[0].Clicks != 10 {
 		t.Errorf("metrics not mapped: %+v", kp.Rows[0])
+	}
+	// The display names, quality score and conversions cross the SAME boundary as the
+	// counters above and are dropped the same silent way if this mapper forgets one: the
+	// model struct's fields are values, so the compiler reports nothing and the caller
+	// receives zeros. Asserted here because the client-level test cannot see this hop.
+	got := kp.Rows[0]
+	if got.AdGroupName != "Registration - Exact" || got.CampaignName != "KubeCon NA 2026 - Search" {
+		t.Errorf("names not mapped: %+v", got)
+	}
+	if got.QualityScore == nil {
+		t.Errorf("QualityScore = nil, want 7")
+	} else if *got.QualityScore != 7 {
+		t.Errorf("QualityScore = %d, want 7", *got.QualityScore)
+	}
+	if got.Conversions != 12.5 {
+		t.Errorf("Conversions = %v, want 12.5", got.Conversions)
 	}
 }
 
@@ -433,7 +451,7 @@ func TestGoogleAdsReadAudienceInsights_MapsBucketsAndKeepsRequestWindow(t *testi
 		b, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(string(b), "FROM age_range_view") {
-			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"campaign":{"id":"555"},"metrics":{"impressions":"100","clicks":"10","costMicros":"500"}}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"adGroupCriterion":{"ageRange":{"type":"AGE_RANGE_25_34"}},"campaign":{"id":"555"},"metrics":{"impressions":"100","clicks":"10","costMicros":"500","conversions":31.25}}]}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"results":[]}`)
@@ -449,6 +467,9 @@ func TestGoogleAdsReadAudienceInsights_MapsBucketsAndKeepsRequestWindow(t *testi
 	}
 	if len(ai.Buckets) != 1 || ai.Buckets[0].Value != "AGE_RANGE_25_34" || ai.Buckets[0].Dimension != model.AudienceDimensionAge {
 		t.Fatalf("buckets = %+v", ai.Buckets)
+	}
+	if got := ai.Buckets[0].Conversions; got != 31.25 {
+		t.Errorf("Conversions = %v, want 31.25", got)
 	}
 }
 

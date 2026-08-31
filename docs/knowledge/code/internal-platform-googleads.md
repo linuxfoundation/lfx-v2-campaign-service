@@ -1115,6 +1115,36 @@ two of three cannot tell the third is missing rather than empty. Google's
 `UNDETERMINED`/`UNKNOWN` buckets are returned as-is, since they are real unattributed traffic
 and dropping them makes the buckets silently under-sum.
 
+**The rows carry display names, a quality score and conversions, and two of those have
+absence semantics that are not zero.** `ad_group.name` and `campaign.name` accompany the ids
+for display only — a name is not unique across campaigns, so anything acting on a keyword still
+addresses it by `ad_group_id` + `criterion_id`, the pair `keyword-actions` takes.
+
+`quality_score` is a POINTER the whole way down, and every layer that flattened it to 0 would be
+a defect: Google withholds the 1-10 rating until a keyword has accrued enough impressions, so an
+unrated keyword is the ordinary case, and 0 is off the scale — a zero-defaulted score presents
+every unrated keyword as the worst-rated one. Absence arrives at TWO levels (the `qualityInfo`
+block omitted entirely, and the score omitted within a present block) and both collapse to nil.
+A score OUTSIDE 1-10 is likewise dropped rather than published, and that guard protects the whole
+response rather than one field: the design declares `Minimum(1)`/`Maximum(10)`, Goa emits
+response validation in the generated CLIENT, so one out-of-range row would reject the ENTIRE
+keywords response. The row itself is kept — its impressions and spend are real and unaffected by
+an unusable score. `TestKeywordQualityScoreBoundsMatchTheDesign` reads the bounds out of
+`design/brief.go` rather than restating them, so the guard cannot drift from the declaration that
+makes it necessary.
+
+`conversions` is NOT a pointer, and the asymmetry is deliberate: Google always measures
+conversions for a served keyword, so an omitted field is a measured zero rather than an unknown.
+It keeps its FRACTION — Google credits fractional conversions under data-driven and
+position-based attribution — and it carries the same magnitude validation `GetCampaignMetrics`
+applies, in the metrics helper both reads share. NaN, ±Inf, a negative count and a value beyond
+int64 each fail the whole response rather than being folded into a total: on the keyword path
+such a value renders as a measurement, and on the audience path it is SUMMED into a bucket, where
+one bad row corrupts every figure in that bucket rather than only its own. Audience conversions
+are aggregated with the other counters for the same reason the counters are — the device query
+returns one row per (campaign, device) pair, so assigning rather than summing would report one
+campaign's conversions as the whole device's.
+
 **Keyword actions are atomic and can only reduce delivery.** `PAUSE` and `REMOVE` are the only
 supported actions; there is deliberately no `ENABLE`, because re-enabling a keyword restarts
 spend and this surface exists to reduce what serves. `partialFailure` is never set, so one
