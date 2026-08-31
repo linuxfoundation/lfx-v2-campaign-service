@@ -1054,6 +1054,67 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("resolve-google-ads-campaign", func() {
+		Description("Resolve one Google Ads campaign id to this service's own campaign and brief. " +
+			"A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation " +
+			"route here is keyed by this service's campaign UUID under its brief. Nothing else " +
+			"bridges the two, so a keyword table cannot act on its own rows without this. " +
+			"A pure READ: it enumerates nothing and mutates nothing, and it is scoped to the " +
+			"project's own campaigns by the same `project_id` predicate the keyword and audience " +
+			"reads use — so it cannot be used to discover whether ANOTHER project owns a given " +
+			"upstream id, which on a shared ad account is the question that must not be answerable. " +
+			"**An unowned id is 200 with an empty `matches`, not 404.** The project genuinely owning " +
+			"no such campaign is an answer the caller acts on by refusing the action, and it must be " +
+			"distinguishable from the route or the project being wrong, which is what a 404 would say. " +
+			"**`matches` is an array, but a valid database can never return more than one entry.** Migration 000020's `uq_campaigns_platform_campaign_live` is a UNIQUE index on (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than per-project — so scoping to a project can only narrow one row to zero or one. The array is DEFENSIVE against that invariant lapsing (a dropped index, a narrowed predicate, a platform added to this read but not to the index), not a claim that duplicates occur: a single-ref contract would force some layer to pick a row, and picking would mutate a campaign nobody named. A caller receiving more than one must refuse rather than choose. " +
+			"This is NOT a list endpoint under rule 3: it is a keyed lookup returning the matches " +
+			"for one supplied id, with no collection, pagination or filtering.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Digits-only for the same reason KeywordActionInput's ids are: the value is a
+			// Google Ads campaign id, and admitting a non-numeric one only moves its refusal
+			// to a place that classifies it less clearly.
+			Attribute("platform_campaign_id", String, "The Google Ads campaign id to resolve. Digits only, no leading zero, and within int64.", func() {
+				// No leading zero, and 1-19 digits. The column is TEXT, so "007" and "7" are
+				// different rows: a leading-zero spelling of a real id matches nothing and comes
+				// back as a 200 "unowned" answer, which reads as "this campaign is not yours"
+				// rather than "that is not an id". "0" is not a Google Ads id either.
+				Pattern(`^[1-9][0-9]{0,18}$`)
+				MaxLength(19)
+				Example("24183781329")
+			})
+			Required("project_id", "platform_campaign_id")
+		})
+		Result(PlatformCampaignResolution)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		// Declared even though this method contacts no platform: `resolveBackendWithOrch`
+		// returns a 503 until storage and the orchestrator are wired. That is USUALLY cold
+		// start, and retrying is then right — but NOT always: in the supported no-database mode
+		// NewContainer leaves both nil deliberately, so these routes stay mounted and answer
+		// this same 503 for the life of the process. A caller must read it as "not available
+		// yet", never as a promise that waiting will clear it. An undeclared error is encoded as
+		// a 500 by the generated encoder, so a caller would otherwise see an opaque failure.
+		//
+		// A storage FAULT is separately a 500, not this — that one is a fault in a service that
+		// is up, and retrying does not help. Cold start is the only 503 here.
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/google-ads/campaign-ref")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("platform_campaign_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
 			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +

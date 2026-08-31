@@ -1031,3 +1031,294 @@ func TestKeywordInsights_ScopeLookupFailureDoesNotFallBack(t *testing.T) {
 			"established", d.keywordCalls, d.audienceCalls)
 	}
 }
+
+// ─── platform campaign resolution ───
+
+// resolverService wires a ConnectionService whose campaign repo holds the given campaigns.
+//
+// The campaigns are supplied as real rows rather than through scopeIDs, because the resolver
+// answers from the ROWS: it needs each campaign's own id and brief, which a scope entry does not
+// carry.
+func resolverService(t *testing.T, campaigns ...*model.Campaign) *ConnectionService {
+	t.Helper()
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	camps := &fakeCampaignRepo{upserted: campaigns}
+	svc.SetOrchestrator(NewOrchestrator(camps, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: &keywordActionDispatcher{},
+	}))
+	return svc
+}
+
+func googleCampaign(id, briefID, projectID, platformCampaignID string) *model.Campaign {
+	return &model.Campaign{
+		ID:                 id,
+		BriefID:            briefID,
+		ProjectID:          projectID,
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: platformCampaignID,
+	}
+}
+
+func TestResolveGoogleAdsCampaign_ReturnsTheBriefAndCampaignPair(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", "24183781329"))
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 1 || len(res.Matches) != 1 {
+		t.Fatalf("matches = %d, match_count = %d, want 1", len(res.Matches), res.MatchCount)
+	}
+	// BOTH ids are asserted, and with different values: the pair is the whole point of the
+	// endpoint, and a resolver that returned the campaign id twice would satisfy a single-field
+	// check while leaving the mutation route unaddressable.
+	if res.Matches[0].CampaignID != "c-1" {
+		t.Errorf("CampaignID = %q, want c-1", res.Matches[0].CampaignID)
+	}
+	if res.Matches[0].BriefID != "b-1" {
+		t.Errorf("BriefID = %q, want b-1", res.Matches[0].BriefID)
+	}
+	// Echoed from the request so the caller can pair the answer with what it asked.
+	if res.PlatformCampaignID != "24183781329" {
+		t.Errorf("PlatformCampaignID = %q, want the requested id", res.PlatformCampaignID)
+	}
+}
+
+// An id this project does not own answers 200 with NO matches, not an error.
+//
+// The distinction is what the caller acts on: an empty result means "not your campaign, refuse
+// the action", while an error means "the request or the service is wrong, retry or report". A
+// 404 here would say the latter about the former.
+func TestResolveGoogleAdsCampaign_UnownedIDIsAnEmptyAnswerNotAnError(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", "24183781329"))
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "99999999999",
+	})
+	if err != nil {
+		t.Fatalf("an unowned id must not be an error: %v", err)
+	}
+	if res.MatchCount != 0 {
+		t.Errorf("match_count = %d, want 0", res.MatchCount)
+	}
+	// Non-nil so it serialises as `[]` rather than `null` — the empty case is the one a caller
+	// must be able to read without a null check.
+	if res.Matches == nil {
+		t.Error("Matches = nil, want an empty slice so the JSON carries [] rather than null")
+	}
+}
+
+// THE TENANT BOUNDARY. The Google Ads customer is shared across foundations, so a campaign id
+// belonging to another project must resolve to nothing — otherwise this endpoint answers
+// "does foundation X own campaign N?", which is exactly the question the shared account makes
+// dangerous.
+func TestResolveGoogleAdsCampaign_DoesNotResolveAnotherProjectsCampaign(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-other", "b-other", "another-foundation", "24183781329"))
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 0 || len(res.Matches) != 0 {
+		t.Fatalf("another project's campaign resolved: %+v", res.Matches)
+	}
+}
+
+// A soft-deleted campaign is invisible here as it is to every other read. Resolving one would
+// hand back a handle to a campaign this service considers gone, and the mutation route would
+// then refuse it — an error the caller cannot act on, in place of a clean "not found".
+func TestResolveGoogleAdsCampaign_SkipsSoftDeletedCampaigns(t *testing.T) {
+	deleted := googleCampaign("c-1", "b-1", "cncf", "24183781329")
+	deleted.Status = "deleted"
+	svc := resolverService(t, deleted)
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 0 {
+		t.Errorf("a soft-deleted campaign was resolved: %+v", res.Matches)
+	}
+}
+
+// Ambiguity is REPORTED, not resolved.
+//
+// A valid database cannot produce this: uq_campaigns_platform_campaign_live (migration 000020)
+// is a global UNIQUE index on (platform, platform_campaign_id) for live Google Ads rows, so the
+// state this fake constructs is one PostgreSQL would reject. The test is therefore about the
+// SHAPE of the answer if that invariant ever lapses — a dropped index, a narrowed predicate, a
+// platform added to the read without being added to the index.
+//
+// It is worth pinning precisely because it is unreachable today: the alternative is a handler
+// that quietly takes matches[0], which would mutate a campaign the caller never named the first
+// time the invariant did lapse. Weaker evidence than a test driving a reachable path, and said
+// here rather than left to look like a schema claim.
+func TestResolveGoogleAdsCampaign_ReportsAmbiguityRatherThanPickingOne(t *testing.T) {
+	svc := resolverService(t,
+		googleCampaign("c-1", "b-1", "cncf", "24183781329"),
+		googleCampaign("c-2", "b-2", "cncf", "24183781329"),
+	)
+
+	res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if res.MatchCount != 2 || len(res.Matches) != 2 {
+		t.Fatalf("matches = %d, want both rows so the caller can refuse", len(res.Matches))
+	}
+	seen := map[string]string{}
+	for _, m := range res.Matches {
+		seen[m.CampaignID] = m.BriefID
+	}
+	if seen["c-1"] != "b-1" || seen["c-2"] != "b-2" {
+		t.Errorf("each match must carry its OWN brief: %+v", seen)
+	}
+}
+
+// The reserved LF scope is unaddressable here for the same reason it is on the keyword and
+// audience reads: left open, it would report whether the Linux Foundation's own scope holds a
+// given campaign to any caller.
+func TestResolveGoogleAdsCampaign_RejectsSystemScope(t *testing.T) {
+	svc := resolverService(t, googleCampaign("c-1", "b-1", model.SystemProjectID, "24183781329"))
+
+	_, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          model.SystemProjectID,
+		PlatformCampaignID: "24183781329",
+	})
+	if err == nil {
+		t.Fatal("expected the reserved system scope to be rejected")
+	}
+	if _, ok := err.(*conn.NotFoundError); !ok {
+		t.Errorf("error = %T (%v), want *conn.NotFoundError", err, err)
+	}
+}
+
+// A STORAGE failure is this service's fault, not the ad platform's.
+//
+// The resolver contacts no platform — the answer is entirely in this service's tables — so
+// routing its error through classifyInsightsError would advertise a local table fault as a
+// retryable Google Ads outage, in a message naming "keyword insights". It would also produce a
+// 503 that means something else entirely: this method DOES declare one, for a backend that is not
+// wired. That is usually cold start and usually clears, but not always — in no-database mode the
+// repository is never bound and the same 503 persists for the life of the process, and a JWKS
+// outage takes the same disposition. A live database fault is none of those: it is a 500.
+func TestResolveGoogleAdsCampaign_StorageFailureIsNotAPlatformOutage(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	camps := &fakeCampaignRepo{resolveErr: errors.New("connection refused")}
+	svc.SetOrchestrator(NewOrchestrator(camps, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: &keywordActionDispatcher{},
+	}))
+
+	_, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err == nil {
+		t.Fatal("a storage failure must not be reported as success")
+	}
+	// A 500, not the 503 the insights classifier's default arm produces. Asserted on the TYPE
+	// rather than the message, because the type is what the generated encoder switches on — a
+	// 503 here would be indistinguishable from the cold-start one this method declares, telling
+	// the caller to retry a fault that retrying cannot fix.
+	if _, ok := err.(*conn.InternalServerError); !ok {
+		t.Fatalf("error = %T (%v), want *conn.InternalServerError", err, err)
+	}
+	// The message must not describe a platform read. "keyword insights" tells the caller to
+	// retry against Google, which will never fix a database fault.
+	if msg := err.Error(); strings.Contains(strings.ToLower(msg), "keyword insights") {
+		t.Errorf("message describes a platform failure: %q", msg)
+	}
+}
+
+// COLD START is a 503, and the design must declare it or the generated encoder turns it into an
+// opaque 500.
+//
+// `resolveBackendWithOrch` refuses before storage and the orchestrator are wired, which is a
+// genuinely retryable condition — distinct from a storage FAULT in a service that is up, which
+// is a 500 because retrying does not help. Both reach the caller from this one method, so both
+// have to be declared and distinguishable.
+func TestResolveGoogleAdsCampaign_ColdStartIsRetryable(t *testing.T) {
+	// No SetOrchestrator: the service is constructed but not yet wired, which is the state a
+	// request arriving during startup finds.
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+
+	_, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "24183781329",
+	})
+	if err == nil {
+		t.Fatal("expected a cold-start refusal")
+	}
+	if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+		t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError — a 500 here tells the caller not to retry something that will succeed once startup finishes", err, err)
+	}
+}
+
+// A malformed id is a 400, not a confident "no such campaign".
+//
+// The DSL's `^[0-9]+$` / MaxLength(19) is enforced by the generated HTTP decoder only, so a
+// direct service or endpoint caller bypasses it. Unchecked, the value reaches the query and
+// returns an empty match set — which this route documents as "this project owns no campaign
+// with that id". That is a claim the input never justified, and the caller cannot then tell a
+// typo from an unowned campaign.
+func TestResolveGoogleAdsCampaign_MalformedIDIsRefusedNotAnsweredEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"letters", "abc"},
+		{"mixed", "2418378132x"},
+		{"empty", ""},
+		{"twenty digits, one past the int64 width", "12345678901234567890"},
+		{"negative", "-1"},
+		{"decimal", "24183781329.0"},
+		{"leading space", " 24183781329"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", "24183781329"))
+
+			res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+				ProjectID:          "cncf",
+				PlatformCampaignID: tc.id,
+			})
+			if err == nil {
+				t.Fatalf("a malformed id answered %+v instead of being refused", res)
+			}
+			if _, ok := err.(*conn.BadRequestError); !ok {
+				t.Errorf("error = %T (%v), want *conn.BadRequestError", err, err)
+			}
+		})
+	}
+}
+
+// The other direction, so the guard cannot be satisfied by refusing everything: a real
+// 11-digit id and the widest legal one both still resolve.
+func TestResolveGoogleAdsCampaign_WellFormedIDsAreStillAccepted(t *testing.T) {
+	for _, id := range []string{"24183781329", "1", "9223372036854775807"} {
+		svc := resolverService(t, googleCampaign("c-1", "b-1", "cncf", id))
+
+		res, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+			ProjectID:          "cncf",
+			PlatformCampaignID: id,
+		})
+		if err != nil {
+			t.Fatalf("a well-formed id %q was refused: %v", id, err)
+		}
+		if res.MatchCount != 1 {
+			t.Errorf("id %q: match_count = %d, want 1", id, res.MatchCount)
+		}
+	}
+}

@@ -8966,6 +8966,200 @@ func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildResolveGoogleAdsCampaignRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "resolve-google-ads-campaign" endpoint
+func (c *Client) BuildResolveGoogleAdsCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveGoogleAdsCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", "*lfxv2campaignserviceconnections.ResolveGoogleAdsCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResolveGoogleAdsCampaignRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections resolve-google-ads-campaign
+// server.
+func EncodeResolveGoogleAdsCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveGoogleAdsCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", "*lfxv2campaignserviceconnections.ResolveGoogleAdsCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("platform_campaign_id", p.PlatformCampaignID)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeResolveGoogleAdsCampaignResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-google-ads-campaign endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeResolveGoogleAdsCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeResolveGoogleAdsCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ResolveGoogleAdsCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			res := NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ResolveGoogleAdsCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveGoogleAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ResolveGoogleAdsCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ResolveGoogleAdsCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ResolveGoogleAdsCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ResolveGoogleAdsCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			err = ValidateResolveGoogleAdsCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", err)
+			}
+			return nil, NewResolveGoogleAdsCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListMetaAdsAccountsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "list-meta-ads-accounts" endpoint
@@ -10355,6 +10549,18 @@ func unmarshalGoogleAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectio
 		CostMicros:  *v.CostMicros,
 		Ctr:         *v.Ctr,
 		Conversions: *v.Conversions,
+	}
+
+	return res
+}
+
+// unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef
+// builds a value of type *lfxv2campaignserviceconnections.CampaignRef from a
+// value of type *CampaignRefResponseBody.
+func unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(v *CampaignRefResponseBody) *lfxv2campaignserviceconnections.CampaignRef {
+	res := &lfxv2campaignserviceconnections.CampaignRef{
+		CampaignID: *v.CampaignID,
+		BriefID:    *v.BriefID,
 	}
 
 	return res
