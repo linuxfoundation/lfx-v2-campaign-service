@@ -360,6 +360,53 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 	return out, nil
 }
 
+// resolvePlatformCampaignQuery finds the campaign rows a project owns for one upstream id.
+//
+// It selects the BRIEF and the campaign's own id, which is what makes an action addressable:
+// the mutation routes are brief- and campaign-scoped, while the keyword rows a caller acts on
+// carry only the platform's numeric id.
+//
+// AT MOST ONE ROW CAN MATCH, and that is enforced by the schema rather than by this query:
+// migration 000020 creates uq_campaigns_platform_campaign_live, a UNIQUE index on
+// (platform, platform_campaign_id) for every live Google Ads row. The index is GLOBAL — it has
+// no project_id column — so adding project_id here can only narrow one row to zero or one, never
+// widen. A second match is therefore not a state a valid database can hold.
+//
+// It is still written without LIMIT and the caller still handles a multi-row answer, because the
+// two are not the same claim: the index is the invariant, and a query that assumed uniqueness
+// would silently act on whichever row sorted first if that invariant were ever dropped or the
+// predicate narrowed. Ordered by id so a repeated call answers identically.
+const resolvePlatformCampaignQuery = `SELECT id, brief_id FROM campaigns
+	WHERE project_id=$1 AND platform=$2 AND platform_campaign_id=$3 AND status <> 'deleted'
+	ORDER BY id ASC`
+
+// ResolvePlatformCampaign returns every live campaign this project holds for one upstream
+// campaign id on platform.
+//
+// EMPTY is not an error, for the same reason it is not in ListProjectPlatformCampaignIDs: a
+// caller naming a campaign this project does not own is an ordinary refusal the service layer
+// reports, not a database fault. Soft-deleted rows are excluded, matching every other read.
+func (r *CampaignRepo) ResolvePlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) ([]model.LocalCampaignRef, error) {
+	rows, err := r.db.Query(ctx, resolvePlatformCampaignQuery, projectID, platform, platformCampaignID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve platform campaign: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.LocalCampaignRef, 0)
+	for rows.Next() {
+		var ref model.LocalCampaignRef
+		if serr := rows.Scan(&ref.CampaignID, &ref.BriefID); serr != nil {
+			return nil, fmt.Errorf("scan local campaign ref: %w", serr)
+		}
+		out = append(out, ref)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate local campaign refs: %w", rerr)
+	}
+	return out, nil
+}
+
 // GetCampaign returns a single campaign under a brief. Soft-deleted campaigns are
 // invisible to reads: a deleted campaign returns ErrNotFound (404), matching
 // domain.ErrNotFound's contract ("does not exist, or has been soft-deleted") and

@@ -126,9 +126,36 @@ trip, so it can fire after the POST reached Reddit), and a read/decode failure o
 a 2xx body are wrapped as `transportError`; a 5xx status is returned as an
 `apiError` and classified by status. `createOutcomeAmbiguous` treats all of these
 as "may exist", so callers require verification before a manual retry. A definite
-4xx is NOT UNCONFIRMED — Reddit
-received and REJECTED the request, so nothing was created and the caller gets a
-clean failure.
+4xx is NOT UNCONFIRMED — Reddit received and REJECTED the request, so nothing was
+created and the caller gets a clean failure.
+
+**429 is the exception, and it is not a definite 4xx.** A throttle is not a
+semantic rejection: Reddit received the request and shed it, which says nothing
+about whether the mutation committed first. Every path that can surface one is
+therefore UNCONFIRMED — the exhausted retry, the over-cap `Retry-After` abort,
+and a context cancelled inside the backoff sleep. This matches the Meta client,
+which documents the same reasoning.
+
+**CREATES DO NOT RETRY A THROTTLE, and that is a separate rule from the
+classification above.** Classifying the exhausted outcome describes the error a
+caller finally sees; it says nothing about what happened inside `request`, and
+there the automatic retry was itself the duplicate — a 429 on a create may
+already have made the campaign, and the retry makes a second one before any
+classification runs. Measured rather than reasoned: with retries enabled a
+throttled create is sent FOUR times.
+
+So the five non-idempotent POSTs — campaign, ad group and its community
+fallback, ad, promoted post — go through `requestNoThrottleRetry`, while every
+read and PATCH keeps the backoff, because retrying those is safe and is what
+the backoff exists for. Meta reached the same split first: its `doCreate`
+passes `retryThrottle=false`.
+
+Two tests hold it, and they cover different things. One counts REQUESTS on a
+throttled create, since an assertion on the returned error passes whether the
+retry ran or not. The other reads the source for `c.request(ctx,
+http.MethodPost` call sites, because the behavioural test invokes the helper
+directly and would stay green if a call site were switched back — and the
+guarantee depends entirely on which helper each site picked.
 
 ## Authoring a promoted post (brief -> servable ad)
 
@@ -248,9 +275,10 @@ claim is already known, not from where it is convenient to write.**
     from an in-flight failure, a 2xx whose body carried no `data.id` (which
     `createPromotedPost` wraps as one precisely because the post may exist), or an
     `*apiError` with a 5xx / mutating 3xx. Verify BEFORE authoring again.
-  - **FAILED** — an `*apiError` that is not ambiguous, i.e. a definite 4xx. Reddit
-    received and rejected it, so no post exists and the operator can remediate
-    directly.
+  - **FAILED** — an `*apiError` that is not ambiguous, i.e. a definite 4xx OTHER
+    THAN 429. Reddit received and rejected it, so no post exists and the operator
+    can remediate directly. A 429 is UNCONFIRMED, not failed: it means the request
+    was shed, not refused.
   - **Pre-send** — the `default` arm (token refresh, body encode, request build, a
     refused/unresolvable dial). A new non-`apiError` shape must be checked against
     `createOutcomeAmbiguous` before it lands here.

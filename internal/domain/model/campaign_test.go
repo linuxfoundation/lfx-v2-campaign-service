@@ -3,7 +3,13 @@
 
 package model
 
-import "testing"
+import (
+	"go/doc"
+	"go/parser"
+	"go/token"
+	"strings"
+	"testing"
+)
 
 func TestJobStatus_Terminal(t *testing.T) {
 	terminal := map[JobStatus]bool{
@@ -210,5 +216,50 @@ func TestSummariseSettings_IsIdempotent(t *testing.T) {
 	rb.SummariseSettings()
 	if second := [2]int{rb.DivergedCount, rb.UnknownCount}; first != second {
 		t.Errorf("counts changed on a second call: %v then %v", first, second)
+	}
+}
+
+// Go binds a CONTIGUOUS comment block to whatever declaration it abuts, so inserting a type
+// between an existing doc comment and its struct silently re-attaches the whole comment to the
+// newcomer — and leaves the original undocumented. That is what happened here: LocalCampaignRef
+// was inserted after ProjectCampaignScope's prose, so a security-relevant explanation of the
+// shared-customer invariant became LocalCampaignRef's doc comment.
+//
+// Parsed with go/doc rather than grepped, because the defect is about ATTACHMENT: the text is
+// present either way, and only the parser knows which declaration owns it.
+func TestDocCommentsAreAttachedToTheirOwnTypes(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse package: %v", err)
+	}
+	pkg, ok := pkgs["model"]
+	if !ok {
+		t.Fatal("package model not found")
+	}
+	docPkg := doc.New(pkg, ".", doc.AllDecls)
+
+	// Each type's own name must appear in its own doc comment. Not a style rule — it is the
+	// cheapest signal that the comment belongs to the declaration it sits above, which is
+	// exactly what a misplaced insertion breaks.
+	for _, want := range []string{"ProjectCampaignScope", "LocalCampaignRef", "PlatformCampaignRef"} {
+		var found *doc.Type
+		for _, typ := range docPkg.Types {
+			if typ.Name == want {
+				found = typ
+				break
+			}
+		}
+		if found == nil {
+			t.Errorf("type %s not found — renamed or removed without updating this guard", want)
+			continue
+		}
+		if strings.TrimSpace(found.Doc) == "" {
+			t.Errorf("%s has NO doc comment; a type inserted above it may have absorbed one", want)
+			continue
+		}
+		if !strings.Contains(found.Doc, want) {
+			t.Errorf("%s's doc comment does not name it, so it probably belongs to another type:\n%s", want, found.Doc)
+		}
 	}
 }
