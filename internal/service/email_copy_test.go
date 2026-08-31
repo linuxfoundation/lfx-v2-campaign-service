@@ -1005,4 +1005,15 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 	if errors.As(err, &bad) {
 		t.Errorf("got a 400 -- the PRE-check rejected first, so this does not exercise the composed bound")
 	}
+
+	// The MESSAGE must not promise transience. A compiled-in template exceeding a compiled-in
+	// bound returns this same 503 to every retry until a corrected deployment ships, so
+	// "temporarily unavailable" would send the caller into a retry loop that cannot succeed.
+	// 503 carries the retry hint by convention; only the text can withdraw it.
+	if strings.Contains(strings.ToLower(unavailable.Message), "temporar") {
+		t.Errorf("the message promises transience for a defect only a deployment fixes: %q", unavailable.Message)
+	}
+	if !strings.Contains(unavailable.Message, "retrying will not help") {
+		t.Errorf("the message must tell the caller a retry cannot clear this: %q", unavailable.Message)
+	}
 }

@@ -389,9 +389,12 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
 			"stage", emailstage.Resolve(promptVars.stage).StageName,
 			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
+		// NOT "temporarily": this is a compiled-in template exceeding a compiled-in bound, so every
+		// retry returns this same 503 until a corrected deployment ships. Promising transience
+		// would have the caller retry a request that cannot start succeeding on its own.
 		return nil, &briefs.ConnServiceUnavailableError{
 			Code:    "503",
-			Message: "email copy generation is temporarily unavailable for this stage",
+			Message: "email copy generation is unavailable for this stage; retrying will not help until this service is fixed",
 		}
 	}
 
