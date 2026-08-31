@@ -593,6 +593,83 @@ var HubSpotCampaign = Type("hubspot-campaign", func() {
 	Required("id", "name")
 })
 
+
+// CampaignRef points at one of this service's campaigns, for a caller that holds only the
+// platform's own campaign id.
+//
+// The two id spaces do not meet anywhere else. Every mutation route here is keyed by this
+// service's campaign UUID under its brief, while the keyword rows a caller acts on carry the
+// PLATFORM's numeric campaign id — `GoogleAdsKeyword.campaign_id` is Google's, not ours. A
+// caller looking at a keyword table therefore cannot address the campaign it belongs to without
+// asking, which is what this type answers.
+var CampaignRef = Type("campaign-ref", func() {
+	Attribute("campaign_id", String, "This service's campaign id, as the mutation routes take it.", func() {
+		Format(FormatUUID)
+		Example("6f9619ff-8b86-d011-b42d-00c04fc964ff")
+	})
+	Attribute("brief_id", String, "The brief the campaign belongs to. Needed because the mutation routes are brief-scoped.", func() {
+		Format(FormatUUID)
+		Example("2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c")
+	})
+	Required("campaign_id", "brief_id")
+})
+
+// PlatformCampaignResolution answers "which of my campaigns is this platform id?".
+//
+// `matches` is an ARRAY, but a valid database can never return more than one entry: migration
+// 000020's uq_campaigns_platform_campaign_live is a UNIQUE index on
+// (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than
+// per-project, so scoping to a project can only narrow one row to zero or one.
+//
+// It stays an array rather than an optional single ref because the shape should not encode an
+// invariant it cannot enforce. If that index were ever dropped or its predicate narrowed, a
+// single-ref contract would force some layer to pick a row — and picking would mutate a campaign
+// the caller never named. An array makes the impossible case representable and refusable instead
+// of silently resolved.
+//
+// An EMPTY array is a 200, not a 404. The project genuinely owns no campaign with that upstream
+// id, which is an answer rather than a failure — and it is the answer a caller acts on by
+// refusing the action, so it must be distinguishable from the route being wrong.
+var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
+	Attribute("platform_campaign_id", String, "The upstream id that was resolved, echoed back.", func() { Example("24183781329") })
+	// The ARRAY carries its own single-element example as well as the composite one below.
+	// Goa's synthesised array example repeats the element type's example twice, which shows a
+	// duplicate for an id a unique index makes single — wrong in the per-property schema even
+	// though the composite example is right.
+	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.", func() {
+		Example([]map[string]any{
+			{
+				"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+				"brief_id":    "2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c",
+			},
+		})
+	})
+	Attribute("match_count", Int, "How many matches were found.", func() { Example(1) })
+	Required("platform_campaign_id", "matches", "match_count")
+	// An explicit COMPOSITE example, for the same reason CampaignSettingsReadback carries one.
+	// Goa synthesises an object example by cloning each attribute's example, so `matches` came
+	// out as the SAME CampaignRef repeated twice while `match_count` kept its scalar 1 — an
+	// example that both contradicts its own count and shows two entries for an id a unique
+	// index makes single. A reader taking that at face value would build a client that expects
+	// duplicates to be normal, which is the opposite of this type's contract.
+	//
+	// The attribute-level Example(1) is retained: it documents the count's shape in the
+	// per-property schema, where no `matches` array sits beside it to contradict it.
+	//
+	// One match is the shape a caller sees whenever the project owns the id at all — zero is
+	// the other real answer, and is already described in words above rather than by example,
+	// since an empty array shows a reader nothing about the element shape.
+	Example(map[string]any{
+		"platform_campaign_id": "24183781329",
+		"matches": []map[string]any{
+			{
+				"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+				"brief_id":    "2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c",
+			},
+		},
+		"match_count": 1,
+	})
+})
 // KeywordActionInput is one requested keyword mutation.
 //
 // Both ids are required and neither is inferable. A criterion id is unique only within its ad

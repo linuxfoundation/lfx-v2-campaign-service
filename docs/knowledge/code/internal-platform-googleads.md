@@ -1145,6 +1145,38 @@ are aggregated with the other counters for the same reason the counters are — 
 returns one row per (campaign, device) pair, so assigning rather than summing would report one
 campaign's conversions as the whole device's.
 
+**A campaign-ref lookup bridges the two id spaces.** The keyword rows this file publishes carry
+GOOGLE's numeric campaign id, because that is what the GAQL rows hold, while every mutation route
+is keyed by this service's own campaign UUID under its brief. Nothing else connects them, so a
+caller looking at a keyword table could not address the campaign a keyword belongs to.
+`GET /projects/{projectId}/google-ads/campaign-ref` answers it from this service's own tables —
+no dispatcher, no connection, the ad platform is never contacted, which is why
+it declares no 409 — there is no connection to be unusable and no ad account to
+mismatch.
+
+It DOES declare a 503: `resolveBackendWithOrch` refuses
+before storage and the orchestrator are wired. That is USUALLY cold start, and
+retrying is then the right answer — but not always. In the supported
+no-database mode `NewContainer` leaves the repository and orchestrator nil
+deliberately, so these routes stay mounted and answer this same typed 503
+rather than a bare 404, and there it persists for the life of the process. A
+client must read 503 as "not available", never as "not available yet" — the word
+"yet" is a promise this route cannot keep. A
+storage FAULT is a 500 instead — a failure in a service already up, where
+retrying does not help — and is reported directly rather than through
+`classifyInsightsError`: every arm of that classifier describes a platform
+failure, so routing a local table fault there would advertise it as a retryable
+Google Ads problem, in a message naming keyword insights. The two statuses are
+deliberately distinct because a caller should branch on them differently.
+
+An unowned id answers 200 with an empty `matches`, not 404: "this project owns no campaign with
+that id" is an answer the caller acts on by refusing, while a 404 says the route or project is
+wrong. `matches` is an ARRAY even though `uq_campaigns_platform_campaign_live` (migration 000020)
+makes more than one impossible in a valid database — the index is global over
+`(platform, platform_campaign_id)` for live Google Ads rows, so scoping to a project can only
+narrow one row to zero or one. The array shape exists so that if the invariant ever lapses the
+extra row is refusable rather than silently resolved by taking the first.
+
 **Keyword actions are atomic and can only reduce delivery.** `PAUSE` and `REMOVE` are the only
 supported actions; there is deliberately no `ENABLE`, because re-enabling a keyword restarts
 spend and this surface exists to reduce what serves. `partialFailure` is never set, so one

@@ -408,11 +408,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- accepted: hubspot base + descendants ---
 		{"/projects/p1/hubspot", true},
 		{"/projects/p1/hubspot/utm", true},
-		// --- accepted: per-provider metrics + google-ads keywords/audience ---
+		// --- accepted: per-provider metrics + the google-ads reads (keywords, audience, campaign-ref) ---
 		{"/projects/p1/google-ads/metrics", true},
 		{"/projects/p1/twitter-ads/metrics", true},
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
+		{"/projects/p1/google-ads/campaign-ref", true},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
 		// inherits nothing: it needs its own alternation branch in the HTTPRoute regex AND

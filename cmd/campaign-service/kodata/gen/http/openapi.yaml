@@ -6819,6 +6819,90 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-google-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Google Ads campaign id to this service''s own campaign and brief. A caller holding a keyword row has the PLATFORM''s numeric campaign id; every mutation route here is keyed by this service''s campaign UUID under its brief. Nothing else bridges the two, so a keyword table cannot act on its own rows without this. A pure READ: it enumerates nothing and mutates nothing, and it is scoped to the project''s own campaigns by the same `project_id` predicate the keyword and audience reads use — so it cannot be used to discover whether ANOTHER project owns a given upstream id, which on a shared ad account is the question that must not be answerable. **An unowned id is 200 with an empty `matches`, not 404.** The project genuinely owning no such campaign is an answer the caller acts on by refusing the action, and it must be distinguishable from the route or the project being wrong, which is what a 404 would say. **`matches` is an array, but a valid database can never return more than one entry.** Migration 000020''s `uq_campaigns_platform_campaign_live` is a UNIQUE index on (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than per-project — so scoping to a project can only narrow one row to zero or one. The array is DEFENSIVE against that invariant lapsing (a dropped index, a narrowed predicate, a platform added to this read but not to the index), not a claim that duplicates occur: a single-ref contract would force some layer to pick a row, and picking would mutate a campaign nobody named. A caller receiving more than one must refuse rather than choose. This is NOT a list endpoint under rule 3: it is a keyed lookup returning the matches for one supplied id, with no collection, pagination or filtering.'
+            operationId: lfx-v2-campaign-service-connections#resolve-google-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Google Ads campaign id to resolve. Digits only, no leading zero, and within int64.
+                  required: true
+                  type: string
+                  maxLength: 19
+                  pattern: ^[1-9][0-9]{0,18}$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/PlatformCampaignResolution'
+                        required:
+                            - platform_campaign_id
+                            - matches
+                            - match_count
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/google-ads/keywords:
         get:
             tags:
@@ -7935,6 +8019,26 @@ definitions:
             pct: 94.2
         required:
             - label
+    CampaignRef:
+        title: CampaignRef
+        type: object
+        properties:
+            brief_id:
+                type: string
+                description: The brief the campaign belongs to. Needed because the mutation routes are brief-scoped.
+                example: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                format: uuid
+            campaign_id:
+                type: string
+                description: This service's campaign id, as the mutation routes take it.
+                example: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                format: uuid
+        example:
+            brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+            campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+        required:
+            - campaign_id
+            - brief_id
     CampaignSettingsField:
         title: CampaignSettingsField
         type: object
@@ -10467,6 +10571,37 @@ definitions:
         required:
             - code
             - message
+    PlatformCampaignResolution:
+        title: PlatformCampaignResolution
+        type: object
+        properties:
+            match_count:
+                type: integer
+                description: How many matches were found.
+                example: 1
+                format: int64
+            matches:
+                type: array
+                items:
+                    $ref: '#/definitions/CampaignRef'
+                description: Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.
+                example:
+                    - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+            platform_campaign_id:
+                type: string
+                description: The upstream id that was resolved, echoed back.
+                example: "24183781329"
+        example:
+            match_count: 1
+            matches:
+                - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                  campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+            platform_campaign_id: "24183781329"
+        required:
+            - platform_campaign_id
+            - matches
+            - match_count
     PlatformResult:
         title: PlatformResult
         type: object

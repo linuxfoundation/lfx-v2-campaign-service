@@ -33,7 +33,7 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
-   providers, `google-ads/keywords|audience`, `hubspot`). **`{provider}/metrics` is
+   providers, `google-ads/keywords|audience|campaign-ref`, `hubspot`). **`{provider}/metrics` is
    ruled and routed but NOT SERVED** — no `design/` file declares it, so a request
    reaching it is authorized here and forwarded to a service with no such route.
    `parity_test` cannot catch that: it compares the RuleSet to the regex and reads
