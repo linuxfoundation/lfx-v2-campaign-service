@@ -169,6 +169,8 @@ type fakeCampaignRepo struct {
 	// scope (or an EMPTY one) without dispatching campaigns to produce it. nil means "derive
 	// it from the campaigns this fake holds".
 	scopeIDs []string
+	// resolveErr forces ResolvePlatformCampaign to fail, for the error-mapping case.
+	resolveErr error
 	// scopeResults pins the provenance blob for a scopeIDs entry, so a test can exercise the
 	// adapter's creation-customer filter without dispatching a real campaign.
 	scopeResults map[string]json.RawMessage
@@ -238,6 +240,34 @@ func (r *fakeCampaignRepo) ListProjectPlatformCampaignIDs(_ context.Context, pro
 		}
 		seen[c.PlatformCampaignID] = true
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: c.PlatformCampaignID, Result: c.Result})
+	}
+	return out, nil
+}
+
+// ResolvePlatformCampaign mirrors the real query rather than returning canned refs: it filters
+// on the same four predicates (project, platform, upstream id, not-deleted) and returns EVERY
+// match. That matters because the behaviour under test is what the service does with an
+// ambiguous or empty answer, and a fake that could only ever return one row would make the
+// multi-match refusal untestable.
+//
+// Deliberately NOT deduplicated, unlike ListProjectPlatformCampaignIDs above. That method
+// answers "which upstream campaigns does this project own", where a repeated id is noise; this
+// one answers "which of MY rows is this upstream id", where a repeated id is the whole finding.
+func (r *fakeCampaignRepo) ResolvePlatformCampaign(_ context.Context, projectID string, platform model.Provider, platformCampaignID string) ([]model.LocalCampaignRef, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.resolveErr != nil {
+		return nil, r.resolveErr
+	}
+	out := make([]model.LocalCampaignRef, 0)
+	for _, c := range append(append([]*model.Campaign{}, r.upserted...), r.adopted...) {
+		if c == nil || c.ProjectID != projectID || c.Platform != platform || c.Status == "deleted" {
+			continue
+		}
+		if c.PlatformCampaignID == "" || c.PlatformCampaignID != platformCampaignID {
+			continue
+		}
+		out = append(out, model.LocalCampaignRef{CampaignID: c.ID, BriefID: c.BriefID})
 	}
 	return out, nil
 }

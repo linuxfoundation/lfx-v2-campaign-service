@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -147,6 +148,126 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 		Rows:      rows,
 		RowCount:  len(rows),
 		Truncated: kp.Truncated,
+	}, nil
+}
+
+// ResolveGoogleAdsCampaign maps one Google Ads campaign id to this service's own campaign
+// and brief, so a caller holding keyword rows can address the brief-scoped mutation routes.
+//
+// The keyword read publishes `campaign_id` as GOOGLE's numeric id, because that is what the
+// GAQL rows carry; every mutation route here is keyed by this service's own campaign UUID under
+// its brief. Nothing else bridges the two, so without this a keyword table cannot act on the
+// rows it just displayed.
+//
+// NOT a dispatcher call: the answer is entirely in this service's tables, so no connection is
+// resolved and Google is never contacted. That is why it declares no 409 — there is no
+// connection to be unusable and no ad account to mismatch.
+//
+// It DOES declare a 503: resolveBackendWithOrch refuses until storage and the orchestrator are
+// wired. That is USUALLY cold start, and retrying is then the right answer — but it is not the
+// only case. In the supported no-database mode NewContainer leaves the repository and
+// orchestrator nil deliberately, so its routes stay mounted and answer this typed 503 rather
+// than a bare 404 — and there the same status persists for the life of the process, however
+// long a caller retries. A client must treat 503 as "not available", never as "not available
+// yet" — the word "yet" is a promise this route cannot keep, and a client that hears it retries
+// a status that will outlive the retry budget.
+//
+// A storage FAULT is a 500 instead — a failure in a service already up, where retrying does not
+// help. Both reach the caller from this one method, so both are declared and kept
+// distinguishable.
+//
+// An unowned id is an empty `matches` with a 200, NOT a 404. "This project owns no campaign
+// with that upstream id" is an answer the caller acts on by refusing the action, and a 404
+// would say something different — that the route or the project is wrong. Distinguishing them
+// is the difference between a caller reporting "not your campaign" and one retrying a request
+// that will never work.
+
+// validateGoogleAdsCampaignID mirrors the DSL constraint on `platform_campaign_id`.
+//
+// Kept as a named helper rather than inlined so the two cannot drift silently: if the design
+// bound changes, this is the one other place that has to move, and it says so.
+//
+// 19 is len(math.MaxInt64), the widest a Google Ads numeric id can be. Digits-only matters
+// beyond tidiness: the id is compared as a STRING against stored platform ids, so a value that
+// is not a canonical decimal integer can never match a real row — it can only produce a
+// confident "no such campaign".
+func validateGoogleAdsCampaignID(id string) error {
+	const maxGoogleAdsCampaignIDLen = 19
+	const badID = "the campaign id must be 1-19 digits, without a leading zero, and within int64"
+
+	if id == "" || len(id) > maxGoogleAdsCampaignIDLen {
+		return &conn.BadRequestError{Code: "400", Message: badID}
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return &conn.BadRequestError{Code: "400", Message: badID}
+		}
+	}
+	// Canonical decimal only. The doc comment above is the reason: the id is compared as a
+	// STRING against stored platform ids, so "007" is a different row from "7" and simply
+	// matches nothing — the caller gets a confident 200 "not your campaign" for an id that is
+	// really just misspelled. "0" is not a Google Ads id at all.
+	if id[0] == '0' {
+		return &conn.BadRequestError{Code: "400", Message: badID}
+	}
+	// 19 digits is len(math.MaxInt64) but not every 19-digit string fits in one, and the values
+	// above it are unrepresentable rather than merely absent. Rejecting here keeps "declared 400"
+	// and "what the caller actually gets" the same answer.
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return &conn.BadRequestError{Code: "400", Message: badID}
+	}
+	return nil
+}
+
+func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *conn.ResolveGoogleAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	// Same reserved-scope refusal as the reads above: left open, this would report whether the
+	// Linux Foundation's own scope holds a given campaign to any caller.
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	// The DSL's `^[1-9][0-9]{0,18}$` / MaxLength(19) is enforced by the generated HTTP DECODER
+	// only, so a direct service or endpoint caller bypasses it entirely. Unchecked, "abc", "007"
+	// or a 20-digit id
+	// reaches the query and comes back as a 200 with no matches — which this route documents as
+	// "this project owns no campaign with that id", a claim the input never justified. The
+	// caller then refuses an action for the wrong reason and cannot tell a typo from an
+	// unowned campaign. Mirrored here so the answer is the declared 400 whichever door the
+	// request came in by.
+	if err := validateGoogleAdsCampaignID(p.PlatformCampaignID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch("resolve campaign reference")
+	if err != nil {
+		return nil, err
+	}
+	refs, rerr := orch.ResolvePlatformCampaign(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID)
+	if rerr != nil {
+		// NOT classifyInsightsError. Every arm of that classifier describes a PLATFORM failure —
+		// an unsupported window, an ad-account mismatch, a connection that cannot be used — and
+		// its default reports an upstream Google Ads outage. This lookup contacts no platform at
+		// all: the only thing that can fail is this service's own database.
+		//
+		// Routing it there would advertise a local table fault as a retryable Google Ads problem,
+		// in a message naming "keyword insights", and would return a 503 this method does not
+		// declare — so the generated server would encode an undeclared error as a 500 anyway.
+		// A storage fault is this service's fault and is reported as one.
+		slog.ErrorContext(ctx, "campaign reference lookup failed",
+			"project_id", p.ProjectID, "error", safeErrSummary(rerr))
+		return nil, &conn.InternalServerError{Code: "500", Message: "the campaign reference could not be read"}
+	}
+
+	// Preallocated with make so an empty result serializes as `[]`, never `null` — the empty
+	// case is the one a caller must be able to read reliably.
+	matches := make([]*conn.CampaignRef, 0, len(refs))
+	for _, r := range refs {
+		matches = append(matches, &conn.CampaignRef{CampaignID: r.CampaignID, BriefID: r.BriefID})
+	}
+	return &conn.PlatformCampaignResolution{
+		// Echoed from the REQUEST, which is safe here precisely because it is not evidence of
+		// anything: the caller already knows what it asked, and the matches are what answer it.
+		PlatformCampaignID: p.PlatformCampaignID,
+		Matches:            matches,
+		MatchCount:         len(matches),
 	}, nil
 }
 
