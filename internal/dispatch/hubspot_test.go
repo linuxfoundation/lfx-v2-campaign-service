@@ -74,6 +74,10 @@ type hubspotRec struct {
 	// widgets from the map it returns, so a guard counting only populated widgets sees 1 and
 	// rewrites the populated body — the ambiguity the single-widget guard exists to refuse.
 	emptyExtraWidget bool
+	// imageWidget adds a header IMAGE module beside the rich-text block -- the ordinary template
+	// shape. It has a body object but no `html` key, so counting object-bodied modules reported
+	// two widgets and the body write silently no-opped.
+	imageWidget bool
 }
 
 func (r *hubspotRec) markClone() {
@@ -179,6 +183,9 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			// A template with a SECOND rich-text widget, when the test asks for one. There is no
 			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
 			// must decline rather than guess -- see its `len(widgets) != 1` guard.
+			if rec.imageWidget {
+				widgets["module_hdr"] = map[string]any{"body": map[string]any{"src": "https://img.example/logo.png", "alt": "logo"}}
+			}
 			if rec.emptyExtraWidget {
 				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "   "}}
 			}
@@ -336,6 +343,33 @@ func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
 	}
 	if !strings.Contains(tagged, "Join us") {
 		t.Errorf("the tagged html must be the GENERATED body, not the template's; got %q", tagged)
+	}
+}
+
+// A header IMAGE beside the rich-text block must NOT count as a second widget.
+//
+// This is the ordinary template shape, and it was silently broken: an image module decodes into
+// `struct{ HTML string }` perfectly happily with HTML empty, so counting object-bodied modules
+// reported two widgets, the single-widget guard declined, and the generated body was never
+// written -- with only an info log to say so. The fix identifies a rich-text widget by the
+// PRESENCE of the `html` key, which an image body does not carry.
+//
+// The inverse of TestHubSpot_EmptySecondWidgetKeepsItsBody: that one pins an undercount, this one
+// an overcount, and the same key check has to answer both.
+func TestHubSpot_HeaderImageDoesNotBlockTheBodyWrite(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.imageWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	_, body := rec.snapshotContent()
+	if !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written despite a header image module", body)
 	}
 }
 

@@ -129,6 +129,11 @@ const maxUnfilteredEmails = 500
 // Bounded by PAGES as well, because a provider that ignores `limit` and returns a handful of rows
 // per page would otherwise still walk to maxListPages before the row bound was reached -- the
 // runaway this exists to stop.
+const maxFilteredScan = 2000
+
+// maxFilteredPages caps the same walk in pages, for the small-page case described above.
+const maxFilteredPages = 20
+
 // ErrSearchIncomplete reports that a FILTERED search hit its scan bound having matched nothing.
 //
 // It is deliberately an error rather than an empty result. `(nil-error, empty-slice)` states that
@@ -139,11 +144,6 @@ const maxUnfilteredEmails = 500
 // Only the ZERO-match case qualifies. A bounded walk that found rows returns them: the caller has
 // something true to show, and the listing is documented as bounded.
 var ErrSearchIncomplete = errors.New("hubspot: email search reached its scan bound before finding any match; the result would be indistinguishable from an authoritative absence")
-
-const maxFilteredScan = 2000
-
-// maxFilteredPages caps the same walk in pages, for the small-page case described above.
-const maxFilteredPages = 20
 
 // SearchEmails returns marketing emails whose name or subject contains query
 // (case-insensitive), most-recently-updated first. Read-only (idempotent). A FILTERED
@@ -495,10 +495,32 @@ type emailContent struct {
 
 // widgetBody is one draft widget's body. Only html is touched; every other field is preserved
 // by patching the widget map rather than replacing it.
+//
+// `Body` is a raw map rather than a struct with an `html` field, because the PRESENCE of the key
+// is what identifies a rich-text widget. A struct cannot express that: an image module decodes
+// into `struct{ HTML string }` perfectly happily, leaving HTML empty, so it is indistinguishable
+// from a rich-text block whose body is blank. The two must not be conflated -- see the count in
+// GetEmailHTMLWidgets.
 type widgetBody struct {
-	Body struct {
-		HTML string `json:"html"`
-	} `json:"body"`
+	Body map[string]json.RawMessage `json:"body"`
+}
+
+// html returns the widget's rich-text body and whether it is a rich-text widget at all.
+//
+// `ok` is key PRESENCE, not a non-empty value: an EMPTY rich-text block is still a block an
+// operator can see and fill, while an image or divider carries no `html` key whatsoever.
+func (w widgetBody) html() (string, bool) {
+	raw, ok := w.Body["html"]
+	if !ok {
+		return "", false
+	}
+	var out string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		// An `html` key holding something other than a string is not a rich-text body this can
+		// write, so it is not counted as one either.
+		return "", false
+	}
+	return out, true
 }
 
 // GetEmailHTMLWidgets returns the draft's rich-text widget bodies keyed by widget id, and the
@@ -530,14 +552,25 @@ func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string
 	for key, rawWidget := range ec.Content.Widgets {
 		var w widgetBody
 		if json.Unmarshal(rawWidget, &w) != nil {
-			continue // a widget that isn't this shape (image, divider, …) is not ours to touch
+			continue // not a body-shaped widget at all
+		}
+		// RICH-TEXT ONLY, identified by the `html` KEY. Decoding into a struct counted every
+		// object-bodied module -- an image or divider decodes into `struct{ HTML string }` with
+		// HTML empty, indistinguishable from a blank rich-text block -- so the ordinary template
+		// (one rich-text block plus a header image) reported 2 and the caller's single-widget
+		// guard silently declined to write the body. That overcount replaced an earlier
+		// UNDERCOUNT which omitted empty blocks; the key check is what separates the two
+		// questions the count has to answer.
+		body, isRichText := w.html()
+		if !isRichText {
+			continue
 		}
 		// Counted whether or not it carries html: an EMPTY rich-text block is still a block the
 		// operator can see and fill, so a template holding one is not the unambiguous
 		// single-body shape the caller's guard is asking about.
 		total++
-		if strings.TrimSpace(w.Body.HTML) != "" {
-			out[key] = w.Body.HTML
+		if strings.TrimSpace(body) != "" {
+			out[key] = body
 		}
 	}
 	return out, total, nil
