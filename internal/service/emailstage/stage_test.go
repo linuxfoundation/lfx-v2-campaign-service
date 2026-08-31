@@ -100,28 +100,34 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 				if !strings.Contains(lower, w) {
 					continue
 				}
-				// The SENTENCE carrying the claim must hold the placeholder -- not merely the
-				// string. "Registration closes [DATE]. Early bird pricing available now." has a
-				// bracket, but it belongs to a different sentence, so the OMIT rule still cannot
-				// touch the pricing claim. Checking the whole string let exactly that through.
-				sentence := claimSentence(text, w)
-				if !strings.Contains(sentence, "[") {
-					t.Errorf("stage %q %s asserts %q in a sentence with no placeholder, so the OMIT rule cannot remove it: %q",
-						name, field, w, sentence)
+				// EVERY sentence carrying the claim, not the first. The OMIT rule drops a
+				// sentence at a time, so one guarded sentence says nothing about the next:
+				// "Early bird pricing ends [DEADLINE]. Standard pricing applies after that date."
+				// passed on the first half while the second asserted a pricing schedule nothing
+				// supplies. Returning the first match made the guard agree with itself.
+				for _, sentence := range claimSentences(text, w) {
+					if !strings.Contains(sentence, "[") {
+						t.Errorf("stage %q %s asserts %q in a sentence with no placeholder, so the OMIT rule cannot remove it: %q",
+							name, field, w, sentence)
+					}
 				}
 			}
 		}
 	}
 }
 
-// claimSentence returns the sentence of text containing needle (case-insensitive), or text when
-// it cannot be split. Sentence-scoped because the OMIT rule drops a SENTENCE, so a placeholder
-// elsewhere in the string does not make this claim removable.
-func claimSentence(text, needle string) string {
+// claimSentences returns EVERY sentence of text containing needle (case-insensitive), or the whole
+// text when no sentence matches. Sentence-scoped because the OMIT rule drops one sentence at a
+// time, and ALL of them because a guarded sentence does not vouch for the one after it.
+func claimSentences(text, needle string) []string {
+	var out []string
 	for _, s := range strings.Split(text, ".") {
 		if strings.Contains(strings.ToLower(s), needle) {
-			return s
+			out = append(out, s)
 		}
 	}
-	return text
+	if len(out) == 0 {
+		return []string{text}
+	}
+	return out
 }

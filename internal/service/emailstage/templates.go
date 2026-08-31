@@ -350,7 +350,10 @@ WORD COUNT TARGET: 180-250 words`,
 			"Primary: Register Now (registration page)",
 			"Secondary: View All Options (pricing page)",
 		},
-		FooterNote: "Early bird pricing ends [DEADLINE]. Standard pricing applies after that date.",
+		// Both sentences placeholdered. The second asserted a standard-pricing schedule with no
+		// placeholder, so the OMIT rule could not reach it even when the first was dropped -- and
+		// the pipeline supplies neither a standard price nor a registration deadline.
+		FooterNote: "Early bird pricing ends [DEADLINE]. [REGULAR_PRICE] applies after that date.",
 	},
 
 	// NOTE: this stage's prompt asks for a `{{ contact.firstname }}` merge token in the greeting.
