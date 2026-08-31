@@ -442,6 +442,10 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 	//
 	// `len(widgets) != 1` is checked too: with a total of 1 and nothing writable there is no
 	// widget to write, and ranging over an empty map would silently no-op.
+	// One rich-text widget, empty or not. `GetEmailHTMLWidgets` now returns every rich-text
+	// widget rather than only the populated ones, so these two counts are the same number -- but
+	// the pair is kept because they answer different questions and a future change to either
+	// should not silently re-couple them.
 	if totalWidgets != 1 || len(widgets) != 1 {
 		// Not an error: a template this shape is simply one this cannot safely rewrite.
 		slog.InfoContext(ctx, "email draft does not have exactly one rich-text widget; leaving its body as the template wrote it",

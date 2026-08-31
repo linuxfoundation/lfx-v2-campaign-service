@@ -74,6 +74,9 @@ type hubspotRec struct {
 	// widgets from the map it returns, so a guard counting only populated widgets sees 1 and
 	// rewrites the populated body — the ambiguity the single-widget guard exists to refuse.
 	emptyExtraWidget bool
+	// onlyEmptyWidget makes the draft's SINGLE rich-text widget empty -- the most unambiguous
+	// shape there is, and the one an operator most expects the generated body to fill.
+	onlyEmptyWidget bool
 	// imageWidget adds a header IMAGE module beside the rich-text block -- the ordinary template
 	// shape. It has a body object but no `html` key, so counting object-bodied modules reported
 	// two widgets and the body write silently no-opped.
@@ -179,7 +182,11 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			// earlier write. A stub that always replayed the template made write ORDER
 			// unobservable — and order is the whole claim of the content-vs-tagging test.
 			html := rec.currentBody()
-			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": html}}}
+			body1 := html
+			if rec.onlyEmptyWidget {
+				body1 = "   "
+			}
+			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": body1}}}
 			// A template with a SECOND rich-text widget, when the test asks for one. There is no
 			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
 			// must decline rather than guess -- see its `len(widgets) != 1` guard.
@@ -343,6 +350,28 @@ func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
 	}
 	if !strings.Contains(tagged, "Join us") {
 		t.Errorf("the tagged html must be the GENERATED body, not the template's; got %q", tagged)
+	}
+}
+
+// A template whose ONLY rich-text block is empty must still receive the generated body.
+//
+// It is the most unambiguous shape there is -- one block, nothing to overwrite -- and it was the
+// one case the guard refused: GetEmailHTMLWidgets omitted empty bodies, so `total` was 1 while the
+// writable map was empty, leaving the widget unaddressable. Every rich-text widget is now
+// returned, empty included, and the caller decides.
+func TestHubSpot_SingleEmptyWidgetReceivesTheBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.onlyEmptyWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if _, body := rec.snapshotContent(); !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written into the single empty rich-text block", body)
 	}
 }
 

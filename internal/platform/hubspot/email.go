@@ -568,10 +568,15 @@ func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string
 		// Counted whether or not it carries html: an EMPTY rich-text block is still a block the
 		// operator can see and fill, so a template holding one is not the unambiguous
 		// single-body shape the caller's guard is asking about.
+		// EVERY rich-text widget goes in the map, empty ones included, and the count is simply its
+		// size. Omitting the empties made a template with exactly ONE empty rich-text block --
+		// the most unambiguous shape there is, and the one an operator most expects to be filled
+		// -- unaddressable: total was 1, the map was empty, and the caller's guard refused a write
+		// it could have made safely.
+		//
+		// The caller decides what to do with an empty body; this reports what the draft HAS.
 		total++
-		if strings.TrimSpace(body) != "" {
-			out[key] = body
-		}
+		out[key] = body
 	}
 	return out, total, nil
 }
