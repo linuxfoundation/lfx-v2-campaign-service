@@ -697,9 +697,11 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 
 // CreateCampaign implements service.CampaignSearcher for HubSpot.
 //
-// A WRITE into a PORTAL-WIDE namespace: the created campaign is visible to every
-// campaign managers, whatever project scoped the request. It performs no existence check — see
-// the client method and the design description for why that belongs with the operator.
+// A WRITE into a PORTAL-WIDE namespace: the created campaign is visible to every campaign
+// manager working in the portal this project's connection authenticates against — which is not
+// necessarily the LF's own, since connections are stored per project with their own token and
+// portal_id. It performs no existence check — see the client method and the design description
+// for why that belongs with the operator.
 func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
 	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
 	if err != nil {
