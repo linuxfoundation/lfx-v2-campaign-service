@@ -64,6 +64,17 @@ type hubspotConfig struct {
 	BodyHTML string `json:"bodyHtml"`
 }
 
+// hubspotConfigProvenance is the subset of hubspotConfig persisted to ConfigSnapshot: what the
+// campaign was cloned FROM and how its links attribute. Deliberately not the whole config --
+// the snapshot column is unencrypted and API-visible, and the generated Subject/BodyHTML are
+// caller-supplied content whose links can carry tokens. A separate type rather than json tags on
+// the original, so a field added to hubspotConfig is NOT persisted until someone adds it here on
+// purpose.
+type hubspotConfigProvenance struct {
+	SourceEmailID string `json:"sourceEmailId"`
+	UTMCampaign   string `json:"utmCampaign,omitempty"`
+}
+
 // audienceReader is the narrow read slice of the audience repository the email dispatcher needs:
 // it looks up the brief's built HubSpot audience to resolve the send-list. Kept minimal (not the
 // full domain.AudienceRepository) so the dispatcher can't mutate audiences.
@@ -650,8 +661,18 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 		Status:             campaignStatusCreated,
 	}
 	// The email channel has no numeric budget/schedule config; ConfigSnapshot still captures the
-	// validated hubspotConfig (the cloned template id) for provenance/reconcile.
-	applyCampaignConfig(ctx, c, 0, false, "", "", cfg)
+	// validated config for provenance/reconcile -- but only the PROVENANCE fields, which is what
+	// this snapshot was ever for.
+	//
+	// Subject and BodyHTML are deliberately excluded. `ConfigSnapshot` is an unencrypted column
+	// and is returned through the API, while generated body HTML is caller-supplied and its
+	// `href`s can carry query tokens. The draft in HubSpot is the system of record for the copy;
+	// duplicating it here would put arbitrary caller content in a column no one reading a
+	// reconcile row expects to hold any.
+	applyCampaignConfig(ctx, c, 0, false, "", "", hubspotConfigProvenance{
+		SourceEmailID: cfg.SourceEmailID,
+		UTMCampaign:   cfg.UTMCampaign,
+	})
 	if raw, err := json.Marshal(struct {
 		*hubspot.Email
 		PortalID string `json:"portalId,omitempty"`

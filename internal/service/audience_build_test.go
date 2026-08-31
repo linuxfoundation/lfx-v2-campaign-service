@@ -1049,7 +1049,13 @@ func TestBuildLogError_DefaultDeny(t *testing.T) {
 	// whole chain, so returning the argument on this arm logged the OUTER text verbatim -- and a
 	// credential decode failure cancelled by its context takes exactly this path. Default-deny
 	// above is no protection when a named arm hands back the wrapper.
-	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, errUnconfirmedCreate} {
+	for _, sentinel := range []error{
+		context.Canceled,
+		context.DeadlineExceeded,
+		errUnconfirmedCreate,
+		domain.ErrCredentialsMalformed,
+		domain.ErrCredentialDecryptionFailed,
+	} {
 		wrapped := fmt.Errorf(`decode hubspot credentials: bad value "pat-na1-SECRET-TOKEN-VALUE": %w`, sentinel)
 		got := buildLogError(wrapped)
 		if !errors.Is(got, sentinel) {
@@ -1058,6 +1064,40 @@ func TestBuildLogError_DefaultDeny(t *testing.T) {
 		if strings.Contains(got.Error(), "SECRET-TOKEN-VALUE") {
 			t.Errorf("buildLogError leaked the wrapper around %v: %q", sentinel, got.Error())
 		}
+	}
+
+	// The two credential classes stay DISTINCT. Merging them gave one log line to two failures
+	// with opposite remedies: re-store the credential row vs. check the application key the
+	// service booted with.
+	if got := buildLogError(fmt.Errorf("wrapped: %w", domain.ErrCredentialsMalformed)); errors.Is(got, domain.ErrCredentialDecryptionFailed) {
+		t.Errorf("a malformed blob reported as a decryption failure: %v", got)
+	}
+
+	// The API-error arm has the SAME wrapper hazard: `IsAPIError` is `errors.As`, which matches
+	// through any outer wrapper, so returning the argument would log that wrapper's text.
+	//
+	// Driven through a real client call rather than a fabricated value: `apiError` is unexported,
+	// so a fake would test the fake rather than the classification that runs in production.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	hc := hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	_, apiErr := hc.CreateList(context.Background(), "probe", json.RawMessage(`{"filterBranches":[]}`))
+	if !hubspot.IsAPIError(apiErr) {
+		t.Fatalf("fixture precondition: a 400 must render as an api error, got %v", apiErr)
+	}
+
+	wrappedAPI := fmt.Errorf(`decode hubspot credentials: bad value "pat-na1-SECRET-TOKEN-VALUE": %w`, apiErr)
+	loggedAPI := buildLogError(wrappedAPI)
+	if !hubspot.IsAPIError(loggedAPI) {
+		t.Errorf("wrapped api error lost its class: %v", loggedAPI)
+	}
+	if strings.Contains(loggedAPI.Error(), "SECRET-TOKEN-VALUE") {
+		t.Errorf("buildLogError leaked the wrapper around an api error: %q", loggedAPI.Error())
 	}
 
 	if buildLogError(nil) != nil {

@@ -250,6 +250,21 @@ func IsAPIError(err error) bool {
 	return errors.As(err, &ae)
 }
 
+// APIErrorOf returns the client's own HTTP-status error from err's chain, or nil.
+//
+// `IsAPIError` answers "is one in there", which `errors.As` finds through ANY outer wrapper. A
+// caller that logs `err` on the strength of it therefore logs the wrapper's text too -- and a
+// wrapper is written by whoever wrapped it, so its safety is exactly what this package cannot
+// vouch for. Returning the unwrapped error gives that caller the safe rendering the doc above
+// promises: method, path and status, with nothing carried in from outside.
+func APIErrorOf(err error) error {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae
+	}
+	return nil
+}
+
 // IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
 // request — the server may or may not have applied the change. This is true for an
 // ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply

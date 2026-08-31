@@ -638,7 +638,14 @@ func buildLogError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, domain.ErrCredentialDecryptionFailed) || errors.Is(err, domain.ErrCredentialsMalformed) {
+	// Reported as THEMSELVES, not merged: a malformed blob is proven-bad row data, while a
+	// decryption failure can mean the application key is wrong. Same log line, opposite remedies
+	// -- re-store the credential vs. check the key the service booted with -- so collapsing them
+	// misdirects whoever is holding the incident.
+	if errors.Is(err, domain.ErrCredentialsMalformed) {
+		return domain.ErrCredentialsMalformed
+	}
+	if errors.Is(err, domain.ErrCredentialDecryptionFailed) {
 		return domain.ErrCredentialDecryptionFailed
 	}
 	// Context and package sentinels: return the SENTINEL, never the error that wraps it.
@@ -656,9 +663,11 @@ func buildLogError(err error) error {
 		return errUnconfirmedCreate
 	}
 	// HubSpot API errors render as method/path/status and never quote a response body, so their
-	// own text is safe -- and unlike a sentinel it names the call that failed.
-	if hubspot.IsAPIError(err) {
-		return err
+	// own text is safe -- and unlike a sentinel it names the call that failed. The UNWRAPPED one,
+	// though: `IsAPIError` is `errors.As`, which finds one through any outer wrapper, so returning
+	// `err` here would log that wrapper verbatim -- the same leak the sentinel arms above avoid.
+	if apiErr := hubspot.APIErrorOf(err); apiErr != nil {
+		return apiErr
 	}
 	// Anything else: report the CLASS, not the text. `safeBuildCause` already gives an operator a
 	// consumer-safe sentence for the same failure, so no diagnostic is lost that they could act on.
