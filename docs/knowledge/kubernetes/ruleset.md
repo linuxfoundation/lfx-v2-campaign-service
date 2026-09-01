@@ -24,7 +24,8 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `AccountLister` — google-ads, meta-ads, linkedin-ads, microsoft-ads and twitter-ads
    (ad-account discovery; linkedin-ads and microsoft-ads added under LFXV2-3064,
    twitter-ads under LFXV2-3319) — and
-   `connection-hubspot/emails` (marketing-email search, LFXV2-3197). The HTTPRoute
+   `connection-hubspot/emails` (marketing-email search, LFXV2-3197) and
+   `connection-hubspot/campaigns` (campaign UTM lookup and create, LFXV2-2641). The HTTPRoute
    regex spells out THREE branches for the same reason — the `AccountLister` providers
    with `accounts`, hubspot with `emails`, and the providers with neither (reddit-ads,
    whose client has no `ListAdAccounts`) —

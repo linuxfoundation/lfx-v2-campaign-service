@@ -355,9 +355,16 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
 			credentialProject = model.SystemProjectID
 		}
+		// NO ERROR TEXT. The sentinel itself is built from ciphertext and key material only,
+		// but what reaches the log is the whole CHAIN, and domain.Encryptor is an interface
+		// whose implementations are free to quote the ciphertext or the key they failed on.
+		// internal/dispatch/creds.go says exactly this, and names this arm as the one path
+		// that still logged the cause — closed here, because the campaign CREATE now routes
+		// its setup failures through this classifier. The operator-facing message already
+		// carries the remedy, and the cause adds nothing an operator can act on.
 		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
 			"project_id", credentialProject, "requested_by_project_id", projectID,
-			"provider", string(d.provider), "error", aerr)
+			"provider", string(d.provider))
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
 	case errors.Is(aerr, domain.ErrServiceDefect):
 		// ABOVE both connection arms below. The 400 below completes "the stored <provider>
@@ -1192,4 +1199,224 @@ func (s *ConnectionService) TestHubspot(ctx context.Context, p *conn.TestHubspot
 
 func (s *ConnectionService) SetCredentialHubspot(ctx context.Context, p *conn.SetCredentialHubspotPayload) error {
 	return s.setCredential(ctx, p.ProjectID, model.ProviderHubSpot, p.Credentials, actorFromCtx(ctx))
+}
+
+// hubspotCampaignDiscovery reuses the account-discovery status mapping for the campaign
+// lookup, exactly as hubspotEmailDiscovery does and for the same reasons: every arm applies
+// unchanged (connection missing, unusable, undecryptable, platform down) and only the noun
+// differs.
+var hubspotCampaignDiscovery = accountDiscovery{
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	operation:   "campaign search",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with private_app_token set",
+}
+
+// hubspotCampaignCreateDiscovery is the CREATE path's own descriptor.
+//
+// Separate from hubspotCampaignDiscovery only because `operation` reaches the operator: sharing
+// it made the create endpoint report "campaign search service is unavailable" during cold start
+// and "campaign search is not supported" on a capability gap. Both name an operation the caller
+// did not ask for, sending them to look at the wrong thing.
+var hubspotCampaignCreateDiscovery = accountDiscovery{
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	operation:   "campaign creation",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with private_app_token set",
+}
+
+// SearchHubspotCampaigns finds LF HubSpot campaigns by name, so a caller can read back an
+// existing campaign's utm token.
+//
+// THE ANSWER IS PORTAL-WIDE. `project_id` gates permission, not visibility — HubSpot's campaign
+// namespace is the whole portal, so this returns every campaign in the connection's portal. That
+// is stated on the design method too, because a reader who assumes project scoping would draw
+// the wrong conclusion from an unexpected match.
+func (s *ConnectionService) SearchHubspotCampaigns(ctx context.Context, p *conn.SearchHubspotCampaignsPayload) (*conn.SearchHubspotCampaignsResult, error) {
+	d := hubspotCampaignDiscovery
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	// Trimmed-empty is a BAD REQUEST, refused before the platform is contacted. Goa's
+	// MinLength(1) counts runes, so `q="   "` passes the generated decoder; the client then
+	// refuses it with a sentinel-less error that classifyDiscoveryError would report as a
+	// retryable 503 — telling the caller to retry a request that can never succeed.
+	if strings.TrimSpace(p.Q) == "" {
+		return nil, &conn.BadRequestError{Code: "400", Message: "a campaign search requires a non-empty query"}
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
+	if err != nil {
+		return nil, err
+	}
+
+	page, serr := orch.SearchCampaigns(ctx, p.ProjectID, d.provider, p.Q)
+	if serr != nil {
+		// Mirrors ListHubspotEmails: the unsupported-capability sentinel is the one arm
+		// classifyDiscoveryError cannot carry, because that helper keys on
+		// ErrAccountsUnsupported and the capabilities are independent.
+		if errors.Is(serr, ErrCampaignSearchUnsupported) {
+			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+		}
+		return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, serr)
+	}
+
+	// make, not nil: an empty result must serialize as `[]` rather than `null`. The caller
+	// branches on empty-vs-found to decide whether to offer a create, so this is the one field
+	// it must be able to read without a null check.
+	out := make([]*conn.HubspotCampaign, 0, len(page.Campaigns))
+	for _, c := range page.Campaigns {
+		out = append(out, toWireHubspotCampaign(c))
+	}
+	// Capped travels with the results because it changes what an EMPTY result means. Dropped
+	// here, the UI would read "no matches" as "no such campaign" and offer a create.
+	return &conn.SearchHubspotCampaignsResult{Campaigns: out, Capped: page.Capped}, nil
+}
+
+// CreateHubspotCampaign creates a portal-wide HubSpot campaign and returns the token HubSpot
+// assigned it.
+//
+// IT ALWAYS CREATES, and the created campaign is visible to everyone on that portal. Both facts are on
+// the design method; neither is enforced here, because neither can be: a duplicate check would
+// race, and visibility is HubSpot's data model. The caller searches first and warns.
+func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.CreateHubspotCampaignPayload) (*conn.HubspotCampaign, error) {
+	d := hubspotCampaignCreateDiscovery
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return nil, &conn.BadRequestError{Code: "400", Message: "a campaign creation requires a non-empty name"}
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
+	if err != nil {
+		return nil, err
+	}
+
+	created, cerr := orch.CreateCampaign(ctx, p.ProjectID, d.provider, p.Name)
+	if cerr != nil {
+		if errors.Is(cerr, ErrCampaignSearchUnsupported) {
+			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+		}
+		// SETUP failures are reported as themselves, because they PROVE nothing was sent: a
+		// missing or inactive connection, an undecryptable credential, an unsupported platform.
+		// Calling those "may already exist" would send an operator to HubSpot to look for a
+		// campaign that was never attempted, and hide the remedy they actually need — which is
+		// to fix the connection. Only failures that could have reached HubSpot are unconfirmed.
+		// ErrCredentialDecryptionFailed belongs here too, and its absence was a real defect:
+		// credsSource.decryptConn returns it BEFORE any HubSpot request is built, so the campaign
+		// provably does not exist — yet it fell through to the unconfirmed 503 telling the
+		// operator to go and check.
+		if errors.Is(cerr, domain.ErrNotFound) || errors.Is(cerr, domain.ErrSystemConnectionMissing) ||
+			errors.Is(cerr, domain.ErrConnectionNotUsable) || errors.Is(cerr, domain.ErrCredentialDecryptionFailed) {
+			return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
+		}
+		// The BEHAVIOURAL marker too, not only the four sentinels above. `credsSource` marks every
+		// failure that happened before the HubSpot request was built with `NoUpstreamCreate()` --
+		// `connLoadFailed` is one, a repository error loading the connection row. Enumerating
+		// sentinels catches the ones we thought of; the marker catches the ones the credential
+		// layer will add later. Without it a database blip fell through to "the campaign may
+		// already exist", sending an operator to hunt in HubSpot for a create that provably never
+		// started.
+		var notSent interface{ NoUpstreamCreate() bool }
+		if errors.As(cerr, &notSent) && notSent.NoUpstreamCreate() {
+			return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
+		}
+		// NOT classifyDiscoveryError for anything else. That classifier is written for READS: its default arm
+		// reports a retryable "campaign search could not be completed" 503, which is wrong here
+		// twice over. It names the wrong operation, and — far worse — it invites a retry of a
+		// NON-IDEMPOTENT write into a namespace shared by everyone on that HubSpot portal. HubSpot marks mutating
+		// transport, 429, 3xx and 5xx failures as unconfirmed precisely because the campaign may
+		// already exist; collapsing them into "try again" is how a duplicate gets made.
+		//
+		// A DEFINITE rejection is reported as one. HubSpot answered on the merits — an invalid
+		// name, a permission failure — and nothing was created, so telling the operator to go
+		// hunt for a campaign that does not exist wastes their time and buries the actual
+		// remedy. IsDefiniteRejection is the structural signal, and it is asked POSITIVELY
+		// rather than as !IsUnconfirmed: the negation answers true for any error the platform
+		// package cannot classify, which would report "nothing was created" about an outcome
+		// nobody established. Unrecognised errors fall through to unconfirmed below.
+		// The cause is summarised here, which is safe ONLY because every credential-bearing
+		// failure has already returned above: ErrCredentialDecryptionFailed is handled with the
+		// other setup failures, whose classifier logs no error text at all. A decrypt branch
+		// here would be unreachable — and worse than merely dead, since its security commentary
+		// would imply a second redaction path that never runs. If a credential-bearing sentinel
+		// is ever added to this method, it belongs in the setup group above, not here.
+		slog.ErrorContext(ctx, "hubspot campaign creation failed",
+			"project_id", p.ProjectID, "definite_rejection", errors.Is(cerr, domain.ErrPlatformRejected), "error", safeErrSummary(cerr))
+		// FIRST, because ErrPlatformNeverSent no longer joins ErrPlatformRejected: the two are
+		// mutually exclusive (HubSpot refused vs HubSpot never saw it), and reporting both made
+		// `definite_rejection` true for a dial failure.
+		//
+		// A 503, not a 400: api-catalog rule 6 makes 400 mean "retrying unchanged will fail
+		// again", and this retries successfully once connectivity returns. Distinguished from
+		// the ordinary unconfirmed 503 by its MESSAGE, which can promise nothing was created.
+		if errors.Is(cerr, domain.ErrPlatformNeverSent) {
+			return nil, &conn.ConnServiceUnavailableError{
+				Code:    "503",
+				Message: "the campaign creation never reached hubspot; nothing was created — retry, and check connectivity if it persists",
+			}
+		}
+		if errors.Is(cerr, domain.ErrPlatformRejected) {
+			// A PERMISSION rejection gets its own remedy. Retrying with another name cannot fix
+			// a 401/403, so the "check the name" message would send the operator to change the
+			// one thing that was never at fault.
+			if errors.Is(cerr, domain.ErrPlatformPermission) {
+				return nil, &conn.BadRequestError{
+					Code:    "400",
+					Message: "hubspot refused the campaign creation on permissions; nothing was created — check that the connection's private app token is valid and has the marketing campaigns write scope",
+				}
+			}
+			return nil, &conn.BadRequestError{
+				Code:    "400",
+				Message: "hubspot rejected the campaign creation; nothing was created — check the name and try again",
+			}
+		}
+		// Everything else is UNCONFIRMED, and the message sends the operator to HubSpot rather
+		// than back through the button: this is a NON-IDEMPOTENT write into a namespace shared by
+		// every project configured against the same HubSpot portal — see the created == nil arm
+		// below — so a retry on an unconfirmed outcome is how a duplicate gets made.
+		return nil, &conn.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the campaign creation could not be confirmed — check HubSpot before creating it again, as it may already exist",
+		}
+	}
+	// The dispatcher refuses a nil-without-error, so this cannot fire on the current path.
+	// Guarded because the alternative is a nil dereference one line down, and a create that
+	// reports success while returning nothing is worse than a clear failure.
+	//
+	// 503, not 500. Reaching here means the create returned NO error: the request was sent and
+	// HubSpot did not refuse it, so the campaign may well exist — this is the one arm where the
+	// service knows least and the write is non-idempotent into a namespace shared by every
+	// project configured against the same HubSpot portal — see the Campaign type comment: a
+	// connection is per project with its own portal_id, so "portal-wide" is not "LF-global".
+	// 500 is reserved for "definitely not sent", and a caller that reads this as a clean
+	// failure retries and makes the duplicate. Same wording as the catch-all below it, because
+	// the caller's remedy is identical: look in HubSpot before creating again.
+	if created == nil {
+		return nil, &conn.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the campaign creation could not be confirmed — check HubSpot before creating it again, as it may already exist",
+		}
+	}
+	return toWireHubspotCampaign(*created), nil
+}
+
+// toWireHubspotCampaign maps the domain campaign onto the wire type.
+//
+// `utm` and `start_date` are OPTIONAL on the wire, and an empty domain value maps to an ABSENT
+// key rather than an empty string. That distinction is the point: a campaign with no configured
+// token is a real campaign, and a consumer must be able to tell "no token" from "" without
+// guessing which the producer meant.
+func toWireHubspotCampaign(c model.HubSpotCampaign) *conn.HubspotCampaign {
+	out := &conn.HubspotCampaign{ID: c.ID, Name: c.Name}
+	if c.UTM != "" {
+		utm := c.UTM
+		out.Utm = &utm
+	}
+	if c.StartDate != "" {
+		start := c.StartDate
+		out.StartDate = &start
+	}
+	return out
 }

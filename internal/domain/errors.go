@@ -157,6 +157,11 @@ var (
 	// An enumeration here is falsified by the next provider added, with nothing failing to
 	// say so — which is exactly what happened to the previous version of this comment.
 	ErrEmailSearchUnsupported = errors.New("email search is not supported for this platform")
+	// ErrCampaignSearchUnsupported is returned when a platform has no marketing-campaign
+	// capability. SEPARATE from ErrEmailSearchUnsupported because the two capabilities are
+	// independent: a platform can search emails without having campaigns, and conflating them
+	// would report the wrong missing capability to the caller.
+	ErrCampaignSearchUnsupported = errors.New("campaign search is not supported for this platform")
 
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.
@@ -235,6 +240,33 @@ var (
 	// ErrMetricsWindowUnsupported, so the service layer classifies without importing every
 	// platform package.
 	ErrConnectionNotUsable = errors.New("the stored connection is not usable as configured")
+
+	// ErrPlatformRejected marks a failure the PLATFORM decided on the merits: it answered, it
+	// refused, and nothing was created. It is the counterpart of an unconfirmed outcome — a
+	// caller may safely report "nothing happened" rather than sending an operator to verify.
+	//
+	// Tagged by the dispatcher, which is the layer that talks to the platform, so the service
+	// can classify without importing a platform client to inspect its private error types.
+	ErrPlatformRejected = errors.New("the platform rejected the request")
+
+	// ErrPlatformNeverSent marks a failure that PROVES the request never left this process: a DNS
+	// or dial failure before anything was written, or a context already cancelled at the call.
+	//
+	// It does NOT join ErrPlatformRejected, deliberately. Both mean nothing was created, but they
+	// are mutually exclusive events: a rejection is HubSpot answering on the merits, and this is
+	// HubSpot never seeing the request at all. Reporting both made errors.Is(err, Rejected) true
+	// for a dial failure and put `definite_rejection=true` in the create's telemetry for it.
+	//
+	// A caller that wants "nothing was created" must therefore check BOTH sentinels — which is
+	// the honest shape, since the remedies differ: a rejection is about the request (fix the
+	// name), while this is about the network or a shutdown, and telling someone to "check the
+	// name" for a dial failure sends them to change the one thing that was never at fault.
+	ErrPlatformNeverSent = errors.New("the request never reached the platform")
+
+	// ErrPlatformPermission narrows ErrPlatformRejected to a refusal on AUTHORISATION (401/403).
+	// Separate because the remedy differs: a rejected name can be fixed by choosing another, a
+	// permission failure cannot be fixed by retrying anything.
+	ErrPlatformPermission = errors.New("the platform refused the request on permissions")
 
 	// ErrSystemConnectionNotUsable marks a defect in the LF-owned SYSTEM connection rather
 	// than in the project's own. It is wrapped alongside ErrConnectionNotUsable, not

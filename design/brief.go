@@ -575,6 +575,24 @@ var GoogleAdsAudience = Type("google-ads-audience", func() {
 	Required("window", "buckets", "bucket_count")
 })
 
+// HubSpotCampaign is one LF HubSpot marketing campaign.
+//
+// The `hs_utm` token is the point of this type: it is what makes a send attributable to a
+// campaign in HubSpot's own reporting. `internal/utm` GENERATES utm parameters for links this
+// service tags, which is a different thing — this is the token an existing upstream campaign
+// already carries.
+var HubSpotCampaign = Type("hubspot-campaign", func() {
+	Attribute("id", String, "HubSpot's own campaign object id.", func() { Example("112233445566") })
+	Attribute("name", String, "The campaign's display name.", func() { Example("KubeCon NA 2026") })
+	// NOT required: a campaign can exist with no token configured, and that is a different fact
+	// from the campaign not existing. A caller must render an absent token as "no token", never
+	// treat it as "no campaign" — doing so would prompt a duplicate create in a namespace shared
+	// portal-wide.
+	Attribute("utm", String, "The campaign's UTM token. ABSENT is a real state, not a missing answer, and it never means the campaign was not found — but WHAT it means depends on which call produced it. From the SEARCH, where the properties are requested explicitly, absent means the campaign has none configured. From the CREATE it means only that that response did not carry one: the marketing create is not documented to return the property, so a token may already exist and be readable by the very next search. A consumer must not render the create's absence as \"HubSpot assigned none\".", func() { Example("kubecon-na-2026") })
+	Attribute("start_date", String, "The campaign's start date as HubSpot holds it, for disambiguating same-named campaigns. Not parsed or normalised here.", func() { Example("2026-11-01") })
+	Required("id", "name")
+})
+
 // CampaignRef points at one of this service's campaigns, for a caller that holds only the
 // platform's own campaign id.
 //

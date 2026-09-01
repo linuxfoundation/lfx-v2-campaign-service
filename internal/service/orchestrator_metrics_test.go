@@ -265,6 +265,22 @@ func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.P
 	return []model.MarketingEmail{}, nil
 }
 
+func (d upstreamCapableDispatcher) SearchCampaigns(context.Context, string, model.Provider, string) (model.HubSpotCampaignPage, error) {
+	if d.err != nil {
+		return model.HubSpotCampaignPage{}, d.err
+	}
+	// Non-nil Campaigns: the orchestrator refuses a nil slice as a contract violation, and the
+	// success arm asserts the call actually succeeded.
+	return model.HubSpotCampaignPage{Campaigns: []model.HubSpotCampaign{}}, nil
+}
+
+func (d upstreamCapableDispatcher) CreateCampaign(context.Context, string, model.Provider, string) (*model.HubSpotCampaign, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.HubSpotCampaign{ID: "1", Name: "n"}, nil
+}
+
 func (d upstreamCapableDispatcher) ReadKeywordPerformance(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordPerformance, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -390,6 +406,25 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opKeywordActions,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ApplyKeywordActions(ctx, "p1", platform, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}})
+				return err
+			},
+		},
+		{
+			name: "search campaign",
+			op:   opSearchCampaign,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.SearchCampaigns(ctx, "p1", platform, "q")
+				return err
+			},
+		},
+		{
+			// The create is the most operationally sensitive call the service makes: it spends
+			// into a portal-wide namespace, and an unconfirmed one may have committed. Its
+			// latency and failure count are exactly what an operator needs.
+			name: "create campaign",
+			op:   opCreateCampaign,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.CreateCampaign(ctx, "p1", platform, "n")
 				return err
 			},
 		},

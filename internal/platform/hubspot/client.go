@@ -265,6 +265,59 @@ func APIErrorOf(err error) error {
 	return nil
 }
 
+// IsNeverSent reports whether err PROVES the request never left this process: a DNS or dial
+// failure before anything was written, or a context already cancelled when the call began.
+//
+// Distinct from IsDefiniteRejection, which means HubSpot answered and refused. Both mean nothing
+// was created, but they point at different remedies — one is a network or shutdown problem, the
+// other is the request itself. Distinct too from a transportError, which is AMBIGUOUS: there the
+// bytes may have left and the reply was simply never read.
+func IsNeverSent(err error) bool {
+	var pe *preSendError
+	return errors.As(err, &pe)
+}
+
+// IsDefiniteRejection reports whether err is a POSITIVELY IDENTIFIED clean rejection: HubSpot
+// answered on the merits with a non-ambiguous 4xx, and nothing was created.
+//
+// It is deliberately not `!IsUnconfirmed(err)`. That negation is fail-OPEN — it answers true for
+// any error this package cannot classify at all (a wrapped context error, a bug elsewhere in the
+// call chain, an error from a different layer), and a caller of a NON-IDEMPOTENT create would
+// then be told "nothing was created" about an outcome nobody established. Only an error this
+// package recognises as a definite 4xx returns true here; everything unrecognised is left to be
+// treated as unconfirmed, which is the safe direction for a write into a shared namespace.
+func IsDefiniteRejection(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	// The STATUS is checked, not merely `!Ambiguous`. Ambiguous is set for the statuses a
+	// mutating request may have committed under (429/3xx/5xx), so its negation also covers
+	// everything else a non-2xx can be — a 1xx, or any status this client does not model. Those
+	// are not rejections on the merits; they are responses nobody classified, and reporting one
+	// as "nothing was created" about a non-idempotent create is the fail-OPEN direction this
+	// predicate exists to avoid. Only a real 4xx says HubSpot refused.
+	if ae.StatusCode < 400 || ae.StatusCode >= 500 {
+		return false
+	}
+	return !ae.Ambiguous
+}
+
+// IsPermissionRejection reports whether err is a definite rejection HubSpot made on
+// AUTHORISATION rather than on the request's content — a 401 or 403.
+//
+// Separate from IsDefiniteRejection because the two need different remedies: a rejected name can
+// be fixed by choosing another, while a permission failure cannot be fixed by retrying anything
+// at all. Telling an operator to "check the name" on a 403 sends them to change the one thing
+// that was never the problem.
+func IsPermissionRejection(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.StatusCode == http.StatusUnauthorized || ae.StatusCode == http.StatusForbidden
+}
+
 // IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
 // request — the server may or may not have applied the change. This is true for an
 // ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply
