@@ -1045,3 +1045,34 @@ func TestComposeEmailCopyPrompt_OmitOutranksRequired(t *testing.T) {
 		t.Error("the precedence rule does not say what to do with a required section it cannot fill")
 	}
 }
+
+// The composed bound must clear EVERY stage's floor plus the full caller allowance.
+//
+// The two bounds have a contract between them: the pre-check accepts up to maxPromptSize runes of
+// caller input, so the composed bound must be at least (worst stage floor + maxPromptSize) or a
+// caller is told their input is too large by the SECOND check after the first accepted it -- and
+// the second answers 503, blaming the service for the caller's perfectly valid request.
+//
+// A prose "re-measure when the templates change" note did not hold: the numbers went stale three
+// times, most recently when a paragraph added to the shared system prompt grew every stage by
+// ~130 runes. This computes the floors instead of trusting a comment.
+func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
+	// Mirrors the two function-local consts in GenerateEmailCopy. They are deliberately duplicated
+	// rather than exported: this test failing IS the signal to update both together.
+	const inputBound = 2400
+	const composedBound = 8400
+
+	worst, worstStage := 0, ""
+	for _, name := range emailstage.Names() {
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
+		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+		if floor > worst {
+			worst, worstStage = floor, name
+		}
+	}
+
+	if worst+inputBound > composedBound {
+		t.Errorf("stage %q floors at %d runes; with the %d-rune input allowance the worst valid composition is %d, above the %d composed bound — valid caller input would be refused with a 503",
+			worstStage, worst, inputBound, worst+inputBound, composedBound)
+	}
+}

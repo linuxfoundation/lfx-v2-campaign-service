@@ -17,7 +17,10 @@ var Templates = map[string]Template{
 			"🎤 Share Your Story: CFP Open for [EVENT_NAME]",
 			"We want to hear from you: CFP for [EVENT_NAME]",
 		},
-		PreviewPattern: "Submit a talk by [DATE]. First-time speakers welcome.",
+		// No mentorship/welcome policy claim: nothing supplies one, and with no placeholder the OMIT
+		// rule cannot reach it. Line 50 already says such a note is allowed only when the brief
+		// provides it; this asserted it unconditionally.
+		PreviewPattern: "Submit a talk by [DATE].",
 		ContentPrompt: `Generate a CFP email for open-source community recruitment.
 
 PRIMARY OBJECTIVE: Recruit speakers. EVERY section must support this. NO other objectives.
@@ -409,9 +412,10 @@ REQUIRED INFORMATION HIERARCHY:
 
 4. PRIMARY CTA: [ Register with Code [PROMO_CODE] ]
 
-5. WHAT'S NEW (50-70 words, 2-3 sentences)
-   Explain 1-2 changes since they last attended
-   Keep it brief, relevant to their interests
+5. WHAT'S NEW (50-70 words, 2-3 sentences) -- ONLY if the brief supplies prior-edition changes
+   [PRIOR_EDITION_CHANGES]
+   Nothing supplies attendance history or a changelog, so OMIT this section entirely rather than
+   inventing what changed since someone last attended.
 
 6. SECONDARY CTA (optional): [ Learn More ]
 
@@ -615,7 +619,9 @@ WORD COUNT TARGET: 200-280 words`,
 			"It was great seeing you at [EVENT_NAME]",
 			"[EVENT_NAME] Recap: Recordings, slides, and next steps",
 		},
-		PreviewPattern: "Recordings available. Survey takes 3 minutes.",
+		// Both claims were unsupported: nothing supplies whether recordings exist or how long the
+		// survey takes, and neither carried a placeholder for the OMIT rule to act on.
+		PreviewPattern: "Thanks for joining us. [SURVEY_URL]",
 		ContentPrompt: `Generate a Post-Event Thank You email for open-source community.
 
 PRIMARY OBJECTIVE: Thank attendees & extend engagement. EVERY section supports this. NO other objectives.

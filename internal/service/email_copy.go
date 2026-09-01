@@ -344,9 +344,16 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// failure mode, since the templates are large (Post-Event is 5041 runes on its own) and are
 	// edited by hand.
 	//
-	// MEASURED: worst stage-only floor 5041 (system 1776 + user 3265), so with the 2400-rune input
-	// bound the worst valid composition is 7441 and 7600 clears it. A template growing ~159 runes
-	// past its current size trips this.
+	// MEASURED 2026-09-01: worst stage-only floor 5503 (Post-Event), so with the 2400-rune input
+	// bound the worst valid composition is 7903. The bound is 8400, leaving ~497 runes of headroom
+	// for template growth.
+	//
+	// This comment has now been wrong THREE times, most recently by my own hand: the precedence
+	// paragraph added to the shared system prompt earlier today grew every stage by ~130 runes and
+	// I did not re-measure, so 7600 would have refused 303 runes of PERFECTLY VALID caller input
+	// with a 503 blaming the service. A prose instruction to "re-measure" plainly does not survive
+	// contact, so TestComposedBoundClearsEveryStageFloor now computes the real floors and fails if
+	// any stage plus the input bound exceeds this -- the number cannot silently go stale again.
 	//
 	// Both figures were wrong twice before, in opposite directions, from a stale 4700/7700
 	// measurement taken before the templates grew:
@@ -360,7 +367,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// 8041 would have satisfied (1) by destroying (2). 2400 runes is far more event-detail text
 	// than any real event carries. Re-measure both whenever the shared prompt or any template
 	// changes: this comment has now been wrong twice from exactly that.
-	const maxComposedPromptSize = 7600 // runes
+	const maxComposedPromptSize = 8400 // runes
 
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
 	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
@@ -386,7 +393,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
 	if totalPromptSize > maxComposedPromptSize {
 		// ERROR, not Warn, and 503 rather than 400. This branch is unreachable by caller input --
-		// the worst valid composition is 7441 against a 7600 bound -- so if it fires, a
+		// the worst valid composition is 7903 against an 8400 bound -- so if it fires, a
 		// service-owned stage template has outgrown its budget. That is a service defect, and a
 		// 400 would file it under client error on every 4xx/5xx dashboard while telling the caller
 		// to edit a brief that is not the problem. The message already said as much; the status
