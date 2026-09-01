@@ -114,9 +114,15 @@ test rather than carrying them forward.
 ### The stage selects the template, and an unrecognised one does not fail
 
 `emailstage.Resolve` maps the requested stage onto one of six templates and falls back to
-Registration Push for anything it does not recognise, including the empty string. That fallback is
-the CONTRACT (LFXV2-1940), not an implementation convenience: a caller is never blocked from
-generating copy by a stage it cannot spell.
+Registration Push for anything it does not recognise. That fallback is the CONTRACT (LFXV2-1940),
+not an implementation convenience: a caller is never blocked from generating copy by a stage it
+cannot spell.
+
+An ABSENT or blank stage never reaches `Resolve`. LFXV2-1940 also requires that a caller sending
+no stage produce a BYTE-IDENTICAL prompt to the pre-stage one, and the stage-aware system prompt
+is not a superset of that text -- it adds placeholder/OMIT rules that only mean anything beside a
+stage brief. So `composeEmailCopyPrompt` returns the frozen `legacySystemPrompt` for that case
+instead. `Resolve` still treats the empty string as Registration Push for any other caller.
 
 The `stage` attribute is therefore free text with no `Enum`. An enum was tried and removed: Goa
 validates it in the generated decoder, so an unrecognised value became a 400 before `Resolve`
@@ -180,7 +186,8 @@ nothing greps for it.
 - **TestParseEmailCopyResponse_EnforcesMaxLengths**: Mutation test for plain-text field truncation limits.
 - **TestResolveEventDates**: Pins the fallback order — the structured `startDate`/`endDate` pair wins, the scraper's combined `dates` string is the fallback, and "Date TBD" is the answer when neither exists.
 - **TestGenerateEmailCopy_StageReachesThePrompt**: Pins that the caller's `stage` actually reaches the composed prompt, rather than being accepted and dropped.
-- **TestGenerateEmailCopy_NilStageIsNotAnError**: A caller that names no stage gets the default (Registration Push), not a 400 — the stage is optional by contract.
+- **TestGenerateEmailCopy_NilStageIsNotAnError**: A caller that names no stage gets generated copy, not a 400 — the stage is optional by contract.
+- **TestAbsentStageProducesLegacyPrompt**: That same caller gets the pre-stage prompt byte for byte, pinned against goldens extracted from `012fa822^`; an explicit stage must NOT produce it, so the branch cannot swallow stage selection.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 
