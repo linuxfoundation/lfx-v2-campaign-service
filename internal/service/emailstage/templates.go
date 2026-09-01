@@ -46,10 +46,13 @@ REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
    One idea only: Why speaking matters to the community.
    Lead with value to speakers, not value to event.
 
-5. WHAT WE'RE LOOKING FOR (80-100 words)
+5. WHAT WE'RE LOOKING FOR (80-100 words) -- ONLY if [TALK_TYPES] is supplied
+   Nothing supplies talk types or selection criteria today, so this section is normally
+   DROPPED. A named talk type is a SELECTION POLICY: inventing one tells a speaker their
+   submission will be judged against a rule the organisers never set.
    Use bullet format:
-   • Talk type 1 (with example)
-   • Talk type 2 (with example)
+   • Talk type 1 from [TALK_TYPES] (with a supplied example only)
+   • Talk type 2 from [TALK_TYPES] (with a supplied example only)
    • Only if the brief says so: a first-time-speaker note. Nothing supplies a mentorship
      programme, so do NOT assert one exists.
    • Story-based over product pitches
@@ -168,10 +171,10 @@ REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
    • [Session title 3]"
    Maximum 3 tracks featured (don't list all).
 
-5. FEATURED SPEAKERS (60-80 words)
+5. FEATURED SPEAKERS (60-80 words) -- ONLY if [SPEAKER_NAMES] is supplied
    Format: "Speaker Name on Topic" (name + topic only, no photos needed)
-   List 3-4 top speakers
-   Keep it short
+   List 3-4 of the supplied speakers. Nothing supplies speaker names today, so this section
+   is normally DROPPED. Never invent a person, a talk title or a topic to fill it.
 
 6. SECONDARY CTA (optional): [ Register to Attend ]
 
@@ -438,7 +441,7 @@ SECTIONS TO REMOVE:
 - Agenda (belongs in Schedule email)
 - Logistics
 - Call for Proposals
-- Registration details (only the discount matters)
+- Registration details -- do NOT include them; only the discount matters here
 - Full event description
 - Membership pitch
 
@@ -525,8 +528,9 @@ REQUIRED INFORMATION HIERARCHY:
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
    Location: [VENUE_NAME], [ADDRESS]
-   What to Bring: (2-3 bullets)
-   Getting There: (transit/parking info, brief)
+   What to Bring: [WHAT_TO_BRING] (2-3 bullets; omit the line if not supplied)
+   Getting There: [TRANSIT_INFO] (omit the line if not supplied -- a location does not
+     imply transit or parking details, and guessing them strands an attendee)
 
 5. WHAT TO EXPECT (80-100 words, 2-3 sentences)
    Brief overview of learning tracks/schedule
@@ -561,8 +565,8 @@ SECTIONS TO REMOVE (not for countdown):
 LOGISTICS RULES:
 ✓ Clear date and time (no ambiguity)
 ✓ Venue name + address
-✓ Transportation info: transit, parking
-✓ What to bring: realistic items
+✓ Transportation info ONLY from [TRANSIT_INFO]; omit entirely when it is not supplied
+✓ What to bring ONLY from [WHAT_TO_BRING]; omit entirely when it is not supplied
 ✗ NO overwhelming detail
 ✗ NO unnecessary complexity
 
@@ -650,7 +654,8 @@ REQUIRED INFORMATION HIERARCHY:
    • Photos: [LINK]
    • Community: Join [COMMUNITY_COUNT]+ in Slack [LINK]
 
-4. PRIMARY CTA: [ Watch Recordings ]
+4. PRIMARY CTA: [ Watch Recordings ] -- ONLY if [RECORDINGS_URL] is supplied.
+   Otherwise the primary CTA is [ Share Feedback ], which needs no unsupplied link.
 
 5. FEEDBACK REQUEST (30-40 words, 2 sentences)
    Light ask: invite feedback WITHOUT inventing a completion time -- no input supplies one
@@ -671,7 +676,7 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "Watch Recordings"
+- 1 PRIMARY CTA: "Watch Recordings" when [RECORDINGS_URL] is supplied, else "Share Feedback"
 - 1 OPTIONAL SECONDARY: "Share Feedback"
 - 0 others (no sponsors, no merchandise, no membership)
 
@@ -717,7 +722,7 @@ INTERNAL VALIDATION:
 □ Every section supports this
 □ Opening: 50-60 words, 2 sentences, genuine thanks
 □ Information hierarchy: headline → gratitude → resources → CTA → feedback → optional teaser → footer
-□ One primary CTA: "Watch Recordings"
+□ One primary CTA: "Watch Recordings" only with [RECORDINGS_URL], else "Share Feedback"
 □ Maximum 1 secondary: "Share Feedback"
 □ No sponsorship, sales, or promotional content
 □ Resources clearly listed with links
