@@ -12,12 +12,14 @@ including its `Create compelling email copy...` trailer. Any non-empty stage, re
 still resolves through `emailstage.Resolve` and takes the template path, so the fallback criterion
 is unchanged.
 
-`TestAbsentStageProducesLegacyPrompt` pins this against
-`internal/service/testdata/legacy_system_prompt.txt` and `legacy_user_prompt.txt`, extracted from
-the last commit before stages existed rather than written out by hand or read back from the
-constant — either of those would let the test agree with a drifted implementation. It also asserts
+`TestAbsentStageProducesLegacyPrompt` pins this against the golden constants in
+`internal/service/email_copy_golden_test.go`, extracted verbatim from the last commit before
+stages existed rather than written out by hand or read back from `legacySystemPrompt` itself — either of those would let the test agree with a drifted implementation. It also asserts
 the negative: an explicit stage must NOT produce the legacy prompt, so the branch cannot swallow
 stage selection. Both directions were confirmed by mutation.
 
 The `absent falls back` row in `TestGenerateEmailCopy_StageReachesThePrompt` was removed: it
 asserted the behaviour the byte-identity criterion rejects. `unrecognised falls back` stays.
+
+The goldens are a `.go` file rather than `testdata/*.txt` because the repo's License Header Check
+scans `*.txt`, and a header prepended to a golden file would corrupt the very bytes it pins.

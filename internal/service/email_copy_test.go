@@ -13,8 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1091,19 +1089,10 @@ func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
 // TestAbsentStageProducesLegacyPrompt pins LFXV2-1940's acceptance criterion: "Existing callers
 // that send no `stage` produce byte-identical prompts to today". The expected text is not written
 // out here and is not read from legacySystemPrompt -- either would let this test agree with a
-// drifted implementation. It is a golden file extracted from the last commit before stages
-// existed (012fa822^), so the only way to make it pass is to emit that commit's bytes.
+// drifted implementation. It is a golden constant extracted from the last commit before stages
+// existed (012fa822^, see email_copy_golden_test.go), so the only way to make it pass is to emit that commit's bytes.
 func TestAbsentStageProducesLegacyPrompt(t *testing.T) {
 	t.Parallel()
-
-	wantSystem, err := os.ReadFile(filepath.Join("testdata", "legacy_system_prompt.txt"))
-	if err != nil {
-		t.Fatalf("read golden system prompt: %v", err)
-	}
-	wantUserTpl, err := os.ReadFile(filepath.Join("testdata", "legacy_user_prompt.txt"))
-	if err != nil {
-		t.Fatalf("read golden user prompt: %v", err)
-	}
 
 	vars := emailCopyPromptVars{
 		eventName: "KubeCon EU 2026",
@@ -1113,24 +1102,24 @@ func TestAbsentStageProducesLegacyPrompt(t *testing.T) {
 	}
 	gotSystem, gotUser := composeEmailCopyPrompt(vars)
 
-	if gotSystem != string(wantSystem) {
-		t.Errorf("absent stage changed the system prompt.\nLFXV2-1940 requires byte-identical output for callers that send no stage.\n got %d bytes\nwant %d bytes", len(gotSystem), len(wantSystem))
+	if gotSystem != goldenLegacySystemPrompt {
+		t.Errorf("absent stage changed the system prompt.\nLFXV2-1940 requires byte-identical output for callers that send no stage.\n got %d bytes\nwant %d bytes", len(gotSystem), len(goldenLegacySystemPrompt))
 	}
-	wantUser := fmt.Sprintf(string(wantUserTpl), vars.eventName, vars.location, vars.dates)
+	wantUser := fmt.Sprintf(goldenLegacyUserPromptTemplate, vars.eventName, vars.location, vars.dates)
 	if gotUser != wantUser {
 		t.Errorf("absent stage changed the user prompt.\n got: %q\nwant: %q", gotUser, wantUser)
 	}
 
 	// A blank-but-present stage is the same case: the API treats "" as "did not say".
 	blankSystem, _ := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: "   "})
-	if blankSystem != string(wantSystem) {
+	if blankSystem != goldenLegacySystemPrompt {
 		t.Errorf("a whitespace-only stage did not take the legacy path")
 	}
 
 	// Guard the other half: an EXPLICIT stage must NOT be byte-identical, or the branch is dead
 	// and stage selection (issue line 29) silently stopped working.
 	explicitSystem, explicitUser := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: emailstage.RegistrationPush})
-	if explicitSystem == string(wantSystem) || explicitUser == wantUser {
+	if explicitSystem == goldenLegacySystemPrompt || explicitUser == wantUser {
 		t.Errorf("an explicit stage produced the legacy prompt; stage selection is not wired")
 	}
 }
