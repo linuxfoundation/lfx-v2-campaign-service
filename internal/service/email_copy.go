@@ -84,6 +84,21 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 // question is what renders in an inbox, not what the type allows.
 func composeEmailCopyPrompt(vars emailCopyPromptVars) (systemPrompt, userPrompt string) {
 	// System prompt: role instruction + constraints + factual grounding.
+	// LFXV2-1940 requires that a caller sending no stage produces a byte-identical prompt to the
+	// one this service emitted before stages existed. The stage-aware system prompt is not a
+	// superset of that text -- it adds the placeholder/OMIT rules, which only mean anything next
+	// to a stage brief -- so an absent stage takes the pre-stage prompt verbatim rather than a
+	// resolved default. An explicit "Registration Push" still takes the template path.
+	if strings.TrimSpace(vars.stage) == "" {
+		return legacySystemPrompt, fmt.Sprintf(`Generate email copy for this event:
+Event Name: %s
+Location: %s
+Dates: %s
+
+Create compelling email copy that invites registration and highlights the value of attending.`,
+			vars.eventName, vars.location, vars.dates)
+	}
+
 	systemPrompt = `You are an expert email copywriter for technology events and communities.
 Your task is to generate compelling email copy for a campaign brief.
 
@@ -119,8 +134,8 @@ Constraints:
 
 	// Stage-specific guidance, appended to the shared role/constraint block above rather than
 	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
-	// changes. An unknown stage resolves to the default, so a caller that sends none keeps exactly
-	// the copy it produced before stages existed.
+	// changes. An unknown NON-EMPTY stage resolves to the default; an ABSENT stage never reaches
+	// here at all -- it returned the frozen legacySystemPrompt above.
 	tpl := emailstage.Resolve(vars.stage)
 	systemPrompt += fmt.Sprintf(`
 
@@ -480,3 +495,29 @@ func (s *BriefService) snapshotLLMClient() *llm.Client {
 	defer s.mu.RUnlock()
 	return s.llmClient
 }
+
+// legacySystemPrompt is the system prompt this service emitted before stages existed, preserved
+// byte-for-byte so a caller that sends no stage sees no change at all (LFXV2-1940). It is a
+// FROZEN copy: edits to the stage-aware prompt above must NOT be mirrored here, and the test
+// TestAbsentStageProducesLegacyPrompt pins it against the pre-stage commit's text.
+const legacySystemPrompt = `You are an expert email copywriter for technology events and communities.
+Your task is to generate compelling email copy for a campaign brief.
+
+IMPORTANT: Use ONLY the event details provided below; never invent dates, names, or locations.
+Every factual claim must come directly from what you're given.
+
+Generate JSON with these fields (no markdown fencing):
+{
+  "subject": "Email subject line (max 60 chars)",
+  "preheader": "Email preheader text (max 100 chars)",
+  "body": "Email body in HTML (max 8000 chars, include <p> tags)",
+  "cta": "Call-to-action button text (max 50 chars)"
+}
+
+Constraints:
+- Subject: punchy, under 60 characters
+- Preheader: summary of the email, under 100 characters
+- Body: professional HTML email, inviting and focused on the event
+- CTA: action-oriented, under 50 characters (e.g. "Register Now", "Join Us")
+- Write for a professional Linux Foundation / technology audience
+- Make it about the event and community, not promotional`

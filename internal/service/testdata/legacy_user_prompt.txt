@@ -1,0 +1,6 @@
+Generate email copy for this event:
+Event Name: %s
+Location: %s
+Dates: %s
+
+Create compelling email copy that invites registration and highlights the value of attending.

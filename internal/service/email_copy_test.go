@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -853,8 +855,11 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 		{"discount offer", strPtr("Discount Offer"), "VIP/alumni", "Offer exclusive rate to segment"},
 		{"final countdown", strPtr("Final Countdown"), "anticipation", "PRIMARY OBJECTIVE: Confirm attendance"},
 		{"post-event", strPtr("Post-Event"), "extend engagement", "PRIMARY OBJECTIVE: Thank attendees"},
-		// Absent stage keeps the pre-stage behaviour: Registration Push, not an error.
-		{"absent falls back", nil, "Drive registrations", "PRIMARY OBJECTIVE: Drive registrations"},
+		// An ABSENT stage is deliberately NOT a row here. LFXV2-1940 requires it to produce the
+		// byte-identical pre-stage prompt, which carries no stage brief at all -- so it has no
+		// "purpose text" to assert. TestAbsentStageProducesLegacyPrompt pins that case against a
+		// golden file instead. Do not re-add it here expecting Registration Push copy: that was
+		// the behaviour the byte-identity criterion rejected.
 		// UNRECOGNISED falls back too, and must reach the service at all -- the design carried a
 		// Goa `Enum` that rejected it with a 400 at the decoder, before `Resolve` could run, which
 		// contradicted the acceptance criterion. Removing the enum is what this pins; the criterion
@@ -1026,11 +1031,16 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 // marker is the more emphatic one, so it invents the fact rather than dropping the section.
 //
 // Asserts on the composed SYSTEM PROMPT, which is what the model actually reads.
+//
+// A stage is REQUIRED here: the precedence rule governs a stage brief, and a caller that sends no
+// stage gets the frozen pre-stage prompt (LFXV2-1940 byte-identity), which has no brief to
+// outrank. Registration Push is the case the doc comment above describes.
 func TestComposeEmailCopyPrompt_OmitOutranksRequired(t *testing.T) {
 	sys, _ := composeEmailCopyPrompt(emailCopyPromptVars{
 		eventName: "KubeCon Europe 2026",
 		location:  "Barcelona",
 		dates:     "June 17 - June 20",
+		stage:     emailstage.RegistrationPush,
 	})
 
 	if !strings.Contains(sys, "OUTRANKS THE STAGE BRIEF") {
@@ -1075,5 +1085,52 @@ func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
 	if worst+inputBound > composedBound {
 		t.Errorf("stage %q floors at %d runes; with the %d-rune input allowance the worst valid composition is %d, above the %d composed bound — valid caller input would be refused with a 503",
 			worstStage, worst, inputBound, worst+inputBound, composedBound)
+	}
+}
+
+// TestAbsentStageProducesLegacyPrompt pins LFXV2-1940's acceptance criterion: "Existing callers
+// that send no `stage` produce byte-identical prompts to today". The expected text is not written
+// out here and is not read from legacySystemPrompt -- either would let this test agree with a
+// drifted implementation. It is a golden file extracted from the last commit before stages
+// existed (012fa822^), so the only way to make it pass is to emit that commit's bytes.
+func TestAbsentStageProducesLegacyPrompt(t *testing.T) {
+	t.Parallel()
+
+	wantSystem, err := os.ReadFile(filepath.Join("testdata", "legacy_system_prompt.txt"))
+	if err != nil {
+		t.Fatalf("read golden system prompt: %v", err)
+	}
+	wantUserTpl, err := os.ReadFile(filepath.Join("testdata", "legacy_user_prompt.txt"))
+	if err != nil {
+		t.Fatalf("read golden user prompt: %v", err)
+	}
+
+	vars := emailCopyPromptVars{
+		eventName: "KubeCon EU 2026",
+		location:  "Amsterdam, Netherlands",
+		dates:     "March 23-26, 2026",
+		stage:     "",
+	}
+	gotSystem, gotUser := composeEmailCopyPrompt(vars)
+
+	if gotSystem != string(wantSystem) {
+		t.Errorf("absent stage changed the system prompt.\nLFXV2-1940 requires byte-identical output for callers that send no stage.\n got %d bytes\nwant %d bytes", len(gotSystem), len(wantSystem))
+	}
+	wantUser := fmt.Sprintf(string(wantUserTpl), vars.eventName, vars.location, vars.dates)
+	if gotUser != wantUser {
+		t.Errorf("absent stage changed the user prompt.\n got: %q\nwant: %q", gotUser, wantUser)
+	}
+
+	// A blank-but-present stage is the same case: the API treats "" as "did not say".
+	blankSystem, _ := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: "   "})
+	if blankSystem != string(wantSystem) {
+		t.Errorf("a whitespace-only stage did not take the legacy path")
+	}
+
+	// Guard the other half: an EXPLICIT stage must NOT be byte-identical, or the branch is dead
+	// and stage selection (issue line 29) silently stopped working.
+	explicitSystem, explicitUser := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: emailstage.RegistrationPush})
+	if explicitSystem == string(wantSystem) || explicitUser == wantUser {
+		t.Errorf("an explicit stage produced the legacy prompt; stage selection is not wired")
 	}
 }
