@@ -88,7 +88,7 @@ SECTIONS TO REMOVE (not relevant to CFP):
 
 TONE & VOICE:
 ✓ Community manager voice
-✓ First-timers explicitly welcome
+✓ First-timers welcomed ONLY if the brief supplies such a policy -- never asserted otherwise
 ✓ Focus on SPEAKER contribution to community
 ✓ Authentic, factual, educational
 ✗ NO "amazing," "revolutionary," "don't miss"

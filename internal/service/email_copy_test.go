@@ -1057,10 +1057,11 @@ func TestComposeEmailCopyPrompt_OmitOutranksRequired(t *testing.T) {
 // times, most recently when a paragraph added to the shared system prompt grew every stage by
 // ~130 runes. This computes the floors instead of trusting a comment.
 func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
-	// Mirrors the two function-local consts in GenerateEmailCopy. They are deliberately duplicated
-	// rather than exported: this test failing IS the signal to update both together.
-	const inputBound = 2400
-	const composedBound = 8400
+	// The REAL constants, not copies. Copying them meant reverting the production bound to 7600
+	// left this test green -- it pinned its own numbers rather than the ones GenerateEmailCopy
+	// uses, which is precisely the regression it claims to prevent.
+	const inputBound = maxPromptSize
+	const composedBound = maxComposedPromptSize
 
 	worst, worstStage := 0, ""
 	for _, name := range emailstage.Names() {

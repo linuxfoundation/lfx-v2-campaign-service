@@ -31,6 +31,16 @@ type emailCopyEventDetails struct {
 	Dates string `json:"dates"`
 }
 
+// maxPromptSize bounds the CALLER's three event-detail fields, checked before composing.
+const maxPromptSize = 2400 // runes
+
+// maxComposedPromptSize bounds the WHOLE composed prompt, checked after.
+//
+// It must stay at or above (worst stage floor + maxPromptSize) or a caller is told their input is
+// too large by the second check after the first accepted it -- with a 503 that blames the service.
+// TestComposedBoundClearsEveryStageFloor computes the floors and enforces exactly that.
+const maxComposedPromptSize = 8400 // runes
+
 // emailCopyPromptVars holds the values needed to compose the generation prompt.
 type emailCopyPromptVars struct {
 	eventName string
@@ -323,7 +333,6 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// truncateString). Counting bytes here rejected a name in Japanese or an accented
 	// location at a third of the advertised budget, and only for those callers — a limit
 	// that means something different depending on the alphabet the event is named in.
-	const maxPromptSize = 2400 // runes
 
 	// The COMPOSED prompt is bounded separately, and higher, because the two checks bound
 	// different things. `maxPromptSize` bounds what the CALLER supplies -- three `Any`-typed
@@ -366,8 +375,8 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// The input bound came DOWN from 3000 rather than this one going up, because raising it above
 	// 8041 would have satisfied (1) by destroying (2). 2400 runes is far more event-detail text
 	// than any real event carries. Re-measure both whenever the shared prompt or any template
-	// changes: this comment has now been wrong twice from exactly that.
-	const maxComposedPromptSize = 8400 // runes
+	// changes: it has now been wrong THREE times from exactly that -- see the note above the
+	// composed bound for the third.
 
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
 	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
