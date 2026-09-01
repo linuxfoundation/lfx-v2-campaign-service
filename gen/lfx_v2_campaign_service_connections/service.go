@@ -247,13 +247,14 @@ type Service interface {
 	// and "does not exist" is as small as one request can make it. **`capped`
 	// reports when that gap is actually open**, derived from HubSpot's own total
 	// rather than from the returned count — an exactly-full page and a truncated
-	// one are the same length. While it is true the caller must not offer an
-	// unqualified create. This is NOT a list endpoint under rule 3: it is a keyed
-	// query returning the matches for one supplied term. It IS a collection —
-	// `campaigns` is an array and `q` narrows it — but a BOUNDED one: a single
-	// unpaged request capped at 200, with no cursor and no filters beyond the
-	// search term, so rule 3's concern about an open-ended listing surface does
-	// not apply.
+	// one are the same length. While `capped` is true the caller must not offer an
+	// unqualified create: the campaign it would duplicate may be one of the
+	// matches HubSpot did not return. This is NOT a list endpoint under rule 3: it
+	// is a keyed query returning the matches for one supplied term. It IS a
+	// collection — `campaigns` is an array and `q` narrows it — but a BOUNDED one:
+	// a single unpaged request capped at 200, with no cursor and no filters beyond
+	// the search term, so rule 3's concern about an open-ended listing surface
+	// does not apply.
 	SearchHubspotCampaigns(context.Context, *SearchHubspotCampaignsPayload) (res *SearchHubspotCampaignsResult, err error)
 	// Create an LF HubSpot marketing campaign, returning the `hs_utm` token when
 	// the response carries one. **`utm` MAY BE ABSENT ON A SUCCESSFUL CREATE**,
