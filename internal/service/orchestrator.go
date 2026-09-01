@@ -294,6 +294,38 @@ type EmailSearcher interface {
 	SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error)
 }
 
+// CampaignSearcher is implemented by a dispatcher that can look up and create marketing
+// campaigns on its platform.
+//
+// SEPARATE from EmailSearcher, and deliberately so: the capabilities are independent. HubSpot
+// implements both; a platform could implement either alone. Folding them into one interface
+// would make a platform that gains email search appear to have gained campaign search too, and
+// the orchestrator's capability check would stop meaning anything.
+type CampaignSearcher interface {
+	// SearchCampaigns returns campaigns whose name matches query, in the platform's own
+	// order — which for HubSpot is UNSPECIFIED, and certainly NOT by relevance. A caller must not
+	// read the first element as the best match.
+	//
+	// A successful call MUST return a NON-NIL slice even when nothing matches, for the reason
+	// ListAccounts does: the caller branches on empty-vs-found to decide whether to offer a
+	// create, and cannot otherwise tell an authoritative "no such campaign" from a read that
+	// silently returned nothing.
+	SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error)
+
+	// CreateCampaign creates a campaign and returns it with the token the platform assigned, if
+	// the platform assigned one. An EMPTY token is a successful create, not a failure: HubSpot's
+	// marketing create is not documented to return `hs_utm`, and this method deliberately does
+	// no follow-up search to fetch it — a second call after a non-idempotent write is another
+	// failure point, and its failure would make a campaign that EXISTS look like a create that
+	// did not happen. The token becomes visible through the ordinary lookup on a later read, so
+	// a caller must not treat an absent token as an unsuccessful create.
+	//
+	// It ALWAYS creates: it performs no existence check, because a search-then-create inside
+	// one call still races a concurrent caller and cannot prevent a duplicate. The check belongs
+	// with the human who can read the candidate names.
+	CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error)
+}
+
 // CampaignAdopter is an OPTIONAL dispatcher capability: look a campaign up BY ITS PLATFORM ID,
 // so an existing one can be bound to a brief without creating anything. Type-asserted like
 // StatusToggler, MetricsReader and AccountLister, so a dispatcher without it yields a clean
@@ -348,6 +380,8 @@ var (
 
 	// ErrEmailSearchUnsupported: the platform has no email-search capability wired.
 	ErrEmailSearchUnsupported = domain.ErrEmailSearchUnsupported
+	// ErrCampaignSearchUnsupported re-exports the domain sentinel, as the siblings above do.
+	ErrCampaignSearchUnsupported = domain.ErrCampaignSearchUnsupported
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -484,6 +518,8 @@ const (
 	opReadSettings   = "read_settings"
 	opListAccounts   = "list_accounts"
 	opSearchEmails   = "search_emails"
+	opSearchCampaign = "search_campaign"
+	opCreateCampaign = "create_campaign"
 	opReadKeywords   = "read_keywords"
 	opReadAudience   = "read_audience"
 	opKeywordActions = "keyword_actions"
@@ -1933,6 +1969,69 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
 	}
 	return accounts, nil
+}
+
+// SearchCampaigns looks up marketing campaigns by name on platform.
+func (o *Orchestrator) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error) {
+	searcher, err := o.campaignSearcherFor(platform)
+	if err != nil {
+		return model.HubSpotCampaignPage{}, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	page, err := searcher.SearchCampaigns(callCtx, projectID, platform, query)
+	o.recordUpstream(ctx, platform, opSearchCampaign, start, err)
+	if err != nil {
+		return model.HubSpotCampaignPage{}, err
+	}
+	// A (nil, nil) answer is a CONTRACT VIOLATION, refused here rather than forwarded — the same
+	// check SearchEmails makes. Forwarded, the service layer would render it as an authoritative
+	// empty `[]`, and empty is exactly what the caller acts on by creating a campaign in a
+	// namespace shared portal-wide. A searcher that fell through a branch must not be able
+	// to license a duplicate.
+	if page.Campaigns == nil {
+		return model.HubSpotCampaignPage{}, fmt.Errorf("campaign search for platform %s returned no result and no error", platform)
+	}
+	return page, nil
+}
+
+// CreateCampaign creates a marketing campaign on platform.
+//
+// NOT given the shared accountsCallTimeout budget by accident: it is a WRITE, and a create whose
+// context expires mid-flight may still have committed upstream. The same budget is used because
+// the call shape is the same, but a caller must treat a timeout here as UNCONFIRMED rather than
+// failed — the campaign may exist, and retrying blindly makes a second one in a namespace shared
+// portal-wide.
+func (o *Orchestrator) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
+	searcher, err := o.campaignSearcherFor(platform)
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	campaign, cerr := searcher.CreateCampaign(callCtx, projectID, platform, name)
+	// Recorded BEFORE the error is returned, and recorded on every arm including the ambiguous
+	// one: an unconfirmed create is precisely the call an operator needs the latency and failure
+	// count for, because it is the one that may have spent money without saying so.
+	o.recordUpstream(ctx, platform, opCreateCampaign, start, cerr)
+	return campaign, cerr
+}
+
+// campaignSearcherFor resolves the dispatcher's campaign capability, or reports that the
+// platform has none. Shared by both methods so the unsupported-platform answer cannot drift
+// between the read and the write.
+func (o *Orchestrator) campaignSearcherFor(platform model.Provider) (CampaignSearcher, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrCampaignSearchUnsupported, platform)
+	}
+	searcher, ok := d.(CampaignSearcher)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCampaignSearchUnsupported, platform)
+	}
+	return searcher, nil
 }
 
 // SearchEmails returns the marketing emails reachable through the project's stored connection

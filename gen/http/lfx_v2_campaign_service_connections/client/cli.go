@@ -1644,3 +1644,78 @@ func BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEma
 
 	return v, nil
 }
+
+// BuildSearchHubspotCampaignsPayload builds the payload for the
+// lfx-v2-campaign-service-connections search-hubspot-campaigns endpoint from
+// CLI flags.
+func BuildSearchHubspotCampaignsPayload(lfxV2CampaignServiceConnectionsSearchHubspotCampaignsProjectID string, lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQ string, lfxV2CampaignServiceConnectionsSearchHubspotCampaignsBearerToken string) (*lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsProjectID
+	}
+	var q string
+	{
+		q = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQ
+		err = goa.MergeErrors(err, goa.ValidatePattern("q", q, "\\S"))
+		if utf8.RuneCountInString(q) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsSearchHubspotCampaignsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsSearchHubspotCampaignsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildCreateHubspotCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections create-hubspot-campaign endpoint from
+// CLI flags.
+func BuildCreateHubspotCampaignPayload(lfxV2CampaignServiceConnectionsCreateHubspotCampaignBody string, lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectID string, lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerToken string) (*lfxv2campaignserviceconnections.CreateHubspotCampaignPayload, error) {
+	var err error
+	var body CreateHubspotCampaignRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsCreateHubspotCampaignBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"name\": \"KubeCon NA 2026\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.name", body.Name, "\\S"))
+		if utf8.RuneCountInString(body.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", body.Name, utf8.RuneCountInString(body.Name), 1, true))
+		}
+		if utf8.RuneCountInString(body.Name) > 255 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", body.Name, utf8.RuneCountInString(body.Name), 255, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.CreateHubspotCampaignPayload{
+		Name: body.Name,
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

@@ -168,6 +168,16 @@ type SetCredentialHubspotRequestBody struct {
 	Credentials *HubspotCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
 }
 
+// CreateHubspotCampaignRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP request body.
+type CreateHubspotCampaignRequestBody struct {
+	// The campaign name. Visible to everyone on the connection's HubSpot portal —
+	// do not include project-sensitive information. Must contain a non-whitespace
+	// character.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+}
+
 // CreateGoogleAdsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body.
@@ -813,6 +823,49 @@ type ListTwitterAdsAccountsResponseBody struct {
 // HTTP response body.
 type ListHubspotEmailsResponseBody struct {
 	Emails []*MarketingEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
+}
+
+// SearchHubspotCampaignsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body.
+type SearchHubspotCampaignsResponseBody struct {
+	// Matches in the order HubSpot returned them — UNSPECIFIED, and NOT by
+	// relevance, so the first row is not the best match. Empty when nothing
+	// matched.
+	Campaigns []*HubspotCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// True when the search could NOT be shown to be complete. That covers the case
+	// HubSpot reported more matches than it returned, and equally the cases where
+	// completeness is simply unknown: an absent `total`, or one that contradicts
+	// the rows (negative, or fewer than were returned). All of them fail CLOSED,
+	// because "we cannot tell" must not be reported as the proven absence a caller
+	// acts on by creating a campaign. While it is true, absence from `campaigns`
+	// is NOT proof the campaign does not exist, and a caller must not offer an
+	// unqualified create on an empty result — it would duplicate a campaign in a
+	// namespace shared by everyone on that HubSpot portal. Narrow the search term
+	// instead.
+	Capped bool `form:"capped" json:"capped" xml:"capped"`
+}
+
+// CreateHubspotCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body.
+type CreateHubspotCampaignResponseBody struct {
+	// HubSpot's own campaign object id.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The campaign's display name.
+	Name string `form:"name" json:"name" xml:"name"`
+	// The campaign's UTM token. ABSENT is a real state, not a missing answer, and
+	// it never means the campaign was not found — but WHAT it means depends on
+	// which call produced it. From the SEARCH, where the properties are requested
+	// explicitly, absent means the campaign has none configured. From the CREATE
+	// it means only that that response did not carry one: the marketing create is
+	// not documented to return the property, so a token may already exist and be
+	// readable by the very next search. A consumer must not render the create's
+	// absence as "HubSpot assigned none".
+	Utm *string `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
+	// The campaign's start date as HubSpot holds it, for disambiguating same-named
+	// campaigns. Not parsed or normalised here.
+	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
 }
 
 // CreateGoogleAdsBadRequestResponseBody is the type of the
@@ -4062,6 +4115,126 @@ type ListHubspotEmailsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// SearchHubspotCampaignsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "BadRequest" error.
+type SearchHubspotCampaignsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchHubspotCampaignsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SearchHubspotCampaignsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchHubspotCampaignsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SearchHubspotCampaignsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchHubspotCampaignsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "NotFound" error.
+type SearchHubspotCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchHubspotCampaignsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type SearchHubspotCampaignsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchHubspotCampaignsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
+// endpoint HTTP response body for the "Unauthorized" error.
+type SearchHubspotCampaignsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type CreateHubspotCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type CreateHubspotCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type CreateHubspotCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type CreateHubspotCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type CreateHubspotCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type CreateHubspotCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
@@ -4176,6 +4349,26 @@ type MarketingEmailResponseBody struct {
 	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
 	// Last-modified timestamp (ISO-8601)
 	UpdatedAt *string `form:"updated_at,omitempty" json:"updated_at,omitempty" xml:"updated_at,omitempty"`
+}
+
+// HubspotCampaignResponseBody is used to define fields on response body types.
+type HubspotCampaignResponseBody struct {
+	// HubSpot's own campaign object id.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The campaign's display name.
+	Name string `form:"name" json:"name" xml:"name"`
+	// The campaign's UTM token. ABSENT is a real state, not a missing answer, and
+	// it never means the campaign was not found — but WHAT it means depends on
+	// which call produced it. From the SEARCH, where the properties are requested
+	// explicitly, absent means the campaign has none configured. From the CREATE
+	// it means only that that response did not carry one: the marketing create is
+	// not documented to return the property, so a token may already exist and be
+	// readable by the very next search. A consumer must not render the create's
+	// absence as "HubSpot assigned none".
+	Utm *string `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
+	// The campaign's start date as HubSpot holds it, for disambiguating same-named
+	// campaigns. Not parsed or normalised here.
+	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
 }
 
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
@@ -4981,6 +5174,41 @@ func NewListHubspotEmailsResponseBody(res *lfxv2campaignserviceconnections.ListH
 		}
 	} else {
 		body.Emails = []*MarketingEmailResponseBody{}
+	}
+	return body
+}
+
+// NewSearchHubspotCampaignsResponseBody builds the HTTP response body from the
+// result of the "search-hubspot-campaigns" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsResponseBody(res *lfxv2campaignserviceconnections.SearchHubspotCampaignsResult) *SearchHubspotCampaignsResponseBody {
+	body := &SearchHubspotCampaignsResponseBody{
+		Capped: res.Capped,
+	}
+	if res.Campaigns != nil {
+		body.Campaigns = make([]*HubspotCampaignResponseBody, len(res.Campaigns))
+		for i, val := range res.Campaigns {
+			if val == nil {
+				body.Campaigns[i] = nil
+				continue
+			}
+			body.Campaigns[i] = marshalLfxv2campaignserviceconnectionsHubspotCampaignToHubspotCampaignResponseBody(val)
+		}
+	} else {
+		body.Campaigns = []*HubspotCampaignResponseBody{}
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignResponseBody builds the HTTP response body from the
+// result of the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignResponseBody(res *lfxv2campaignserviceconnections.HubspotCampaign) *CreateHubspotCampaignResponseBody {
+	body := &CreateHubspotCampaignResponseBody{
+		ID:        res.ID,
+		Name:      res.Name,
+		Utm:       res.Utm,
+		StartDate: res.StartDate,
 	}
 	return body
 }
@@ -8536,6 +8764,138 @@ func NewListHubspotEmailsUnauthorizedResponseBody(res *lfxv2campaignserviceconne
 	return body
 }
 
+// NewSearchHubspotCampaignsBadRequestResponseBody builds the HTTP response
+// body from the result of the "search-hubspot-campaigns" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SearchHubspotCampaignsBadRequestResponseBody {
+	body := &SearchHubspotCampaignsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchHubspotCampaignsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "search-hubspot-campaigns" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SearchHubspotCampaignsServiceUnavailableResponseBody {
+	body := &SearchHubspotCampaignsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchHubspotCampaignsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "search-hubspot-campaigns" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SearchHubspotCampaignsInternalServerErrorResponseBody {
+	body := &SearchHubspotCampaignsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchHubspotCampaignsNotFoundResponseBody builds the HTTP response body
+// from the result of the "search-hubspot-campaigns" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SearchHubspotCampaignsNotFoundResponseBody {
+	body := &SearchHubspotCampaignsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchHubspotCampaignsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "search-hubspot-campaigns" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SearchHubspotCampaignsPayloadTooLargeResponseBody {
+	body := &SearchHubspotCampaignsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchHubspotCampaignsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "search-hubspot-campaigns" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchHubspotCampaignsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SearchHubspotCampaignsUnauthorizedResponseBody {
+	body := &SearchHubspotCampaignsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignBadRequestResponseBody builds the HTTP response body
+// from the result of the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateHubspotCampaignBadRequestResponseBody {
+	body := &CreateHubspotCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "create-hubspot-campaign" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateHubspotCampaignServiceUnavailableResponseBody {
+	body := &CreateHubspotCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "create-hubspot-campaign" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateHubspotCampaignInternalServerErrorResponseBody {
+	body := &CreateHubspotCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignNotFoundResponseBody builds the HTTP response body
+// from the result of the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *CreateHubspotCampaignNotFoundResponseBody {
+	body := &CreateHubspotCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *CreateHubspotCampaignPayloadTooLargeResponseBody {
+	body := &CreateHubspotCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotCampaignUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *CreateHubspotCampaignUnauthorizedResponseBody {
+	body := &CreateHubspotCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service create-google-ads endpoint payload.
 func NewCreateGoogleAdsPayload(body *CreateGoogleAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateGoogleAdsPayload {
@@ -9094,6 +9454,30 @@ func NewListHubspotEmailsPayload(projectID string, q *string, bearerToken *strin
 	return v
 }
 
+// NewSearchHubspotCampaignsPayload builds a
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns
+// endpoint payload.
+func NewSearchHubspotCampaignsPayload(projectID string, q string, bearerToken *string) *lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload {
+	v := &lfxv2campaignserviceconnections.SearchHubspotCampaignsPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateHubspotCampaignPayload builds a lfx-v2-campaign-service-connections
+// service create-hubspot-campaign endpoint payload.
+func NewCreateHubspotCampaignPayload(body *CreateHubspotCampaignRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateHubspotCampaignPayload {
+	v := &lfxv2campaignserviceconnections.CreateHubspotCampaignPayload{
+		Name: *body.Name,
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // ValidateCreateGoogleAdsRequestBody runs the validations defined on
 // Create-Google-AdsRequestBody
 func ValidateCreateGoogleAdsRequestBody(body *CreateGoogleAdsRequestBody) (err error) {
@@ -9429,6 +9813,28 @@ func ValidateSetCredentialHubspotRequestBody(body *SetCredentialHubspotRequestBo
 	if body.Credentials != nil {
 		if err2 := ValidateHubspotCredentialsRequestBody(body.Credentials); err2 != nil {
 			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateHubspotCampaignRequestBody runs the validations defined on
+// Create-Hubspot-CampaignRequestBody
+func ValidateCreateHubspotCampaignRequestBody(body *CreateHubspotCampaignRequestBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Name != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.name", *body.Name, "\\S"))
+	}
+	if body.Name != nil {
+		if utf8.RuneCountInString(*body.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 1, true))
+		}
+	}
+	if body.Name != nil {
+		if utf8.RuneCountInString(*body.Name) > 255 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 255, false))
 		}
 	}
 	return

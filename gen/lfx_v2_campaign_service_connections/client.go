@@ -66,11 +66,13 @@ type Client struct {
 	ListMicrosoftAdsAccountsEndpoint  goa.Endpoint
 	ListTwitterAdsAccountsEndpoint    goa.Endpoint
 	ListHubspotEmailsEndpoint         goa.Endpoint
+	SearchHubspotCampaignsEndpoint    goa.Endpoint
+	CreateHubspotCampaignEndpoint     goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, resolveGoogleAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, resolveGoogleAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:           createGoogleAds,
 		GetGoogleAdsEndpoint:              getGoogleAds,
@@ -123,6 +125,8 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		ListMicrosoftAdsAccountsEndpoint:  listMicrosoftAdsAccounts,
 		ListTwitterAdsAccountsEndpoint:    listTwitterAdsAccounts,
 		ListHubspotEmailsEndpoint:         listHubspotEmails,
+		SearchHubspotCampaignsEndpoint:    searchHubspotCampaigns,
+		CreateHubspotCampaignEndpoint:     createHubspotCampaign,
 	}
 }
 
@@ -1053,4 +1057,42 @@ func (c *Client) ListHubspotEmails(ctx context.Context, p *ListHubspotEmailsPayl
 		return
 	}
 	return ires.(*ListHubspotEmailsResult), nil
+}
+
+// SearchHubspotCampaigns calls the "search-hubspot-campaigns" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// SearchHubspotCampaigns may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SearchHubspotCampaigns(ctx context.Context, p *SearchHubspotCampaignsPayload) (res *SearchHubspotCampaignsResult, err error) {
+	var ires any
+	ires, err = c.SearchHubspotCampaignsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*SearchHubspotCampaignsResult), nil
+}
+
+// CreateHubspotCampaign calls the "create-hubspot-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateHubspotCampaign may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateHubspotCampaign(ctx context.Context, p *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error) {
+	var ires any
+	ires, err = c.CreateHubspotCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*HubspotCampaign), nil
 }

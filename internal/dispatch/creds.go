@@ -839,10 +839,10 @@ func (s *credsSource) decryptConn(ctx context.Context, key credCacheKey, project
 		// `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
 		// Do not "restore" logging of the cause on either.
 		//
-		// Account DISCOVERY still logs the full `aerr` (`internal/service/connection.go`,
-		// the ErrCredentialDecryptionFailed arm). That is out of this change's scope and is
-		// NOT covered by the tests above — so this is deliberately not a service-wide
-		// guarantee. Anything relying on one must close that path first.
+		// Account DISCOVERY no longer logs the cause either (`internal/service/connection.go`,
+		// the ErrCredentialDecryptionFailed arm): the campaign CREATE routes its setup
+		// failures through that classifier, so the last path that quoted the chain was
+		// closed. Pinned by TestClassifyDiscoveryError_DecryptFailureLogsNoErrorText.
 		// All arms return a fixed message to the caller regardless.
 		//
 		// A decrypt failure is NOT one condition, and which sentinel it carries decides

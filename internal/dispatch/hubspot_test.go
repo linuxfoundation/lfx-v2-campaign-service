@@ -786,3 +786,159 @@ func TestHubSpot_ConfigSnapshotOmitsTheGeneratedCopy(t *testing.T) {
 		t.Errorf("ConfigSnapshot lost the utm campaign: %s", snapshot)
 	}
 }
+
+// TestHubSpot_CreateCampaignTagsDomainSentinels pins the translation the SERVICE depends on.
+//
+// The service classifies a create outcome from domain sentinels alone — it must not import a
+// platform client to read unexported error types, which would invert service → dispatch →
+// platform. That only works if this layer actually tags them, and nothing else in the chain can
+// notice if it stops: the service tests would go on passing against sentinels nobody produces.
+func TestHubSpot_CreateCampaignTagsDomainSentinels(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		wantTags    []error
+		notWantTags []error
+	}{
+		{
+			name:        "403 is a permission rejection",
+			status:      http.StatusForbidden,
+			wantTags:    []error{domain.ErrPlatformPermission, domain.ErrPlatformRejected},
+			notWantTags: nil,
+		},
+		{
+			name:        "400 is a definite rejection but not a permission one",
+			status:      http.StatusBadRequest,
+			wantTags:    []error{domain.ErrPlatformRejected},
+			notWantTags: []error{domain.ErrPlatformPermission},
+		},
+		{
+			// A 500 MAY have committed the campaign, so it must stay untagged and be treated as
+			// unconfirmed upstream. Tagging it would tell the operator nothing was created.
+			name:        "500 is left unclassified",
+			status:      http.StatusInternalServerError,
+			wantTags:    nil,
+			notWantTags: []error{domain.ErrPlatformRejected, domain.ErrPlatformPermission},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{"message":"nope"}`)
+			}))
+			defer srv.Close()
+
+			d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+				fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+			_, err := d.CreateCampaign(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon NA 2027")
+			if err == nil {
+				t.Fatalf("a %d was reported as success", tc.status)
+			}
+			for _, want := range tc.wantTags {
+				if !errors.Is(err, want) {
+					t.Errorf("a %d is not tagged %v, so the service cannot classify it: %v", tc.status, want, err)
+				}
+			}
+			for _, notWant := range tc.notWantTags {
+				if errors.Is(err, notWant) {
+					t.Errorf("a %d is wrongly tagged %v: %v", tc.status, notWant, err)
+				}
+			}
+		})
+	}
+}
+
+// TestHubSpot_CreateCampaignTagsANeverSentFailure pins the arm the status table above cannot
+// reach: a failure that happens BEFORE any request leaves this process.
+//
+// It matters because the default is deliberately fail-closed. An untagged error is treated as
+// unconfirmed, which is right for anything that might have reached HubSpot — but a dial failure
+// or an already-cancelled context proves the campaign was never created, and reporting that as
+// "may already exist" sends the operator to hunt for something that does not exist.
+func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
+	// A context cancelled before the call begins is the cheapest way to reach preSendError
+	// deterministically — no network, no timing.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request should reach HubSpot when the context is already cancelled")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	_, err := d.CreateCampaign(ctx, "cncf", model.ProviderHubSpot, "KubeCon NA 2027")
+	if err == nil {
+		t.Fatal("a cancelled context was reported as a successful create")
+	}
+	// The SPECIFIC sentinel, which is what the service branches on. Asserting the broader
+	// rejection tag would pass even if this arm stopped tagging never-sent at all, and the
+	// service would then answer the name-rejection remedy for a dial failure.
+	if !errors.Is(err, domain.ErrPlatformNeverSent) {
+		t.Errorf("a never-sent failure is not tagged ErrPlatformNeverSent, so the service cannot "+
+			"tell it apart from a rejection and answers the wrong remedy: %v", err)
+	}
+	// And NOT tagged rejected: the two are mutually exclusive events — HubSpot refusing on the
+	// merits versus HubSpot never seeing the request. Reporting both made `definite_rejection`
+	// true for a DNS failure in the create's own telemetry.
+	if errors.Is(err, domain.ErrPlatformRejected) {
+		t.Errorf("a never-sent failure also tagged as a definite rejection, which corrupts "+
+			"rejection telemetry and any generic rejection handling: %v", err)
+	}
+	if errors.Is(err, domain.ErrPlatformPermission) {
+		t.Errorf("a never-sent failure tagged as a permission refusal: %v", err)
+	}
+}
+
+// TestHubSpot_SearchCampaignsCrossesTheSeam covers the dispatcher adapter itself.
+//
+// The client tests derive Capped and the service tests map it onto the wire, but nothing
+// exercised the adapter BETWEEN them. Dropping page.Capped here would leave both of those suites
+// green while turning a capped, incomplete search into a plain empty answer — and empty is
+// exactly what the UI acts on by offering to create a campaign, in a namespace shared by every
+// project configured against that same HubSpot portal — which is not necessarily the LF's own,
+// since connections are per project. Every field is asserted for the same reason: a field lost at
+// this seam cannot be seen from either side of it.
+func TestHubSpot_SearchCampaignsCrossesTheSeam(t *testing.T) {
+	const searchPath = "/crm/v3/objects/0-35/search"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == searchPath {
+			// total (7) deliberately exceeds the returned rows (1): that is what makes the page
+			// capped, and the capped flag is the whole point of this test.
+			_, _ = io.WriteString(w, `{"total":7,"results":[{"id":"c-1","properties":{"hs_name":"KubeCon NA 2026","hs_utm":"kubecon-na-2026","hs_start_date":"2026-11-10"}}]}`)
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	page, err := d.SearchCampaigns(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon")
+	if err != nil {
+		t.Fatalf("SearchCampaigns: %v", err)
+	}
+	if !page.Capped {
+		t.Error("Capped was dropped crossing the dispatcher: an incomplete search now reads as a " +
+			"complete one, and an absent campaign is what licenses a duplicate create")
+	}
+	if len(page.Campaigns) != 1 {
+		t.Fatalf("got %d campaigns, want 1", len(page.Campaigns))
+	}
+	got := page.Campaigns[0]
+	for _, f := range []struct{ name, got, want string }{
+		{"ID", got.ID, "c-1"},
+		{"Name", got.Name, "KubeCon NA 2026"},
+		{"UTM", got.UTM, "kubecon-na-2026"},
+		{"StartDate", got.StartDate, "2026-11-10"},
+	} {
+		if f.got != f.want {
+			t.Errorf("%s = %q, want %q — lost crossing the dispatcher seam", f.name, f.got, f.want)
+		}
+	}
+}

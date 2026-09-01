@@ -1903,3 +1903,34 @@ dispatch searched for the Search campaign's name, and an unsupported channel was
 after adoption could already have bound a campaign. `googleads.CampaignKindSearch` and
 `CampaignKindDemandGen` are exported so the dispatcher composes the same name the client writes.
 
+
+## HubSpot campaign capability
+
+`HubSpotDispatcher` implements `service.CampaignSearcher`: `SearchCampaigns` and
+`CreateCampaign`, backed by the client's two campaign operations. `projectID` selects which
+connection's credential to use — and therefore which PORTAL is visible, since HubSpot connections
+are stored per project with their own token and `portal_id` and `credsSource` refuses the LF
+system fallback for HubSpot.
+
+**The create translates platform errors into domain sentinels HERE**, which is the layer that
+talks to the platform. The service must tell a definite rejection (nothing created, report it as
+such) from an unconfirmed outcome (verify before retrying) from a failure that never left this
+process — and it must do so without importing a platform client to read its unexported error
+types, which would invert service → dispatch → platform.
+
+Three sentinels carry it: `ErrPlatformRejected` (HubSpot answered and refused),
+`ErrPlatformPermission` (narrowing that to 401/403, because retrying another name cannot fix a
+permission problem) and `ErrPlatformNeverSent` (a dial failure or already-cancelled context).
+
+`ErrPlatformNeverSent` is carried ALONE, deliberately. Joining `ErrPlatformRejected` onto it
+reported two mutually exclusive events as one — HubSpot refusing on the merits versus HubSpot
+never seeing the request — and it showed up immediately as `definite_rejection=true` in the
+create's telemetry for a DNS failure. A caller that wants "nothing was created" therefore checks
+BOTH sentinels, which is the honest shape given the remedies differ: one is about the request,
+the other about the network. The service checks never-sent FIRST for that reason.
+
+Anything not POSITIVELY identified is left untagged and treated as unconfirmed upstream. That
+default is the safe direction for a non-idempotent write, and
+`TestHubSpot_CreateCampaignTagsDomainSentinels` pins it with a 500 case — because a translation
+that silently stopped happening would leave the service's own tests passing against sentinels
+nothing produces.

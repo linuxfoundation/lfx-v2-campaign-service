@@ -15,7 +15,7 @@ type Resolution struct {
 	// "fallback" when neither yielded anything usable.
 	//
 	// SourceHubSpotCampaign is reserved for a value read from an upstream HubSpot campaign's
-	// hs_utm — NOT yet implemented, so nothing emits it today. Recording a brief-config
+	// hs_utm — not emitted today (see SourceHubSpotCampaign for the precise remaining gap). Recording a brief-config
 	// override as hubspot_campaign would make the provenance log false, and provenance is the
 	// only way to tell two differently-sourced campaigns apart in a report.
 	Source string
@@ -24,8 +24,14 @@ type Resolution struct {
 // Provenance values for Resolution.Source.
 const (
 	// SourceHubSpotCampaign is reserved for an upstream HubSpot campaign's configured hs_utm.
-	// Nothing emits it yet: following the source email to its campaign needs endpoints this
-	// client does not have.
+	//
+	// Nothing emits it yet, and the reason is narrower than it used to be. The client CAN now
+	// reach campaigns — SearchCampaigns finds them BY NAME and CreateCampaign makes one — but
+	// resolution here starts from a source EMAIL, and nothing reads the association from an
+	// email to the campaign it belongs to. Searching by the email's name would be a guess, not
+	// a lookup: campaign and email names need not match, and a wrong hit would attribute this
+	// email's traffic to somebody else's campaign, which is worse than emitting no source at
+	// all. Closing this needs an association read, not another search endpoint.
 	SourceHubSpotCampaign = "hubspot_campaign"
 	// SourceBriefConfig is an operator-set utmCampaign on the brief's platform config.
 	SourceBriefConfig = "brief_config"

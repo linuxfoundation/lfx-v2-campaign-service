@@ -214,6 +214,105 @@ type Service interface {
 	// caller-specified source email (sourceEmailId is required and has no
 	// default), so the caller has to be able to find one.
 	ListHubspotEmails(context.Context, *ListHubspotEmailsPayload) (res *ListHubspotEmailsResult, err error)
+	// Find LF HubSpot marketing campaigns by name, to read back an existing
+	// campaign's `hs_utm` token. **THE NAMESPACE IS PORTAL-WIDE.** HubSpot
+	// campaigns are not scoped to a project, so this returns every campaign in the
+	// portal the connection authenticates against, regardless of which project
+	// scopes the path. `project_id` gates permission AND selects WHICH portal is
+	// visible: a HubSpot connection is stored per project with its own token and
+	// `portal_id`, and the LF system fallback is refused for HubSpot — so two
+	// projects see the same campaigns only when they are configured against the
+	// same portal, which is common under the LF umbrella but is not guaranteed.
+	// The portal-wide part is a property of HubSpot's data model rather than a gap
+	// in the scoping here, and it is why the create route below needs a warning.
+	// The match is HubSpot's own `query` search over its default searchable
+	// properties: NOT an exact-name lookup, and NOT relevance-ranked — the CRM v3
+	// search API has no relevance sort, and no `sorts` is sent, so the order is
+	// UNSPECIFIED. **Do not read the first row as the best match** — the search is
+	// token-based, so a hit can merely share a token with the query. Every match
+	// is returned, in the order HubSpot returned them, rather than narrowed to a
+	// best one, because choosing between similarly-named campaigns needs a human
+	// reading the names — collapsing them here would hide the ambiguity from the
+	// only party able to resolve it. **An empty `campaigns` array is a 200, not a
+	// 404**: 'no campaign is named that' is the answer a caller acts on by
+	// offering to create one, and it must be distinguishable from a search that
+	// failed. A campaign with no `utm` is a real result and is returned as one —
+	// an absent token does NOT mean the campaign was not found, and treating it
+	// that way would prompt a duplicate create. **The result set is CAPPED at 200
+	// and there is no paging.** A campaign ranked below the cap is not returned,
+	// and a caller reads an absent campaign as licence to create one — so an
+	// operator who cannot find a campaign should search a narrower term rather
+	// than assume it does not exist. 200 is HubSpot's own per-request maximum
+	// (raised from 100 in September 2024), so the gap between "not in the top N"
+	// and "does not exist" is as small as one request can make it. **`capped`
+	// reports when that gap is actually open**, derived from HubSpot's own total
+	// rather than from the returned count — an exactly-full page and a truncated
+	// one are the same length. While `capped` is true the caller must not offer an
+	// unqualified create: the campaign it would duplicate may be one of the
+	// matches HubSpot did not return. This is NOT a list endpoint under rule 3: it
+	// is a keyed query returning the matches for one supplied term. It IS a
+	// collection — `campaigns` is an array and `q` narrows it — but a BOUNDED one:
+	// a single unpaged request capped at 200, with no cursor and no filters beyond
+	// the search term, so rule 3's concern about an open-ended listing surface
+	// does not apply.
+	SearchHubspotCampaigns(context.Context, *SearchHubspotCampaignsPayload) (res *SearchHubspotCampaignsResult, err error)
+	// Create an LF HubSpot marketing campaign, returning the `hs_utm` token when
+	// the response carries one. **`utm` MAY BE ABSENT ON A SUCCESSFUL CREATE**,
+	// and that is not an error: the marketing create is not documented to return
+	// the property, and this route does no follow-up read — a second call after a
+	// non-idempotent write is another failure point whose failure would make a
+	// campaign that EXISTS look like one that was never created. An absent token
+	// means only that this response did not carry one, NOT that the campaign has
+	// none configured; the ordinary lookup reads it back. What IS required is the
+	// id: an id-less 2xx is refused as unconfirmed, because a campaign that cannot
+	// be addressed is not a usable answer. **THIS WRITE IS VISIBLE PORTAL-WIDE.**
+	// The campaign namespace is the whole HubSpot portal this project's connection
+	// authenticates against, so a campaign created here appears for everyone
+	// working in that portal however this path is scoped. WHICH portal depends on
+	// the connection — they are stored per project with their own token and
+	// `portal_id`, and the LF system fallback is refused for HubSpot — so this is
+	// not necessarily every foundation, and projects on different portals do not
+	// see each other's campaigns. A caller MUST warn before invoking it, and must
+	// not put anything project-sensitive in the name. **It does not check for an
+	// existing campaign first, and that is deliberate.** A search-then-create
+	// inside one call would still race any concurrent caller and could not prevent
+	// a duplicate; the check belongs with the human who can read the candidate
+	// names. Search first, show the matches, create only if the operator confirms
+	// none is right. This method always creates. `hs_utm` is assigned by HubSpot,
+	// never supplied here, and is read back from the create response rather than
+	// re-fetched — so the returned token is the one HubSpot actually assigned
+	// rather than one this service guessed. **A 2xx carrying no id is reported as
+	// an error**, because the campaign may or may not exist and cannot be
+	// addressed either way: the caller must check HubSpot rather than retry into a
+	// second copy. Other failures fall into FOUR classes, and the status tells
+	// them apart. **400 — nothing was created, and the request is correctable.**
+	// Either HubSpot rejected it on the merits (a definite non-429 4xx), or the
+	// stored connection EXISTS but is not usable as configured. A 401/403 says so
+	// in its own words, because retrying another NAME cannot fix a permission
+	// problem. **404 — no HubSpot connection is configured for this project.**
+	// Distinct from the 400 above, which means one exists and is broken: the
+	// remedy is to connect HubSpot, not to fix a credential. **500 — the stored
+	// credential could not be decrypted**, or the service is otherwise faulted
+	// BEFORE the request went out. Not the operator's to fix, and not retryable by
+	// them. 500 is reserved for that pre-send position: a fault discovered AFTER
+	// the create returned without error is a 503, because by then the campaign may
+	// exist and only this service's reading of the outcome failed. Those three
+	// prove nothing reached HubSpot, which is why they are reported as themselves
+	// rather than as an unconfirmed outcome: sending an operator to look for a
+	// campaign that was never attempted hides the remedy they actually need. **503
+	// — the outcome could not be confirmed, OR the request never left this
+	// service.** Those two share a status because both are
+	// retryable-when-things-recover rather than correctable by the caller, and the
+	// MESSAGE distinguishes them: a pre-send failure (DNS, dial, an
+	// already-cancelled context) can promise nothing was created, which the
+	// unconfirmed case cannot. Everything else lands here too, including any
+	// failure this service cannot positively classify: a non-idempotent write into
+	// a shared namespace fails CLOSED, so an unrecognised error is treated as
+	// possibly-committed rather than reported as a clean failure. HubSpot marks
+	// mutating transport, 429, 3xx and 5xx failures as possibly-committed, and so
+	// is a 2xx whose body could not be decoded. Verify in HubSpot before creating
+	// it again.
+	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -236,7 +335,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [51]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails"}
+var MethodNames = [53]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -278,6 +377,19 @@ type CreateGoogleAdsPayload struct {
 	ProjectID   string
 	Config      *GoogleAdsConnectionConfig
 	Credentials *GoogleAdsCredentials
+}
+
+// CreateHubspotCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-hubspot-campaign method.
+type CreateHubspotCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The campaign name. Visible to everyone on the connection's HubSpot portal —
+	// do not include project-sensitive information. Must contain a non-whitespace
+	// character.
+	Name string
 }
 
 // CreateHubspotPayload is the payload type of the
@@ -638,6 +750,27 @@ type GoogleAdsKeywords struct {
 	// The rows are the TOP ones by impressions, not the project's full keyword set
 	// — do not total them and present the result as the project's whole spend.
 	Truncated bool
+}
+
+// HubspotCampaign is the result type of the
+// lfx-v2-campaign-service-connections service create-hubspot-campaign method.
+type HubspotCampaign struct {
+	// HubSpot's own campaign object id.
+	ID string
+	// The campaign's display name.
+	Name string
+	// The campaign's UTM token. ABSENT is a real state, not a missing answer, and
+	// it never means the campaign was not found — but WHAT it means depends on
+	// which call produced it. From the SEARCH, where the properties are requested
+	// explicitly, absent means the campaign has none configured. From the CREATE
+	// it means only that that response did not carry one: the marketing create is
+	// not documented to return the property, so a token may already exist and be
+	// readable by the very next search. A consumer must not render the create's
+	// absence as "HubSpot assigned none".
+	Utm *string
+	// The campaign's start date as HubSpot holds it, for disambiguating same-named
+	// campaigns. Not parsed or normalised here.
+	StartDate *string
 }
 
 // HubspotConnection is the result type of the
@@ -1016,6 +1149,39 @@ type ResolveGoogleAdsCampaignPayload struct {
 	// The Google Ads campaign id to resolve. Digits only, no leading zero, and
 	// within int64.
 	PlatformCampaignID string
+}
+
+// SearchHubspotCampaignsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns method.
+type SearchHubspotCampaignsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The campaign name to search for. Matched by HubSpot's own `query` search
+	// over its default searchable properties — not an exact-name lookup, and not
+	// relevance-ranked. Must contain a non-whitespace character.
+	Q string
+}
+
+// SearchHubspotCampaignsResult is the result type of the
+// lfx-v2-campaign-service-connections service search-hubspot-campaigns method.
+type SearchHubspotCampaignsResult struct {
+	// Matches in the order HubSpot returned them — UNSPECIFIED, and NOT by
+	// relevance, so the first row is not the best match. Empty when nothing
+	// matched.
+	Campaigns []*HubspotCampaign
+	// True when the search could NOT be shown to be complete. That covers the case
+	// HubSpot reported more matches than it returned, and equally the cases where
+	// completeness is simply unknown: an absent `total`, or one that contradicts
+	// the rows (negative, or fewer than were returned). All of them fail CLOSED,
+	// because "we cannot tell" must not be reported as the proven absence a caller
+	// acts on by creating a campaign. While it is true, absence from `campaigns`
+	// is NOT proof the campaign does not exist, and a caller must not offer an
+	// unqualified create on an empty result — it would duplicate a campaign in a
+	// namespace shared by everyone on that HubSpot portal. Narrow the search term
+	// instead.
+	Capped bool
 }
 
 // SetCredentialGoogleAdsPayload is the payload type of the

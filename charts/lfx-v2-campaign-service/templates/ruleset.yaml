@@ -126,6 +126,10 @@ spec:
           # What the caller picks is the marketing email a campaign clones, since
           # hubspotConfig.SourceEmailID is required with no default (LFXV2-3197).
           - path: /projects/:projectId/connection-hubspot/emails
+          # Campaign lookup and create. The LOOKUP reads back an existing campaign's utm
+          # token; the CREATE writes into a namespace shared portal-wide, which is why
+          # the design description requires the caller to warn first.
+          - path: /projects/:projectId/connection-hubspot/campaigns
           # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
           # would only match /briefs/{id}; the routed contract has DEEPER paths —
           # /briefs/{id}/approve and /briefs/{id}/campaigns/{campaignId} (per the
@@ -154,7 +158,8 @@ spec:
           # Maps a Google Ads campaign id to this service's campaign + brief, so a caller
           # holding keyword rows can address the brief-scoped mutation routes.
           - path: /projects/:projectId/google-ads/campaign-ref
-          # HubSpot UTM (LF-global; projectId only gates permission). ** covers
+          # HubSpot UTM (portal-wide; projectId gates permission AND selects the
+          # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.
           - path: /projects/:projectId/hubspot
           - path: /projects/:projectId/hubspot/**
