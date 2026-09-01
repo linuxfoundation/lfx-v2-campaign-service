@@ -1,4 +1,4 @@
-# 2026-08-31 — a fix that inverted its own bug
+# 2026-08-31 — LFXV2-2775: a fix that inverted its own bug
 
 **Update** — The single-widget guard has now been wrong in both directions, and the second error
 was introduced by the fix for the first.
