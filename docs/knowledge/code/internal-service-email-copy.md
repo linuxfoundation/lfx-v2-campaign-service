@@ -57,7 +57,7 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 ### The prompt bound is checked twice, in runes, against TWO different limits
 
 `maxPromptSize` is 2400 **runes** and bounds the three event-detail fields BEFORE
-`composeEmailCopyPrompt`; `maxComposedPromptSize` is 7600 and bounds the composed prompt after.
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 8400 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
 input plus the stage template — and getting the second number wrong fails in TWO opposite
 directions, both of which this file has actually shipped:
@@ -79,10 +79,10 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event is 5041 runes on its own) and hand-edited.
+— the templates are large (Post-Event is 5503 runes on its own) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 7441, so 7600 clears it, and a template
-growing ~159 runes trips the guard. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
+With the input bound at 2400 the worst valid composition is 7903 (Post-Event floors at 5503), so
+8400 clears it with ~497 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
 
 That test was a **false green** for one revision: once the input bound moved to 2400, its 2500-rune
@@ -101,10 +101,15 @@ Runes, not bytes, because the limit is stated to the caller and logged as a char
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at 5041 runes on its own,
-and with the maximum 2400 runes of caller input it composes to 7441 against the 7600 bound. Every
-figure in this section has been wrong at least once from a measurement taken before a template
-grew, so derive them rather than carrying them forward.
+shared prompt or any template changes: Post-Event is the largest stage at 5503 runes on its own,
+and with the maximum 2400 runes of caller input it composes to 7903 against the 8400 bound.
+
+Every figure in this section has been wrong at least once from a measurement taken before a
+template grew — three times, most recently when a paragraph added to the shared system prompt grew
+every stage by ~130 runes. A prose instruction to re-measure did not survive contact, so
+`TestComposedBoundClearsEveryStageFloor` now COMPUTES every stage floor from the real constants and
+fails if `worst + maxPromptSize` exceeds `maxComposedPromptSize`. Derive these numbers from that
+test rather than carrying them forward.
 
 ### The stage selects the template, and an unrecognised one does not fail
 
