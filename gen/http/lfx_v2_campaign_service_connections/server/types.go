@@ -829,7 +829,7 @@ type ListHubspotEmailsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "search-hubspot-campaigns"
 // endpoint HTTP response body.
 type SearchHubspotCampaignsResponseBody struct {
-	// Matches in the order HubSpot returned them — by object creation, NOT by
+	// Matches in the order HubSpot returned them — UNSPECIFIED, and NOT by
 	// relevance, so the first row is not the best match. Empty when nothing
 	// matched.
 	Campaigns []*HubspotCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`

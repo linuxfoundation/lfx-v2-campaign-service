@@ -108,7 +108,8 @@ type campaignSearchHit struct {
 // The match is HubSpot's own `query` search over the default searchable properties. It is NOT
 // an exact-name lookup — it can return campaigns whose names merely share a token — and it is
 // NOT relevance-ranked: the CRM v3 search API has no relevance sort, and with no `sorts` in the
-// request the rows come back in HubSpot's default order, which is by object creation. Do not
+// request the rows come back in an UNSPECIFIED order: no `sorts` is sent and HubSpot's CRM
+// search documents no default, so nothing here establishes one. Do not
 // read the first row as the best match; nothing here has scored them.
 //
 // Every hit is returned rather than filtered to a single "best" one, because picking one would
@@ -199,7 +200,7 @@ func (c *Client) SearchCampaigns(ctx context.Context, query string) (SearchCampa
 // SearchCampaignsPage is one page of campaign search results plus the fact a caller needs to
 // know whether absence is meaningful.
 type SearchCampaignsPage struct {
-	// Campaigns are the matches, in the order HubSpot returned them — by object creation, NOT
+	// Campaigns are the matches, in the order HubSpot returned them — UNSPECIFIED, NOT
 	// by relevance. See SearchCampaigns.
 	Campaigns []Campaign
 	// Capped reports that this search could NOT be shown to be complete — HubSpot reported more

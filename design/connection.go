@@ -1330,7 +1330,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"gap in the scoping here, and it is why the create route below needs a warning. " +
 			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
 			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
-			"sort, and no `sorts` is sent, so rows arrive in HubSpot's default order (by object " +
+			"sort, and no `sorts` is sent, so the order is UNSPECIFIED (" +
 			"creation). **Do not read the first row as the best match** — the search is token-based, " +
 			"so a hit can merely share a token with the query. Every match is returned, in the order " +
 			"HubSpot returned them, rather than narrowed to a best one, because choosing between " +
@@ -1368,7 +1368,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("project_id", "q")
 		})
 		Result(func() {
-			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in the order HubSpot returned them — by object creation, NOT by relevance, so the first row is not the best match. Empty when nothing matched.")
+			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in the order HubSpot returned them — UNSPECIFIED, and NOT by relevance, so the first row is not the best match. Empty when nothing matched.")
 			Attribute("capped", Boolean, "True when the search could NOT be shown to be complete. That covers the case HubSpot reported more matches than it returned, and equally the cases where completeness is simply unknown: an absent `total`, or one that contradicts the rows (negative, or fewer than were returned). All of them fail CLOSED, because \"we cannot tell\" must not be reported as the proven absence a caller acts on by creating a campaign. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.")
 			Required("campaigns", "capped")
 		})

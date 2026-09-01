@@ -58,12 +58,13 @@ spec:
     # single provider, so that collapse is one ticket away and must still not be done
     # early.
     #
-    # hubspot is spelled out separately for the same reason, but its extra sub-path is
-    # /emails, NOT /accounts: a HubSpot connection is already scoped to the portal its
-    # token authenticates against, so there is no account to discover — what the caller
-    # picks is which marketing email a campaign clones (LFXV2-3197). It therefore cannot
-    # join the discovery branch; admitting /accounts for hubspot would rule a path the
-    # service does not serve, and /emails for google-ads or meta-ads the same.
+    # hubspot is spelled out separately for the same reason, but its extra sub-paths are
+    # /emails and /campaigns, NOT /accounts: a HubSpot connection is already scoped to the
+    # portal its token authenticates against, so there is no account to discover — what the
+    # caller picks is which marketing email a campaign clones (LFXV2-3197) and which existing
+    # HubSpot campaign owns the UTM token (LFXV2-2641). It therefore cannot join the discovery
+    # branch; admitting /accounts for hubspot would rule a path the service does not serve, and
+    # /emails or /campaigns for google-ads or meta-ads the same.
     - matches:
       - path:
           type: RegularExpression

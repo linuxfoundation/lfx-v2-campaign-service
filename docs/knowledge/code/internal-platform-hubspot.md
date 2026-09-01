@@ -376,7 +376,8 @@ requiring an operator warning rather than being narrowed here.
 **The search is loose, unranked, and every match is returned.** HubSpot's `query` searches its
 default searchable properties, not an exact name, so a hit can merely share a token with the
 term. It is NOT relevance-ranked: the CRM v3 search API has no relevance sort, and no `sorts` is
-sent, so rows arrive in HubSpot's default order — by object creation. **The first row is not the
+sent, so rows arrive in whatever order HubSpot chooses — UNSPECIFIED, and not a documented
+guarantee this request establishes. **The first row is not the
 best match**, and any ranking a caller shows is its own (the UI scores locally).
 
 Matches come back whole rather than narrowed to a best one: choosing between similarly-named

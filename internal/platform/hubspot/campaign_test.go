@@ -32,7 +32,7 @@ func TestSearchCampaigns_ReturnsEveryMatchInOrder(t *testing.T) {
 	if len(got.Campaigns) != 2 {
 		t.Fatalf("matches = %d, want 2", len(got.Campaigns))
 	}
-	// ORDER is HubSpot's own (by object creation, not relevance) and must survive: the caller
+	// ORDER is HubSpot's own (UNSPECIFIED, and certainly not relevance) and must survive: the caller
 	// shows these to a human
 	// choosing between candidate names, and re-ordering would put a worse match first.
 	if got.Campaigns[0].ID != "11" || got.Campaigns[1].ID != "22" {

@@ -94,7 +94,7 @@ func TestSearchHubspotCampaigns_ReturnsMatchesInOrder(t *testing.T) {
 		t.Fatalf("campaigns = %d, want 2", len(res.Campaigns))
 	}
 	// HubSpot's ORDER must survive — not "relevance order": this search is explicitly not
-	// relevance-ranked, and rows arrive in HubSpot's default order (by object creation). The
+	// relevance-ranked, and rows arrive in an UNSPECIFIED order. The
 	// caller shows them to a human picking between similar names, so reordering here would
 	// invent a ranking the API never provided and invite treating the first row as the best
 	// match, which is exactly what the endpoint's contract warns against.
