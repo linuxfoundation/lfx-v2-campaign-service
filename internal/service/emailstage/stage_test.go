@@ -4,6 +4,8 @@
 package emailstage
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -84,31 +86,49 @@ func TestResolveNeverReturnsAnEmptyTemplate(t *testing.T) {
 // inside") asserts nothing the brief has to supply, and requiring a placeholder in every preview
 // would be noise rather than a guard.
 func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
-	// Words that name a fact NOTHING in the pipeline supplies: only eventName, location and dates
-	// are ever filled. A pattern using one of these must wrap it in a placeholder so the OMIT rule
-	// can drop the sentence.
-	commercial := []string{"price", "pricing", "rate", "discount", "early bird", "promo", "coupon", "code", "save"}
+	// Facts NOTHING in the pipeline supplies: only eventName, location and dates are ever filled.
+	// A sentence ASSERTING one must carry a placeholder so the OMIT rule can drop it.
+	// Every noun the briefs promise that the pipeline cannot supply. Extended after a mutation
+	// showed the first list caught only two of four known-bad lines: "Event guide and schedule
+	// inside" and a "Watch Recordings" CTA both slipped through because the words were absent
+	// from the list, not because the guard was wrong.
+	claims := []string{
+		"early bird", "pricing", "promo code", "discount", "recordings", "3-minute",
+		"event guide", "schedule inside", "video library", "watch recordings", "resources",
+	}
+
+	// A prohibition is the opposite of a claim. The briefs are full of "No pricing", "NO sales
+	// pitch", "Pricing (belongs in Registration Push email)" -- instructions NOT to mention the
+	// thing. Flagging those made the guard fire on every stage, which is how a real finding gets
+	// ignored. Only affirmative sentences are checked.
+	negated := regexp.MustCompile(`(?i)\b(no|not|never|without|remove|avoid|omit|exclude|belongs in)\b`)
 
 	for name, tpl := range Templates {
-		for field, text := range map[string]string{
+		fields := map[string]string{
 			"SubjectPattern": tpl.SubjectPattern,
 			"PreviewPattern": tpl.PreviewPattern,
 			"FooterNote":     tpl.FooterNote,
-		} {
-			lower := strings.ToLower(text)
-			for _, w := range commercial {
-				if !strings.Contains(lower, w) {
-					continue
-				}
-				// EVERY sentence carrying the claim, not the first. The OMIT rule drops a
-				// sentence at a time, so one guarded sentence says nothing about the next:
-				// "Early bird pricing ends [DEADLINE]. Standard pricing applies after that date."
-				// passed on the first half while the second asserted a pricing schedule nothing
-				// supplies. Returning the first match made the guard agree with itself.
-				for _, sentence := range claimSentences(text, w) {
+			"ContentPrompt":  tpl.ContentPrompt,
+		}
+		for i, cta := range tpl.CTAStrategy {
+			fields[fmt.Sprintf("CTAStrategy[%d]", i)] = cta
+		}
+		for field, text := range fields {
+			for _, claim := range claims {
+				// WORD-boundary: substring matching made "rate" hit "Generate" and "recruitment".
+				re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(claim) + `([^\p{L}]|$)`)
+				for _, sentence := range claimSentences(text, claim) {
+					if !re.MatchString(sentence) || negated.MatchString(sentence) {
+						continue
+					}
+					// The opening "Generate a <Stage> email for ..." line NAMES the stage; it is a
+					// label, not a claim made to the reader.
+					if strings.HasPrefix(strings.TrimSpace(sentence), "Generate a") {
+						continue
+					}
 					if !strings.Contains(sentence, "[") {
-						t.Errorf("stage %q %s asserts %q in a sentence with no placeholder, so the OMIT rule cannot remove it: %q",
-							name, field, w, sentence)
+						t.Errorf("stage %q %s asserts %q with no placeholder, so the OMIT rule cannot remove it: %q",
+							name, field, claim, strings.TrimSpace(sentence))
 					}
 				}
 			}
@@ -116,9 +136,6 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 	}
 }
 
-// claimSentences returns EVERY sentence of text containing needle (case-insensitive), or the whole
-// text when no sentence matches. Sentence-scoped because the OMIT rule drops one sentence at a
-// time, and ALL of them because a guarded sentence does not vouch for the one after it.
 func claimSentences(text, needle string) []string {
 	var out []string
 	for _, s := range strings.Split(text, ".") {

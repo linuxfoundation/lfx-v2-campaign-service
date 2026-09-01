@@ -354,7 +354,7 @@ IF ANY RULE FAILS: Revise before returning.
 WORD COUNT TARGET: 180-250 words`,
 		CTAStrategy: []string{
 			"Primary: Register Now (registration page)",
-			"Secondary: View All Options (pricing page)",
+			"Secondary: View All Options -- link only what the brief supplies, not a pricing page",
 		},
 		// Both sentences placeholdered. The second asserted a standard-pricing schedule with no
 		// placeholder, so the OMIT rule could not reach it even when the first was dropped -- and
@@ -498,7 +498,7 @@ WORD COUNT TARGET: 180-240 words`,
 			"Getting ready for [EVENT_NAME]? Here's what to expect.",
 			"See you in [DAYS_LEFT] days at [EVENT_NAME]",
 		},
-		PreviewPattern: "Event guide and schedule inside.",
+		PreviewPattern: "[EVENT_NAME] starts soon.",
 		ContentPrompt: `Generate a Final Countdown email for open-source community.
 
 PRIMARY OBJECTIVE: Confirm attendance & build anticipation. EVERY section supports this. NO other objectives.
@@ -614,7 +614,7 @@ WORD COUNT TARGET: 200-280 words`,
 		Timing:         "1-2 days after event",
 		Tone:           "Grateful, reflective, community-focused",
 		UrgencyLevel:   1,
-		SubjectPattern: "Thank You for [EVENT_NAME] – Recordings & Resources",
+		SubjectPattern: "Thank You for [EVENT_NAME]",
 		SubjectExamples: []string{
 			"It was great seeing you at [EVENT_NAME]",
 			"[EVENT_NAME] Recap: Recordings, slides, and next steps",
@@ -653,7 +653,7 @@ REQUIRED INFORMATION HIERARCHY:
 4. PRIMARY CTA: [ Watch Recordings ]
 
 5. FEEDBACK REQUEST (30-40 words, 2 sentences)
-   Light ask: "Your 3-minute survey helps us improve"
+   Light ask: invite feedback WITHOUT inventing a completion time -- no input supplies one
    Tone: "We'd love to hear from you"
 
 6. SECONDARY CTA (optional): [ Share Your Feedback ]
@@ -734,7 +734,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 180-240 words`,
 		CTAStrategy: []string{
-			"Primary: Watch Recordings (video library link)",
+			"Primary: a link the brief actually supplies -- do NOT offer recordings unless [RECORDINGS_URL] is given",
 			"Secondary: Share Your Feedback (survey link)",
 		},
 		FooterNote: "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
