@@ -95,6 +95,33 @@ func TestDecodeEmailCopyEventDetails(t *testing.T) {
 }
 
 // TestFormatEventDates verifies date formatting handles various input combinations.
+// A UI-written brief carries the scraped combined string in `dates` and leaves
+// `startDate`/`endDate` empty -- those are paid-platform config fields. Reading only the pair
+// therefore produced "Date TBD" for every email while the real dates sat in the brief, and the
+// system prompt tells the model never to invent dates, so it could only omit them.
+//
+// Verified on a live brief: dates="19-20 November 2026", startDate="", endDate="".
+func TestResolveEventDates(t *testing.T) {
+	cases := []struct {
+		name    string
+		details emailCopyEventDetails
+		want    string
+	}{
+		{"combined only, the shape a UI brief actually has", emailCopyEventDetails{Dates: "19-20 November 2026"}, "19-20 November 2026"},
+		{"structured pair wins when set", emailCopyEventDetails{StartDate: "2026-11-19", EndDate: "2026-11-20", Dates: "ignored"}, "2026-11-19 - 2026-11-20"},
+		{"combined is trimmed", emailCopyEventDetails{Dates: "  19-20 November 2026  "}, "19-20 November 2026"},
+		{"whitespace-only combined is not a date", emailCopyEventDetails{Dates: "   "}, "Date TBD"},
+		{"nothing at all", emailCopyEventDetails{}, "Date TBD"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveEventDates(tc.details); got != tc.want {
+				t.Errorf("resolveEventDates() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatEventDates(t *testing.T) {
 	tests := []struct {
 		startDate, endDate, want string

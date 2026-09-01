@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -116,6 +117,75 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 	}
 	if len(afters) != 2 || afters[0] != "" || afters[1] != "CURSOR2" {
 		t.Errorf("cursor not forwarded across pages: %v", afters)
+	}
+}
+
+// A filtered search was bounded only by maxListPages, so a query matching nothing walked every
+// page in the portal -- 200 pages of round trips, well past any request deadline. The caller then
+// saw `context deadline exceeded`, and the template picker reported a connection problem for what
+// was really "no matches". Observed live against a portal with 100+ emails per page.
+// The ROW bound, which the page bound hides on an honest provider: at limit=100 both fire on the
+// same iteration, so only a provider returning MORE than 100 rows per page reaches the row bound
+// first. Without this case, deleting maxFilteredScan entirely leaves the package green.
+func TestSearchEmails_StopsOnTheRowBoundWhenPagesAreOversized(t *testing.T) {
+	rowsPerPage := 300
+	pages := 0
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		rows := make([]string, 0, rowsPerPage)
+		for i := 0; i < rowsPerPage; i++ {
+			rows = append(rows, fmt.Sprintf(`{"id":"%d-%d","name":"unrelated","subject":"z","updatedAt":"2026-01-01T00:00:00Z"}`, pages, i))
+		}
+		_, _ = fmt.Fprintf(w, `{"results":[%s],"paging":{"next":{"after":"CUR%d"}}}`, strings.Join(rows, ","), pages)
+	})
+
+	// The bound is reached having matched NOTHING, which must be an error rather than an empty
+	// result: `(empty, nil)` claims the portal authoritatively holds no such email, about one
+	// that may sit on the next unread page. Asserting the error is what stops this test pinning
+	// the false absence it used to.
+	got, err := c.SearchEmails(context.Background(), "no-such-template")
+	if !errors.Is(err, ErrSearchIncomplete) {
+		t.Fatalf("SearchEmails err = %v, want ErrSearchIncomplete for a truncated walk with no matches", err)
+	}
+	if got != nil {
+		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
+	}
+	// 2000 rows / 300 per page = 7 pages, well short of maxFilteredPages (20). If the page bound
+	// were the only one, this would run to 20 pages and 6000 rows.
+	wantPages := (maxFilteredScan + rowsPerPage - 1) / rowsPerPage
+	if pages != wantPages {
+		t.Errorf("walked %d pages; the row bound should stop it at %d", pages, wantPages)
+	}
+	if pages >= maxFilteredPages {
+		t.Errorf("stopped on the page bound (%d), not the row bound", maxFilteredPages)
+	}
+}
+
+func TestSearchEmails_StopsScanningAQueryThatMatchesNothing(t *testing.T) {
+	pages := 0
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		// Always another page, and never a match: the shape that used to run to maxListPages.
+		// The cursor must ADVANCE each page -- the client refuses a repeated token, so a fixed
+		// one would end the walk for the wrong reason and the test would pass vacuously.
+		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z","updatedAt":"2026-01-01T00:00:00Z"}],"paging":{"next":{"after":"CUR%d"}}}`, pages, pages)
+	})
+
+	got, err := c.SearchEmails(context.Background(), "no-such-template")
+	if !errors.Is(err, ErrSearchIncomplete) {
+		t.Fatalf("SearchEmails err = %v, want ErrSearchIncomplete for a truncated walk with no matches", err)
+	}
+	if got != nil {
+		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
+	}
+	// The bound is on rows SCANNED, not rows matched -- matched is zero here, which is exactly
+	// the case that ran longest. This stub returns ONE row per page, the small-page shape the
+	// page bound exists for, so the page bound is what must stop it.
+	if pages > maxFilteredPages {
+		t.Errorf("walked %d pages; must stop at maxFilteredPages (%d)", pages, maxFilteredPages)
+	}
+	if pages >= maxListPages {
+		t.Errorf("walked to the page cap (%d) instead of the scan bound", maxListPages)
 	}
 }
 
@@ -722,10 +792,15 @@ func TestSearchEmails_UnfilteredCapTrimsAnOvershootingPage(t *testing.T) {
 	}
 }
 
-func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
-	// The bound must NOT apply to a filtered search. A caller that searches for a name is
-	// looking one UP, and a truncated walk answers "no such email" about an email sitting
-	// on a later page -- a false absence the callers act on destructively.
+func TestSearchEmails_FilteredWalkIsNotCappedWithinTheScanBound(t *testing.T) {
+	// maxUnfilteredEmails must NOT apply to a filtered search. A caller that searches for a name
+	// is looking one UP, and truncating at the UNFILTERED cap would answer "no such email" about
+	// an email sitting on a later page.
+	//
+	// The filtered walk is not unbounded, though: it stops at maxFilteredScan rows or
+	// maxFilteredPages pages, because an unbounded walk died on the request deadline and the
+	// caller then saw a connection error rather than "no matches". This case stays comfortably
+	// inside both, so what it pins is that the UNFILTERED cap does not cut it short.
 	perPage := 100
 	pages := maxUnfilteredEmails / perPage * 2
 	target := pages*perPage - 1
@@ -778,6 +853,6 @@ func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
 		t.Fatalf("the match on the last page must not be truncated away")
 	}
 	if requested.Load() != int64(pages) {
-		t.Errorf("filtered walk must read every page: read %d, want %d", requested.Load(), pages)
+		t.Errorf("filtered walk must not stop at the UNFILTERED cap: read %d pages, want %d", requested.Load(), pages)
 	}
 }

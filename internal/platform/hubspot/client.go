@@ -239,6 +239,32 @@ type apiError struct {
 	Ambiguous bool
 }
 
+// IsAPIError reports whether err is one of this client's HTTP-status errors.
+//
+// Exists so a caller deciding what is SAFE TO LOG can name this class rather than defaulting to
+// allow. An apiError renders as method, path and status only — it never quotes a response body or
+// any credential — so its text is safe verbatim. A caller cannot establish that about an
+// arbitrary error, which is why the distinction has to be drawn here, where the type is known.
+func IsAPIError(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae)
+}
+
+// APIErrorOf returns the client's own HTTP-status error from err's chain, or nil.
+//
+// `IsAPIError` answers "is one in there", which `errors.As` finds through ANY outer wrapper. A
+// caller that logs `err` on the strength of it therefore logs the wrapper's text too -- and a
+// wrapper is written by whoever wrapped it, so its safety is exactly what this package cannot
+// vouch for. Returning the unwrapped error gives that caller the safe rendering the doc above
+// promises: method, path and status, with nothing carried in from outside.
+func APIErrorOf(err error) error {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae
+	}
+	return nil
+}
+
 // IsNeverSent reports whether err PROVES the request never left this process: a DNS or dial
 // failure before anything was written, or a context already cancelled when the call began.
 //

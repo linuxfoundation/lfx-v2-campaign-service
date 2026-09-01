@@ -1523,6 +1523,30 @@ Two places this shows up today:
 
 See [internal/dispatch](../../../internal/dispatch).
 
+### Applying generated copy to the staged draft
+
+`applyEmailContent` writes the generated `subject` and `bodyHtml` onto the HubSpot draft after it
+is cloned from the template. It is **best-effort and ordered**: subject first, then body, and
+every failure is logged and swallowed rather than returned.
+
+That is deliberate. The draft already exists and is the deliverable; failing the whole dispatch
+because a subject patch 500'd would discard a staged email a human could still edit by hand. The
+log lines say exactly what the operator is left with — "it keeps the template's subject" / "it
+keeps the template's body" — so a draft that silently kept template copy is diagnosable.
+
+The body write is guarded on the draft having **exactly one rich-text widget**, counting empty
+blocks. A template with two blocks is refused (logged at INFO, not an error): there is no way to
+know which one the body belongs in, and rewriting the wrong one destroys content. A template with
+one EMPTY block is written — that is the most unambiguous shape there is, and the one an operator
+most expects to be filled. Counting only POPULATED widgets got this wrong in both directions: it
+reported 1 for a populated-plus-empty pair and rewrote the populated block, and it reported a
+writable count of 0 for the single-empty case and refused a write it could safely have made.
+
+Widget identity is the **presence of the `body.html` key**, not a non-empty value. An image or
+divider module decodes into the same body struct with an empty HTML string, so counting
+object-bodied modules made the ordinary template — one rich-text block plus a header image —
+report two widgets and decline the write.
+
 ## The system account is a connection row, not a second mechanism
 
 A project that has connected no ad account of its own dispatches through the LF-owned system

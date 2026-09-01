@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,24 @@ type hubspotRec struct {
 	sawClone     bool
 	sawSendList  bool
 	taggedHTML   string
+	subjectSet   string
+	bodyHTMLSet  string
+	draftHTML    string
+	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
+	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
+	extraWidget bool
+	// emptyExtraWidget adds a second rich-text widget with an EMPTY body. The client USED TO omit
+	// such widgets from the map it returned, so a guard counting only populated widgets saw 1 and
+	// rewrote the populated body — the ambiguity the single-widget guard exists to refuse. Empty
+	// rich-text widgets are now returned like any other, and this fixture pins that they count.
+	emptyExtraWidget bool
+	// onlyEmptyWidget makes the draft's SINGLE rich-text widget empty -- the most unambiguous
+	// shape there is, and the one an operator most expects the generated body to fill.
+	onlyEmptyWidget bool
+	// imageWidget adds a header IMAGE module beside the rich-text block -- the ordinary template
+	// shape. It has a body object but no `html` key, so counting object-bodied modules reported
+	// two widgets and the body write silently no-opped.
+	imageWidget bool
 }
 
 func (r *hubspotRec) markClone() {
@@ -76,6 +95,44 @@ func (r *hubspotRec) markSendList(body map[string]any) {
 	defer r.mu.Unlock()
 	r.sawSendList = true
 	r.sendListBody = body
+}
+
+// markSubject records a PATCH that set the draft's subject (LFXV2-2775 content apply).
+func (r *hubspotRec) markSubject(v string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.subjectSet = v
+}
+
+// markBody records the html written to the draft's single rich-text widget.
+func (r *hubspotRec) markBody(v string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bodyHTMLSet = v
+	r.draftHTML = v
+}
+
+// setDraft records html written by a path that is not the content apply (the UTM tagger).
+func (r *hubspotRec) setDraft(v string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.draftHTML = v
+}
+
+// currentBody is the draft's html as it stands, seeded with the template's own body.
+func (r *hubspotRec) currentBody() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.draftHTML == "" {
+		return `<a href="https://events.lfx.dev/reg">Register</a>`
+	}
+	return r.draftHTML
+}
+
+func (r *hubspotRec) snapshotContent() (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.subjectSet, r.bodyHTMLSet
 }
 
 func (r *hubspotRec) markTagged(raw string) {
@@ -94,6 +151,20 @@ func (r *hubspotRec) SendListBody() map[string]any {
 }
 func (r *hubspotRec) TaggedHTML() string { r.mu.Lock(); defer r.mu.Unlock(); return r.taggedHTML }
 
+// extractWidgetHTML pulls the single widget's html out of a content PATCH payload.
+func extractWidgetHTML(body map[string]any) string {
+	content, _ := body["content"].(map[string]any)
+	widgets, _ := content["widgets"].(map[string]any)
+	for _, w := range widgets {
+		wm, _ := w.(map[string]any)
+		bm, _ := wm["body"].(map[string]any)
+		if h, ok := bm["html"].(string); ok {
+			return h
+		}
+	}
+	return ""
+}
+
 func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	t.Helper()
 	rec := &hubspotRec{}
@@ -108,17 +179,52 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
-			// The draft body the UTM tagger reads: one rich-text widget with a bare link.
-			_, _ = io.WriteString(w, `{"content":{"widgets":{"module_1":{"body":{"html":"<a href=\"https://events.lfx.dev/reg\">Register</a>"}}}}}`)
+			// STATEFUL: returns whatever was last written, so a reader sees the effect of an
+			// earlier write. A stub that always replayed the template made write ORDER
+			// unobservable — and order is the whole claim of the content-vs-tagging test.
+			html := rec.currentBody()
+			body1 := html
+			if rec.onlyEmptyWidget {
+				body1 = "   "
+			}
+			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": body1}}}
+			// A template with a SECOND rich-text widget, when the test asks for one. There is no
+			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
+			// must decline rather than guess -- see its `len(widgets) != 1` guard.
+			if rec.imageWidget {
+				widgets["module_hdr"] = map[string]any{"body": map[string]any{"src": "https://img.example/logo.png", "alt": "logo"}}
+			}
+			if rec.emptyExtraWidget {
+				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "   "}}
+			}
+			if rec.extraWidget {
+				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "<p>second block</p>"}}
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"content": map[string]any{"widgets": widgets},
+			})
+			_, _ = w.Write(payload)
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]any
 			_ = json.Unmarshal(raw, &body)
 			// The send-list PATCH and the UTM PATCH hit the same path; tell them apart by
 			// which key the payload carries rather than by call order.
-			if _, isContent := body["content"]; isContent {
-				rec.markTagged(string(raw))
-			} else {
+			switch {
+			case body["content"] != nil:
+				// Both the content apply (LFXV2-2775) and the UTM tagger PATCH `content`.
+				// Tell them apart by what the html contains: a tagged body carries utm_
+				// parameters, a freshly applied body does not.
+				html := extractWidgetHTML(body)
+				if strings.Contains(html, "utm_") {
+					rec.markTagged(string(raw))
+					rec.setDraft(html)
+				} else {
+					rec.markBody(html)
+				}
+			case body["subject"] != nil:
+				rec.markSubject(fmt.Sprint(body["subject"]))
+			default:
 				rec.markSendList(body)
 			}
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
@@ -214,6 +320,163 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	body, _ := json.Marshal(rec.SendListBody())
 	if !strings.Contains(string(body), "26724") {
 		t.Errorf("send-list payload must carry the audience master list id 26724, got %s", body)
+	}
+}
+
+// TestHubSpot_AppliesGeneratedContent: subject and body from the config reach the draft, and the
+// body is written BEFORE the UTM tagger so the tags survive (LFXV2-2775).
+func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p><a href=\"https://events.lfx.dev/reg\">Register</a>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the generated subject", subject)
+	}
+	if !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body", body)
+	}
+
+	// ORDER is the claim, not merely that both ran: the tagger rewrites the body's links, so a
+	// body written afterwards would discard every utm_ parameter it had just added.
+	tagged := rec.TaggedHTML()
+	if !strings.Contains(tagged, "utm_") {
+		t.Errorf("the tagger must run AFTER the body is applied, so the final draft carries utm parameters; got %q", tagged)
+	}
+	if !strings.Contains(tagged, "Join us") {
+		t.Errorf("the tagged html must be the GENERATED body, not the template's; got %q", tagged)
+	}
+}
+
+// A template whose ONLY rich-text block is empty must still receive the generated body.
+//
+// It is the most unambiguous shape there is -- one block, nothing to overwrite -- and it was the
+// one case the guard refused: GetEmailHTMLWidgets omitted empty bodies, so `total` was 1 while the
+// writable map was empty, leaving the widget unaddressable. Every rich-text widget is now
+// returned, empty included, and the caller decides.
+func TestHubSpot_SingleEmptyWidgetReceivesTheBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.onlyEmptyWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if _, body := rec.snapshotContent(); !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written into the single empty rich-text block", body)
+	}
+}
+
+// A header IMAGE beside the rich-text block must NOT count as a second widget.
+//
+// This is the ordinary template shape, and it was silently broken: an image module decodes into
+// `struct{ HTML string }` perfectly happily with HTML empty, so counting object-bodied modules
+// reported two widgets, the single-widget guard declined, and the generated body was never
+// written -- with only an info log to say so. The fix identifies a rich-text widget by the
+// PRESENCE of the `html` key, which an image body does not carry.
+//
+// The inverse of TestHubSpot_EmptySecondWidgetKeepsItsBody: that one pins an undercount, this one
+// an overcount, and the same key check has to answer both.
+func TestHubSpot_HeaderImageDoesNotBlockTheBodyWrite(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.imageWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	_, body := rec.snapshotContent()
+	if !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written despite a header image module", body)
+	}
+}
+
+// An EMPTY second rich-text widget is still a second widget.
+//
+// `GetEmailHTMLWidgets` USED TO omit widgets whose body trims to empty, so a guard counting only
+// the widgets it CAN write saw 1 for a template with one populated body and one empty block, and
+// rewrote the populated one — the exact ambiguity the single-widget guard exists to refuse. An
+// empty block is one an operator can see and fill; it is part of the template's structure, not
+// an absence, so every rich-text widget is now returned and this test pins that it counts.
+//
+// This is the case the populated-second-widget test above cannot reach: there the map itself has
+// two entries, so a count of either kind refuses.
+func TestHubSpot_EmptySecondWidgetKeepsItsBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.emptyExtraWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the subject applied even where the body cannot be", subject)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want no body write when an empty second rich-text block exists", body)
+	}
+}
+
+// A template with TWO rich-text widgets must keep its own body. There is no safe way to choose
+// which block the generated body replaces, and writing the wrong one destroys content the
+// operator did not choose to replace -- the single destructive outcome in this path.
+//
+// The subject still applies: it is one field with one meaning, so it carries no such ambiguity.
+func TestHubSpot_MultiWidgetTemplateKeepsItsBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.extraWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the generated subject applied even for a multi-widget template", subject)
+	}
+	// The BODY is what must not be written. Asserting it is empty pins "no content PATCH was
+	// issued for the body" rather than merely "the template survived by luck".
+	if body != "" {
+		t.Errorf("body = %q, want no body write on a multi-widget template", body)
+	}
+}
+
+// TestHubSpot_ContentAbsentLeavesTemplateCopy: omitting subject/bodyHtml must change nothing —
+// this is every campaign that predates LFXV2-2775.
+func TestHubSpot_ContentAbsentLeavesTemplateCopy(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	subject, body := rec.snapshotContent()
+	if subject != "" {
+		t.Errorf("no subject was configured, so none may be PATCHed; got %q", subject)
+	}
+	if body != "" {
+		t.Errorf("no body was configured, so the template's body must be left alone; got %q", body)
 	}
 }
 
@@ -486,6 +749,43 @@ func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testin
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// ConfigSnapshot must not carry the generated copy.
+//
+// The snapshot column is UNENCRYPTED and is returned through the API, and its purpose is
+// provenance: what this campaign was cloned from, and how its links attribute. The generated
+// subject and body are caller-supplied content whose `href`s can carry query tokens, and the
+// HubSpot draft is the system of record for them -- so persisting them here would put arbitrary
+// caller content in a column nobody reading a reconcile row expects to hold any.
+//
+// Passing `cfg` wholesale to applyCampaignConfig did exactly that.
+func TestHubSpot_ConfigSnapshotOmitsTheGeneratedCopy(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	// A body carrying a tokenised link -- the shape that makes this a leak rather than bloat.
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","utmCampaign":"kubecon","subject":"Three days in Amsterdam","bodyHtml":"<a href=\"https://x.example/rsvp?token=SECRET-LINK-TOKEN\">RSVP</a>"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	snapshot := string(out.ConfigSnapshot)
+	if strings.Contains(snapshot, "SECRET-LINK-TOKEN") || strings.Contains(snapshot, "bodyHtml") {
+		t.Errorf("ConfigSnapshot carried the generated body: %s", snapshot)
+	}
+	if strings.Contains(snapshot, "Three days in Amsterdam") || strings.Contains(snapshot, "subject") {
+		t.Errorf("ConfigSnapshot carried the generated subject: %s", snapshot)
+	}
+	// The provenance fields it EXISTS for must survive, or this test would pass on an empty snapshot.
+	if !strings.Contains(snapshot, "555") {
+		t.Errorf("ConfigSnapshot lost the source template id: %s", snapshot)
+	}
+	if !strings.Contains(snapshot, "kubecon") {
+		t.Errorf("ConfigSnapshot lost the utm campaign: %s", snapshot)
+	}
+}
 
 // TestHubSpot_CreateCampaignTagsDomainSentinels pins the translation the SERVICE depends on.
 //

@@ -340,6 +340,27 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		if len(ids) == 0 && !ambiguous {
 			created.Status = model.AudienceFailed
 		}
+		// Log the CAUSE. `partialSummary` writes "build failed (see server logs for details)"
+		// into the row, and until now there were no such details: a build that created a real
+		// HubSpot list and then failed on the master list produced no log line at all, leaving
+		// an operator holding list ids with nothing explaining what went wrong. Observed on a
+		// live build (list 30779 created, master list failed, service log silent).
+		slog.WarnContext(ctx, "audience build did not complete",
+			"audience_id", created.ID, "brief_id", p.BriefID, "status", string(created.Status),
+			"created_lists", strings.Join(ids, ","), "unconfirmed", ambiguous,
+			// The RAW error for the HubSpot-API arm, matching the sibling persist-failure log
+			// below. `SafeErrorCause` is a WAREHOUSE redactor: it collapses everything it does
+			// not recognise -- a HubSpot 4xx included -- to the literal "warehouse failure",
+			// naming the wrong subsystem in the one place an operator looks for the cause.
+			// `hubspot.apiError` is safe to render: it prints method, path and status only, and
+			// deliberately never echoes the response body.
+			//
+			// EXCEPT on the credential arm. A builder can fail before any request -- resolving
+			// stored credentials -- and `creds.resolve` wraps the raw decrypt error, which
+			// `domain.Encryptor` implementations are free to have quoted ciphertext or key
+			// material into. `creds.go` carries a standing rule against logging that cause, so
+			// it collapses to the sentinel instead of being "restored" here.
+			"error", buildLogError(buildErr))
 		// Detached for the same reason as the success path below: lists may exist upstream and
 		// this row is the only record of them.
 		partialCtx, cancelPartial := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
@@ -597,6 +618,62 @@ func unrecordedListsErr(cause error, audienceID string, ids []string, exposeCaus
 // Collapsing unknown causes to a generic description here, rather than persisting err.Error()
 // verbatim, keeps a credential-store or driver error from reaching a stored, publicly-readable
 // field. Mirrors audience.SafeErrorCause's pattern for warehouse errors.
+// buildLogError is the build failure as it may be LOGGED.
+//
+// DEFAULT-DENY. Only errors this package can name are logged with their text; anything else
+// collapses to a sentinel.
+//
+// The previous version was default-ALLOW, on the reasoning that whatever else reached here was a
+// HubSpot API error rendering as method/path/status. That reasoning holds for the errors that
+// arrive TODAY and is falsified by the next one added: `AudienceBuilder.client` JSON-decodes the
+// DECRYPTED credential blob, and a decode error is shaped by the struct it decodes into — a shape
+// this function does not control and cannot see. On a credential path the safe default is the
+// other way round, because the cost of being wrong is a token in a log rather than a thinner
+// diagnostic.
+//
+// The named arms are the ones whose text is known to be safe: sentinels this package declares,
+// context errors, and HubSpot's own API errors, which render as method/path/status and never
+// quote a response body.
+func buildLogError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// Reported as THEMSELVES, not merged: a malformed blob is proven-bad row data, while a
+	// decryption failure can mean the application key is wrong. Same log line, opposite remedies
+	// -- re-store the credential vs. check the key the service booted with -- so collapsing them
+	// misdirects whoever is holding the incident.
+	if errors.Is(err, domain.ErrCredentialsMalformed) {
+		return domain.ErrCredentialsMalformed
+	}
+	if errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+		return domain.ErrCredentialDecryptionFailed
+	}
+	// Context and package sentinels: return the SENTINEL, never the error that wraps it.
+	// `errors.Is` matches through the whole chain, so returning `err` here would log the outer
+	// text verbatim -- `fmt.Errorf("token %s: %w", secret, context.Canceled)` satisfies this arm
+	// and would defeat the default-deny above on exactly the credential path it exists to guard.
+	// The sentinel carries everything an operator acts on: which class of failure it was.
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, errUnconfirmedCreate) {
+		return errUnconfirmedCreate
+	}
+	// HubSpot API errors render as method/path/status and never quote a response body, so their
+	// own text is safe -- and unlike a sentinel it names the call that failed. The UNWRAPPED one,
+	// though: `IsAPIError` is `errors.As`, which finds one through any outer wrapper, so returning
+	// `err` here would log that wrapper verbatim -- the same leak the sentinel arms above avoid.
+	if apiErr := hubspot.APIErrorOf(err); apiErr != nil {
+		return apiErr
+	}
+	// Anything else: report the CLASS, not the text. `safeBuildCause` already gives an operator a
+	// consumer-safe sentence for the same failure, so no diagnostic is lost that they could act on.
+	return errors.New(safeBuildCause(err))
+}
+
 func safeBuildCause(err error) string {
 	if err == nil {
 		return "build failed"

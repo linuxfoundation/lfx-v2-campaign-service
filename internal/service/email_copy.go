@@ -23,6 +23,11 @@ type emailCopyEventDetails struct {
 	Location  string `json:"location"`
 	StartDate string `json:"startDate"`
 	EndDate   string `json:"endDate"`
+	// Dates is the COMBINED form the scraper produces -- "19-20 November 2026" -- which is what
+	// briefs written by the UI actually carry. `startDate`/`endDate` are paid-platform config
+	// fields and are empty on an email brief, so reading only those yielded "Date TBD" for every
+	// email while the real dates sat in the brief beside them. Verified on a live brief.
+	Dates string `json:"dates"`
 }
 
 // emailCopyPromptVars holds the values needed to compose the generation prompt.
@@ -97,6 +102,22 @@ Create compelling email copy that invites registration and highlights the value 
 		vars.eventName, vars.location, vars.dates)
 
 	return systemPrompt, userPrompt
+}
+
+// resolveEventDates picks the best date string the brief actually carries.
+//
+// The structured pair wins when present -- it is unambiguous and a caller that set it meant it.
+// The combined `dates` string is the fallback rather than the primary because it is free text
+// from a scrape, and "Date TBD" is the honest answer when neither exists: the prompt instructs
+// the model never to invent dates, so a wrong string is worse than an absent one.
+func resolveEventDates(d emailCopyEventDetails) string {
+	if formatted := formatEventDates(d.StartDate, d.EndDate); formatted != "Date TBD" {
+		return formatted
+	}
+	if combined := strings.TrimSpace(d.Dates); combined != "" {
+		return combined
+	}
+	return "Date TBD"
 }
 
 // formatEventDates builds a human-readable date range from start and end dates.
@@ -226,7 +247,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	promptVars := emailCopyPromptVars{
 		eventName: strings.TrimSpace(details.EventName),
 		location:  strings.TrimSpace(details.Location),
-		dates:     formatEventDates(details.StartDate, details.EndDate),
+		dates:     resolveEventDates(details),
 	}
 	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
 	// allocations. Only three strings from event_details reach the prompt — eventName,

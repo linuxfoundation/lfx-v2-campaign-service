@@ -84,8 +84,11 @@ safely retryable.
 
 `SearchEmails` walks `paging.next.after` across pages, up to `maxListPages` (200). Two behaviours
 differ by whether a query was given, and the split is deliberate (LFXV2-3197). A FILTERED search
-reads every page: truncating it would answer "no such email" about an email on a later page, and
-the callers of a lookup act on that absence. An UNFILTERED one — an empty `q`, the picker's
+reads far more pages -- `maxFilteredScan` (2000) rows or `maxFilteredPages` (20), whichever comes
+first -- because truncating it early would answer "no such email" about an email on a later page,
+and the callers of a lookup act on that absence. It is not unbounded: unbounded, a query matching
+nothing walked the entire portal and died on the request deadline, so the caller saw a connection
+error instead of "no matches". An UNFILTERED one — an empty `q`, the picker's
 default first screen, where every row matches and the walk is therefore at its worst — stops at
 `maxUnfilteredEmails` (500) rows taken in SERVER order and sorted client-side afterwards. Those
 500 are NOT a guarantee of the newest in the portal: under a bound the two cannot both hold, and
