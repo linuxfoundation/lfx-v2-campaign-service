@@ -85,6 +85,12 @@ A stage brief below may name a placeholder in [BRACKETS] for a fact that was not
 prices, attendee counts, session counts, deadlines. OMIT any sentence or section whose placeholder
 has no supplied value. Do not guess one, and do not emit the bracketed placeholder itself.
 
+THIS RULE OUTRANKS THE STAGE BRIEF. A brief may mark a section REQUIRED and still name a
+placeholder in it -- "1. HEADLINE: Early Bird Pricing Ends [DEADLINE]" is required and has no
+supplied deadline. Drop the section: only eventName, location and dates are ever supplied, so a
+required section built on anything else cannot be written truthfully. A shorter email that says
+only what is known is the correct output, never an invented price, deadline or count.
+
 Generate JSON with these fields (no markdown fencing):
 {
   "subject": "Email subject line (max 60 chars)",

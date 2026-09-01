@@ -1017,3 +1017,31 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 		t.Errorf("the message must tell the caller a retry cannot clear this: %q", unavailable.Message)
 	}
 }
+
+// The OMIT rule must outrank a stage brief's own REQUIRED marker.
+//
+// A brief can mark a section required AND name a placeholder in it -- Registration Push's
+// "1. HEADLINE: Early Bird Pricing Ends [DEADLINE]" is required and no deadline is ever supplied.
+// Without an explicit precedence the model gets two contradictory instructions and the required
+// marker is the more emphatic one, so it invents the fact rather than dropping the section.
+//
+// Asserts on the composed SYSTEM PROMPT, which is what the model actually reads.
+func TestComposeEmailCopyPrompt_OmitOutranksRequired(t *testing.T) {
+	sys, _ := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName: "KubeCon Europe 2026",
+		location:  "Barcelona",
+		dates:     "June 17 - June 20",
+	})
+
+	if !strings.Contains(sys, "OUTRANKS THE STAGE BRIEF") {
+		t.Error("the system prompt does not say the OMIT rule outranks a REQUIRED section")
+	}
+	// The rule has to name the conflict concretely, or it reads as generic boilerplate beside a
+	// brief that is very specific about what it requires.
+	if !strings.Contains(sys, "REQUIRED") {
+		t.Error("the precedence rule does not mention the REQUIRED marker it overrides")
+	}
+	if !strings.Contains(sys, "Drop the section") {
+		t.Error("the precedence rule does not say what to do with a required section it cannot fill")
+	}
+}

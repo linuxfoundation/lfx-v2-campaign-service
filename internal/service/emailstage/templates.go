@@ -47,7 +47,8 @@ REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
    Use bullet format:
    • Talk type 1 (with example)
    • Talk type 2 (with example)
-   • Explicitly: "First-time speakers—mentorship available"
+   • Only if the brief says so: a first-time-speaker note. Nothing supplies a mentorship
+     programme, so do NOT assert one exists.
    • Story-based over product pitches
 
 6. IMPORTANT DATES (dates only, no narrative)
@@ -117,7 +118,9 @@ WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
 			"Primary: Submit Your Proposal (link to CFP form)",
 		},
-		FooterNote: "First-time speakers: we offer mentorship and support. Questions? Reply to this email.",
+		// No mentorship claim: nothing in the pipeline supplies one, and unlike a price it carries
+		// no placeholder for the OMIT rule to act on -- so it read as fact on every CFP email.
+		FooterNote: "Questions? Reply to this email.",
 	},
 
 	"Schedule Announcement": {
