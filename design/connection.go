@@ -1352,7 +1352,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"rather than from the returned count — an exactly-full page and a truncated one are the " +
 			"same length. While it is true the caller must not offer an unqualified create. " +
 			"This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for " +
-			"one supplied term, with no collection, pagination or filtering.")
+			"one supplied term. It IS a collection — `campaigns` is an array and `q` narrows it — but a " +
+			"BOUNDED one: a single unpaged request capped at 200, with no cursor and no filters " +
+			"beyond the search term, so rule 3's concern about an open-ended listing surface does " +
+			"not apply.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

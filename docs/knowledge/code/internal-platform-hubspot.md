@@ -360,8 +360,11 @@ test still passes.
 
 This is NOT the same thing as `internal/utm`. That package GENERATES utm parameters for links
 this service tags (`Apply`) and decides the campaign value (`Resolve`). These read the token an
-existing UPSTREAM campaign already carries — which is the endpoint gap `resolve.go` names as the
-reason `SourceHubSpotCampaign` is reserved but never emitted.
+existing UPSTREAM campaign already carries. That closes the endpoint gap `resolve.go` used to
+name: the client CAN now reach campaigns. The reason `SourceHubSpotCampaign` is still never
+emitted is narrower — resolution starts from a source EMAIL, and nothing reads the association
+from an email to the campaign it belongs to. Searching by the email's name would be a guess, so
+closing it needs an association read, not another search endpoint.
 
 **The namespace is PORTAL-WIDE, and that shapes both methods.** HubSpot campaigns are not
 scoped to a project or a sub-account, so every campaign in a portal is visible to any caller
