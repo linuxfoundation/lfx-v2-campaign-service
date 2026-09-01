@@ -242,6 +242,41 @@ type AccessibleAccount struct {
 	Label string
 }
 
+// HubSpotCampaign is one LF HubSpot marketing campaign.
+//
+// THE NAMESPACE IS PORTAL-WIDE, NOT PROJECT-SCOPED. HubSpot campaigns are not scoped to a
+// project or a sub-account, so a campaign reachable here is reachable by everyone holding that
+// portal's token. WHICH portal is the connection's: HubSpot connections are stored per project
+// with their own token and portal_id, and credsSource refuses the LF system fallback for
+// HubSpot — so two projects share this namespace only when configured against the same portal.
+// That is HubSpot's data model, not a gap in this service's scoping, and it is why the create
+// path is documented as needing an operator warning.
+type HubSpotCampaign struct {
+	// ID is HubSpot's own campaign object id.
+	ID string
+	// Name is the campaign's display name.
+	Name string
+	// UTM is the campaign's utm token. EMPTY is a REAL state — a campaign can exist with no
+	// token configured — and is not the same as the campaign not existing. A caller that treats
+	// an empty token as "not found" would prompt a duplicate create in a shared namespace.
+	UTM string
+	// StartDate is HubSpot's own date string, for disambiguating same-named campaigns. Not
+	// parsed here: it is displayed, never used for arithmetic.
+	StartDate string
+}
+
+// HubSpotCampaignPage is a campaign search result together with whether the search was capped.
+//
+// Capped exists because ABSENCE FROM Campaigns IS NOT PROOF OF NON-EXISTENCE. The search is
+// bounded at HubSpot's per-request maximum with no paging, so whenever completeness is not
+// PROVEN — more matched than returned, or the response cannot say — a campaign the caller
+// cannot see may still exist — and the caller acts on
+// absence by creating one in a namespace shared by everyone on that portal.
+type HubSpotCampaignPage struct {
+	Campaigns []HubSpotCampaign
+	Capped    bool
+}
+
 // MarketingEmail is a minimal view of one marketing email reachable through a stored
 // connection, for a picker that has to choose which email a campaign will CLONE.
 //

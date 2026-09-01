@@ -1315,4 +1315,165 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
+
+	Method("search-hubspot-campaigns", func() {
+		Description("Find LF HubSpot marketing campaigns by name, to read back an existing campaign's " +
+			"`hs_utm` token. " +
+			"**THE NAMESPACE IS PORTAL-WIDE.** HubSpot campaigns are not scoped to a project, so this " +
+			"returns every campaign in the portal the connection authenticates against, regardless " +
+			"of which project scopes the path. " +
+			"`project_id` gates permission AND selects WHICH portal is visible: a HubSpot connection " +
+			"is stored per project with its own token and `portal_id`, and the LF system fallback is " +
+			"refused for HubSpot — so two projects see the same campaigns only when they are " +
+			"configured against the same portal, which is common under the LF umbrella but is not " +
+			"guaranteed. The portal-wide part is a property of HubSpot's data model rather than a " +
+			"gap in the scoping here, and it is why the create route below needs a warning. " +
+			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
+			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
+			"sort, and no `sorts` is sent, so the order is UNSPECIFIED. " +
+			"**Do not read the first row as the best match** — the search is token-based, " +
+			"so a hit can merely share a token with the query. Every match is returned, in the order " +
+			"HubSpot returned them, rather than narrowed to a best one, because choosing between " +
+			"similarly-named campaigns needs a human reading the names — collapsing them here would " +
+			"hide the ambiguity from the only party able to resolve it. " +
+			"**An empty `campaigns` array is a 200, not a 404**: 'no campaign is named that' is the " +
+			"answer a caller acts on by offering to create one, and it must be distinguishable from a " +
+			"search that failed. " +
+			"A campaign with no `utm` is a real result and is returned as one — an absent token does " +
+			"NOT mean the campaign was not found, and treating it that way would prompt a duplicate " +
+			"create. " +
+			"**The result set is CAPPED at 200 and there is no paging.** A campaign ranked below the " +
+			"cap is not returned, and a caller reads an absent campaign as licence to create one — so " +
+			"an operator who cannot find a campaign should search a narrower term rather than assume " +
+			"it does not exist. 200 is HubSpot's own per-request maximum (raised from 100 in September " +
+			"2024), so the gap between \"not in " +
+			"the top N\" and \"does not exist\" is as small as one request can make it. " +
+			"**`capped` reports when that gap is actually open**, derived from HubSpot's own total " +
+			"rather than from the returned count — an exactly-full page and a truncated one are the " +
+			"same length. While `capped` is true the caller must not offer an unqualified create: the " +
+			"campaign it would duplicate may be one of the matches HubSpot did not return. " +
+			"This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for " +
+			"one supplied term. It IS a collection — `campaigns` is an array and `q` narrows it — but a " +
+			"BOUNDED one: a single unpaged request capped at 200, with no cursor and no filters " +
+			"beyond the search term, so rule 3's concern about an open-ended listing surface does " +
+			"not apply.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("q", String, "The campaign name to search for. Matched by HubSpot's own `query` search over its default searchable properties — not an exact-name lookup, and not relevance-ranked. Must contain a non-whitespace character.", func() {
+				// MinLength(1) alone admits "   ", which the handler then refuses with a 400:
+				// the contract would promise a request the service does not accept. The pattern
+				// states the rule the handler already enforces, so the generated decoder and the
+				// runtime agree and the published schema is what callers can rely on.
+				MinLength(1)
+				Pattern(`\S`)
+				Example("KubeCon NA 2026")
+			})
+			Required("project_id", "q")
+		})
+		Result(func() {
+			Attribute("campaigns", ArrayOf(HubSpotCampaign), "Matches in the order HubSpot returned them — UNSPECIFIED, and NOT by relevance, so the first row is not the best match. Empty when nothing matched.")
+			Attribute("capped", Boolean, "True when the search could NOT be shown to be complete. That covers the case HubSpot reported more matches than it returned, and equally the cases where completeness is simply unknown: an absent `total`, or one that contradicts the rows (negative, or fewer than were returned). All of them fail CLOSED, because \"we cannot tell\" must not be reported as the proven absence a caller acts on by creating a campaign. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.")
+			Required("campaigns", "capped")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-hubspot/campaigns")
+			Param("q")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			connectionAuthErrorResponses()
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("create-hubspot-campaign", func() {
+		Description("Create an LF HubSpot marketing campaign, returning the `hs_utm` token when " +
+			"the response carries one. " +
+			"**`utm` MAY BE ABSENT ON A SUCCESSFUL CREATE**, and that is not an error: the " +
+			"marketing create is not documented to return the property, and this route does no " +
+			"follow-up read — a second call after a non-idempotent write is another failure " +
+			"point whose failure would make a campaign that EXISTS look like one that was never " +
+			"created. An absent token means only that this response did not carry one, NOT that " +
+			"the campaign has none configured; the ordinary lookup reads it back. What IS " +
+			"required is the id: an id-less 2xx is refused as unconfirmed, because a campaign " +
+			"that cannot be addressed is not a usable answer. " +
+			"**THIS WRITE IS VISIBLE PORTAL-WIDE.** The campaign namespace is the whole HubSpot " +
+			"portal this project's connection authenticates against, so a campaign created here " +
+			"appears for everyone working in that portal however this path is scoped. WHICH portal " +
+			"depends on the connection — they are stored per project with their own token and " +
+			"`portal_id`, and the LF system fallback is refused for HubSpot — so this is not " +
+			"necessarily every foundation, and projects on different portals do not see each " +
+			"other's campaigns. A caller MUST warn before invoking it, and must not put anything " +
+			"project-sensitive in the name. " +
+			"**It does not check for an existing campaign first, and that is deliberate.** A " +
+			"search-then-create inside one call would still race any concurrent caller and could not " +
+			"prevent a duplicate; the check belongs with the human who can read the candidate names. " +
+			"Search first, show the matches, create only if the operator confirms none is right. " +
+			"This method always creates. " +
+			"`hs_utm` is assigned by HubSpot, never supplied here, and is read back from the create " +
+			"response rather than re-fetched — so the returned token is the one HubSpot actually " +
+			"assigned rather than one this service guessed. " +
+			"**A 2xx carrying no id is reported as an error**, because the campaign may or may not " +
+			"exist and cannot be addressed either way: the caller must check HubSpot rather than " +
+			"retry into a second copy. " +
+			"Other failures fall into FOUR classes, and the status tells them apart. " +
+			"**400 — nothing was created, and the request is correctable.** Either HubSpot rejected " +
+			"it on the merits (a definite non-429 4xx), or the stored connection EXISTS but is not " +
+			"usable as configured. A 401/403 says so in its own words, because retrying another " +
+			"NAME cannot fix a permission problem. " +
+			"**404 — no HubSpot connection is configured for this project.** Distinct from the 400 " +
+			"above, which means one exists and is broken: the remedy is to connect HubSpot, not to " +
+			"fix a credential. " +
+			"**500 — the stored credential could not be decrypted**, or the service is otherwise " +
+			"faulted BEFORE the request went out. Not the operator's to fix, and not retryable by " +
+			"them. 500 is reserved for that pre-send position: a fault discovered AFTER the create " +
+			"returned without error is a 503, because by then the campaign may exist and only this " +
+			"service's reading of the outcome failed. " +
+			"Those three prove nothing reached HubSpot, which is why they are reported as themselves " +
+			"rather than as an unconfirmed outcome: sending an operator to look for a campaign that " +
+			"was never attempted hides the remedy they actually need. " +
+			"**503 — the outcome could not be confirmed, OR the request never left this service.** " +
+			"Those two share a status because both are retryable-when-things-recover rather than " +
+			"correctable by the caller, and the MESSAGE distinguishes them: a pre-send failure " +
+			"(DNS, dial, an already-cancelled context) can promise nothing was created, which the " +
+			"unconfirmed case cannot. Everything else lands here too, including " +
+			"any failure this service cannot positively classify: a non-idempotent write into a " +
+			"shared namespace fails CLOSED, so an unrecognised error is treated as possibly-committed " +
+			"rather than reported as a clean failure. HubSpot marks mutating transport, 429, 3xx and " +
+			"5xx failures as possibly-committed, and so is a 2xx whose body could not be decoded. " +
+			"Verify in HubSpot before creating it again.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("name", String, "The campaign name. Visible to everyone on the connection's HubSpot portal — do not include project-sensitive information. Must contain a non-whitespace character.", func() {
+				// See the search `q` attribute: MinLength(1) admits a whitespace-only name that
+				// the handler refuses with a 400.
+				MinLength(1)
+				MaxLength(255)
+				Pattern(`\S`)
+				Example("KubeCon NA 2026")
+			})
+			Required("project_id", "name")
+		})
+		Result(HubSpotCampaign)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			POST("/projects/{project_id}/connection-hubspot/campaigns")
+			Header("bearer_token:Authorization")
+			Response(StatusCreated)
+			Response("NotFound", StatusNotFound)
+			connectionAuthErrorResponses()
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
 })

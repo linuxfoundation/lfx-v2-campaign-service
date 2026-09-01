@@ -265,3 +265,13 @@ func ListTwitterAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID string)
 func ListHubspotEmailsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-hubspot/emails", projectID)
 }
+
+// SearchHubspotCampaignsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service search-hubspot-campaigns HTTP endpoint.
+func SearchHubspotCampaignsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-hubspot/campaigns", projectID)
+}
+
+// CreateHubspotCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service create-hubspot-campaign HTTP endpoint.
+func CreateHubspotCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-hubspot/campaigns", projectID)
+}

@@ -36,10 +36,11 @@ sub-path each carries:
   LFXV2-3062, linkedin-ads and microsoft-ads under LFXV2-3064, twitter-ads under
   LFXV2-3319). Reddit is absent because its client has no `ListAdAccounts` to expose, not
   because the route was skipped.
-- `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197). NOT
-  `/accounts`: a HubSpot connection is already scoped to the portal its token
-  authenticates against, so there is no account to discover. What the caller picks is
-  which marketing email a campaign clones.
+- `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197) — and
+  **`/campaigns`** — campaign UTM lookup and create (LFXV2-2641). NOT `/accounts`: a
+  HubSpot connection is already scoped to the portal its token authenticates against, so
+  there is no account to discover. What the caller picks is which marketing email a
+  campaign clones, and which existing HubSpot campaign owns the UTM token.
 - Reddit carries neither. With it now the ONLY member of the shared branch, that branch is
   one ticket away from disappearing — but collapsing it early would admit `/accounts` for a
   provider the service does not serve.

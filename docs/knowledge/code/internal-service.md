@@ -1099,4 +1099,36 @@ two happened.
 one — a tripwire for a future entry point wired without the security scheme, which would
 present only as NULL attribution.
 
+## HubSpot campaign lookup and create
+
+`SearchHubspotCampaigns` and `CreateHubspotCampaign` let a caller read back an existing HubSpot
+campaign's `hs_utm`, or make one when none exists. Both resolve the capability with a dynamic
+type assertion (`CampaignSearcher`), so a platform without it answers a clean "not supported"
+400 rather than a nil dereference — and because that assertion is dynamic, a mock whose signature
+drifts stops satisfying the interface SILENTLY. `connection_campaigns_test.go` carries a
+compile-time `var _ CampaignSearcher` for exactly that reason.
+
+**The create classifies its own failures, and does not borrow the read classifier.** That helper
+is written for reads: its default arm reports a retryable "could not be completed", which on a
+NON-IDEMPOTENT write invites the retry that makes a duplicate. Four outcomes are separated
+instead, and the distinction that matters is what a caller should DO:
+
+- **400** — the request was wrong and retrying it unchanged will fail again: HubSpot rejected it
+  on the merits, or the stored connection exists but is unusable. A 401/403 says so in its own
+  words, since retrying another *name* cannot fix a permission problem.
+- **404** — no HubSpot connection is configured. Different remedy from the 400: connect HubSpot.
+- **500** — the stored credential could not be decrypted. Logged WITHOUT the cause, because the
+  chain can carry ciphertext and `safeErrSummary` normalises rather than redacts.
+- **503** — the outcome could not be confirmed, OR the request never left this service. Those
+  share a status because both are retryable-when-things-recover rather than caller-correctable;
+  the message distinguishes them, since a pre-send failure can promise nothing was created.
+
+Anything this service cannot positively classify falls to the 503, deliberately: a create into a
+namespace shared portal-wide fails CLOSED, and reporting an unrecognised error as a clean failure
+is how a caller is invited to duplicate a campaign.
+
+The classification itself is read from DOMAIN sentinels the dispatcher tags, never by importing a
+platform client to inspect its unexported error types — that would invert service → dispatch →
+platform. See [internal/dispatch](internal-dispatch.md).
+
 See [internal/service](../../../internal/service).
