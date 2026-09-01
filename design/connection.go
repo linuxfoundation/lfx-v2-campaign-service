@@ -1330,8 +1330,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"gap in the scoping here, and it is why the create route below needs a warning. " +
 			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
 			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
-			"sort, and no `sorts` is sent, so the order is UNSPECIFIED (" +
-			"creation). **Do not read the first row as the best match** — the search is token-based, " +
+			"sort, and no `sorts` is sent, so the order is UNSPECIFIED. " +
+			"**Do not read the first row as the best match** — the search is token-based, " +
 			"so a hit can merely share a token with the query. Every match is returned, in the order " +
 			"HubSpot returned them, rather than narrowed to a best one, because choosing between " +
 			"similarly-named campaigns needs a human reading the names — collapsing them here would " +

@@ -533,3 +533,36 @@ func TestCreateHubspotCampaign_NeverSentDoesNotBlameTheName(t *testing.T) {
 		t.Errorf("message does not say the request never reached HubSpot: %q", be.Message)
 	}
 }
+
+// notSentErr carries the same behavioural marker credsSource puts on every failure that happened
+// before the HubSpot request was built.
+type notSentErr struct{ error }
+
+func (notSentErr) NoUpstreamCreate() bool { return true }
+
+// A failure MARKED as never-sent must not be reported as "may already exist".
+//
+// The setup block enumerated four sentinels. `connLoadFailed` -- a repository error loading the
+// connection row -- is none of them, yet it carries NoUpstreamCreate() precisely because the
+// create provably never started. Falling through to the unconfirmed arm sent an operator hunting
+// in HubSpot for a campaign that was never attempted, and buried the real remedy.
+//
+// Driven through the marker rather than a named sentinel, because the marker is the contract the
+// credential layer actually promises; a test naming one sentinel would pass while the next
+// pre-send failure it adds falls through again.
+func TestCreateHubspotCampaign_MarkedNotSentIsNotUnconfirmed(t *testing.T) {
+	d := &mockCampaignSearcherDispatcher{createErr: notSentErr{errors.New("load hubspot connection: dial tcp: connection refused")}}
+
+	_, err := newCampaignSvc(d).CreateHubspotCampaign(context.Background(),
+		&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2026"})
+	if err == nil {
+		t.Fatal("a failed create was reported as success")
+	}
+	// The UNCONFIRMED arm tells the operator to go and look in HubSpot. This failure proves
+	// nothing was sent, so that message is not merely unhelpful -- it is false.
+	if unavailable, ok := err.(*conn.ConnServiceUnavailableError); ok {
+		if strings.Contains(unavailable.Message, "check HubSpot before creating it again") {
+			t.Errorf("a provably-never-sent failure was reported as unconfirmed: %q", unavailable.Message)
+		}
+	}
+}

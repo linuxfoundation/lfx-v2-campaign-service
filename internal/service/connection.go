@@ -1311,6 +1311,17 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 			errors.Is(cerr, domain.ErrConnectionNotUsable) || errors.Is(cerr, domain.ErrCredentialDecryptionFailed) {
 			return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
 		}
+		// The BEHAVIOURAL marker too, not only the four sentinels above. `credsSource` marks every
+		// failure that happened before the HubSpot request was built with `NoUpstreamCreate()` --
+		// `connLoadFailed` is one, a repository error loading the connection row. Enumerating
+		// sentinels catches the ones we thought of; the marker catches the ones the credential
+		// layer will add later. Without it a database blip fell through to "the campaign may
+		// already exist", sending an operator to hunt in HubSpot for a create that provably never
+		// started.
+		var notSent interface{ NoUpstreamCreate() bool }
+		if errors.As(cerr, &notSent) && notSent.NoUpstreamCreate() {
+			return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, cerr)
+		}
 		// NOT classifyDiscoveryError for anything else. That classifier is written for READS: its default arm
 		// reports a retryable "campaign search could not be completed" 503, which is wrong here
 		// twice over. It names the wrong operation, and — far worse — it invites a retry of a

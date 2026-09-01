@@ -674,6 +674,14 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 
 	page, err := client.SearchCampaigns(ctx, query)
 	if err != nil {
+		// A 401/403 is tagged at THIS boundary, where the status is still visible. Wrapped bare,
+		// it reached classifyDiscoveryError's default arm as a retryable 503 -- but an invalid
+		// token or a missing campaign-read scope does not recover by retrying, and the remedy is
+		// to reconnect HubSpot. ErrConnectionNotUsable is what maps it to a 400 the operator can
+		// act on, the same tag the credential-resolution defects above carry.
+		if hubspot.IsPermissionRejection(err) {
+			return model.HubSpotCampaignPage{}, fmt.Errorf("%w: search hubspot campaigns: %w", domain.ErrConnectionNotUsable, err)
+		}
 		return model.HubSpotCampaignPage{}, fmt.Errorf("search hubspot campaigns: %w", err)
 	}
 
