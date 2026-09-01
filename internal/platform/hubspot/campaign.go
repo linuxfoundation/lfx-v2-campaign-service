@@ -225,14 +225,17 @@ type SearchCampaignsPage struct {
 // then creates. Making that ordering the caller's job is what keeps this method honest about
 // what it does — it always creates.
 //
-// HubSpot assigns `hs_utm` itself on creation; it is not settable here. The created campaign is
-// read back from the create response rather than re-fetched, so any token returned is the one
-// HubSpot actually assigned rather than one this service guessed.
+// HubSpot assigns `hs_utm` itself on creation; it is not settable here.
 //
-// The token may be ABSENT from a successful create, and that is not an error: property
-// selection on a create is undocumented (see the request below), and HubSpot may not have
-// assigned one yet. `UTM == ""` is a real state every caller already handles — what is refused
-// is a response with no ID, which cannot be addressed at all.
+// EXPECT `UTM == ""` FROM THIS METHOD. The create response is read as-is, and this request sends
+// no `?properties=` (see the request below for why), so in practice HubSpot does not return the
+// token here at all -- the legacy path that has run in production creates and then SEARCHES to
+// obtain it. A token, if one ever does come back, is HubSpot's own rather than one this service
+// guessed; but a caller that needs the token must read it through the ordinary lookup, not from
+// this return value.
+//
+// That absence is not an error and every caller already handles it. What IS refused is a
+// response with no ID, which cannot be addressed at all.
 func (c *Client) CreateCampaign(ctx context.Context, name string) (*Campaign, error) {
 	n := strings.TrimSpace(name)
 	if n == "" {
