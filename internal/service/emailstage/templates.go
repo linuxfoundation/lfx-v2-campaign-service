@@ -154,7 +154,8 @@ EVENT DETAILS:
 - Topics: [TOPICS]
 
 REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
-1. HEADLINE: "[EVENT_NAME] Schedule is Live"
+1. HEADLINE: "[EVENT_NAME] Schedule is Live" -- ONLY if [SCHEDULE_URL] is supplied;
+   otherwise "What You'll Learn at [EVENT_NAME]"
 
 2. INTRODUCTION (30-50 words, 2 sentences)
    Announce: the schedule is available -- ONLY if [SCHEDULE_URL] is supplied, since the claim

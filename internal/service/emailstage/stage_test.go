@@ -200,8 +200,15 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 					if strings.Contains(sentence, "PRIMARY OBJECTIVE") || strings.Contains(sentence, "OBJECTIVE:") {
 						continue
 					}
-					if !strings.Contains(sentence, "[") {
-						t.Errorf("stage %q %s asserts %q with no placeholder, so the OMIT rule cannot remove it: %q",
+					// [EVENT_NAME]/[LOCATION]/[DATES] are the three fields the pipeline always
+					// fills (see emailCopyPromptVars), so a bracket that is ONLY one of these
+					// proves nothing: the OMIT rule never strips them, and a claim can ride in on
+					// a placeholder that can never gate it. The Schedule Announcement headline
+					// ("[EVENT_NAME] Schedule is Live") carried exactly this: a claim word
+					// ("schedule") plus an always-supplied bracket, with no [SCHEDULE_URL]
+					// anywhere on the line.
+					if !strings.Contains(alwaysSuppliedRE.ReplaceAllString(sentence, ""), "[") {
+						t.Errorf("stage %q %s asserts %q with no placeholder the OMIT rule can act on, so the claim is unconditional: %q",
 							name, field, claim, strings.TrimSpace(sentence))
 					}
 				}
@@ -273,3 +280,9 @@ var explanatoryRE = regexp.MustCompile(`(?i)(nothing supplies|normally DROPPED|n
 // gatedRE marks a line that defers to a supplied value. The placeholder enforcing it usually sits
 // on the section heading above, so the line itself carries no bracket.
 var gatedRE = regexp.MustCompile(`(?i)(the supplied|supplied [a-z]|only if|only with|when .* is supplied|from \[)`)
+
+// alwaysSuppliedRE matches the three placeholders emailCopyPromptVars always fills. A bracket
+// belonging to one of these can never gate a claim -- the OMIT rule never strips it, since the
+// pipeline always has a value for it -- so it must be stripped before the has-a-placeholder check
+// below, or a claim can ride in unconditionally on an unrelated always-filled placeholder.
+var alwaysSuppliedRE = regexp.MustCompile(`\[(EVENT_NAME|LOCATION|DATES)\]`)
