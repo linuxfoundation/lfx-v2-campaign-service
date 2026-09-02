@@ -40,13 +40,13 @@ const maxPromptSize = 2400 // runes
 // too large by the second check after the first accepted it -- with a 503 that blames the service.
 // TestComposedBoundClearsEveryStageFloor computes the floors and enforces exactly that.
 //
-// 9000, not 8400. At 8400 the margin was 24 runes: Post-Event floors at 5976 and the input
-// allowance is 2400, so the worst valid composition is 8376. A single sentence added to any
+// 9000, not 8400. At 8400 the margin was 24 runes: Post-Event floors at 6078 and the input
+// allowance is 2400, so the worst valid composition is 8478. A single sentence added to any
 // template would have pushed valid caller input into a 503 -- and this session added 473 runes of
 // template text, consuming almost the entire previous margin without noticing until a reviewer
 // pointed at a stale figure three edits later.
 //
-// 9000 restores ~624 runes, which is roughly the size of the largest single section in a template
+// 9000 restores ~522 runes, which is roughly the size of the largest single section in a template
 // brief. That is the unit the margin needs to be measured in: not "some slack", but "one more
 // section can be written before the bound has to move again".
 const maxComposedPromptSize = 9000 // runes
@@ -391,11 +391,11 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// that remains: a stage template growing past the budget in a future edit. That is a real
 	// failure mode, since the templates are large (Post-Event's ContentPrompt is 3637 runes, and
 	// its COMPOSED floor -- system and user framing plus the template, at zero caller input -- is
-	// 5976) and are
+	// 6078) and are
 	// edited by hand.
 	//
-	// MEASURED 2026-09-01: worst stage-only floor 5976 (Post-Event), so with the 2400-rune input
-	// bound the worst valid composition is 8376. The bound is 8400, leaving only ~24 runes of headroom
+	// MEASURED 2026-09-01: worst stage-only floor 6078 (Post-Event), so with the 2400-rune input
+	// bound the worst valid composition is 8478. The bound is 9000, leaving ~522 runes of headroom
 	// for template growth.
 	//
 	// This comment has now been wrong THREE times, most recently by my own hand: the precedence
@@ -443,7 +443,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
 	if totalPromptSize > maxComposedPromptSize {
 		// ERROR, not Warn, and 503 rather than 400. This branch is unreachable by caller input --
-		// the worst valid composition is 8376 against an 8400 bound -- so if it fires, a
+		// the worst valid composition is 8478 against a 9000 bound -- so if it fires, a
 		// service-owned stage template has outgrown its budget. That is a service defect, and a
 		// 400 would file it under client error on every 4xx/5xx dashboard while telling the caller
 		// to edit a brief that is not the problem. The message already said as much; the status

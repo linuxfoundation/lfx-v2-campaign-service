@@ -62,8 +62,8 @@ They are separate constants because they measure different things — the caller
 input plus the stage template — and getting the second number wrong fails in TWO opposite
 directions, both of which this file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (5976 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
-  only **524** runes for caller fields (6500 - 5976), so anything from 525 runes upward was
+- **Too low rejects valid input.** At 6500 the Post-Event stage (6078 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
+  only **422** runes for caller fields (6500 - 6078), so anything from 423 runes upward was
   refused — 1618 runes of event details passed the 3000 pre-check and were then refused by the
   composed one, two bounds contradicting each other, with the caller told their input was too
   large immediately after the first accepted it.
@@ -80,10 +80,10 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event composes to a 5976-rune floor from a 3637-rune ContentPrompt) and hand-edited.
+— the templates are large (Post-Event composes to a 6078-rune floor from a 3637-rune ContentPrompt) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 8376 (Post-Event floors at 5976), so
-9000 clears it with ~624 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
+With the input bound at 2400 the worst valid composition is 8478 (Post-Event floors at 6078), so
+9000 clears it with ~522 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
 
 That test was a **false green** for one revision: once the input bound moved to 2400, its 2500-rune
@@ -102,8 +102,8 @@ Runes, not bytes, because the limit is stated to the caller and logged as a char
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at a 5976-rune COMPOSED floor (its ContentPrompt alone is 3637),
-and with the maximum 2400 runes of caller input it composes to 8376 against the 9000 bound.
+shared prompt or any template changes: Post-Event is the largest stage at a 6078-rune COMPOSED floor (its ContentPrompt alone is 3637),
+and with the maximum 2400 runes of caller input it composes to 8478 against the 9000 bound.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
 template grew — three times, most recently when a paragraph added to the shared system prompt grew
@@ -188,6 +188,7 @@ nothing greps for it.
 - **TestResolveEventDates**: Pins the fallback order — the structured `startDate`/`endDate` pair wins, the scraper's combined `dates` string is the fallback, and "Date TBD" is the answer when neither exists.
 - **TestGenerateEmailCopy_StageReachesThePrompt**: Pins that the caller's `stage` actually reaches the composed prompt, rather than being accepted and dropped.
 - **TestGenerateEmailCopy_NilStageIsNotAnError**: A caller that names no stage gets generated copy, not a 400 — the stage is optional by contract.
+- **TestCTAFallbacksSurviveTheOmitRule**: Pins that no CTA fallback shares a line with an unsupplied placeholder, since the OMIT rule outranks the stage brief and would delete the fallback along with the condition — the third route found to an empty CTA and its 503.
 - **TestConceptDocSizingArithmetic**: Derives the input bound, composed bound, worst composition and headroom from the real constants and fails when the sizing section states a figure they contradict. Five separate numbers in that one section had gone stale, each caught by a reviewer rather than the repo.
 - **TestConceptDocNamesEveryTest**: Makes this inventory's own "names every test" claim checkable, by failing when a test in `email_copy_test.go` has no entry here. The claim went stale within one round and a reviewer caught it, not the repo.
 - **TestComposedBoundClearsEveryStageFloor**: Computes every stage's composed floor from the real constants and fails with the exact arithmetic when `worst floor + maxPromptSize` exceeds `maxComposedPromptSize` — the seam that stops a template edit silently making valid caller input a 503. It has already caught two regressions introduced by fixes.

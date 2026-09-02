@@ -166,8 +166,9 @@ REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
    Value: What attendees will learn
    RULE: Only these two ideas. No pricing, no logistics, no other details.
 
-3. PRIMARY CTA: [ View Full Schedule ] -- ONLY if [SCHEDULE_URL] is supplied.
-   Otherwise the primary CTA is [ Register Now ], which needs no unsupplied link.
+3. PRIMARY CTA: [ View Full Schedule ] when [SCHEDULE_URL] is supplied.
+   WITHOUT that link the primary CTA is [ Register Now ]. This fallback line names no
+   placeholder, so the OMIT rule cannot remove it.
 
 4. LEARNING TRACKS (100-120 words, organized by track)
    Format per track:
@@ -193,7 +194,8 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else "Register Now"
+- 1 PRIMARY CTA: "View Full Schedule" when a schedule link is supplied
+- WITHOUT it the primary CTA is "Register Now"
 - 1 OPTIONAL SECONDARY CTA: "Register to Attend"
 - NO unrelated CTAs (no sponsors, no travel, no community)
 
@@ -224,7 +226,8 @@ INTERNAL VALIDATION:
 □ Every section supports learning opportunity
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → tracks → speakers → footer
-□ One primary CTA: "View Full Schedule" only with [SCHEDULE_URL], else "Register Now"
+□ One primary CTA: "View Full Schedule" when a schedule link is supplied
+□ Otherwise the primary CTA is "Register Now"
 □ Maximum 1 secondary CTA: "Register to Attend"
 □ No pricing, logistics, or sponsorship info
 □ No paragraph exceeds 3 sentences or 60 words
@@ -238,7 +241,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule -- only when [SCHEDULE_URL] is supplied; else Register Now",
+			"Primary: View Full Schedule when a schedule link is supplied. Without one: Register Now.",
 			"Secondary: Register to Attend (registration page)",
 		},
 		FooterNote:         "Early registration helps us plan better. See you soon.",
@@ -425,9 +428,10 @@ REQUIRED INFORMATION HIERARCHY:
    Standard: [REGULAR_PRICE]
    Save: [DISCOUNT_AMOUNT]
 
-4. PRIMARY CTA: [ Register with Code [PROMO_CODE] ] when [PROMO_CODE] is supplied, otherwise
-   [ Register Now ]. Never emit the bracket itself and never invent a code -- an invented one is
-   refused at checkout, which is worse than no code at all.
+4. PRIMARY CTA: [ Register with Code [PROMO_CODE] ] when [PROMO_CODE] is supplied.
+   WITHOUT a code the primary CTA is [ Register Now ]. This fallback line names no placeholder,
+   so the OMIT rule cannot remove it. Never emit the bracket itself and never invent a code --
+   an invented one is refused at checkout, which is worse than no code at all.
 
 5. WHAT'S NEW (50-70 words, 2-3 sentences) -- ONLY if the brief supplies prior-edition changes
    [PRIOR_EDITION_CHANGES]
@@ -445,7 +449,8 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "Register with Code [PROMO_CODE]" when supplied, else "Register Now"
+- 1 PRIMARY CTA: "Register with Code [PROMO_CODE]" when a code is supplied
+- WITHOUT a code the primary CTA is "Register Now"
 - 1 OPTIONAL SECONDARY: "Learn More"
 - NO unrelated CTAs (no sponsors, no community, no travel)
 
@@ -484,7 +489,8 @@ INTERNAL VALIDATION:
 □ Every section supports discount offer
 □ Opening: personalized, 40-50 words, 2 sentences
 □ Information hierarchy: greeting → why special → code → CTA → what's new → footer
-□ One primary CTA: "Register with Code [PROMO_CODE]" when supplied, else "Register Now"
+□ One primary CTA: "Register with Code [PROMO_CODE]" when a code is supplied
+□ Otherwise the primary CTA is "Register Now"
 □ Maximum 1 secondary: "Learn More"
 □ Personalization token used in greeting
 □ Discount offer in clear, scannable format
@@ -540,8 +546,10 @@ REQUIRED INFORMATION HIERARCHY:
    Direction: "Here's what to expect..."
    RULE: Only these. No detailed schedule.
 
-3. PRIMARY CTA: [ View Full Schedule ] with [SCHEDULE_URL], else [ See You There ].
-   Never empty (the cta field is required) and never "Register Now" (they hold a ticket).
+3. PRIMARY CTA: [ View Full Schedule ] when [SCHEDULE_URL] is supplied.
+   WITHOUT that link the primary CTA is [ See You There ]. This fallback line names no
+   placeholder, so the OMIT rule cannot remove it. Never empty (the cta field is required) and
+   never "Register Now" (they hold a ticket).
 
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
@@ -566,7 +574,8 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "View Full Schedule" with [SCHEDULE_URL], else "See You There"
+- 1 PRIMARY CTA: "View Full Schedule" when the schedule link is supplied
+- WITHOUT it the primary CTA is "See You There"
 - 1 OPTIONAL SECONDARY: "Download Event App"
 - NO unrelated CTAs
 
@@ -607,7 +616,8 @@ INTERNAL VALIDATION:
 □ Every section supports this
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → logistics → what to expect → footer
-□ One primary CTA: "View Full Schedule" with [SCHEDULE_URL], else "See You There"
+□ One primary CTA: "View Full Schedule" when the link is supplied
+□ Otherwise the primary CTA is "See You There"
 □ Maximum 1 secondary: "Download Event App"
 □ Clear date, time, timezone, venue
 □ Transit/parking info practical
@@ -624,7 +634,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule with [SCHEDULE_URL], else See You There -- never empty",
+			"Primary: View Full Schedule when the schedule link is supplied. Without it: See You There. Never empty.",
 			"Secondary: Download Event App (mobile app link)",
 		},
 		FooterNote:         "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
@@ -675,8 +685,9 @@ REQUIRED INFORMATION HIERARCHY:
    • Photos: [LINK]
    • Community: Join [COMMUNITY_COUNT]+ in Slack [LINK]
 
-4. PRIMARY CTA: [ Watch Recordings ] -- ONLY if [RECORDINGS_URL] is supplied.
-   Otherwise the primary CTA is [ Share Feedback ], which needs no unsupplied link.
+4. PRIMARY CTA: [ Watch Recordings ] when [RECORDINGS_URL] is supplied.
+   WITHOUT that link the primary CTA is [ Share Feedback ]. This fallback line names no
+   placeholder, so the OMIT rule cannot remove it.
 
 5. FEEDBACK REQUEST (30-40 words, 2 sentences)
    Light ask: invite feedback WITHOUT inventing a completion time -- no input supplies one
@@ -697,7 +708,8 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "Watch Recordings" when [RECORDINGS_URL] is supplied, else "Share Feedback"
+- 1 PRIMARY CTA: "Watch Recordings" when the recordings link is supplied
+- WITHOUT it the primary CTA is "Share Feedback"
 - 1 OPTIONAL SECONDARY: "Share Your Feedback"
 - 0 others (no sponsors, no merchandise, no membership)
 
@@ -744,7 +756,8 @@ INTERNAL VALIDATION:
 □ Every section supports this
 □ Opening: 50-60 words, 2 sentences, genuine thanks
 □ Information hierarchy: headline → gratitude → resources → CTA → feedback → optional teaser → footer
-□ One primary CTA: "Watch Recordings" only with [RECORDINGS_URL], else "Share Feedback"
+□ One primary CTA: "Watch Recordings" when the link is supplied
+□ Otherwise the primary CTA is "Share Feedback"
 □ Maximum 1 secondary: "Share Your Feedback"
 □ No sponsorship, sales, or promotional content
 □ Resources clearly listed with links

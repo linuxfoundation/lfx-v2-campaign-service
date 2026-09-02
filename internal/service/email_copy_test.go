@@ -1194,6 +1194,18 @@ func TestConceptDocSizingArithmetic(t *testing.T) {
 		}
 	}
 
+	// The PUBLISHED catalog is checked too. It states the composed bound to consumers, and it
+	// drifted independently of the concept doc when the bound moved -- the guard covering one file
+	// let the other publish a threshold the endpoint no longer enforces.
+	catalog, err := os.ReadFile(filepath.Join("..", "..", "docs", "api-catalog.md"))
+	if err != nil {
+		t.Fatalf("read api catalog: %v", err)
+	}
+	if !strings.Contains(string(catalog), fmt.Sprintf("over %d is a `503`", maxComposedPromptSize)) {
+		t.Errorf("docs/api-catalog.md does not publish the current composed bound (%d); consumers would rely on a threshold the endpoint does not enforce",
+			maxComposedPromptSize)
+	}
+
 	// Presence is not enough: a figure repeated twice can go stale in one place and still be
 	// "mentioned" by the other. So the stale values that have actually shipped in this section are
 	// named and forbidden outright, EXCEPT where the prose is narrating them as history.

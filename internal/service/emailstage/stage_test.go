@@ -525,8 +525,11 @@ func TestStageCTAPromptMatchesDeclaration(t *testing.T) {
 			}
 			for _, m := range button.FindAllStringSubmatch(l, -1) {
 				got := norm(pick(m))
-				// Placeholder tokens are shape, not button text.
-				if got == "" || strings.HasPrefix(got, "[") {
+				// Placeholder tokens are shape, not button text. UPPER_SNAKE inside the brackets
+				// is what distinguishes `[SCHEDULE_URL]` from `[ View Full Schedule ]`; the
+				// earlier prefix check only caught nested brackets and let a lone placeholder on
+				// a CTA line read as a drifted label.
+				if got == "" || placeholderTokenRE.MatchString(got) {
 					continue
 				}
 				if !role[got] {
@@ -549,3 +552,46 @@ func pick(m []string) string {
 // norm lowercases and collapses whitespace so "View Full Schedule" and "view  full schedule"
 // compare equal; the prose is hand-written and its spacing varies.
 func norm(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
+
+// placeholderTokenRE matches an UPPER_SNAKE placeholder name, so it is not mistaken for a button.
+var placeholderTokenRE = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// A CTA fallback must not share a sentence with an unsupplied placeholder.
+//
+// The system prompt's OMIT rule removes any sentence whose placeholder has no supplied value, and
+// it outranks the stage brief. So `PRIMARY CTA: [ View Full Schedule ] with [SCHEDULE_URL], else
+// [ See You There ]` is self-defeating: the token is never supplied, so the model may drop the
+// whole line -- taking the fallback with it and leaving no CTA at all, which the service refuses
+// with a 503.
+//
+// This is the third distinct route to the same empty-CTA failure (the first was a "Register Now"
+// fallback that contradicted the stage, the second an explicit "omit the CTA" instruction), so it
+// is pinned rather than reasoned about. The fallback must live on its own line, naming no
+// placeholder, where OMIT cannot reach it.
+func TestCTAFallbacksSurviveTheOmitRule(t *testing.T) {
+	t.Parallel()
+
+	placeholder := regexp.MustCompile(`\[[A-Z][A-Z0-9_]*\]`)
+	fallbackWord := regexp.MustCompile(`(?i)\b(else|otherwise|without it)\b`)
+
+	for name, tpl := range Templates {
+		fb := strings.TrimSpace(tpl.PrimaryCTAFallback)
+		if fb == "" {
+			continue
+		}
+		for _, text := range append([]string{tpl.ContentPrompt}, tpl.CTAStrategy...) {
+			for _, line := range strings.Split(text, "\n") {
+				l := strings.TrimSpace(line)
+				if !strings.Contains(l, fb) {
+					continue
+				}
+				// The line names the fallback. If it also names an unsupplied placeholder AND
+				// reads as a conditional, OMIT can delete the fallback along with the condition.
+				if placeholder.MatchString(l) && fallbackWord.MatchString(l) {
+					t.Errorf("stage %q states its CTA fallback %q on the same line as %s; the OMIT rule can drop that whole sentence and leave no CTA: %q",
+						name, fb, placeholder.FindString(l), l)
+				}
+			}
+		}
+	}
+}
