@@ -313,3 +313,48 @@ var alwaysSupplied = map[string]bool{"EVENT_NAME": true, "LOCATION": true, "DATE
 // placeholderRE matches a placeholder TOKEN: `[SCHEDULE_URL]`, `[Session title 1]`. The leading
 // character must not be a space, which is what excludes CTA button text (`[ Register Now ]`).
 var placeholderRE = regexp.MustCompile(`\[([A-Za-z][A-Za-z0-9_ ]*)\]`)
+
+// Final Countdown must never ask the reader to register.
+//
+// The stage is for people who have ALREADY registered -- its own SECTIONS TO REMOVE excludes
+// "Registration info". Gating the "View Full Schedule" CTA on [SCHEDULE_URL] introduced a
+// FALLBACK of "Register Now", and since nothing supplies that URL the fallback fires every time:
+// the gating fix quietly turned every Final Countdown email back into a registration push.
+//
+// Pinned narrowly rather than as a general "stage contradicts its own removals" rule. That
+// general form was written first and produced a false finding on Discount Offer, whose removal
+// entry ("Registration details -- only the discount matters") bans a SECTION while its whole
+// purpose is a discounted-registration CTA. The distinction lives in prose the templates write
+// for humans, and a guard that cannot read it reports the wrong stage.
+func TestFinalCountdownNeverAsksForRegistration(t *testing.T) {
+	t.Parallel()
+
+	tpl, ok := Templates[FinalCountdown]
+	if !ok {
+		t.Fatalf("Final Countdown template missing")
+	}
+	fields := append([]string{tpl.ContentPrompt}, tpl.CTAStrategy...)
+	fields = append(fields, tpl.SubjectPattern, tpl.PreviewPattern, tpl.FooterNote)
+
+	for _, text := range fields {
+		for _, line := range strings.Split(text, "\n") {
+			l := strings.TrimSpace(line)
+			// Only CTA directives. The removal list itself names registration, correctly.
+			if !strings.Contains(strings.ToUpper(l), "CTA") {
+				continue
+			}
+			// A PROHIBITION names registration in order to forbid it -- "Do NOT fall back to
+			// Register Now", "a registration CTA here contradicts the stage". Those lines are the
+			// fix, not the defect, and flagging them makes the guard fire on its own remedy.
+			if prohibitionRE.MatchString(l) {
+				continue
+			}
+			if regexp.MustCompile(`(?i)\bregist`).MatchString(l) {
+				t.Errorf("Final Countdown has a CTA asking the reader to register, which the stage excludes: %q", l)
+			}
+		}
+	}
+}
+
+// prohibitionRE marks a directive that names registration in order to BAN it.
+var prohibitionRE = regexp.MustCompile(`(?i)(never|do not|don't|no primary cta|omit|contradicts|excludes)`)

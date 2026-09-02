@@ -527,7 +527,10 @@ REQUIRED INFORMATION HIERARCHY:
    RULE: Only these. No detailed schedule.
 
 3. PRIMARY CTA: [ View Full Schedule ] -- ONLY if [SCHEDULE_URL] is supplied.
-   Otherwise the primary CTA is [ Register Now ], which needs no unsupplied link.
+   Otherwise OMIT the primary CTA entirely. Do NOT fall back to "Register Now": this stage
+   is for people who have ALREADY registered, and SECTIONS TO REMOVE below excludes
+   registration info outright -- a registration CTA here contradicts the stage and
+   re-creates the Registration Push email this one exists to follow.
 
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
@@ -552,7 +555,8 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else "Register Now"
+- 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else NO primary CTA
+  (never "Register Now" -- this stage is for people already registered)
 - 1 OPTIONAL SECONDARY: "Download Event App"
 - NO unrelated CTAs
 
