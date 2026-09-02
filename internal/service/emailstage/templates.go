@@ -416,7 +416,9 @@ REQUIRED INFORMATION HIERARCHY:
    Standard: [REGULAR_PRICE]
    Save: [DISCOUNT_AMOUNT]
 
-4. PRIMARY CTA: [ Register with Code [PROMO_CODE] ]
+4. PRIMARY CTA: [ Register with Code [PROMO_CODE] ] when [PROMO_CODE] is supplied, otherwise
+   [ Register Now ]. Never emit the bracket itself and never invent a code -- an invented one is
+   refused at checkout, which is worse than no code at all.
 
 5. WHAT'S NEW (50-70 words, 2-3 sentences) -- ONLY if the brief supplies prior-edition changes
    [PRIOR_EDITION_CHANGES]
@@ -434,7 +436,7 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "Register with Code [CODE]"
+- 1 PRIMARY CTA: "Register with Code [PROMO_CODE]" when supplied, else "Register Now"
 - 1 OPTIONAL SECONDARY: "Learn More"
 - NO unrelated CTAs (no sponsors, no community, no travel)
 
@@ -526,8 +528,11 @@ REQUIRED INFORMATION HIERARCHY:
    Direction: "Here's what to expect..."
    RULE: Only these. No detailed schedule.
 
-3. PRIMARY CTA: [ View Full Schedule ] -- ONLY if [SCHEDULE_URL] is supplied.
-   Otherwise OMIT the primary CTA. Never "Register Now": they have already registered.
+3. PRIMARY CTA: [ View Full Schedule ] when [SCHEDULE_URL] is supplied, otherwise
+   [ See You There ]. NEVER omit the CTA: the JSON schema requires a non-empty cta field, so an
+   omitted one is rejected by the service. Never "Register Now" either -- do not ask for a
+   sign-up the reader already completed. The fallback must assert nothing unsupplied, and
+   "See You There" names only the event itself.
 
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
@@ -594,7 +599,7 @@ INTERNAL VALIDATION:
 □ Every section supports this
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → logistics → what to expect → footer
-□ One primary CTA: "View Schedule" only with [SCHEDULE_URL]; otherwise no primary CTA
+□ One primary CTA: "View Schedule" with [SCHEDULE_URL], else "See You There" -- never empty
 □ Maximum 1 secondary: "Download App"
 □ Clear date, time, timezone, venue
 □ Transit/parking info practical
@@ -611,7 +616,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule only with [SCHEDULE_URL]; otherwise no primary CTA. Never \"Register Now\".",
+			"Primary: View Full Schedule with [SCHEDULE_URL], else \"See You There\" -- never omitted, never \"Register Now\".",
 			"Secondary: Download Event App (mobile app link)",
 		},
 		FooterNote: "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",

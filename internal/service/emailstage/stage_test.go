@@ -379,3 +379,39 @@ var prohibitionRE = regexp.MustCompile(`(?i)(never|do not|don't|no primary cta|o
 // ctaRequirementRE marks a checklist row that mandates a particular call to action, as opposed to
 // one describing layout or tone.
 var ctaRequirementRE = regexp.MustCompile(`(?i)(primary|secondary) cta:`)
+
+// Every stage must be able to produce a non-empty CTA with only the three supplied fields.
+//
+// The service rejects an empty `cta` with a 503 (`GenerateEmailCopy`, the required-fields check),
+// and the shared JSON schema asks for one unconditionally. So a stage brief that instructs the
+// model to OMIT the primary CTA puts it in an unwinnable position: obey the stage and the
+// response is rejected, or obey the schema and violate the stage.
+//
+// Final Countdown hit exactly that. Gating its "View Full Schedule" CTA on [SCHEDULE_URL] --
+// which nothing supplies -- left "otherwise omit the primary CTA" as the always-taken branch, so
+// the stage could not satisfy the endpoint contract at all. The fix that removed one
+// contradiction created a worse one, which is why this is pinned rather than reasoned about.
+func TestEveryStageCanProduceACTA(t *testing.T) {
+	t.Parallel()
+
+	omitCTA := regexp.MustCompile(`(?i)(omit|no|remove|drop) the (primary )?cta`)
+	for name, tpl := range Templates {
+		for _, text := range append([]string{tpl.ContentPrompt}, tpl.CTAStrategy...) {
+			for _, line := range strings.Split(text, "\n") {
+				l := strings.TrimSpace(line)
+				// A prohibition on omitting is the fix, not the defect.
+				if strings.Contains(strings.ToUpper(l), "NEVER OMIT") {
+					continue
+				}
+				if omitCTA.MatchString(l) {
+					t.Errorf("stage %q instructs the model to omit the CTA, which the schema requires and the service rejects when empty: %q", name, l)
+				}
+			}
+		}
+		// Every stage must name at least one primary CTA reachable with no unsupplied fact --
+		// i.e. a CTA phrase that is not gated behind a placeholder the pipeline never fills.
+		if len(tpl.CTAStrategy) == 0 {
+			t.Errorf("stage %q declares no CTAStrategy, so nothing tells the model what button to write", name)
+		}
+	}
+}
