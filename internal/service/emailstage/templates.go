@@ -194,7 +194,7 @@ PARAGRAPH ENFORCEMENT:
 
 CTA ENFORCEMENT:
 - 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else "Register Now"
-- 1 OPTIONAL SECONDARY CTA: "Register"
+- 1 OPTIONAL SECONDARY CTA: "Register to Attend"
 - NO unrelated CTAs (no sponsors, no travel, no community)
 
 SECTIONS TO REMOVE (not for this stage):
@@ -608,7 +608,7 @@ INTERNAL VALIDATION:
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → logistics → what to expect → footer
 □ One primary CTA: "View Full Schedule" with [SCHEDULE_URL], else "See You There"
-□ Maximum 1 secondary: "Download App"
+□ Maximum 1 secondary: "Download Event App"
 □ Clear date, time, timezone, venue
 □ Transit/parking info practical
 □ No detailed agenda (they know it)
@@ -698,7 +698,7 @@ PARAGRAPH ENFORCEMENT:
 
 CTA ENFORCEMENT:
 - 1 PRIMARY CTA: "Watch Recordings" when [RECORDINGS_URL] is supplied, else "Share Feedback"
-- 1 OPTIONAL SECONDARY: "Share Feedback"
+- 1 OPTIONAL SECONDARY: "Share Your Feedback"
 - 0 others (no sponsors, no merchandise, no membership)
 
 SECTIONS TO REMOVE (not for this stage):
@@ -745,7 +745,7 @@ INTERNAL VALIDATION:
 □ Opening: 50-60 words, 2 sentences, genuine thanks
 □ Information hierarchy: headline → gratitude → resources → CTA → feedback → optional teaser → footer
 □ One primary CTA: "Watch Recordings" only with [RECORDINGS_URL], else "Share Feedback"
-□ Maximum 1 secondary: "Share Feedback"
+□ Maximum 1 secondary: "Share Your Feedback"
 □ No sponsorship, sales, or promotional content
 □ Resources clearly listed with links
 □ Feedback request light, optional

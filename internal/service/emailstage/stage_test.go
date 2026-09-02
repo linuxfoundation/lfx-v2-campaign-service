@@ -469,7 +469,13 @@ func TestStageCTAPromptMatchesDeclaration(t *testing.T) {
 	t.Parallel()
 
 	// A CTA directive: the numbered hierarchy line, an ENFORCEMENT bullet, or a checklist row.
-	directive := regexp.MustCompile(`(?i)^(\d+\.\s*)?(-\s*\d+\s*|□\s*(one|maximum \d+)\s*)?(primary|secondary)\s+cta\b`)
+	// "CTA" is OPTIONAL after primary/secondary. The enforcement lists write both
+	// `- 1 PRIMARY CTA: "..."` and `- 1 OPTIONAL SECONDARY: "..."`, and requiring the word let a
+	// drifted secondary through -- Post-Event declared "Share Your Feedback" but one line said
+	// "Share Feedback", which is also its primary fallback, so the model was told to write the
+	// same button twice. This is the second blind spot of this exact shape (the first needed
+	// "the" to be optional), so the pattern is now permissive about the wording around the noun.
+	directive := regexp.MustCompile(`(?i)^(\d+\.\s*)?(-\s*\d+\s*|□\s*(one|maximum \d+)\s*)?(optional\s+)?(primary|secondary)(\s+cta)?\b`)
 	// The button text itself, in [ Brackets ] or "Quotes".
 	button := regexp.MustCompile(`\[\s*([A-Z][^\]\[]{2,40}?)\s*\]|"([^"]{3,40})"`)
 
@@ -505,13 +511,25 @@ func TestStageCTAPromptMatchesDeclaration(t *testing.T) {
 			if !directive.MatchString(l) {
 				continue
 			}
+			// ROLE-AWARE. A SECONDARY line may only name the declared secondary, and a PRIMARY
+			// line only the primary or its fallback. Checking against one combined set let
+			// Post-Event label its secondary "Share Feedback" -- which is legitimate as its
+			// PRIMARY fallback, so the combined set accepted it -- telling the model to write the
+			// same button twice when recordings are unavailable.
+			role := allowed
+			if regexp.MustCompile(`(?i)\bsecondary\b`).MatchString(l) {
+				role = map[string]bool{}
+				if sec := strings.TrimSpace(tpl.SecondaryCTA); sec != "" {
+					role[norm(sec)] = true
+				}
+			}
 			for _, m := range button.FindAllStringSubmatch(l, -1) {
 				got := norm(pick(m))
 				// Placeholder tokens are shape, not button text.
 				if got == "" || strings.HasPrefix(got, "[") {
 					continue
 				}
-				if !allowed[got] {
+				if !role[got] {
 					t.Errorf("stage %q names CTA %q in its prompt, which is neither its PrimaryCTA (%q), its fallback (%q), nor a declared secondary: %q",
 						name, got, tpl.PrimaryCTA, tpl.PrimaryCTAFallback, l)
 				}
