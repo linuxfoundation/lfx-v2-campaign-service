@@ -3108,6 +3108,11 @@ func EncodeGenerateEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder)
 				req.Header.Set("Authorization", head)
 			}
 		}
+		values := req.URL.Query()
+		if p.Stage != nil {
+			values.Add("stage", *p.Stage)
+		}
+		req.URL.RawQuery = values.Encode()
 		return nil
 	}
 }

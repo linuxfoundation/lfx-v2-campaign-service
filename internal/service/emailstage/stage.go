@@ -1,0 +1,102 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+// Package emailstage holds the per-stage generation specs for event email copy.
+//
+// An event's email programme is not one email: a CFP launch, a schedule announcement and a
+// post-event thank-you differ in purpose, tone, urgency, subject shape and call to action. Before
+// this package there was ONE hardcoded prompt — "invites registration" — so every send generated
+// registration-push copy whatever the operator actually wanted, and the rest was rewritten by hand.
+//
+// Ported from the LF-Marketing-Ops reference implementation (prasad/skills, 3bca85c2), which
+// carries this taxonomy as AI_STAGE_TEMPLATES. It is DATA, deliberately: the marginal cost of a
+// sixth stage over a second is a struct literal, which is why all six land together rather than a
+// subset that would leave a selector with unusable options.
+package emailstage
+
+import "strings"
+
+// Template is one stage's complete generation spec.
+//
+// MOST fields feed the prompt: StageName, Purpose, Tone, UrgencyLevel, SubjectPattern,
+// PreviewPattern, CTAStrategy, FooterNote and ContentPrompt. `SubjectPattern` is shown as shape
+// rather than text to copy, and `UrgencyLevel` (1-10) is what separates a Final Countdown from a
+// CFP Launch when the wording alone would not.
+//
+// `Timing` and `SubjectExamples` are reference metadata and reach no prompt today. They are kept
+// because they describe the stage a reader is editing -- and because dropping them would make the
+// port lossy against the source it was taken from.
+type Template struct {
+	StageName       string
+	Purpose         string
+	Timing          string
+	Tone            string
+	UrgencyLevel    int
+	SubjectPattern  string
+	SubjectExamples []string
+	PreviewPattern  string
+	ContentPrompt   string
+	CTAStrategy     []string
+	FooterNote      string
+
+	// PrimaryCTA is the button text when every placeholder it needs is supplied, and
+	// PrimaryCTAFallback is what the model must write when they are not.
+	//
+	// Declared as DATA because the prose says the same thing in up to four places -- the numbered
+	// hierarchy, the CTA ENFORCEMENT list, the validation checklist and CTAStrategy -- and those
+	// drifted twice in one day. Final Countdown ended up telling the model to use "See You There"
+	// on one line and to emit NO CTA on the next, for a branch that is always taken. Both were
+	// found in review rather than by anything in the repo.
+	//
+	// The fields are the single source of truth and `TestStageCTAPromptMatchesDeclaration` checks
+	// every prose surface against them, so a drifted line fails the build instead of shipping a
+	// contradiction to the model.
+	//
+	// PrimaryCTAFallback is REQUIRED when PrimaryCTA names a placeholder: nothing supplies
+	// [SCHEDULE_URL], [RECORDINGS_URL] or [PROMO_CODE], so the fallback is the branch that
+	// actually runs, and an empty `cta` is refused by the service with a 503.
+	PrimaryCTA         string
+	PrimaryCTAFallback string
+
+	// SecondaryCTA is the optional second button, or "" when the stage allows none. Declared for
+	// the same reason as the primary: Schedule Announcement called one button "Register to
+	// Attend" in the hierarchy and "Register" in the checklist, and Registration Push called one
+	// "View All Options" and "View Options". Neither is wrong on its own; together they tell the
+	// model to write two different buttons.
+	SecondaryCTA string
+}
+
+// Stage identifiers. Exported so callers name a stage rather than passing a loose string that a
+// typo turns into a silent fallback.
+const (
+	CFPLaunch            = "CFP Launch"
+	ScheduleAnnouncement = "Schedule Announcement"
+	RegistrationPush     = "Registration Push"
+	DiscountOffer        = "Discount Offer"
+	FinalCountdown       = "Final Countdown"
+	PostEvent            = "Post-Event"
+)
+
+// DefaultStage is what an absent or unrecognised stage resolves to.
+//
+// Registration Push, deliberately: it is what the single hardcoded prompt this package replaces
+// produced, so a caller that sends no stage keeps exactly the behaviour it had. Falling back to
+// anything else would silently change every existing caller's output.
+const DefaultStage = RegistrationPush
+
+// Resolve returns the stage's template, falling back to DefaultStage.
+//
+// Never returns a zero Template: an unknown stage means "the caller did not say", not "generate
+// nothing", and a zero value would hand the model an empty purpose and tone — worse output than
+// the single prompt this replaced, and silently so.
+func Resolve(stage string) Template {
+	if tpl, ok := Templates[strings.TrimSpace(stage)]; ok {
+		return tpl
+	}
+	return Templates[DefaultStage]
+}
+
+// Names lists the stages in programme order, for callers that offer a choice.
+func Names() []string {
+	return []string{CFPLaunch, ScheduleAnnouncement, RegistrationPush, DiscountOffer, FinalCountdown, PostEvent}
+}

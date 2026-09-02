@@ -2468,6 +2468,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		var (
 			projectID   string
 			briefID     string
+			stage       *string
 			bearerToken *string
 			err         error
 
@@ -2476,6 +2477,10 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
 		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		stageRaw := r.URL.Query().Get("stage")
+		if stageRaw != "" {
+			stage = &stageRaw
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -2483,7 +2488,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if err != nil {
 			return payload, err
 		}
-		payload = NewGenerateEmailCopyPayload(projectID, briefID, bearerToken)
+		payload = NewGenerateEmailCopyPayload(projectID, briefID, stage, bearerToken)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")

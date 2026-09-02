@@ -14,6 +14,7 @@ import (
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // emailCopyEventDetails is the slice of a brief's EventDetails this generation needs.
@@ -30,11 +31,42 @@ type emailCopyEventDetails struct {
 	Dates string `json:"dates"`
 }
 
+// maxPromptSize bounds the CALLER's three event-detail fields, checked before composing.
+const maxPromptSize = 2400 // runes
+
+// maxComposedPromptSize bounds the WHOLE composed prompt, checked after.
+//
+// It must stay at or above (worst stage floor + maxPromptSize) or a caller is told their input is
+// too large by the second check after the first accepted it -- with a 503 that blames the service.
+// TestComposedBoundClearsEveryStageFloor computes the floors and enforces exactly that.
+//
+// 9000, not 8400. At 8400 the margin was 24 runes: Post-Event floors at 6078 and the input
+// allowance is 2400, so the worst valid composition is 8478. A single sentence added to any
+// template would have pushed valid caller input into a 503 -- and this session added 473 runes of
+// template text, consuming almost the entire previous margin without noticing until a reviewer
+// pointed at a stale figure three edits later.
+//
+// 9000 restores ~522 runes, which is roughly the size of the largest single section in a template
+// brief. That is the unit the margin needs to be measured in: not "some slack", but "one more
+// section can be written before the bound has to move again".
+const maxComposedPromptSize = 9000 // runes
+
 // emailCopyPromptVars holds the values needed to compose the generation prompt.
 type emailCopyPromptVars struct {
 	eventName string
 	location  string
 	dates     string
+	// stage selects the generation spec. TWO distinct paths, deliberately not one:
+	//
+	//   - EMPTY (or blank) means the caller did not say. `composeEmailCopyPrompt` returns the
+	//     frozen legacy prompt and never calls Resolve, because LFXV2-1940 requires a caller that
+	//     sends no stage to keep receiving byte-identical prompts.
+	//   - NON-EMPTY but unrecognised resolves to emailstage.DefaultStage rather than erroring,
+	//     so a caller is never blocked by a stage it cannot spell -- see Resolve.
+	//
+	// Collapsing the first into the second is the edit to avoid: it silently changes the prompt
+	// every existing caller receives.
+	stage string
 }
 
 // decodeEmailCopyEventDetails pulls the fields email generation needs from the brief's opaque
@@ -57,8 +89,13 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 }
 
 // composeEmailCopyPrompt builds the system and user prompts for email copy generation.
-// Follows the lfx-one reference implementation's principle of composing from fixed blocks
-// rather than branching on prompt variants.
+//
+// Composes from fixed blocks rather than branching on prompt variants, per the lfx-one reference
+// implementation -- with ONE deliberate exception. An absent stage returns the frozen
+// `legacySystemPrompt` variant, because LFXV2-1940 requires a caller that sends no stage to keep
+// receiving byte-identical prompts, and the stage-aware text is not a superset of the pre-stage
+// one. Every stage that IS named composes, as the principle describes; the branch exists only to
+// hold the no-stage case still.
 // The subject and preheader limits stated to the model — 60 and 100 — are DELIBERATELY tighter
 // than the enforced ones. `design/brief.go` caps them at 200 and 150 and `parseEmailCopyResponse`
 // truncates to the same, but those are the backstop, not the target: a subject line is cut off
@@ -70,11 +107,37 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 // question is what renders in an inbox, not what the type allows.
 func composeEmailCopyPrompt(vars emailCopyPromptVars) (systemPrompt, userPrompt string) {
 	// System prompt: role instruction + constraints + factual grounding.
+	// LFXV2-1940 requires that a caller sending no stage produces a byte-identical prompt to the
+	// one this service emitted before stages existed. The stage-aware system prompt is not a
+	// superset of that text -- it adds the placeholder/OMIT rules, which only mean anything next
+	// to a stage brief -- so an absent stage takes the pre-stage prompt verbatim rather than a
+	// resolved default. An explicit "Registration Push" still takes the template path.
+	if strings.TrimSpace(vars.stage) == "" {
+		return legacySystemPrompt, fmt.Sprintf(`Generate email copy for this event:
+Event Name: %s
+Location: %s
+Dates: %s
+
+Create compelling email copy that invites registration and highlights the value of attending.`,
+			vars.eventName, vars.location, vars.dates)
+	}
+
 	systemPrompt = `You are an expert email copywriter for technology events and communities.
 Your task is to generate compelling email copy for a campaign brief.
 
-IMPORTANT: Use ONLY the event details provided below; never invent dates, names, or locations.
-Every factual claim must come directly from what you're given.
+IMPORTANT: Use ONLY the event details provided below; never invent dates, names, locations,
+prices, deadlines, counts, or any other fact. Every factual claim must come directly from what
+you're given.
+
+A stage brief below may name a placeholder in [BRACKETS] for a fact that was not supplied --
+prices, attendee counts, session counts, deadlines. OMIT any sentence or section whose placeholder
+has no supplied value. Do not guess one, and do not emit the bracketed placeholder itself.
+
+THIS RULE OUTRANKS THE STAGE BRIEF. A brief may mark a section REQUIRED and still name a
+placeholder in it -- "1. HEADLINE: Early Bird Pricing Ends [DEADLINE]" is required and has no
+supplied deadline. Drop the section: only eventName, location and dates are ever supplied, so a
+required section built on anything else cannot be written truthfully. A shorter email that says
+only what is known is the correct output, never an invented price, deadline or count.
 
 Generate JSON with these fields (no markdown fencing):
 {
@@ -92,14 +155,47 @@ Constraints:
 - Write for a professional Linux Foundation / technology audience
 - Make it about the event and community, not promotional`
 
-	// User prompt: the specific event details and request.
+	// Stage-specific guidance, appended to the shared role/constraint block above rather than
+	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
+	// changes. An unknown NON-EMPTY stage resolves to the default; an ABSENT stage never reaches
+	// here at all -- it returned the frozen legacySystemPrompt above.
+	tpl := emailstage.Resolve(vars.stage)
+	systemPrompt += fmt.Sprintf(`
+
+STAGE: %s
+Purpose: %s
+Tone: %s
+Urgency (1-10): %d
+Subject shape: %s
+Preheader shape: %s
+Call-to-action strategy: %s
+%s`,
+		tpl.StageName, tpl.Purpose, tpl.Tone, tpl.UrgencyLevel,
+		tpl.SubjectPattern, tpl.PreviewPattern,
+		strings.Join(tpl.CTAStrategy, "; "), tpl.FooterNote)
+
+	// User prompt: the specific event details and the stage's own content brief.
+	//
+	// The stage prompt carries [EVENT_NAME]/[LOCATION]/[DATES] placeholders. They are NOT
+	// substituted here: the details are already stated above them as labelled facts, so leaving
+	// the placeholders as shape keeps one source of truth rather than two that can disagree.
+	//
+	// The templates also carry placeholders for facts NOTHING supplies — [PROMO_CODE],
+	// [REGULAR_PRICE], [SESSION_COUNT], [VENUE_NAME] and a dozen more — while marking those
+	// sections required. Only three of roughly twenty placeholder kinds are ever filled.
+	//
+	// The system prompt handles that ONCE, above: omit the sentence or section whose placeholder
+	// has no value, do not guess one, and do not emit the bracket itself. A second instruction
+	// saying to KEEP the placeholder verbatim was added here and removed — it contradicted the
+	// first outright, and a prompt that states both policies lets the model pick either, which is
+	// worse than whichever one it replaced.
 	userPrompt = fmt.Sprintf(`Generate email copy for this event:
 Event Name: %s
 Location: %s
 Dates: %s
 
-Create compelling email copy that invites registration and highlights the value of attending.`,
-		vars.eventName, vars.location, vars.dates)
+%s`,
+		vars.eventName, vars.location, vars.dates, tpl.ContentPrompt)
 
 	return systemPrompt, userPrompt
 }
@@ -248,6 +344,10 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		eventName: strings.TrimSpace(details.EventName),
 		location:  strings.TrimSpace(details.Location),
 		dates:     resolveEventDates(details),
+		// Absent is not an error: the design leaves `stage` optional. An absent one takes the
+		// frozen legacy prompt (byte-identical to the pre-stage behaviour, LFXV2-1940); only a
+		// non-empty unrecognised value falls through Resolve to Registration Push.
+		stage: strVal(p.Stage),
 	}
 	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
 	// allocations. Only three strings from event_details reach the prompt — eventName,
@@ -255,18 +355,69 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// design/brief.go, so none of the three carries a length constraint of its own and a
 	// single one of them can be arbitrarily large.
 	//
-	// MEASURED, not estimated: the fixed system prompt is 962 runes and a realistic user
-	// prompt ("KubeCon + CloudNativeCon North America 2026", "Salt Lake City, Utah",
-	// "November 10-13, 2026") is 245, for 1207 total. 3000 leaves roughly 1800 runes of
-	// headroom across the three fields — far above any real event name, far below a payload
-	// worth paying input tokens for. Oversized prompts are rejected as 400 BadRequest.
+	// MEASURED, not estimated, and this bound counts ONLY what the caller supplies: the three
+	// event-detail strings. A realistic set ("KubeCon + CloudNativeCon North America 2026",
+	// "Salt Lake City, Utah", "November 10-13, 2026") is 83 runes, so 2400 leaves ~2317 of
+	// headroom across the three — far above any real event name, far below a payload worth
+	// paying input tokens for. Oversized input is rejected as 400 BadRequest, which is correct
+	// here: the caller CAN edit these fields, unlike the composed bound below.
+	//
+	// The fixed prompt (1751 runes of system text plus the stage template) is deliberately NOT
+	// in this figure -- it is service-owned and no caller can grow it, which is exactly why the
+	// composed bound is a separate constant with a separate status code. Re-measure both when
+	// the shared prompt or a template changes; the numbers here have gone stale twice.
 	//
 	// RUNES, not bytes. The limit is stated to the caller and logged as a character count,
 	// and every other limit in this file counts runes (parseEmailCopyResponse's body bound,
 	// truncateString). Counting bytes here rejected a name in Japanese or an accented
 	// location at a third of the advertised budget, and only for those callers — a limit
 	// that means something different depending on the alphabet the event is named in.
-	const maxPromptSize = 3000 // runes
+
+	// The COMPOSED prompt is bounded separately, and higher, because the two checks bound
+	// different things. `maxPromptSize` bounds what the CALLER supplies -- three `Any`-typed
+	// fields with no length constraint of their own -- and that is the guard against unbounded
+	// input-token cost and large allocations. The composed total additionally includes the fixed
+	// system prompt and the stage template, which are service-owned constants no caller can grow.
+	//
+	// This bound guards TEMPLATE growth, not caller input, and it cannot guard both.
+	//
+	// The two properties are mutually exclusive BY CONSTRUCTION, for any pair of numbers: "never
+	// refuse what the pre-check accepted" needs this at or above the worst valid composition,
+	// while "reachable by caller input" needs it below. Three revisions tried to satisfy both by
+	// tuning the numbers; none could, and the arithmetic says none can.
+	//
+	// So the first property wins -- a caller must never be told their input is too large by the
+	// second of two checks after the first accepted it -- and this one is sized to catch the case
+	// that remains: a stage template growing past the budget in a future edit. That is a real
+	// failure mode, since the templates are large (Post-Event's ContentPrompt is 3637 runes, and
+	// its COMPOSED floor -- system and user framing plus the template, at zero caller input -- is
+	// 6078) and are
+	// edited by hand.
+	//
+	// MEASURED 2026-09-01: worst stage-only floor 6078 (Post-Event), so with the 2400-rune input
+	// bound the worst valid composition is 8478. The bound is 9000, leaving ~522 runes of headroom
+	// for template growth.
+	//
+	// This comment has now been wrong THREE times, most recently by my own hand: the precedence
+	// paragraph added to the shared system prompt earlier today grew every stage by ~130 runes and
+	// I did not re-measure, so 7600 would have refused 303 runes of PERFECTLY VALID caller input
+	// with a 503 blaming the service. A prose instruction to "re-measure" plainly does not survive
+	// contact, so TestComposedBoundClearsEveryStageFloor now computes the real floors and fails if
+	// any stage plus the input bound exceeds this -- the number cannot silently go stale again.
+	//
+	// Both figures were wrong twice before, in opposite directions, from a stale 4700/7700
+	// measurement taken before the templates grew:
+	//
+	//   - 6500 REJECTED VALID INPUT: Post-Event left only ~1459 runes for caller fields, so 1618
+	//     runes of event details passed the 3000 pre-check and were refused here.
+	//   - 8000 was believed unreachable and was not -- 8041 > 8000, so it fired only for the very
+	//     largest Post-Event input, and the reachability test passed for a reason nobody checked.
+	//
+	// The input bound came DOWN from 3000 rather than this one going up, because raising it above
+	// 8041 would have satisfied (1) by destroying (2). 2400 runes is far more event-detail text
+	// than any real event carries. Re-measure both whenever the shared prompt or any template
+	// changes: it has now been wrong THREE times from exactly that -- see the note above the
+	// composed bound for the third.
 
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
 	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
@@ -290,13 +441,23 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	systemPrompt, userPrompt := composeEmailCopyPrompt(promptVars)
 
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
-	if totalPromptSize > maxPromptSize {
-		slog.WarnContext(ctx, "email copy generation blocked: composed prompt exceeds size limit",
+	if totalPromptSize > maxComposedPromptSize {
+		// ERROR, not Warn, and 503 rather than 400. This branch is unreachable by caller input --
+		// the worst valid composition is 8478 against a 9000 bound -- so if it fires, a
+		// service-owned stage template has outgrown its budget. That is a service defect, and a
+		// 400 would file it under client error on every 4xx/5xx dashboard while telling the caller
+		// to edit a brief that is not the problem. The message already said as much; the status
+		// code contradicted it.
+		slog.ErrorContext(ctx, "email copy generation blocked: composed prompt exceeds size limit; a stage template has outgrown the budget",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
-			"prompt_size", totalPromptSize, "limit", maxPromptSize)
-		return nil, &briefs.BadRequestError{
-			Code:    "400",
-			Message: "brief's event details are too large; reduce the event name, location, or dates",
+			"stage", emailstage.Resolve(promptVars.stage).StageName,
+			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
+		// NOT "temporarily": this is a compiled-in template exceeding a compiled-in bound, so every
+		// retry returns this same 503 until a corrected deployment ships. Promising transience
+		// would have the caller retry a request that cannot start succeeding on its own.
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "email copy generation is unavailable for this stage; retrying will not help until this service is fixed",
 		}
 	}
 
@@ -360,3 +521,29 @@ func (s *BriefService) snapshotLLMClient() *llm.Client {
 	defer s.mu.RUnlock()
 	return s.llmClient
 }
+
+// legacySystemPrompt is the system prompt this service emitted before stages existed, preserved
+// byte-for-byte so a caller that sends no stage sees no change at all (LFXV2-1940). It is a
+// FROZEN copy: edits to the stage-aware prompt above must NOT be mirrored here, and the test
+// TestAbsentStageProducesLegacyPrompt pins it against the pre-stage commit's text.
+const legacySystemPrompt = `You are an expert email copywriter for technology events and communities.
+Your task is to generate compelling email copy for a campaign brief.
+
+IMPORTANT: Use ONLY the event details provided below; never invent dates, names, or locations.
+Every factual claim must come directly from what you're given.
+
+Generate JSON with these fields (no markdown fencing):
+{
+  "subject": "Email subject line (max 60 chars)",
+  "preheader": "Email preheader text (max 100 chars)",
+  "body": "Email body in HTML (max 8000 chars, include <p> tags)",
+  "cta": "Call-to-action button text (max 50 chars)"
+}
+
+Constraints:
+- Subject: punchy, under 60 characters
+- Preheader: summary of the email, under 100 characters
+- Body: professional HTML email, inviting and focused on the event
+- CTA: action-oriented, under 50 characters (e.g. "Register Now", "Join Us")
+- Write for a professional Linux Foundation / technology audience
+- Make it about the event and community, not promotional`

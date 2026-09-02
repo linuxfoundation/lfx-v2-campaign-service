@@ -4587,10 +4587,11 @@ func NewGetBriefMetricsPayload(projectID string, briefID string, window *string,
 
 // NewGenerateEmailCopyPayload builds a lfx-v2-campaign-service-briefs service
 // generate-email-copy endpoint payload.
-func NewGenerateEmailCopyPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
+func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
 	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
+	v.Stage = stage
 	v.BearerToken = bearerToken
 
 	return v

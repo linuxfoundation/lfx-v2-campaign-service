@@ -1288,12 +1288,34 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			bearerToken()
 			projectIDAttr()
 			briefIDAttr()
+			// The event-lifecycle stage this email belongs to. OPTIONAL, and its absence is
+			// meaningful rather than merely missing: it means the caller did not say, which
+			// resolves to Registration Push -- the copy the single hardcoded prompt produced
+			// before stages existed, so every pre-stage caller keeps its current output.
+			//
+			// FREE TEXT, not an enum, and the fallback is the point: LFXV2-1940 specifies that an
+			// unrecognised or absent stage resolves to Registration Push rather than erroring, so
+			// a caller is never blocked from generating copy by a stage it cannot spell.
+			//
+			// The cost is real and worth naming: a TYPO produces Registration Push copy under a
+			// 200, so a caller asking for "Fnal Countdown" gets the wrong kind of email and is
+			// told it succeeded. `emailstage.Resolve` is where that fallback lives, and the
+			// response does not report which stage was actually used — a caller that needs to
+			// know must compare what it sent against `Names()`.
+			Attribute("stage", String, "Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
+				Example("Post-Event")
+			})
 			Required("project_id", "brief_id")
 		})
 		Result(EmailCopy)
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/email-copy")
+			// A QUERY param, not a body attribute. Declaring it in the body made the body itself
+			// REQUIRED -- Goa emits MissingPayloadError on EOF -- so a pre-stage caller that POSTs
+			// with no body got a 400 instead of the default-stage copy it used to get. Verified
+			// against the running service before and after: body-less went 400, then 200.
+			Param("stage")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

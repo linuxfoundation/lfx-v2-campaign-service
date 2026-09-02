@@ -9,9 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +24,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // newTestLLMClient builds a real llm.Client against an httptest.Server, using the
@@ -322,7 +327,9 @@ func TestGenerateEmailCopy_BriefNotFound(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("LLM should not be called when the brief lookup fails")
+			// t.Error, not t.Fatal: this runs on the HANDLER goroutine, where Fatal calls
+			// runtime.Goexit on the wrong goroutine instead of failing the test cleanly.
+			t.Error("LLM should not be called when the brief lookup fails")
 		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
@@ -354,7 +361,7 @@ func TestGenerateEmailCopy_InvalidEventDetails(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("LLM should not be called when event details are invalid")
+			t.Error("LLM should not be called when event details are invalid") // handler goroutine -- see above
 		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
@@ -632,12 +639,12 @@ func TestGenerateEmailCopy_RejectsOverlongBody(t *testing.T) {
 }
 
 // TestGenerateEmailCopy_RejectsOversizedPrompt verifies that event details large enough
-// to create an oversized prompt (>3000 chars total) are rejected as 400 BadRequest before
+// to create oversized event details (>2400 runes across the three fields) are rejected as 400
 // calling the LLM. This prevents unbounded input-token cost and large allocations from
 // unsized event_details fields.
 func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
 	repo := newFakeBriefRepo()
-	// Create a brief with event details sized to exceed the 3000-char prompt limit.
+	// Create a brief with event details sized to exceed the 2400-rune input limit.
 	hugeName := repeatStr("KubeCon ", 500) // ~4000 chars
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
@@ -647,7 +654,7 @@ func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("LLM should not be called when prompt exceeds size limit")
+			t.Error("LLM should not be called when prompt exceeds size limit") // handler goroutine -- see above
 		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
@@ -669,11 +676,11 @@ func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
 }
 
 // TestGenerateEmailCopy_AcceptsSizeablePrompt verifies that normally-sized event details
-// (within the 3000-char prompt limit) pass validation and reach the LLM.
+// (within the 2400-rune input limit) pass validation and reach the LLM.
 func TestGenerateEmailCopy_AcceptsSizeablePrompt(t *testing.T) {
 	repo := newFakeBriefRepo()
 	// Create a brief with large but acceptable event details.
-	reasonablyLongName := repeatStr("x", 500) // 500 chars is well within the 3000 limit
+	reasonablyLongName := repeatStr("x", 500) // 500 runes is well within the 2400 limit
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
 		ProjectID:    "proj-123",
@@ -761,7 +768,7 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("GenerateEmailCopy() error = %v; a %d-rune (%d-byte) name is within the "+
-			"3000-CHARACTER limit and must not be rejected",
+			"2400-RUNE input limit and must not be rejected",
 			err, utf8.RuneCountInString(multibyteName), len(multibyteName))
 	}
 	if !llmCalled.Load() {
@@ -785,7 +792,7 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 // of the composed prompt. Asserting on the former is what makes deleting the pre-check fail.
 func TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing(t *testing.T) {
 	repo := newFakeBriefRepo()
-	hugeName := repeatStr("KubeCon ", 500) // 4000 runes, over the 3000 limit on its own
+	hugeName := repeatStr("KubeCon ", 500) // 4000 runes, over the 2400 limit on its own
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
 		ProjectID:    "proj-123",
@@ -824,4 +831,423 @@ func TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing(t *testing.T) {
 	if !strings.Contains(logged, "input_size=") {
 		t.Errorf("log = %q, want an input_size field naming what was measured", logged)
 	}
+}
+
+// The stage must reach the MODEL, not merely be accepted by the handler. Asserting only that the
+// call succeeded would pass against a stage that was parsed and then dropped -- which is exactly
+// how the whole feature would be inert while every test stayed green.
+func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
+	cases := []struct {
+		name  string
+		stage *string
+		// wantPhrase comes from the stage's Purpose, wantContent from its ContentPrompt. They are
+		// separate fields appended separately, so one assertion cannot pin both.
+		wantPhrase  string
+		wantContent string
+	}{
+		// Purpose text unique to each stage's ported ContentPrompt.
+		// EVERY stage, not a sample. LFXV2-1940 requires each one's prompt to reach the model, and
+		// a two-stage sample cannot catch a template wired to the wrong constant -- the failure
+		// that most plausibly survives review, since each stage is a table row that looks right
+		// beside its neighbours.
+		{"cfp launch", strPtr("CFP Launch"), "Recruit speakers", "PRIMARY OBJECTIVE: Recruit speakers"},
+		{"schedule announcement", strPtr("Schedule Announcement"), "speaker lineup", "Showcase learning opportunities"},
+		{"registration push", strPtr("Registration Push"), "Drive registrations", "PRIMARY OBJECTIVE: Drive registrations"},
+		{"discount offer", strPtr("Discount Offer"), "VIP/alumni", "Offer exclusive rate to segment"},
+		{"final countdown", strPtr("Final Countdown"), "anticipation", "PRIMARY OBJECTIVE: Confirm attendance"},
+		{"post-event", strPtr("Post-Event"), "extend engagement", "PRIMARY OBJECTIVE: Thank attendees"},
+		// An ABSENT stage is deliberately NOT a row here. LFXV2-1940 requires it to produce the
+		// byte-identical pre-stage prompt, which carries no stage brief at all -- so it has no
+		// "purpose text" to assert. TestAbsentStageProducesLegacyPrompt pins that case against a
+		// golden file instead. Do not re-add it here expecting Registration Push copy: that was
+		// the behaviour the byte-identity criterion rejected.
+		// UNRECOGNISED falls back too, and must reach the service at all -- the design carried a
+		// Goa `Enum` that rejected it with a 400 at the decoder, before `Resolve` could run, which
+		// contradicted the acceptance criterion. Removing the enum is what this pins; the criterion
+		// prefers a caller never blocked by a stage it cannot spell.
+		{"unrecognised falls back", strPtr("Fnal Countdown"), "Drive registrations", "PRIMARY OBJECTIVE: Drive registrations"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+				ID: "brief-456", ProjectID: "proj-123",
+				EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","dates":"June 17-20, 2026"}`),
+			}
+
+			// atomic, not a bare string: the handler goroutine writes it and the test goroutine
+			// reads it, which is a data race `go test -race` reports. The same boundary already
+			// uses atomics elsewhere in this file.
+			var sentBody atomic.Value
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				sentBody.Store(string(b))
+				w.Header().Set("Content-Type", "application/json")
+				content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+			}))
+			defer srv.Close()
+
+			svc := newTestBriefService(repo)
+			svc.SetLLMClient(newTestLLMClient(t, srv))
+
+			if _, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+				ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: tc.stage,
+			}); err != nil {
+				t.Fatalf("GenerateEmailCopy() error = %v", err)
+			}
+
+			body, _ := sentBody.Load().(string)
+			if !strings.Contains(body, tc.wantPhrase) {
+				t.Errorf("prompt sent upstream does not carry %q for stage %v", tc.wantPhrase, tc.stage)
+			}
+			// The CONTENT PROMPT too, not only the Purpose. Both are appended, but from separate
+			// fields -- so asserting a Purpose phrase alone leaves `tpl.ContentPrompt` free to be
+			// dropped or swapped with every case still green, which is the half of the stage that
+			// actually shapes the email.
+			if !strings.Contains(body, tc.wantContent) {
+				t.Errorf("prompt sent upstream does not carry the stage's own content brief %q", tc.wantContent)
+			}
+		})
+	}
+}
+
+// A caller that sends NO stage must still succeed. Declaring `stage` in the request BODY made the
+// body itself required -- Goa emits MissingPayloadError on EOF -- so a pre-stage caller POSTing
+// with no body got a 400 instead of the default-stage copy it had always received. It is a query
+// parameter for that reason. Verified against the running service: body-less went 400, then 200.
+func TestGenerateEmailCopy_NilStageIsNotAnError(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","dates":"June 17-20, 2026"}`),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	got, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: nil,
+	})
+	if err != nil {
+		t.Fatalf("a nil stage must resolve to the default, got error: %v", err)
+	}
+	if got == nil || got.Subject == "" {
+		t.Error("expected copy back for a caller that named no stage")
+	}
+}
+
+// The composed-prompt bound guards TEMPLATE growth, not caller input, and this drives it that way.
+//
+// It cannot be reached by caller input at ALL, for any pair of bounds: "never reject what the
+// pre-check accepted" needs the composed bound at or above the worst valid composition, and
+// "reachable by caller input" needs it below. The two are mutually exclusive by construction.
+//
+// An earlier version of this test drove a 2500-rune event name and was a FALSE GREEN once the
+// input bound moved to 2400: the PRE-check rejected first, both guards returned the same
+// BadRequestError, and nothing could tell them apart. Neutralising the composed guard entirely
+// broke no test. The messages now differ, and this injects an oversized STAGE — the only input
+// that can actually reach the composed check — so deleting the guard fails here.
+func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
+	// A stage whose template alone blows the composed budget. Restored after the test so the
+	// package's own templates are untouched for everything else.
+	const oversized = "Oversized Test Stage"
+	original, existed := emailstage.Templates[oversized]
+	emailstage.Templates[oversized] = emailstage.Template{
+		StageName:     oversized,
+		Purpose:       "exercise the composed bound",
+		Tone:          "neutral",
+		UrgencyLevel:  1,
+		ContentPrompt: repeatStr("y", 9000),
+	}
+	t.Cleanup(func() {
+		if existed {
+			emailstage.Templates[oversized] = original
+			return
+		}
+		delete(emailstage.Templates, oversized)
+	})
+
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		// Small, so the PRE-check cannot be what rejects this. That distinction is the whole point.
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon","location":"Barcelona","dates":"June 17-20, 2026"}`),
+	}
+	// An LLM client must be configured, or the call fails on service-unavailable BEFORE the size
+	// check and the test would pass for the wrong reason. The server is never reached: the bound
+	// rejects the request first, which is the claim.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the composed-prompt bound should have rejected this before any LLM call")
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	stage := oversized
+	_, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: &stage,
+	})
+	if err == nil {
+		t.Fatal("expected the composed-prompt bound to reject an oversized stage template")
+	}
+	// 503, not 400, and the TYPE is now what distinguishes the two guards. This branch is
+	// unreachable by caller input, so if it fires a service-owned template has outgrown its
+	// budget -- a service defect, not a client error. The pre-check still answers 400, so a
+	// pre-check rejection can no longer masquerade as coverage here.
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("want ConnServiceUnavailableError (503) for a service-side overflow, got %T: %v", err, err)
+	}
+	var bad *briefs.BadRequestError
+	if errors.As(err, &bad) {
+		t.Errorf("got a 400 -- the PRE-check rejected first, so this does not exercise the composed bound")
+	}
+
+	// The MESSAGE must not promise transience. A compiled-in template exceeding a compiled-in
+	// bound returns this same 503 to every retry until a corrected deployment ships, so
+	// "temporarily unavailable" would send the caller into a retry loop that cannot succeed.
+	// 503 carries the retry hint by convention; only the text can withdraw it.
+	if strings.Contains(strings.ToLower(unavailable.Message), "temporar") {
+		t.Errorf("the message promises transience for a defect only a deployment fixes: %q", unavailable.Message)
+	}
+	if !strings.Contains(unavailable.Message, "retrying will not help") {
+		t.Errorf("the message must tell the caller a retry cannot clear this: %q", unavailable.Message)
+	}
+}
+
+// The OMIT rule must outrank a stage brief's own REQUIRED marker.
+//
+// A brief can mark a section required AND name a placeholder in it -- Registration Push's
+// "1. HEADLINE: Early Bird Pricing Ends [DEADLINE]" is required and no deadline is ever supplied.
+// Without an explicit precedence the model gets two contradictory instructions and the required
+// marker is the more emphatic one, so it invents the fact rather than dropping the section.
+//
+// Asserts on the composed SYSTEM PROMPT, which is what the model actually reads.
+//
+// A stage is REQUIRED here: the precedence rule governs a stage brief, and a caller that sends no
+// stage gets the frozen pre-stage prompt (LFXV2-1940 byte-identity), which has no brief to
+// outrank. Registration Push is the case the doc comment above describes.
+func TestComposeEmailCopyPrompt_OmitOutranksRequired(t *testing.T) {
+	sys, _ := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName: "KubeCon Europe 2026",
+		location:  "Barcelona",
+		dates:     "June 17 - June 20",
+		stage:     emailstage.RegistrationPush,
+	})
+
+	if !strings.Contains(sys, "OUTRANKS THE STAGE BRIEF") {
+		t.Error("the system prompt does not say the OMIT rule outranks a REQUIRED section")
+	}
+	// The rule has to name the conflict concretely, or it reads as generic boilerplate beside a
+	// brief that is very specific about what it requires.
+	if !strings.Contains(sys, "REQUIRED") {
+		t.Error("the precedence rule does not mention the REQUIRED marker it overrides")
+	}
+	if !strings.Contains(sys, "Drop the section") {
+		t.Error("the precedence rule does not say what to do with a required section it cannot fill")
+	}
+}
+
+// The composed bound must clear EVERY stage's floor plus the full caller allowance.
+//
+// The two bounds have a contract between them: the pre-check accepts up to maxPromptSize runes of
+// caller input, so the composed bound must be at least (worst stage floor + maxPromptSize) or a
+// caller is told their input is too large by the SECOND check after the first accepted it -- and
+// the second answers 503, blaming the service for the caller's perfectly valid request.
+//
+// A prose "re-measure when the templates change" note did not hold: the numbers went stale three
+// times, most recently when a paragraph added to the shared system prompt grew every stage by
+// ~130 runes. This computes the floors instead of trusting a comment.
+func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
+	// The REAL constants, not copies. Copying them meant reverting the production bound to 7600
+	// left this test green -- it pinned its own numbers rather than the ones GenerateEmailCopy
+	// uses, which is precisely the regression it claims to prevent.
+	const inputBound = maxPromptSize
+	const composedBound = maxComposedPromptSize
+
+	worst, worstStage := 0, ""
+	for _, name := range emailstage.Names() {
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
+		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+		if floor > worst {
+			worst, worstStage = floor, name
+		}
+	}
+
+	if worst+inputBound > composedBound {
+		t.Errorf("stage %q floors at %d runes; with the %d-rune input allowance the worst valid composition is %d, above the %d composed bound — valid caller input would be refused with a 503",
+			worstStage, worst, inputBound, worst+inputBound, composedBound)
+	}
+}
+
+// TestAbsentStageProducesLegacyPrompt pins LFXV2-1940's acceptance criterion: "Existing callers
+// that send no `stage` produce byte-identical prompts to today". The expected text is not written
+// out here and is not read from legacySystemPrompt -- either would let this test agree with a
+// drifted implementation. It is a golden constant extracted from the last commit before stages
+// existed (012fa822^, see email_copy_golden_test.go), so the only way to make it pass is to emit that commit's bytes.
+func TestAbsentStageProducesLegacyPrompt(t *testing.T) {
+	t.Parallel()
+
+	vars := emailCopyPromptVars{
+		eventName: "KubeCon EU 2026",
+		location:  "Amsterdam, Netherlands",
+		dates:     "March 23-26, 2026",
+		stage:     "",
+	}
+	gotSystem, gotUser := composeEmailCopyPrompt(vars)
+
+	if gotSystem != goldenLegacySystemPrompt {
+		t.Errorf("absent stage changed the system prompt.\nLFXV2-1940 requires byte-identical output for callers that send no stage.\n got %d bytes\nwant %d bytes", len(gotSystem), len(goldenLegacySystemPrompt))
+	}
+	wantUser := fmt.Sprintf(goldenLegacyUserPromptTemplate, vars.eventName, vars.location, vars.dates)
+	if gotUser != wantUser {
+		t.Errorf("absent stage changed the user prompt.\n got: %q\nwant: %q", gotUser, wantUser)
+	}
+
+	// A blank-but-present stage is the same case: the API treats "" as "did not say".
+	blankSystem, _ := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: "   "})
+	if blankSystem != goldenLegacySystemPrompt {
+		t.Errorf("a whitespace-only stage did not take the legacy path")
+	}
+
+	// Guard the other half: an EXPLICIT stage must NOT be byte-identical, or the branch is dead
+	// and stage selection (issue line 29) silently stopped working.
+	explicitSystem, explicitUser := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: emailstage.RegistrationPush})
+	if explicitSystem == goldenLegacySystemPrompt || explicitUser == wantUser {
+		t.Errorf("an explicit stage produced the legacy prompt; stage selection is not wired")
+	}
+}
+
+// The concept doc claims its inventory "names every test". This makes that claim checkable.
+//
+// It went stale within one round: two tests added by this branch were never listed, and the
+// omission was found by a reviewer rather than by anything in the repo. A prose claim about
+// completeness is exactly the kind that drifts silently -- the same failure the bound comment had
+// three times -- so it is asserted here instead of promised there.
+func TestConceptDocNamesEveryTest(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("email_copy_test.go")
+	if err != nil {
+		t.Fatalf("read test source: %v", err)
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "knowledge", "code", "internal-service-email-copy.md"))
+	if err != nil {
+		t.Fatalf("read concept doc: %v", err)
+	}
+
+	declared := regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]+)\(`).FindAllStringSubmatch(string(src), -1)
+	if len(declared) == 0 {
+		t.Fatalf("found no test declarations; the pattern is wrong, not the doc")
+	}
+	for _, m := range declared {
+		if !strings.Contains(string(doc), "**"+m[1]+"**") {
+			t.Errorf("test %s is not named in the concept doc's inventory, which claims to name every test", m[1])
+		}
+	}
+}
+
+// The sizing section's arithmetic must agree with the real constants.
+//
+// Five separate figures in that one section have gone stale, in a section whose own thesis is
+// that these numbers go stale -- 3000, 7600, 5041, "5503 on its own", and a subtraction that read
+// 1459 where 6500-5503 is 997. Every one was caught by a reviewer rather than by the repo, and
+// each fix was another round.
+//
+// So the numbers that have a computable relationship are computed here. Prose can still describe
+// a HISTORICAL bound (the section deliberately narrates 6500 and 8000 as past mistakes); what it
+// may not do is state a current figure that the constants contradict.
+func TestConceptDocSizingArithmetic(t *testing.T) {
+	t.Parallel()
+
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "knowledge", "code", "internal-service-email-copy.md"))
+	if err != nil {
+		t.Fatalf("read concept doc: %v", err)
+	}
+	text := string(doc)
+
+	// The worst composition and its headroom, both derived rather than transcribed.
+	worst := worstStageFloor() + maxPromptSize
+	headroom := maxComposedPromptSize - worst
+
+	for _, want := range []struct {
+		label string
+		value int
+	}{
+		{"input bound", maxPromptSize},
+		{"composed bound", maxComposedPromptSize},
+		{"worst composition", worst},
+		{"headroom", headroom},
+	} {
+		if !strings.Contains(text, fmt.Sprintf("%d", want.value)) {
+			t.Errorf("the sizing section does not mention the current %s (%d); a number changed and the prose did not follow",
+				want.label, want.value)
+		}
+	}
+
+	// The PUBLISHED catalog is checked too. It states the composed bound to consumers, and it
+	// drifted independently of the concept doc when the bound moved -- the guard covering one file
+	// let the other publish a threshold the endpoint no longer enforces.
+	catalog, err := os.ReadFile(filepath.Join("..", "..", "docs", "api-catalog.md"))
+	if err != nil {
+		t.Fatalf("read api catalog: %v", err)
+	}
+	if !strings.Contains(string(catalog), fmt.Sprintf("over %d is a `503`", maxComposedPromptSize)) {
+		t.Errorf("docs/api-catalog.md does not publish the current composed bound (%d); consumers would rely on a threshold the endpoint does not enforce",
+			maxComposedPromptSize)
+	}
+
+	// Presence is not enough: a figure repeated twice can go stale in one place and still be
+	// "mentioned" by the other. So the stale values that have actually shipped in this section are
+	// named and forbidden outright, EXCEPT where the prose is narrating them as history.
+	//
+	// The historical bullets deliberately say "At 6500" and "8000 was set against a believed
+	// ceiling of 7700" -- those are the mistakes the section exists to record. Every other stale
+	// figure is a defect.
+	for _, stale := range []struct {
+		value int
+		why   string
+	}{
+		{5503, "an old Post-Event floor"},
+		{7903, "the worst composition under the old floor"},
+		{5041, "a 6500-era template size"},
+		{7600, "a superseded composed bound"},
+		{997, "the 6500 remaining allowance under the old floor"},
+	} {
+		if strings.Contains(text, fmt.Sprintf("%d", stale.value)) {
+			t.Errorf("the sizing section still contains %d (%s); it has been superseded and every earlier instance of this cost a review round",
+				stale.value, stale.why)
+		}
+	}
+
+	// The historical example must subtract correctly: 6500 was the old bound.
+	if strings.Contains(text, "At 6500") {
+		remaining := 6500 - worstStageFloor()
+		if !strings.Contains(text, fmt.Sprintf("%d", remaining)) {
+			t.Errorf("the 6500 example does not state the correct remaining allowance (6500 - %d = %d)",
+				worstStageFloor(), remaining)
+		}
+	}
+}
+
+// worstStageFloor is the largest composed prompt any stage produces at zero caller input. Shared
+// by the bound test and the doc-arithmetic test so neither transcribes a number the other derives.
+func worstStageFloor() int {
+	worst := 0
+	for _, name := range emailstage.Names() {
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
+		if floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user); floor > worst {
+			worst = floor
+		}
+	}
+	return worst
 }

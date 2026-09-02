@@ -3110,6 +3110,15 @@ paths:
             description: Generate AI-written email copy (subject, preheader, body, CTA) for a campaign brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503.
             operationId: lfx-v2-campaign-service-briefs#generate-email-copy
             parameters:
+                - name: stage
+                  in: query
+                  description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                    example: Post-Event
+                  example: Post-Event
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
