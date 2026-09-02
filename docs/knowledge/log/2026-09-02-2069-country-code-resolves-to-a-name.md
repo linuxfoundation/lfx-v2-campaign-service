@@ -1,4 +1,4 @@
-# 2026-09-02 — #2069: the UI writes countryCode, the audience build needed country
+# 2026-09-02 — linuxfoundation/lfx-self-serve#2069: the UI writes countryCode, the audience build needed country
 
 **Fix** — `decodeEventDetails` required `country` and deliberately refused `countryCode`, so EVERY
 brief created through the campaigns UI failed with "no country in its details" and could never
