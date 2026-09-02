@@ -80,3 +80,50 @@ func TestDecodeEventDetailsStillErrorsWhenNamePresentButNoCountry(t *testing.T) 
 		t.Fatal("expected an error for a brief with no country in any spelling, got nil")
 	}
 }
+
+// The UI writes `countryCode` and never `country`, so this is the shape EVERY brief created
+// through the campaigns page actually has. Before `CountryForCode` existed the decoder refused
+// it deliberately -- a literal `CN` reaches HubSpot as an exact filter value, matches nobody, and
+// the build would SUCCEED while storing an empty inclusion list. The refusal was correct; what
+// was missing was the mapping, so the fix resolves the code rather than passing it through.
+func TestDecodeEventDetailsResolvesUICountryCode(t *testing.T) {
+	got, err := decodeEventDetails(&model.CampaignBrief{
+		ID:           "b-cn",
+		EventDetails: json.RawMessage(`{"name":"MCP Dev Summit Shanghai","countryCode":"CN"}`),
+	})
+	if err != nil {
+		t.Fatalf("a brief carrying only countryCode must decode, got: %v", err)
+	}
+	// The NAME, not the code. `audience.DisplayName` sends this into HubSpot as an exact
+	// CONTAINS/IS_ANY_OF value, so "CN" would match no contact.
+	if got.Country != "china" {
+		t.Errorf("countryCode CN resolved to %q, want %q", got.Country, "china")
+	}
+}
+
+// An explicit `country` outranks the code: a name the brief states is more trustworthy than one
+// derived from two letters, and the two can disagree.
+func TestDecodeEventDetailsPrefersExplicitCountryOverCode(t *testing.T) {
+	got, err := decodeEventDetails(&model.CampaignBrief{
+		ID:           "b-both",
+		EventDetails: json.RawMessage(`{"name":"Event","country":"Japan","countryCode":"CN"}`),
+	})
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if got.Country != "Japan" {
+		t.Errorf("explicit country lost to the code: got %q, want %q", got.Country, "Japan")
+	}
+}
+
+// An UNMAPPED code must still fail loudly. This is the property the original refusal protected:
+// a code the region map does not know cannot become a HubSpot filter value, because it would
+// match nobody and report success on an empty list.
+func TestDecodeEventDetailsRejectsUnmappedCountryCode(t *testing.T) {
+	if _, err := decodeEventDetails(&model.CampaignBrief{
+		ID:           "b-xx",
+		EventDetails: json.RawMessage(`{"name":"Event","countryCode":"XX"}`),
+	}); err == nil {
+		t.Fatal("an unmapped country code must fail rather than build an empty inclusion list")
+	}
+}

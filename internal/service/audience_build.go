@@ -149,23 +149,24 @@ type briefEventDetails struct {
 	// verbatim into the opaque `event_details` blob, which the design types as `Any` — so
 	// nothing arbitrates the key. Same defect the paid path had (LFXV2-3259); this decoder is
 	// a separate struct that the dispatch-side fix does not reach.
-	Name string `json:"name"`
-	// `countryCode` is deliberately NOT accepted as a fallback for Country, even though the UI
-	// writes it and its absence is what makes this decoder reject a UI brief.
+	Name    string `json:"name"`
+	Country string `json:"country"`
+	// CountryCode is the ISO 3166-1 alpha-2 form, and it is what the UI actually writes --
+	// `CampaignCreateRequest` carries `countryCode` and never `country`, so before this field
+	// existed EVERY brief created through the UI failed with "no country in its details".
 	//
-	// Country flows through `audience.DisplayName` into HubSpot `CONTAINS`/`IS_ANY_OF`
-	// filters, and that function aliases only `us` and `uk` among ISO-2 values
-	// (`internal/audience/region.go:63-64`). A `JP` or `DE` would pass through literally,
-	// match no HubSpot country property, and the build would SUCCEED while storing an empty
-	// inclusion list — trading a loud, accurate failure for a silent wrong answer on a list
-	// that decides who receives an email.
+	// It is resolved through `audience.CountryForCode`, NOT passed through raw. Country flows
+	// into HubSpot `CONTAINS`/`IS_ANY_OF` filters as an exact value, so a literal `JP` or `DE`
+	// would match no contact and the build would SUCCEED while storing an empty inclusion list
+	// -- a silent wrong answer on the list that decides who receives an email. That is why the
+	// earlier version of this decoder refused the code outright rather than aliasing it.
 	//
-	// Reading the code therefore needs an ISO-2 → country-name mapping first. Until that
-	// exists, failing with "no country in its details" is the correct outcome: it names a
-	// real gap instead of hiding it. Tracked separately from LFXV2-3259.
-	Country  string `json:"country"`
-	Location string `json:"location"`
-	Year     string `json:"year"`
+	// The mapping only covers the countries `countryToRegion` knows, so an unmapped code still
+	// falls through to the same loud "no country" error. The refusal was never the goal; the
+	// missing mapping was, and it now exists.
+	CountryCode string `json:"countryCode"`
+	Location    string `json:"location"`
+	Year        string `json:"year"`
 }
 
 // BuildAudience derives a brief's HubSpot audience and records it.
@@ -847,6 +848,15 @@ func decodeEventDetails(b *model.CampaignBrief) (briefEventDetails, error) {
 		}
 		if out.Country == "" {
 			out.Country = strings.TrimSpace(partial.Country)
+		}
+		// The ISO-2 code is the LAST resort, after every spelled-out `country` in the blob has
+		// been tried: a name the brief states explicitly is more trustworthy than one derived
+		// from a two-letter code, and `CountryForCode` only knows the countries the region map
+		// covers.
+		if out.Country == "" {
+			if name, ok := audience.CountryForCode(partial.CountryCode); ok {
+				out.Country = name
+			}
 		}
 		if out.Location == "" {
 			out.Location = strings.TrimSpace(partial.Location)
