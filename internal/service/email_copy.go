@@ -71,8 +71,13 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 }
 
 // composeEmailCopyPrompt builds the system and user prompts for email copy generation.
-// Follows the lfx-one reference implementation's principle of composing from fixed blocks
-// rather than branching on prompt variants.
+//
+// Composes from fixed blocks rather than branching on prompt variants, per the lfx-one reference
+// implementation -- with ONE deliberate exception. An absent stage returns the frozen
+// `legacySystemPrompt` variant, because LFXV2-1940 requires a caller that sends no stage to keep
+// receiving byte-identical prompts, and the stage-aware text is not a superset of the pre-stage
+// one. Every stage that IS named composes, as the principle describes; the branch exists only to
+// hold the no-stage case still.
 // The subject and preheader limits stated to the model — 60 and 100 — are DELIBERATELY tighter
 // than the enforced ones. `design/brief.go` caps them at 200 and 150 and `parseEmailCopyResponse`
 // truncates to the same, but those are the backstop, not the target: a subject line is cut off

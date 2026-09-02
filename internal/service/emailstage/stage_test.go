@@ -102,6 +102,12 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 		"event guide", "schedule inside", "video library", "watch recordings", "resources",
 		"speakers", "speaker name", "talk type", "what to bring", "getting there",
 		"transit", "parking", "selection criteria",
+		// A third family: PROGRAMME and SOCIAL PROOF. Nothing supplies a schedule, a track list,
+		// a session title, an attendee quote or an event statistic, and each is a fact a reader
+		// would act on -- a testimonial most of all, since an invented quote attributes words to
+		// a person who never said them.
+		"session title", "learning track", "tracks", "schedule", "testimonial", "attendee quote",
+		"event highlights", "statistics",
 	}
 
 	// A prohibition is the opposite of a claim. The briefs are full of "No pricing", "NO sales
@@ -109,6 +115,22 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 	// thing. Flagging those made the guard fire on every stage, which is how a real finding gets
 	// ignored. Only affirmative sentences are checked.
 	negated := regexp.MustCompile(`(?i)\b(no|not|never|without|remove|avoid|omit|exclude|belongs in)\b`)
+
+	// The negation must govern the CLAIM, not merely appear somewhere on the line. A parenthetical
+	// aside carries its own negatives -- "1-2 attendee testimonials (genuine quotes, not
+	// marketing)" is an ORDER to produce quotes whose aside happens to say "not". Matching the
+	// whole line let that pass, so the guard reported clean on a directive telling the model to
+	// compose attendee quotes and attribute them to people.
+	//
+	// Stripping parentheticals before the negation test is what separates the two: what remains
+	// is the directive itself, and a real prohibition ("No pricing", "Pricing (belongs in
+	// Registration Push)") still carries its negative outside the brackets or is caught by the
+	// "belongs in" alternative.
+	aside := regexp.MustCompile(`\([^)]*\)`)
+
+	// A REDIRECT is a prohibition written as a signpost: the section is banned here and named
+	// elsewhere. These live inside the parenthetical, so they survive the strip above.
+	redirect := regexp.MustCompile(`(?i)\b(belongs in|no photos|not for this stage)\b`)
 
 	for name, tpl := range Templates {
 		fields := map[string]string{
@@ -123,9 +145,21 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 		for field, text := range fields {
 			for _, claim := range claims {
 				// WORD-boundary: substring matching made "rate" hit "Generate" and "recruitment".
-				re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(claim) + `([^\p{L}]|$)`)
+				// Trailing `s?` so a singular claim also matches its plural. Without it the
+				// boundary required a non-letter immediately after the claim, so "testimonial"
+				// silently failed to match "testimonials" -- and the guard reported clean on a
+				// directive telling the model to compose attendee quotes. Every singular entry in
+				// the list carried the same hole.
+				re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(claim) + `s?([^\p{L}]|$)`)
 				for _, sentence := range claimSentences(text, claim) {
-					if !re.MatchString(sentence) || negated.MatchString(sentence) {
+					// A prohibition counts however it is spelled: "No pricing" states it outright,
+					// "Pricing (belongs in Registration Push email)" states it inside the aside.
+					// Both are checked. What the stripped form rules out is the OPPOSITE case --
+					// an affirmative order whose aside merely contains a negative word, like
+					// "testimonials (genuine quotes, not marketing)".
+					stripped := aside.ReplaceAllString(sentence, " ")
+					prohibited := negated.MatchString(stripped) || redirect.MatchString(sentence)
+					if !re.MatchString(sentence) || prohibited {
 						continue
 					}
 					// The opening "Generate a <Stage> email for ..." line NAMES the stage; it is a

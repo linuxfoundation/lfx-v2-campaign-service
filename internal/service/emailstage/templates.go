@@ -157,11 +157,13 @@ REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
 1. HEADLINE: "[EVENT_NAME] Schedule is Live"
 
 2. INTRODUCTION (30-50 words, 2 sentences)
-   Announce: Schedule is available
+   Announce: the schedule is available -- ONLY if [SCHEDULE_URL] is supplied, since the claim
+   is only true when there is somewhere to see it
    Value: What attendees will learn
    RULE: Only these two ideas. No pricing, no logistics, no other details.
 
-3. PRIMARY CTA: [ View Full Schedule ]
+3. PRIMARY CTA: [ View Full Schedule ] -- ONLY if [SCHEDULE_URL] is supplied.
+   Otherwise the primary CTA is [ Register Now ], which needs no unsupplied link.
 
 4. LEARNING TRACKS (100-120 words, organized by track)
    Format per track:
@@ -169,7 +171,7 @@ REQUIRED INFORMATION HIERARCHY (DO NOT DEVIATE):
    • [Session title 1]
    • [Session title 2]
    • [Session title 3]"
-   Maximum 3 tracks featured (don't list all).
+   Maximum 3 of the supplied [TRACKS] featured (don't list all). Omit when none are supplied.
 
 5. FEATURED SPEAKERS (60-80 words) -- ONLY if [SPEAKER_NAMES] is supplied
    Format: "Speaker Name on Topic" (name + topic only, no photos needed)
@@ -187,7 +189,7 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "View Full Schedule"
+- 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else "Register Now"
 - 1 OPTIONAL SECONDARY CTA: "Register"
 - NO unrelated CTAs (no sponsors, no travel, no community)
 
@@ -202,8 +204,8 @@ SECTIONS TO REMOVE (not for this stage):
 
 TONE & VOICE:
 ✓ Educational focus: "Learn from experts"
-✓ Concrete session titles (not generic)
-✓ Breadth shown: Multiple tracks
+✓ Concrete session titles ONLY from [KEY_SESSIONS]; omit rather than inventing a title
+✓ Breadth shown ONLY from supplied [TRACKS]; omit rather than implying a programme
 ✓ Community perspective: "Peer learning"
 ✗ NO marketing hype
 ✗ NO "don't miss"
@@ -218,7 +220,7 @@ INTERNAL VALIDATION:
 □ Every section supports learning opportunity
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → tracks → speakers → footer
-□ One primary CTA: "View Full Schedule"
+□ One primary CTA: "View Full Schedule" only with [SCHEDULE_URL], else "Register Now"
 □ Maximum 1 secondary CTA: "Register"
 □ No pricing, logistics, or sponsorship info
 □ No paragraph exceeds 3 sentences or 60 words
@@ -232,7 +234,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule (schedule/agenda link)",
+			"Primary: View Full Schedule -- only when [SCHEDULE_URL] is supplied; else Register Now",
 			"Secondary: Register to Attend (registration page)",
 		},
 		FooterNote: "Early registration helps us plan better. See you soon.",
@@ -523,7 +525,8 @@ REQUIRED INFORMATION HIERARCHY:
    Direction: "Here's what to expect..."
    RULE: Only these. No detailed schedule.
 
-3. PRIMARY CTA: [ View Full Schedule ]
+3. PRIMARY CTA: [ View Full Schedule ] -- ONLY if [SCHEDULE_URL] is supplied.
+   Otherwise the primary CTA is [ Register Now ], which needs no unsupplied link.
 
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
@@ -532,9 +535,9 @@ REQUIRED INFORMATION HIERARCHY:
    Getting There: [TRANSIT_INFO] (omit the line if not supplied -- a location does not
      imply transit or parking details, and guessing them strands an attendee)
 
-5. WHAT TO EXPECT (80-100 words, 2-3 sentences)
-   Brief overview of learning tracks/schedule
-   Don't list detailed sessions
+5. WHAT TO EXPECT (80-100 words, 2-3 sentences) -- ONLY if [TRACKS] is supplied
+   Brief overview of the supplied learning tracks. Nothing supplies tracks or a schedule today,
+   so this section is normally DROPPED; do not describe a programme from the event name.
 
 6. SECONDARY CTA (optional): [ Download Event App ]
 
@@ -548,7 +551,7 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "View Full Schedule"
+- 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else "Register Now"
 - 1 OPTIONAL SECONDARY: "Download Event App"
 - NO unrelated CTAs
 
@@ -606,7 +609,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule (agenda/schedule link)",
+			"Primary: View Full Schedule -- only when [SCHEDULE_URL] is supplied; else Register Now",
 			"Secondary: Download Event App (mobile app link)",
 		},
 		FooterNote: "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
@@ -690,9 +693,10 @@ SECTIONS TO REMOVE (not for this stage):
 - Merchandise sales
 - Community JOIN NOW (just link to existing)
 
-SECTIONS ALLOWED ONLY IF GENUINELY VALUABLE:
-- 1-2 attendee testimonials (genuine quotes, not marketing)
-- Event highlights (brief statistics only)
+SECTIONS ALLOWED ONLY IF THE DATA IS SUPPLIED:
+- 1-2 attendee testimonials ONLY from [TESTIMONIALS]; never compose a quote, and never
+  attribute one to a person. Nothing supplies these today, so this section is normally DROPPED.
+- Event highlights ONLY from [EVENT_STATS]; omit when not supplied rather than estimating
 - Call to action for community continuation
 
 GRATITUDE RULES:

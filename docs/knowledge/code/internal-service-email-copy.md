@@ -17,7 +17,7 @@ The implementation follows six principles from the reference lfx-one implementat
 
 1. **Scrape, don't recall.** Every factual claim originates from the brief's `EventDetails` (event name, location, date, etc.), never the model's training data. The system prompt explicitly forbids invention: `"use ONLY the event details provided below; never invent dates, names, or locations"`.
 
-2. **Compose prompts, don't branch.** Prompts are built by concatenating fixed blocks (role instruction, constraints, event-details block) rather than if/else-ing variants. This keeps the prompt construction centred and auditable.
+2. **Compose prompts, don't branch — with one named exception.** Prompts are built by concatenating fixed blocks (role instruction, constraints, event-details block, stage brief) rather than if/else-ing variants. The exception is an ABSENT stage, which returns a frozen copy of the pre-stage prompt: LFXV2-1940 requires those callers to keep receiving byte-identical prompts, and the stage-aware text is not a superset of the old one. Naming the exception here is the point — an invariant with a silent hole in it is worse than one with a stated boundary.
 
 3. **Prompt limits are advisory; code limits are real.** The system prompt tells the model "subject under 60 characters", but `GenerateEmailCopy` also enforces the limits in code: `truncateString()` cuts subject at 200, preheader at 150 and CTA at 50 runes, while an over-long body is rejected rather than cut (see `truncateString` below for why the body is the exception).
 
