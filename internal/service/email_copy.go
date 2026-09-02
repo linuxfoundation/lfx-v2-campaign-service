@@ -379,7 +379,9 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// So the first property wins -- a caller must never be told their input is too large by the
 	// second of two checks after the first accepted it -- and this one is sized to catch the case
 	// that remains: a stage template growing past the budget in a future edit. That is a real
-	// failure mode, since the templates are large (Post-Event is 5041 runes on its own) and are
+	// failure mode, since the templates are large (Post-Event's ContentPrompt is 3637 runes, and
+	// its COMPOSED floor -- system and user framing plus the template, at zero caller input -- is
+	// 5503) and are
 	// edited by hand.
 	//
 	// MEASURED 2026-09-01: worst stage-only floor 5503 (Post-Event), so with the 2400-rune input

@@ -13,6 +13,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1121,5 +1124,34 @@ func TestAbsentStageProducesLegacyPrompt(t *testing.T) {
 	explicitSystem, explicitUser := composeEmailCopyPrompt(emailCopyPromptVars{eventName: vars.eventName, location: vars.location, dates: vars.dates, stage: emailstage.RegistrationPush})
 	if explicitSystem == goldenLegacySystemPrompt || explicitUser == wantUser {
 		t.Errorf("an explicit stage produced the legacy prompt; stage selection is not wired")
+	}
+}
+
+// The concept doc claims its inventory "names every test". This makes that claim checkable.
+//
+// It went stale within one round: two tests added by this branch were never listed, and the
+// omission was found by a reviewer rather than by anything in the repo. A prose claim about
+// completeness is exactly the kind that drifts silently -- the same failure the bound comment had
+// three times -- so it is asserted here instead of promised there.
+func TestConceptDocNamesEveryTest(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("email_copy_test.go")
+	if err != nil {
+		t.Fatalf("read test source: %v", err)
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "knowledge", "code", "internal-service-email-copy.md"))
+	if err != nil {
+		t.Fatalf("read concept doc: %v", err)
+	}
+
+	declared := regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]+)\(`).FindAllStringSubmatch(string(src), -1)
+	if len(declared) == 0 {
+		t.Fatalf("found no test declarations; the pattern is wrong, not the doc")
+	}
+	for _, m := range declared {
+		if !strings.Contains(string(doc), "**"+m[1]+"**") {
+			t.Errorf("test %s is not named in the concept doc's inventory, which claims to name every test", m[1])
+		}
 	}
 }
