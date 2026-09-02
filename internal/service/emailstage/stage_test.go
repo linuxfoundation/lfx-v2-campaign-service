@@ -249,10 +249,16 @@ func isStructuralDirective(sentence string) bool {
 	if t == "" {
 		return true
 	}
-	// Validation checklist rows ("□ Clear pricing comparison") and information-hierarchy
-	// lines ("headline → intro → CTA").
-	if strings.HasPrefix(t, "□") || strings.Contains(t, "→") {
+	// Information-hierarchy lines ("headline → intro → CTA") are pure ordering.
+	if strings.Contains(t, "→") {
 		return true
+	}
+	// Validation checklist rows are structural -- EXCEPT when the row REQUIRES a specific CTA.
+	// "□ Clear pricing comparison" is a formatting rule; `□ One primary CTA: "View Schedule"` is
+	// a requirement for a button pointing at a link nothing supplies, and exempting it wholesale
+	// let that ship. The box is not what makes a line structural; what it asks for is.
+	if strings.HasPrefix(t, "□") {
+		return !ctaRequirementRE.MatchString(t)
 	}
 	// Ordering and formatting rules.
 	lower := strings.ToLower(t)
@@ -333,14 +339,25 @@ func TestFinalCountdownNeverAsksForRegistration(t *testing.T) {
 	if !ok {
 		t.Fatalf("Final Countdown template missing")
 	}
-	fields := append([]string{tpl.ContentPrompt}, tpl.CTAStrategy...)
-	fields = append(fields, tpl.SubjectPattern, tpl.PreviewPattern, tpl.FooterNote)
+	// CTAStrategy entries are checked as CTA directives WHOLESALE -- the field IS the call to
+	// action, so its lines never contain the literal word "CTA". Requiring that word is what let
+	// `"Primary: View Full Schedule -- ... else Register Now"` through: it is the same
+	// contradiction as the ContentPrompt one, in the field that most directly drives the button.
+	type source struct {
+		text      string
+		alwaysCTA bool
+	}
+	sources := []source{{tpl.ContentPrompt, false}, {tpl.SubjectPattern, false}, {tpl.PreviewPattern, false}, {tpl.FooterNote, false}}
+	for _, cta := range tpl.CTAStrategy {
+		sources = append(sources, source{cta, true})
+	}
 
-	for _, text := range fields {
-		for _, line := range strings.Split(text, "\n") {
+	for _, src := range sources {
+		for _, line := range strings.Split(src.text, "\n") {
 			l := strings.TrimSpace(line)
-			// Only CTA directives. The removal list itself names registration, correctly.
-			if !strings.Contains(strings.ToUpper(l), "CTA") {
+			// In the prompt body only CTA directives are in scope: the removal list itself names
+			// registration, correctly. A CTAStrategy line is always in scope.
+			if !src.alwaysCTA && !strings.Contains(strings.ToUpper(l), "CTA") {
 				continue
 			}
 			// A PROHIBITION names registration in order to forbid it -- "Do NOT fall back to
@@ -358,3 +375,7 @@ func TestFinalCountdownNeverAsksForRegistration(t *testing.T) {
 
 // prohibitionRE marks a directive that names registration in order to BAN it.
 var prohibitionRE = regexp.MustCompile(`(?i)(never|do not|don't|no primary cta|omit|contradicts|excludes)`)
+
+// ctaRequirementRE marks a checklist row that mandates a particular call to action, as opposed to
+// one describing layout or tone.
+var ctaRequirementRE = regexp.MustCompile(`(?i)(primary|secondary) cta:`)

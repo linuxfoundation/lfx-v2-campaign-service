@@ -527,10 +527,7 @@ REQUIRED INFORMATION HIERARCHY:
    RULE: Only these. No detailed schedule.
 
 3. PRIMARY CTA: [ View Full Schedule ] -- ONLY if [SCHEDULE_URL] is supplied.
-   Otherwise OMIT the primary CTA entirely. Do NOT fall back to "Register Now": this stage
-   is for people who have ALREADY registered, and SECTIONS TO REMOVE below excludes
-   registration info outright -- a registration CTA here contradicts the stage and
-   re-creates the Registration Push email this one exists to follow.
+   Otherwise OMIT the primary CTA. Never "Register Now": they have already registered.
 
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
@@ -597,7 +594,7 @@ INTERNAL VALIDATION:
 □ Every section supports this
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → logistics → what to expect → footer
-□ One primary CTA: "View Schedule"
+□ One primary CTA: "View Schedule" only with [SCHEDULE_URL]; otherwise no primary CTA
 □ Maximum 1 secondary: "Download App"
 □ Clear date, time, timezone, venue
 □ Transit/parking info practical
@@ -614,7 +611,7 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule -- only when [SCHEDULE_URL] is supplied; else Register Now",
+			"Primary: View Full Schedule only with [SCHEDULE_URL]; otherwise no primary CTA. Never \"Register Now\".",
 			"Secondary: Download Event App (mobile app link)",
 		},
 		FooterNote: "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
