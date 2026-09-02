@@ -1155,3 +1155,87 @@ func TestConceptDocNamesEveryTest(t *testing.T) {
 		}
 	}
 }
+
+// The sizing section's arithmetic must agree with the real constants.
+//
+// Five separate figures in that one section have gone stale, in a section whose own thesis is
+// that these numbers go stale -- 3000, 7600, 5041, "5503 on its own", and a subtraction that read
+// 1459 where 6500-5503 is 997. Every one was caught by a reviewer rather than by the repo, and
+// each fix was another round.
+//
+// So the numbers that have a computable relationship are computed here. Prose can still describe
+// a HISTORICAL bound (the section deliberately narrates 6500 and 8000 as past mistakes); what it
+// may not do is state a current figure that the constants contradict.
+func TestConceptDocSizingArithmetic(t *testing.T) {
+	t.Parallel()
+
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "knowledge", "code", "internal-service-email-copy.md"))
+	if err != nil {
+		t.Fatalf("read concept doc: %v", err)
+	}
+	text := string(doc)
+
+	// The worst composition and its headroom, both derived rather than transcribed.
+	worst := worstStageFloor() + maxPromptSize
+	headroom := maxComposedPromptSize - worst
+
+	for _, want := range []struct {
+		label string
+		value int
+	}{
+		{"input bound", maxPromptSize},
+		{"composed bound", maxComposedPromptSize},
+		{"worst composition", worst},
+		{"headroom", headroom},
+	} {
+		if !strings.Contains(text, fmt.Sprintf("%d", want.value)) {
+			t.Errorf("the sizing section does not mention the current %s (%d); a number changed and the prose did not follow",
+				want.label, want.value)
+		}
+	}
+
+	// Presence is not enough: a figure repeated twice can go stale in one place and still be
+	// "mentioned" by the other. So the stale values that have actually shipped in this section are
+	// named and forbidden outright, EXCEPT where the prose is narrating them as history.
+	//
+	// The historical bullets deliberately say "At 6500" and "8000 was set against a believed
+	// ceiling of 7700" -- those are the mistakes the section exists to record. Every other stale
+	// figure is a defect.
+	for _, stale := range []struct {
+		value int
+		why   string
+	}{
+		{5503, "an old Post-Event floor"},
+		{7903, "the worst composition under the old floor"},
+		{5041, "a 6500-era template size"},
+		{7600, "a superseded composed bound"},
+		{997, "the 6500 remaining allowance under the old floor"},
+	} {
+		if strings.Contains(text, fmt.Sprintf("%d", stale.value)) {
+			t.Errorf("the sizing section still contains %d (%s); it has been superseded and every earlier instance of this cost a review round",
+				stale.value, stale.why)
+		}
+	}
+
+	// The historical example must subtract correctly: 6500 was the old bound.
+	if strings.Contains(text, "At 6500") {
+		remaining := 6500 - worstStageFloor()
+		if !strings.Contains(text, fmt.Sprintf("%d", remaining)) {
+			t.Errorf("the 6500 example does not state the correct remaining allowance (6500 - %d = %d)",
+				worstStageFloor(), remaining)
+		}
+	}
+}
+
+// worstStageFloor is the largest composed prompt any stage produces at zero caller input. Shared
+// by the bound test and the doc-arithmetic test so neither transcribes a number the other derives.
+func worstStageFloor() int {
+	worst := 0
+	for _, name := range emailstage.Names() {
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
+		if floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user); floor > worst {
+			worst = floor
+		}
+	}
+	return worst
+}
