@@ -126,7 +126,10 @@ WORD COUNT TARGET: 200-280 words`,
 		},
 		// No mentorship claim: nothing in the pipeline supplies one, and unlike a price it carries
 		// no placeholder for the OMIT rule to act on -- so it read as fact on every CFP email.
-		FooterNote: "Questions? Reply to this email.",
+		FooterNote:         "Questions? Reply to this email.",
+		PrimaryCTA:         "Submit Your Proposal",
+		PrimaryCTAFallback: "",
+		SecondaryCTA:       "",
 	},
 
 	"Schedule Announcement": {
@@ -222,7 +225,7 @@ INTERNAL VALIDATION:
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → tracks → speakers → footer
 □ One primary CTA: "View Full Schedule" only with [SCHEDULE_URL], else "Register Now"
-□ Maximum 1 secondary CTA: "Register"
+□ Maximum 1 secondary CTA: "Register to Attend"
 □ No pricing, logistics, or sponsorship info
 □ No paragraph exceeds 3 sentences or 60 words
 □ Bullets used for track listing
@@ -238,7 +241,10 @@ WORD COUNT TARGET: 200-280 words`,
 			"Primary: View Full Schedule -- only when [SCHEDULE_URL] is supplied; else Register Now",
 			"Secondary: Register to Attend (registration page)",
 		},
-		FooterNote: "Early registration helps us plan better. See you soon.",
+		FooterNote:         "Early registration helps us plan better. See you soon.",
+		PrimaryCTA:         "View Full Schedule",
+		PrimaryCTAFallback: "Register Now",
+		SecondaryCTA:       "Register to Attend",
 	},
 
 	"Registration Push": {
@@ -343,7 +349,7 @@ INTERNAL VALIDATION:
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → benefits → pricing → footer
 □ One primary CTA: "Register Now"
-□ Maximum 1 secondary CTA: "View Options"
+□ Maximum 1 secondary CTA: "View All Options"
 □ Factual deadline, no fake urgency
 □ Clear pricing comparison (early → standard)
 □ Savings amount stated clearly
@@ -365,7 +371,10 @@ WORD COUNT TARGET: 180-250 words`,
 		// Both sentences placeholdered. The second asserted a standard-pricing schedule with no
 		// placeholder, so the OMIT rule could not reach it even when the first was dropped -- and
 		// the pipeline supplies neither a standard price nor a registration deadline.
-		FooterNote: "Early bird pricing ends [DEADLINE]. [REGULAR_PRICE] applies after that date.",
+		FooterNote:         "Early bird pricing ends [DEADLINE]. [REGULAR_PRICE] applies after that date.",
+		PrimaryCTA:         "Register Now",
+		PrimaryCTAFallback: "",
+		SecondaryCTA:       "View All Options",
 	},
 
 	// NOTE: this stage's prompt asks for a `{{ contact.firstname }}` merge token in the greeting.
@@ -475,7 +484,7 @@ INTERNAL VALIDATION:
 □ Every section supports discount offer
 □ Opening: personalized, 40-50 words, 2 sentences
 □ Information hierarchy: greeting → why special → code → CTA → what's new → footer
-□ One primary CTA: "Register with Code"
+□ One primary CTA: "Register with Code [PROMO_CODE]" when supplied, else "Register Now"
 □ Maximum 1 secondary: "Learn More"
 □ Personalization token used in greeting
 □ Discount offer in clear, scannable format
@@ -492,7 +501,10 @@ WORD COUNT TARGET: 180-240 words`,
 		CTAStrategy: []string{
 			"Primary: Register with Code [PROMO_CODE] (registration with pre-filled code)",
 		},
-		FooterNote: "Questions? Reply to this email. We'd love to hear from you.",
+		FooterNote:         "Questions? Reply to this email. We'd love to hear from you.",
+		PrimaryCTA:         "Register with Code [PROMO_CODE]",
+		PrimaryCTAFallback: "Register Now",
+		SecondaryCTA:       "Learn More",
 	},
 
 	"Final Countdown": {
@@ -528,11 +540,8 @@ REQUIRED INFORMATION HIERARCHY:
    Direction: "Here's what to expect..."
    RULE: Only these. No detailed schedule.
 
-3. PRIMARY CTA: [ View Full Schedule ] when [SCHEDULE_URL] is supplied, otherwise
-   [ See You There ]. NEVER omit the CTA: the JSON schema requires a non-empty cta field, so an
-   omitted one is rejected by the service. Never "Register Now" either -- do not ask for a
-   sign-up the reader already completed. The fallback must assert nothing unsupplied, and
-   "See You There" names only the event itself.
+3. PRIMARY CTA: [ View Full Schedule ] with [SCHEDULE_URL], else [ See You There ].
+   Never empty (the cta field is required) and never "Register Now" (they hold a ticket).
 
 4. KEY LOGISTICS (80-100 words, structured format)
    Date & Time: [DATES], [START_TIME] [TIMEZONE]
@@ -557,8 +566,7 @@ PARAGRAPH ENFORCEMENT:
 - Whitespace BETWEEN paragraphs
 
 CTA ENFORCEMENT:
-- 1 PRIMARY CTA: "View Full Schedule" when [SCHEDULE_URL] is supplied, else NO primary CTA
-  (never "Register Now" -- this stage is for people already registered)
+- 1 PRIMARY CTA: "View Full Schedule" with [SCHEDULE_URL], else "See You There"
 - 1 OPTIONAL SECONDARY: "Download Event App"
 - NO unrelated CTAs
 
@@ -599,7 +607,7 @@ INTERNAL VALIDATION:
 □ Every section supports this
 □ Opening: 30-50 words, 2 sentences
 □ Information hierarchy: headline → intro → CTA → logistics → what to expect → footer
-□ One primary CTA: "View Schedule" with [SCHEDULE_URL], else "See You There" -- never empty
+□ One primary CTA: "View Full Schedule" with [SCHEDULE_URL], else "See You There"
 □ Maximum 1 secondary: "Download App"
 □ Clear date, time, timezone, venue
 □ Transit/parking info practical
@@ -616,10 +624,13 @@ IF ANY RULE FAILS: Revise before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: View Full Schedule with [SCHEDULE_URL], else \"See You There\" -- never omitted, never \"Register Now\".",
+			"Primary: View Full Schedule with [SCHEDULE_URL], else See You There -- never empty",
 			"Secondary: Download Event App (mobile app link)",
 		},
-		FooterNote: "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
+		FooterNote:         "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
+		PrimaryCTA:         "View Full Schedule",
+		PrimaryCTAFallback: "See You There",
+		SecondaryCTA:       "Download Event App",
 	},
 
 	"Post-Event": {
@@ -753,6 +764,9 @@ WORD COUNT TARGET: 180-240 words`,
 			"Primary: a link the brief actually supplies -- do NOT offer recordings unless [RECORDINGS_URL] is given",
 			"Secondary: Share Your Feedback (survey link)",
 		},
-		FooterNote: "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
+		FooterNote:         "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
+		PrimaryCTA:         "Watch Recordings",
+		PrimaryCTAFallback: "Share Feedback",
+		SecondaryCTA:       "Share Your Feedback",
 	},
 }

@@ -38,6 +38,32 @@ type Template struct {
 	ContentPrompt   string
 	CTAStrategy     []string
 	FooterNote      string
+
+	// PrimaryCTA is the button text when every placeholder it needs is supplied, and
+	// PrimaryCTAFallback is what the model must write when they are not.
+	//
+	// Declared as DATA because the prose says the same thing in up to four places -- the numbered
+	// hierarchy, the CTA ENFORCEMENT list, the validation checklist and CTAStrategy -- and those
+	// drifted twice in one day. Final Countdown ended up telling the model to use "See You There"
+	// on one line and to emit NO CTA on the next, for a branch that is always taken. Both were
+	// found in review rather than by anything in the repo.
+	//
+	// The fields are the single source of truth and `TestStageCTAPromptMatchesDeclaration` checks
+	// every prose surface against them, so a drifted line fails the build instead of shipping a
+	// contradiction to the model.
+	//
+	// PrimaryCTAFallback is REQUIRED when PrimaryCTA names a placeholder: nothing supplies
+	// [SCHEDULE_URL], [RECORDINGS_URL] or [PROMO_CODE], so the fallback is the branch that
+	// actually runs, and an empty `cta` is refused by the service with a 503.
+	PrimaryCTA         string
+	PrimaryCTAFallback string
+
+	// SecondaryCTA is the optional second button, or "" when the stage allows none. Declared for
+	// the same reason as the primary: Schedule Announcement called one button "Register to
+	// Attend" in the hierarchy and "Register" in the checklist, and Registration Push called one
+	// "View All Options" and "View Options". Neither is wrong on its own; together they tell the
+	// model to write two different buttons.
+	SecondaryCTA string
 }
 
 // Stage identifiers. Exported so callers name a stage rather than passing a loose string that a

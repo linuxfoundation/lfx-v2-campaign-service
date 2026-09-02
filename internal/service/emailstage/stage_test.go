@@ -394,7 +394,11 @@ var ctaRequirementRE = regexp.MustCompile(`(?i)(primary|secondary) cta:`)
 func TestEveryStageCanProduceACTA(t *testing.T) {
 	t.Parallel()
 
-	omitCTA := regexp.MustCompile(`(?i)(omit|no|remove|drop) the (primary )?cta`)
+	// "the" is OPTIONAL. The enforcement lines write "else NO primary CTA" without it, so
+	// requiring the article let a second instance of this exact defect survive in the same
+	// template the first one was fixed in -- the guard reported clean on the line below the one
+	// it had just proven.
+	omitCTA := regexp.MustCompile(`(?i)\b(omit|no|remove|drop)\s+(the\s+)?(primary\s+)?cta\b`)
 	for name, tpl := range Templates {
 		for _, text := range append([]string{tpl.ContentPrompt}, tpl.CTAStrategy...) {
 			for _, line := range strings.Split(text, "\n") {
@@ -415,3 +419,115 @@ func TestEveryStageCanProduceACTA(t *testing.T) {
 		}
 	}
 }
+
+// A stage's CTA fallback must be the SAME phrase everywhere it is named.
+//
+// Each stage states its CTA in up to four places: the numbered hierarchy, the CTA ENFORCEMENT
+// list, the validation checklist, and CTAStrategy. Fixing one and missing another is what
+// happened twice on Final Countdown -- the hierarchy said "See You There" while the enforcement
+// line still said "NO primary CTA", so the model got two contradictory instructions for the
+// always-taken branch. Reviewers caught both; nothing in the repo did.
+//
+// Keyed on the fallback phrase rather than parsing the grammar: if a stage names a gated CTA at
+// all, every surface that names a fallback must name the same one.
+func TestStageCTAFallbacksAgree(t *testing.T) {
+	t.Parallel()
+
+	// The phrases a fallback can be. A stage uses at most one.
+	fallbacks := []string{"See You There", "Share Feedback", "Register Now"}
+
+	for name, tpl := range Templates {
+		text := tpl.ContentPrompt + "\n" + strings.Join(tpl.CTAStrategy, "\n")
+		var seen []string
+		for _, f := range fallbacks {
+			// Only count it as this stage's fallback when it appears in an else/otherwise clause.
+			if regexp.MustCompile(`(?i)(else|otherwise)[^\n]{0,40}` + regexp.QuoteMeta(f)).MatchString(text) {
+				seen = append(seen, f)
+			}
+		}
+		if len(seen) > 1 {
+			t.Errorf("stage %q names %d different CTA fallbacks (%s); the surfaces disagree and the model gets contradictory instructions",
+				name, len(seen), strings.Join(seen, ", "))
+		}
+	}
+}
+
+// Every CTA phrase in a stage's prose must be one the stage DECLARED.
+//
+// This is the structural fix for a defect that shipped three times in one day. Each stage states
+// its call to action in up to four hand-written places -- the numbered hierarchy, the CTA
+// ENFORCEMENT list, the validation checklist, and CTAStrategy -- and fixing one while missing
+// another gave the model two contradictory instructions for the branch that always runs. Final
+// Countdown said "See You There" on one line and "NO primary CTA" on the next; before that it
+// said "Register Now" to readers who already held a ticket. Every instance was caught by a
+// reviewer, none by the repo.
+//
+// `PrimaryCTA` and `PrimaryCTAFallback` are now the single source of truth. This walks the prose
+// and fails when a CTA directive names a button that is neither, so a drifted surface breaks the
+// build instead of reaching the model.
+func TestStageCTAPromptMatchesDeclaration(t *testing.T) {
+	t.Parallel()
+
+	// A CTA directive: the numbered hierarchy line, an ENFORCEMENT bullet, or a checklist row.
+	directive := regexp.MustCompile(`(?i)^(\d+\.\s*)?(-\s*\d+\s*|□\s*(one|maximum \d+)\s*)?(primary|secondary)\s+cta\b`)
+	// The button text itself, in [ Brackets ] or "Quotes".
+	button := regexp.MustCompile(`\[\s*([A-Z][^\]\[]{2,40}?)\s*\]|"([^"]{3,40})"`)
+
+	for name, tpl := range Templates {
+		if strings.TrimSpace(tpl.PrimaryCTA) == "" {
+			t.Errorf("stage %q declares no PrimaryCTA", name)
+			continue
+		}
+		// A gated CTA needs a fallback, because the placeholder it names is never supplied and an
+		// empty `cta` is refused by the service with a 503.
+		if strings.Contains(tpl.PrimaryCTA, "[") && strings.TrimSpace(tpl.PrimaryCTAFallback) == "" {
+			t.Errorf("stage %q gates its PrimaryCTA on a placeholder but declares no fallback; the gated branch never runs and an empty cta is a 503", name)
+		}
+
+		allowed := map[string]bool{norm(tpl.PrimaryCTA): true}
+		if f := strings.TrimSpace(tpl.PrimaryCTAFallback); f != "" {
+			allowed[norm(f)] = true
+		}
+		// EXACT match, no prefix tolerance. Accepting "Register" for a declared "Register to
+		// Attend" would tolerate exactly the drift this exists to stop -- the model would still
+		// receive two different button texts for one button.
+		if sec := strings.TrimSpace(tpl.SecondaryCTA); sec != "" {
+			allowed[norm(sec)] = true
+		}
+		for _, c := range tpl.CTAStrategy {
+			for _, m := range button.FindAllStringSubmatch(c, -1) {
+				allowed[norm(pick(m))] = true
+			}
+		}
+
+		for _, line := range strings.Split(tpl.ContentPrompt, "\n") {
+			l := strings.TrimSpace(line)
+			if !directive.MatchString(l) {
+				continue
+			}
+			for _, m := range button.FindAllStringSubmatch(l, -1) {
+				got := norm(pick(m))
+				// Placeholder tokens are shape, not button text.
+				if got == "" || strings.HasPrefix(got, "[") {
+					continue
+				}
+				if !allowed[got] {
+					t.Errorf("stage %q names CTA %q in its prompt, which is neither its PrimaryCTA (%q), its fallback (%q), nor a declared secondary: %q",
+						name, got, tpl.PrimaryCTA, tpl.PrimaryCTAFallback, l)
+				}
+			}
+		}
+	}
+}
+
+// pick returns whichever capture group matched.
+func pick(m []string) string {
+	if m[1] != "" {
+		return m[1]
+	}
+	return m[2]
+}
+
+// norm lowercases and collapses whitespace so "View Full Schedule" and "view  full schedule"
+// compare equal; the prose is hand-written and its spacing varies.
+func norm(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
