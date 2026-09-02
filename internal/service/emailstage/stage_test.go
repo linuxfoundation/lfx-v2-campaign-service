@@ -207,7 +207,7 @@ func TestPatternsDoNotAssertUnsuppliedCommercialFacts(t *testing.T) {
 					// ("[EVENT_NAME] Schedule is Live") carried exactly this: a claim word
 					// ("schedule") plus an always-supplied bracket, with no [SCHEDULE_URL]
 					// anywhere on the line.
-					if !strings.Contains(alwaysSuppliedRE.ReplaceAllString(sentence, ""), "[") {
+					if !hasOmittablePlaceholder(sentence) {
 						t.Errorf("stage %q %s asserts %q with no placeholder the OMIT rule can act on, so the claim is unconditional: %q",
 							name, field, claim, strings.TrimSpace(sentence))
 					}
@@ -286,3 +286,36 @@ var gatedRE = regexp.MustCompile(`(?i)(the supplied|supplied [a-z]|only if|only 
 // pipeline always has a value for it -- so it must be stripped before the has-a-placeholder check
 // below, or a claim can ride in unconditionally on an unrelated always-filled placeholder.
 var alwaysSuppliedRE = regexp.MustCompile(`\[(EVENT_NAME|LOCATION|DATES)\]`)
+
+// hasOmittablePlaceholder reports whether the sentence names a placeholder the OMIT rule can
+// actually act on -- one standing for a fact nothing supplies.
+//
+// Two things must NOT count as a gate, and stripping the always-supplied names alone catches only
+// the first:
+//
+//   - [EVENT_NAME]/[LOCATION]/[DATES], which the pipeline fills on every request. This is the
+//     Schedule Announcement headline case.
+//   - CTA BUTTON TEXT like `[ Register Now ]` or `[ View Full Schedule ]`, which names no fact at
+//     all. A residual `[` from one of these satisfied a bare has-a-bracket check, so a claim could
+//     ride in on its own button label. Not reachable in today's templates -- the three CTA lines
+//     each carry a real [SCHEDULE_URL]/[RECORDINGS_URL] beside them -- but it is the same shape as
+//     the bug above, one layer down.
+//
+// So a gate must be a PLACEHOLDER TOKEN (no spaces inside the brackets, e.g. [SCHEDULE_URL] or
+// [Session title 1]) that is not one of the always-supplied three.
+func hasOmittablePlaceholder(sentence string) bool {
+	for _, m := range placeholderRE.FindAllStringSubmatch(sentence, -1) {
+		token := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(m[1]), " ", "_"))
+		if !alwaysSupplied[token] {
+			return true
+		}
+	}
+	return false
+}
+
+// alwaysSupplied are the placeholders emailCopyPromptVars fills on every request.
+var alwaysSupplied = map[string]bool{"EVENT_NAME": true, "LOCATION": true, "DATES": true}
+
+// placeholderRE matches a placeholder TOKEN: `[SCHEDULE_URL]`, `[Session title 1]`. The leading
+// character must not be a space, which is what excludes CTA button text (`[ Register Now ]`).
+var placeholderRE = regexp.MustCompile(`\[([A-Za-z][A-Za-z0-9_ ]*)\]`)

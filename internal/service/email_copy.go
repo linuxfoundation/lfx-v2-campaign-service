@@ -46,8 +46,16 @@ type emailCopyPromptVars struct {
 	eventName string
 	location  string
 	dates     string
-	// stage selects the generation spec. Empty means the caller did not say, which resolves to
-	// emailstage.DefaultStage rather than erroring -- see Resolve.
+	// stage selects the generation spec. TWO distinct paths, deliberately not one:
+	//
+	//   - EMPTY (or blank) means the caller did not say. `composeEmailCopyPrompt` returns the
+	//     frozen legacy prompt and never calls Resolve, because LFXV2-1940 requires a caller that
+	//     sends no stage to keep receiving byte-identical prompts.
+	//   - NON-EMPTY but unrecognised resolves to emailstage.DefaultStage rather than erroring,
+	//     so a caller is never blocked by a stage it cannot spell -- see Resolve.
+	//
+	// Collapsing the first into the second is the edit to avoid: it silently changes the prompt
+	// every existing caller receives.
 	stage string
 }
 
@@ -326,8 +334,9 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		eventName: strings.TrimSpace(details.EventName),
 		location:  strings.TrimSpace(details.Location),
 		dates:     resolveEventDates(details),
-		// Absent is not an error: the design leaves `stage` optional, and Resolve reads an empty
-		// string as "the caller did not say" -> Registration Push, the pre-stage behaviour.
+		// Absent is not an error: the design leaves `stage` optional. An absent one takes the
+		// frozen legacy prompt (byte-identical to the pre-stage behaviour, LFXV2-1940); only a
+		// non-empty unrecognised value falls through Resolve to Registration Push.
 		stage: strVal(p.Stage),
 	}
 	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
