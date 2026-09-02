@@ -281,12 +281,6 @@ var explanatoryRE = regexp.MustCompile(`(?i)(nothing supplies|normally DROPPED|n
 // on the section heading above, so the line itself carries no bracket.
 var gatedRE = regexp.MustCompile(`(?i)(the supplied|supplied [a-z]|only if|only with|when .* is supplied|from \[)`)
 
-// alwaysSuppliedRE matches the three placeholders emailCopyPromptVars always fills. A bracket
-// belonging to one of these can never gate a claim -- the OMIT rule never strips it, since the
-// pipeline always has a value for it -- so it must be stripped before the has-a-placeholder check
-// below, or a claim can ride in unconditionally on an unrelated always-filled placeholder.
-var alwaysSuppliedRE = regexp.MustCompile(`\[(EVENT_NAME|LOCATION|DATES)\]`)
-
 // hasOmittablePlaceholder reports whether the sentence names a placeholder the OMIT rule can
 // actually act on -- one standing for a fact nothing supplies.
 //
