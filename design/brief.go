@@ -25,12 +25,21 @@ var BriefData = Type("brief-data", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")
 	})
-	// NO MinLength here: BriefData is Reference()d by the Brief RESPONSE type, and goa copies
-	// validations through Reference — so constraining it here also constrains every brief
-	// response, making an already-persisted empty-slug row undecodable by generated clients
-	// (get-brief included). The empty-slug REQUEST is rejected by BriefInput below — the
-	// create/update payload type, which carries MinLength(1) — which is where the constraint
-	// belongs. Keep the two in sync: see BriefInput's doc comment.
+	// The test for a constraint HERE is whether every PERSISTED row already satisfies it, not
+	// whether it belongs on a request. BriefData is Reference()d by the Brief RESPONSE type and goa
+	// copies validations through Reference, so anything added here also constrains every brief
+	// response — and a constraint a stored row can fail makes that row undecodable by generated
+	// clients, get-brief included.
+	//
+	// So `event_slug` carries NO MinLength: an empty slug was creatable before BriefInput's
+	// MinLength(1) existed, so such rows may be in the table. Request-only constraints like that
+	// one belong on BriefInput below; keep the two in sync, see its doc comment.
+	//
+	// The `delivery_type` and `stage` enums below ARE here, deliberately, and pass the same test:
+	// 000030 backfills every pre-existing row to `paid-marketing`/`''` and its CHECK constraints
+	// refuse anything else, so no stored brief can fail them. They must be on BriefData rather than
+	// only on BriefInput because a stage accepted on WRITE but rejected on READ writes a row no
+	// lookup can name — see the note on `stage`.
 	Attribute("event_slug", String, "Event/course slug. Part of a brief's composite identity, not unique on its own: see delivery_type and stage.")
 	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
 		Enum("paid-marketing", "email")

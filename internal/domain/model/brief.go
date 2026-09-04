@@ -31,9 +31,16 @@ const (
 
 // Valid reports whether d is a known delivery type.
 //
-// The empty string is NOT valid. A brief that names no surface cannot be scoped to one, and the
-// column is NOT NULL with a CHECK constraint, so an empty value is a write that would be refused
-// by the database rather than a value with a sensible meaning. Callers that mean "paid" say so.
+// The empty string is NOT valid, and that is a statement about STORED values rather than about
+// what a caller may send. The column is NOT NULL with a CHECK, so `”` is a write the database
+// refuses; no brief can carry it.
+//
+// A caller MAY omit the field, and that is a different thing. `deliveryTypeOrPaid` in the service
+// and `CreateBrief` in the repository both map the zero value to `paid-marketing` before the write
+// — paid was the only surface whose brief could be saved before 000030, so "unsaid" means paid.
+// Only the ZERO value defaults: a non-empty value that is not a known surface is passed through so
+// the CHECK refuses it, because under the widened key `(project, slug, paid-marketing, ”)` is the
+// REAL paid brief's slot and silently filing a typo there aims the write at another brief.
 func (d DeliveryType) Valid() bool {
 	switch d {
 	case DeliveryPaidMarketing, DeliveryEmail:
