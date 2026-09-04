@@ -63,6 +63,33 @@ ALTER TABLE campaign_briefs
     ADD CONSTRAINT campaign_briefs_delivery_type_valid
     CHECK (delivery_type IN ('paid-marketing', 'email'));
 
+-- Reject the identity COMBINATIONS the model says cannot exist, not merely the two values
+-- independently. Validating each column alone still admits `(paid-marketing, 'Registration Push')`
+-- and `(email, '')`: neither is a brief the product has -- paid has no series and an email send is
+-- always some stage -- yet each occupies its own slot in the unique index above, so they are extra
+-- live briefs for one event rather than harmless bad data. A free-text stage does the same, and
+-- unbounded: `(email, 'Nonsense Stage')` is a slot too, and one no lookup can ever name, since
+-- find-brief validates against this same list. All three were storable and were verified so.
+--
+-- Enforced HERE and not only at the HTTP edge because this is the invariant the KEY depends on,
+-- and the key is the database's. The generated Goa validators cover HTTP callers; a migration, a
+-- backfill, or a psql session answers to this constraint alone.
+--
+-- Keep this list in step with `emailstage.Names()`. `TestPublishedStageEnumMatchesEmailStageNames`
+-- pins the API's copy to that function; a seventh stage needs a migration to reach this one.
+ALTER TABLE campaign_briefs
+    DROP CONSTRAINT IF EXISTS campaign_briefs_delivery_stage_pair_valid;
+
+ALTER TABLE campaign_briefs
+    ADD CONSTRAINT campaign_briefs_delivery_stage_pair_valid
+    CHECK (
+        (delivery_type = 'paid-marketing' AND stage = '')
+        OR (delivery_type = 'email' AND stage IN (
+            'CFP Launch', 'Schedule Announcement', 'Registration Push',
+            'Discount Offer', 'Final Countdown', 'Post-Event'
+        ))
+    );
+
 DROP INDEX IF EXISTS uq_campaign_briefs_project_event;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_campaign_briefs_project_event_delivery_stage

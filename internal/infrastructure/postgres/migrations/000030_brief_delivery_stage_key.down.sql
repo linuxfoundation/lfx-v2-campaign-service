@@ -31,6 +31,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_campaign_briefs_project_event
 ALTER TABLE campaign_briefs
     DROP CONSTRAINT IF EXISTS campaign_briefs_delivery_type_valid;
 
+-- The pair constraint goes with them. It references BOTH columns, so leaving it would make the
+-- column drops below fail and take this transaction with them.
+ALTER TABLE campaign_briefs
+    DROP CONSTRAINT IF EXISTS campaign_briefs_delivery_stage_pair_valid;
+
 ALTER TABLE campaign_briefs
     DROP COLUMN IF EXISTS delivery_type;
 

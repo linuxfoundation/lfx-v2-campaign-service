@@ -687,6 +687,68 @@ func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
 	})
 }
 
+// TestLiveBriefIdentityPairsAreConstrained pins the identity COMBINATIONS at the schema, not just
+// the two columns independently.
+//
+// Validating each column alone still admits `(paid-marketing, "Registration Push")` and
+// `(email, "")` -- neither is a brief the product has, since paid has no series and an email send
+// is always some stage -- and each occupies its OWN slot in the widened unique index, so they are
+// extra live briefs for one event rather than inert bad data. A free-text stage is worse: it is a
+// slot no lookup can ever name, because find-brief validates against the same list. All three were
+// storable before the pair CHECK; this test is what keeps them out.
+//
+// At the DATABASE, not only the HTTP edge, because this is the invariant the KEY rests on. The
+// generated validators cover HTTP callers; a migration, a backfill or a psql session answers to
+// the constraint alone.
+func TestLiveBriefIdentityPairsAreConstrained(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	create := func(t *testing.T, delivery model.DeliveryType, stage string) error {
+		t.Helper()
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		b.DeliveryType = delivery
+		b.Stage = stage
+		_, err := repo.CreateBrief(ctx, b, nil)
+		return err
+	}
+
+	for _, tc := range []struct {
+		name     string
+		delivery model.DeliveryType
+		stage    string
+	}{
+		{"paid with an email stage", model.DeliveryPaidMarketing, "Registration Push"},
+		{"email with no stage", model.DeliveryEmail, ""},
+		{"email with a stage nothing can look up", model.DeliveryEmail, "Nonsense Stage"},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			if err := create(t, tc.delivery, tc.stage); err == nil {
+				t.Fatalf("CreateBrief stored (%q, %q); that pair is not a brief the product has, "+
+					"and it consumes a live slot in the unique key", tc.delivery, tc.stage)
+			}
+		})
+	}
+
+	// The two real shapes must still be storable. A constraint that rejected these would refuse
+	// every brief in the system, so this is the half that proves the rule is the right one.
+	for _, tc := range []struct {
+		name     string
+		delivery model.DeliveryType
+		stage    string
+	}{
+		{"a paid brief", model.DeliveryPaidMarketing, ""},
+		{"an email send", model.DeliveryEmail, "Final Countdown"},
+	} {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			if err := create(t, tc.delivery, tc.stage); err != nil {
+				t.Fatalf("CreateBrief refused (%q, %q), which is a real brief: %v", tc.delivery, tc.stage, err)
+			}
+		})
+	}
+}
+
 // TestLiveCreateBriefDefaultsOnlyTheZeroDeliveryType pins both halves of the normalisation in
 // CreateBrief, because they pull in opposite directions and a fix for one can undo the other.
 //

@@ -164,7 +164,9 @@ Non-secret platform account IDs currently configured in the Express BFF, retaine
 
 ## Campaign Tables
 
-Beyond connections, the service persists briefs and campaigns. Both carry the `version` iterator (ETag/If-Match). A **brief is the funnel unit** and holds the program type; a **brief is shared across channels**, so one brief has many `campaigns` rows (one per channel/platform), all sharing `brief_id`.
+Beyond connections, the service persists briefs and campaigns. Both carry the `version` iterator (ETag/If-Match). A **brief is the funnel unit** and holds the program type; one brief has many `campaigns` rows (one per channel/platform), all sharing `brief_id`.
+
+A brief is shared across the **paid** platforms, not across delivery surfaces. Migration `000030` made `delivery_type` and `stage` part of a brief's identity: paid and email are parallel channels on one event, and an email campaign is a series rather than a document. So one event carries a paid brief **and** an email brief per stage — all live at once, none able to displace another.
 
 ### campaign_briefs
 
