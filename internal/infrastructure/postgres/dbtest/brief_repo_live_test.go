@@ -785,6 +785,84 @@ func TestLivePairCheckMatchesEmailStageNames(t *testing.T) {
 	}
 }
 
+// TestLiveWidenedKeyPermitsSiblingsAndRejectsDuplicates exercises the INDEX that is the whole
+// point of 000030, against the real PostgreSQL definition.
+//
+// Every other test here proves a piece around it -- the CHECKs, the rollback guard, the repo's
+// scoping -- and the service fake cannot help at all: it matches on struct fields, so a wrong
+// index definition (three columns, or a non-partial one) would leave every fake-backed test green.
+// The only thing that can catch that is asking Postgres.
+//
+// Three properties, and they only mean something together:
+//  1. an event holds a paid brief AND several email stages at once -- the state that was
+//     unrepresentable before, and the reason the key widened;
+//  2. an EXACT duplicate of any one of them is still refused as ErrConflict -- widening must not
+//     have become "no uniqueness at all";
+//  3. archiving frees ONLY that full-key slot, leaving its siblings untouched -- the partial
+//     predicate still applies, and it applies per-identity rather than per-event.
+func TestLiveWidenedKeyPermitsSiblingsAndRejectsDuplicates(t *testing.T) {
+	ctx := context.Background()
+	repo := newBriefRepo(dbtest.Pool(t))
+	project := dbtest.UniqueID(t, "project")
+	slug := dbtest.UniqueID(t, "slug")
+
+	create := func(t *testing.T, delivery model.DeliveryType, stage string) (*model.CampaignBrief, error) {
+		t.Helper()
+		b := draftBrief(project, slug)
+		b.DeliveryType = delivery
+		b.Stage = stage
+		return repo.CreateBrief(ctx, b, nil)
+	}
+
+	// 1. One event, four live briefs: the paid plan and three sends of its series.
+	identities := []struct {
+		delivery model.DeliveryType
+		stage    string
+	}{
+		{model.DeliveryPaidMarketing, ""},
+		{model.DeliveryEmail, "CFP Launch"},
+		{model.DeliveryEmail, "Registration Push"},
+		{model.DeliveryEmail, "Final Countdown"},
+	}
+	created := make(map[string]*model.CampaignBrief, len(identities))
+	for _, id := range identities {
+		b, err := create(t, id.delivery, id.stage)
+		if err != nil {
+			t.Fatalf("CreateBrief(%q, %q) on an event that already has siblings: %v", id.delivery, id.stage, err)
+		}
+		created[string(id.delivery)+"|"+id.stage] = b
+	}
+	if len(created) != len(identities) {
+		t.Fatalf("expected %d distinct briefs for one event, got %d", len(identities), len(created))
+	}
+
+	// 2. An exact duplicate of any one of them is still a conflict.
+	for _, id := range identities {
+		if _, err := create(t, id.delivery, id.stage); !errors.Is(err, domain.ErrConflict) {
+			t.Errorf("duplicate CreateBrief(%q, %q) = %v, want domain.ErrConflict -- the widened "+
+				"index must still be UNIQUE on the full key", id.delivery, id.stage, err)
+		}
+	}
+
+	// 3. Archiving frees that slot and ONLY that slot.
+	victim := created["email|Registration Push"]
+	if _, err := repo.ArchiveBrief(ctx, project, victim.ID, victim.CreatedBy, nil); err != nil {
+		t.Fatalf("ArchiveBrief: %v", err)
+	}
+	if _, err := create(t, model.DeliveryEmail, "Registration Push"); err != nil {
+		t.Errorf("CreateBrief after archiving the same identity: %v -- archiving must free its slot", err)
+	}
+	for _, id := range identities {
+		if id.delivery == model.DeliveryEmail && id.stage == "Registration Push" {
+			continue
+		}
+		if _, err := create(t, id.delivery, id.stage); !errors.Is(err, domain.ErrConflict) {
+			t.Errorf("after archiving one sibling, CreateBrief(%q, %q) = %v, want domain.ErrConflict "+
+				"-- archiving one identity must not free another's slot", id.delivery, id.stage, err)
+		}
+	}
+}
+
 // TestLiveBriefIdentityPairsAreConstrained pins the identity COMBINATIONS at the schema, not just
 // the two columns independently.
 //

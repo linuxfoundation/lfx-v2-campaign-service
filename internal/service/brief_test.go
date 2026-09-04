@@ -2358,7 +2358,8 @@ func TestFindBrief_HandlesLongSlugs(t *testing.T) {
 // lookup: BriefInput.event_slug is uncapped and the column is unbounded TEXT, so a cap
 // here would make a brief the CREATE contract accepted permanently unrecallable — the caller
 // would get a validation error instead of its saved brief, then collide on re-create against
-// the UNIQUE(project_id, event_slug) index. The service-level test above cannot catch that,
+// the brief unique index (all four identity columns since 000030). The service-level test
+// above cannot catch that,
 // because a cap lives in design/brief.go and is generated into DecodeFindBriefRequest, not
 // into the service method. Verified binding: adding MaxLength(64) to design/brief.go and
 // regenerating fails this test.
@@ -2436,7 +2437,8 @@ func TestFindBrief_IsScopedToProject(t *testing.T) {
 //
 // They originally did not. goa's Required() checks only that the JSON key is PRESENT, so an
 // explicit "" satisfied it, and the TEXT NOT NULL column accepts it — meaning a brief with an
-// empty slug was creatable, occupied the UNIQUE(project_id, event_slug) index, and could never
+// empty slug was creatable, occupied a slot in the brief unique index -- then
+// (project_id, event_slug), now all four identity columns -- and could never
 // be recalled through find-brief (whose own MinLength(1) rejects the request with a 400
 // instead of the documented 404/200).
 //

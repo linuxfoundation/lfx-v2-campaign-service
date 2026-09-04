@@ -146,7 +146,7 @@ flowchart TD
     hubspot --> copy["Generate Copy (AI, streaming)\nPer-platform character limits"]
     copy --> keywords["Generate Keywords (AI)\nMatch types: exact, phrase, broad"]
     keywords --> targeting["LinkedIn Geo + Targeting Resolution\nAI recommends geos → server resolves URNs"]
-    targeting --> save["Save Brief (auto-save)\nPersisted to campaign_briefs\nKeyed by project_id + event_slug"]
+    targeting --> save["Save Brief (auto-save)\nPersisted to campaign_briefs\nKeyed by project_id + event_slug\n+ delivery_type + stage"]
     save --> done["SSE stream complete → user reviews brief"]
 ```
 

@@ -61,7 +61,8 @@ type BriefReader interface {
 // BriefWriter mutates campaign briefs.
 type BriefWriter interface {
 	// CreateBrief inserts a brief. Returns ErrConflict on the
-	// UNIQUE(project_id, event_slug) violation.
+	// UNIQUE(project_id, event_slug, delivery_type, stage) violation -- the full identity since
+	// 000030, so one event's paid brief and each stage of its email series are separate rows.
 	CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// ReplaceBrief replaces a brief's mutable fields, gating on expectedVersion.
 	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)

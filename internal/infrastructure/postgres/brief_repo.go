@@ -190,7 +190,8 @@ func (r *BriefRepo) FindBriefByEventSlug(
 	return b, nil
 }
 
-// CreateBrief inserts a brief. Returns ErrConflict on UNIQUE(project_id, event_slug).
+// CreateBrief inserts a brief. Returns ErrConflict on
+// UNIQUE(project_id, event_slug, delivery_type, stage).
 func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(b.ApprovedBy)
 	if err != nil {
