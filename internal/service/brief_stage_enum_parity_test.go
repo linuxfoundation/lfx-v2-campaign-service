@@ -75,7 +75,7 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 
 			// BriefInput is the WRITE payload, and it is the one that matters most: a stage this
 			// type accepts but find-brief's enum rejects writes a row no lookup can name -- the
-			// typo returns 422 and the correct spelling 404, leaving it reachable only by id.
+			// typo returns 400 and the correct spelling 404, leaving it reachable only by id.
 			schema, ok := doc.Components.Schemas["BriefInput"]
 			if !ok {
 				t.Fatalf("%s has no BriefInput schema", rel)

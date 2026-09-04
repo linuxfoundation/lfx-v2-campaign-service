@@ -57,7 +57,8 @@ var BriefData = Type("brief-data", func() {
 	// The Enum is here on BriefData -- the WRITE side -- and not only on find-brief, because a
 	// stage is part of a brief's IDENTITY. find-brief validates the stage it is asked for, so a
 	// stage this type accepted but that enum rejects writes a row no lookup can ever name: the
-	// typo returns 422 and the correct spelling returns 404. The row is reachable only by id.
+	// typo returns 400 (a generated enum rejection) and the correct spelling returns 404. The row
+	// is reachable only by id.
 	// Unlike `event_slug` above, constraining it here is safe for the response type: every
 	// persisted row's stage is either "" or one of these six, so no stored brief becomes
 	// undecodable. Keep this list identical to `emailstage.Names()` plus "" --

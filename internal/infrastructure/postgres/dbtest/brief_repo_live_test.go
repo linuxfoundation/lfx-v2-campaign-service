@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // The brief repository's write path has, until now, been asserted only over SQL SOURCE
@@ -720,6 +723,65 @@ func TestLiveFindBriefZeroDeliveryTypeFindsTheMigratedPaidRow(t *testing.T) {
 	}
 	if found.DeliveryType != model.DeliveryPaidMarketing {
 		t.Errorf("stored delivery_type = %q, want %q", found.DeliveryType, model.DeliveryPaidMarketing)
+	}
+}
+
+// TestLivePairCheckMatchesEmailStageNames pins the pair CHECK against the LIVE schema, after every
+// migration has run — not against 000030's file.
+//
+// An earlier version read the migration SQL directly and compared it to `emailstage.Names()`. That
+// looked equivalent and was not: 000030 is a FROZEN historical artifact. A seventh stage arrives as
+// a NEW migration altering the constraint, and the old file must not change, because databases
+// already past it will never re-run it. Pinning today's taxonomy to that file would have failed on
+// a correct change and pressured whoever hit it into editing migration history — the one thing a
+// migration directory must never do.
+//
+// Reading the constraint from `pg_constraint` asks the question that actually matters: does the
+// schema this service will run against accept exactly the stages it knows about? That answer stays
+// correct however many migrations later amend it.
+func TestLivePairCheckMatchesEmailStageNames(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+
+	var def string
+	err := pool.QueryRow(ctx,
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		 WHERE conname = 'campaign_briefs_delivery_stage_pair_valid'`).Scan(&def)
+	if err != nil {
+		t.Fatalf("read the pair constraint from the live schema: %v", err)
+	}
+
+	for _, stage := range emailstage.Names() {
+		if !strings.Contains(def, "'"+stage+"'") {
+			t.Errorf("the live pair CHECK omits %q, which emailstage.Names() declares — a brief "+
+				"naming it passes the API enum and then fails the constraint as a 500.\nconstraint: %s",
+				stage, def)
+		}
+	}
+
+	// The reverse: a stage removed from `emailstage` must not linger in the schema, or the database
+	// keeps accepting an identity the service has no template for.
+	//
+	// Read out of the ARRAY(...) the email arm builds, rather than counting quotes across the whole
+	// definition: Postgres renders each literal as `'x'::text` and the constraint also names
+	// 'paid-marketing' and '' in the paid arm, so a whole-text count answers a different question
+	// than the one asked. Scoping to the array is what makes this the reverse of the loop above.
+	arrayStart := strings.Index(def, "ARRAY[")
+	if arrayStart < 0 {
+		t.Fatalf("the live pair CHECK has no ARRAY of email stages.\nconstraint: %s", def)
+	}
+	arrayEnd := strings.Index(def[arrayStart:], "]")
+	if arrayEnd < 0 {
+		t.Fatalf("the live pair CHECK's stage ARRAY is unterminated.\nconstraint: %s", def)
+	}
+	inSchema := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(def[arrayStart:arrayStart+arrayEnd], -1)
+	if len(inSchema) != len(emailstage.Names()) {
+		var got []string
+		for _, m := range inSchema {
+			got = append(got, m[1])
+		}
+		t.Errorf("the live pair CHECK names stages %v, want %v — a stage removed from emailstage "+
+			"still lingers in the schema, or one was added without a migration.", got, emailstage.Names())
 	}
 }
 

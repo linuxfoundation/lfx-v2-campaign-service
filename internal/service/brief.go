@@ -1781,9 +1781,10 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 // ─── mapping helpers ───
 
 func briefResult(b *model.CampaignBrief) *briefs.Brief {
-	// Locals because the generated response type models both as optional pointers, while the row
-	// always carries a value: the columns are NOT NULL, and an omitted delivery type was resolved
-	// to paid at write time rather than stored as absent. So these are never nil in practice.
+	// Both are REQUIRED on the response, so the generated type takes plain strings rather than
+	// pointers -- which matches the row: the columns are NOT NULL, and an omitted delivery type is
+	// resolved to paid at write time rather than stored as absent. The locals exist only to convert
+	// `model.DeliveryType` to its underlying string.
 	deliveryType := string(b.DeliveryType)
 	stage := b.Stage
 	return &briefs.Brief{
