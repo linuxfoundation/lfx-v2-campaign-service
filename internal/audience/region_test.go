@@ -141,3 +141,50 @@ func TestTitleCase_IsRuneSafe(t *testing.T) {
 				"so mojibake silently matches nobody (input %q)", in)
 	}
 }
+
+// Every country the region map knows must be reachable by its ISO-2 code, and every code must
+// map to a country the region map knows.
+//
+// The two maps are hand-maintained and serve one flow: the UI writes `countryCode`, the audience
+// build resolves it here, and the result becomes an exact HubSpot filter value. A country added
+// to `countryToRegion` without its code is invisible to every UI brief; a code pointing at a name
+// `countryToRegion` lacks resolves to a value that matches no contact and would build an empty
+// inclusion list while reporting success.
+func TestISO2MappingMatchesRegionCountriesExactly(t *testing.T) {
+	t.Parallel()
+
+	byName := make(map[string]string, len(iso2ToCountry))
+	for code, name := range iso2ToCountry {
+		if _, ok := countryToRegion[name]; !ok {
+			t.Errorf("code %q maps to %q, which countryToRegion does not know; it would reach HubSpot as a filter matching nobody", code, name)
+		}
+		if prev, dup := byName[name]; dup {
+			t.Errorf("countries %q and %q both map to %q", prev, code, name)
+		}
+		byName[name] = code
+	}
+
+	for country := range countryToRegion {
+		if _, ok := byName[country]; !ok {
+			t.Errorf("country %q has no ISO-2 code, so no UI brief can ever select it (the UI writes countryCode only)", country)
+		}
+	}
+}
+
+// `GB` is the ISO code; `UK` is not, but it is what people type.
+func TestCountryForCodeAcceptsUKAndIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{"GB", "gb", "UK", "uk", " Uk "} {
+		got, ok := CountryForCode(in)
+		if !ok || got != "united kingdom" {
+			t.Errorf("CountryForCode(%q) = (%q, %v), want (\"united kingdom\", true)", in, got, ok)
+		}
+	}
+	if _, ok := CountryForCode("XX"); ok {
+		t.Error("an unknown code must report false rather than resolve to something")
+	}
+	if _, ok := CountryForCode(""); ok {
+		t.Error("an empty code must report false")
+	}
+}

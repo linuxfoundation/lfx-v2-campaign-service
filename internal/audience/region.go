@@ -148,3 +148,52 @@ func CountriesIn(r Region) []string {
 	sort.Strings(out)
 	return out
 }
+
+// iso2ToCountry maps ISO 3166-1 alpha-2 codes to the canonical country names in countryToRegion.
+//
+// The UI writes `countryCode` and never `country` (CampaignCreateRequest), so without this every
+// brief created through the UI failed the audience build with "no country in its details".
+//
+// Deliberately covers ONLY the countries countryToRegion knows. A code outside that set resolves
+// to nothing and the caller keeps failing loudly, which is the property the decoder's comment
+// protects: Country reaches HubSpot as an exact CONTAINS/IS_ANY_OF filter value, so an unmapped
+// or invented name matches no contact and the build would SUCCEED while storing an empty
+// inclusion list. On a list that decides who receives an email, a visible error beats a silent
+// wrong answer.
+//
+// Keep this in step with countryToRegion: a country added there without its code here is
+// reachable by name but not by the UI, which is the bug this map exists to close.
+var iso2ToCountry = map[string]string{
+	// APAC
+	"kr": "south korea", "jp": "japan", "cn": "china", "in": "india",
+	"sg": "singapore", "au": "australia", "tw": "taiwan", "id": "indonesia",
+	"my": "malaysia", "ph": "philippines", "vn": "vietnam", "th": "thailand",
+	"nz": "new zealand", "hk": "hong kong",
+
+	// EMEA
+	"gb": "united kingdom", "de": "germany", "fr": "france", "nl": "netherlands",
+	"es": "spain", "it": "italy", "ie": "ireland", "ch": "switzerland",
+	"se": "sweden", "pl": "poland", "za": "south africa", "il": "israel",
+	"ae": "uae", "sa": "saudi arabia",
+
+	// NA
+	"us": "united states", "ca": "canada", "mx": "mexico",
+
+	// LATAM
+	"br": "brazil", "ar": "argentina", "cl": "chile", "co": "colombia", "pe": "peru",
+}
+
+// CountryForCode resolves an ISO 3166-1 alpha-2 code to the country name the rest of this package
+// expects. The second return is false when the code is unknown, and callers MUST NOT substitute a
+// fallback: an unrecognised country must fail visibly rather than build a list matching nobody.
+//
+// `GB` is the code for the United Kingdom; `UK` is not an ISO code but is accepted because it is
+// what people type.
+func CountryForCode(code string) (string, bool) {
+	key := strings.ToLower(strings.TrimSpace(code))
+	if key == "uk" {
+		key = "gb"
+	}
+	name, ok := iso2ToCountry[key]
+	return name, ok
+}
