@@ -94,6 +94,11 @@ func TestScanBrief_MapsEachColumnToItsField(t *testing.T) {
 	require.Equal(t, "b-1", b.ID)
 	require.Equal(t, "cncf", b.ProjectID)
 	require.Equal(t, model.ProgramType("events"), b.ProgramType)
+	// The identity columns are asserted like every other mapped field. Feeding them into `fakeRow`
+	// without checking them would let a scan regression that leaves either unset pass a test whose
+	// stated purpose is that every column maps.
+	require.Equal(t, model.DeliveryEmail, b.DeliveryType)
+	require.Equal(t, "Registration Push", b.Stage)
 	require.Equal(t, "kubecon-2026", b.EventSlug)
 	require.Equal(t, url, b.URL)
 	require.Equal(t, model.BriefStatus("approved"), b.Status)

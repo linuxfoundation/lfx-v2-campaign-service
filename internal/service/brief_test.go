@@ -150,8 +150,23 @@ func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, 
 	// its original author. The caller builds a fresh model with CreatedBy unset, so a fake
 	// that simply overwrote the map entry would DROP the author — and an assertion that the
 	// edit did not rewrite authorship would then pass against a repository that erased it.
-	if prev, ok := r.briefs[briefKey(b.ProjectID, b.ID)]; ok {
+	prev, ok := r.briefs[briefKey(b.ProjectID, b.ID)]
+	if ok {
 		b.CreatedBy = prev.CreatedBy
+		// The identity guard, modelled as the real repository enforces it: an ASSERTION that
+		// disagrees with the stored row is refused, and an absent one is not a change request.
+		// Without this the fake would accept an identity change the database rejects, and a
+		// service test could not tell whether UpdateBrief forwards the assertions at all.
+		if b.AssertDeliveryType != nil && *b.AssertDeliveryType != prev.DeliveryType {
+			return nil, domain.ErrBriefIdentityImmutable
+		}
+		if b.AssertStage != nil && *b.AssertStage != prev.Stage {
+			return nil, domain.ErrBriefIdentityImmutable
+		}
+		// delivery_type and stage are NOT in replaceBriefQuery's SET list, so the stored row keeps
+		// its own -- the same reason created_by is carried over above.
+		b.DeliveryType = prev.DeliveryType
+		b.Stage = prev.Stage
 	}
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
 	return b, r.enqueue(b, indexPayload)
@@ -2020,6 +2035,79 @@ func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
 	}
 }
 
+// TestUpdateBrief_ForwardsTheIdentityAssertions pins the SERVICE-layer wiring that the live tests
+// cannot reach: they construct `AssertDeliveryType`/`AssertStage` themselves, so deleting the two
+// assignments in `UpdateBrief` leaves them green while an HTTP update silently ignores an identity
+// change again -- the exact behaviour those fields were added to stop.
+//
+// Three cases, because the contract has three states and only one of them is "reject":
+//   - OMITTED: the payload says nothing about identity, and an ordinary content edit must succeed.
+//   - RESTATED: the payload names the identity it already has, which is not a change.
+//   - CHANGED: the payload names a different identity, which is refused as 409.
+//
+// The explicit-empty stage is the case a value comparison cannot see: `""` is the PAID brief's real
+// stage, so `{"stage": ""}` on an email brief is a genuine request to move it, not an omission.
+func TestUpdateBrief_ForwardsTheIdentityAssertions(t *testing.T) {
+	seed := func() *fakeBriefRepo {
+		r := newFakeBriefRepo()
+		r.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+			ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: model.DeliveryEmail, Stage: "Registration Push",
+			Status: model.BriefDraft, Version: 1,
+		}
+		return r
+	}
+	ifMatch := "1"
+	payload := func(delivery, stage *string) *briefs.UpdateBriefPayload {
+		return &briefs.UpdateBriefPayload{
+			ProjectID: "cncf", BriefID: "b1", IfMatch: &ifMatch,
+			Brief: &briefs.BriefInput{
+				ProgramType: "events", EventSlug: "kubecon-eu-2026",
+				DeliveryType: delivery, Stage: stage,
+			},
+		}
+	}
+	str := func(v string) *string { return &v }
+
+	t.Run("an omitted identity is not a change", func(t *testing.T) {
+		got, err := newBriefServiceWithRepo(t, seed()).UpdateBrief(context.Background(), payload(nil, nil))
+		if err != nil {
+			t.Fatalf("UpdateBrief without restating the identity: %v", err)
+		}
+		// It must also SURVIVE: the columns are not in the UPDATE's SET list.
+		if got.DeliveryType != "email" || got.Stage != "Registration Push" {
+			t.Errorf("identity after a content edit = (%q, %q), want (email, Registration Push)", got.DeliveryType, got.Stage)
+		}
+	})
+
+	t.Run("a restated identity is not a change", func(t *testing.T) {
+		_, err := newBriefServiceWithRepo(t, seed()).UpdateBrief(context.Background(),
+			payload(str("email"), str("Registration Push")))
+		if err != nil {
+			t.Fatalf("UpdateBrief restating the identity it already has: %v", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name     string
+		delivery *string
+		stage    *string
+	}{
+		{"a different delivery type", str("paid-marketing"), nil},
+		{"a different stage", nil, str("Final Countdown")},
+		{"an explicitly empty stage", nil, str("")},
+	} {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			_, err := newBriefServiceWithRepo(t, seed()).UpdateBrief(context.Background(), payload(tc.delivery, tc.stage))
+
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("UpdateBrief with %s: err = %v, want *briefs.ConflictError", tc.name, err)
+			}
+		})
+	}
+}
+
 // TestBriefIdentityPairsRejectedAt400 pins the ERROR MAPPING for an impossible identity pair, at
 // both call sites, which the database tests cannot reach.
 //
@@ -2107,6 +2195,12 @@ func TestFindBrief_ZeroDeliveryTypeQueriesPaid(t *testing.T) {
 	}
 	if got.ID != "b1" {
 		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+	// The RESPONSE carries the identity too, not merely the right row. Both fields are Required()
+	// on the wire, so a briefResult that stopped populating either would publish a document whose
+	// own identity is missing -- and asserting only the id cannot see that.
+	if got.DeliveryType != "paid-marketing" || got.Stage != "" {
+		t.Errorf("response identity = (%q, %q), want (paid-marketing, \"\")", got.DeliveryType, got.Stage)
 	}
 }
 

@@ -49,7 +49,9 @@ shipped. Add it with the caller that needs it, not before.
 
 `BriefService` implements brief CRUD and campaign endpoints. `FindBrief` looks a brief up by
 `(project_id, event_slug, delivery_type, stage)` rather than by id — the key a caller holds when re-visiting an event
-page — returning `ErrNotFound` when the event has no brief yet. That 404 is an ordinary
+page — returning `ErrNotFound` when THAT SURFACE AND STAGE has no brief yet. Since 000030
+widened the key, a 404 no longer means the event has no brief at all: it may already carry a paid
+brief and other stages of its email series. That 404 is an ordinary
 outcome (first-time generation), not a failure. It never generates or mutates: regeneration is
 an explicit `UpdateBrief`, so edits to the AI-generated copy are never silently overwritten. Campaign creation
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate

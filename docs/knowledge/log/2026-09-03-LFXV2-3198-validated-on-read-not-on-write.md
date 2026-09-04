@@ -33,4 +33,7 @@ Three guards now close it, added over the course of this ticket:
 **The general shape:** when a value is validated at one end of a round trip and not the other, the
 gap is not "unvalidated input" — it is a state the system can enter and cannot leave. Ask of any
 enum: can something be WRITTEN that no READ can name? Note also that this repo had already learned
-this exact lesson on `event_slug`, and the note recording it is a few lines above in the same file.
+this exact lesson on `event_slug`: the `BriefData` type in `design/brief.go` carries a comment
+explaining why `MinLength` must live on the request type only, because a constraint a stored row
+can fail makes that row undecodable. The stage enum is the mirror case -- it belongs on BOTH ends,
+because every persisted row satisfies it.

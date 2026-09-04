@@ -615,7 +615,7 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 // claimed"). So the ordering guarantee has to come from the rollout strategy, and a future
 // edit that "restores the default" would quietly reopen the window.
 //
-// 000014 is no longer the only migration relying on this. 000030 narrows the brief unique key
+// 000014 is no longer the only migration relying on this. 000030 WIDENS the brief unique key
 // from (project_id, event_slug) to (project_id, event_slug, delivery_type, stage), and its
 // safety rests on the SAME guarantee from the other direction: with Recreate and replicaCount 1
 // there is no overlap in which a pre-000030 pod queries `WHERE project_id=$1 AND event_slug=$2`
