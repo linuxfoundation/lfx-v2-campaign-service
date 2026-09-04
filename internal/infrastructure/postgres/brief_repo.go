@@ -25,9 +25,9 @@ func NewBriefRepo(pool *Pool) *BriefRepo { return &BriefRepo{db: pool} }
 
 var _ domain.BriefRepository = (*BriefRepo)(nil)
 
-const briefCols = `id::text, project_id::text, program_type, event_slug, url, platforms, event_details,
-	copy, keywords, targeting, status, version, approved_by, approved_at, created_by, updated_by,
-	created_at, updated_at`
+const briefCols = `id::text, project_id::text, program_type, event_slug, delivery_type, stage, url,
+	platforms, event_details, copy, keywords, targeting, status, version, approved_by, approved_at,
+	created_by, updated_by, created_at, updated_at`
 
 // The four write statements are package constants rather than function locals so the
 // invariant they share — every one of them stamps an actor column in the SAME statement
@@ -36,9 +36,9 @@ const briefCols = `id::text, project_id::text, program_type, event_slug, url, pl
 // in which the row changed and the attribution had not.
 const (
 	createBriefQuery = `INSERT INTO campaign_briefs
-		(project_id, program_type, event_slug, url, platforms, event_details, copy, keywords, targeting,
-		 approved_by, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING ` + briefCols
+		(project_id, program_type, event_slug, delivery_type, stage, url, platforms, event_details, copy,
+		 keywords, targeting, approved_by, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING ` + briefCols
 
 	// Replacing brief content invalidates any prior approval: reset the brief to
 	// 'draft' and clear the approver so a modified brief cannot silently retain
@@ -46,6 +46,9 @@ const (
 	// and dispatched without re-review). event_slug is included so a slug change
 	// is actually persisted (it is subject to the partial-unique index, which
 	// surfaces a conflict if the new slug collides with a live brief).
+	// `delivery_type` and `stage` are deliberately NOT in the SET list. They are identity under
+	// 000030's key, so changing one does not edit this brief -- it names a different one. A caller
+	// that wants the other surface or another stage of the series creates that brief instead.
 	replaceBriefQuery = `UPDATE campaign_briefs SET
 		program_type=$1, event_slug=$2, url=$3, platforms=$4, event_details=$5, copy=$6, keywords=$7, targeting=$8,
 		status='draft', approved_by=NULL, approved_at=NULL,
@@ -149,20 +152,35 @@ func classifyNoRowTx(ctx context.Context, tx pgx.Tx, projectID, id string) error
 	return domain.ErrPreconditionFailed
 }
 
-// FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
-// ErrNotFound when none exists. This is the "have I already generated a brief for this
-// event?" lookup: the UI derives the slug from a pasted event URL and calls this before
-// generating, so a previously generated brief (with its AI copy/keywords/targeting) is
-// reused instead of silently regenerated.
+// FindBriefByEventSlug returns the non-archived brief for
+// (projectID, eventSlug, deliveryType, stage), or ErrNotFound when none exists. This is the
+// "have I already generated a brief for this event?" lookup: the UI derives the slug from a
+// pasted event URL and calls this before generating, so a previously generated brief (with its
+// AI copy/keywords/targeting) is reused instead of silently regenerated.
 //
-// At most ONE row can match: uq_campaign_briefs_project_event is a UNIQUE index on
-// (project_id, event_slug) WHERE status <> 'archived' — the same predicate used here, so
-// this is an efficient unique-key lookup and archiving frees the slug for a fresh brief.
-// (Not an index-ONLY scan: briefCols selects every column while the index carries just the
-// two key columns, so the heap row is still fetched.)
-func (r *BriefRepo) FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
-	q := `SELECT ` + briefCols + ` FROM campaign_briefs WHERE project_id = $1 AND event_slug = $2 AND status <> 'archived'`
-	b, err := scanBrief(r.db.QueryRow(ctx, q, projectID, eventSlug))
+// DELIVERY TYPE AND STAGE ARE PART OF THE LOOKUP, not filters layered on top of it. Before
+// 000030 the comment here said "at most ONE row can match" on (project_id, event_slug), and that
+// was true of the old index. It stopped being true when one event began carrying a paid brief
+// and an email series at once: the same `QueryRow` against the widened table would return an
+// ARBITRARY member of that set — whichever row Postgres reached first — so a paid caller could
+// be handed a Final Countdown email brief and overwrite it. Narrowing the WHERE clause to the
+// full key restores the one-row guarantee rather than papering over a multi-row result.
+//
+// At most one row can match: uq_campaign_briefs_project_event_delivery_stage is UNIQUE on
+// (project_id, event_slug, delivery_type, stage) WHERE status <> 'archived' — the same predicate
+// used here, so this remains an efficient unique-key lookup and archiving still frees the slot.
+// (Not an index-ONLY scan: briefCols selects every column while the index carries just the four
+// key columns, so the heap row is still fetched.)
+func (r *BriefRepo) FindBriefByEventSlug(
+	ctx context.Context,
+	projectID, eventSlug string,
+	deliveryType model.DeliveryType,
+	stage string,
+) (*model.CampaignBrief, error) {
+	q := `SELECT ` + briefCols + ` FROM campaign_briefs
+		WHERE project_id = $1 AND event_slug = $2 AND delivery_type = $3 AND stage = $4
+		  AND status <> 'archived'`
+	b, err := scanBrief(r.db.QueryRow(ctx, q, projectID, eventSlug, string(deliveryType), stage))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -172,7 +190,8 @@ func (r *BriefRepo) FindBriefByEventSlug(ctx context.Context, projectID, eventSl
 	return b, nil
 }
 
-// CreateBrief inserts a brief. Returns ErrConflict on UNIQUE(project_id, event_slug).
+// CreateBrief inserts a brief. Returns ErrConflict on
+// UNIQUE(project_id, event_slug, delivery_type, stage).
 func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(b.ApprovedBy)
 	if err != nil {
@@ -192,8 +211,22 @@ func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, ind
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// An unset DeliveryType is the zero string, and the insert names the column explicitly, so the
+	// column DEFAULT never applies -- the write reaches 000030's CHECK as `''` and fails. The
+	// service layer's deliveryTypeOrPaid() covers the HTTP path only; a Go caller that builds a
+	// CampaignBrief and skips this field gets a constraint violation instead of the paid default
+	// the column documents. Normalising HERE puts the default on the path every writer shares.
+	//
+	// Only the ZERO value defaults. A non-empty value that is not a valid surface is passed
+	// through unchanged so the CHECK rejects it: a typo must not be silently filed as paid,
+	// which -- under 000030's widened key -- is a slot that can displace the real paid brief.
+	deliveryType := b.DeliveryType
+	if deliveryType == "" {
+		deliveryType = model.DeliveryPaidMarketing
+	}
+
 	row := tx.QueryRow(ctx, createBriefQuery,
-		b.ProjectID, string(b.ProgramType), b.EventSlug, nullStr(b.URL),
+		b.ProjectID, string(b.ProgramType), b.EventSlug, string(deliveryType), b.Stage, nullStr(b.URL),
 		nullJSON(b.Platforms), nullJSON(b.EventDetails), nullJSON(b.Copy),
 		nullJSON(b.Keywords), nullJSON(b.Targeting), approvedBy, createdBy,
 	)
@@ -246,6 +279,32 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 		// Distinguish missing from stale version, THROUGH THIS TRANSACTION (see classifyNoRowTx).
 		return nil, classifyNoRowTx(ctx, tx, b.ProjectID, b.ID)
 	}
+	// Identity is checked AFTER the update and BEFORE the commit, against the row the UPDATE
+	// returned. `replaceBriefQuery` deliberately omits delivery_type and stage from its SET list
+	// -- they are identity under 000030's key -- but omitting them silently meant a caller could
+	// PUT a changed delivery_type, receive 200, and read the OLD value back in the response with
+	// nothing saying its change had been dropped.
+	//
+	// Compared against `updated` rather than a separate read: it is the committed row from this
+	// same statement and this same transaction, so nothing can land in between. The rollback is
+	// the deferred Rollback -- returning before Commit discards the content update too, which is
+	// what makes this a rejection of the whole request rather than a partial apply.
+	//
+	// PRESENCE, not value. An earlier revision compared the plain DeliveryType/Stage fields and
+	// skipped an empty one as "not restated", which was wrong for `stage`: "" is a real stage --
+	// the paid brief's -- so `{"stage": ""}` on an email brief is a genuine request to move it,
+	// and that revision committed the content and answered 200 with the stage unchanged. The
+	// Assert* fields keep an omitted field distinguishable from an explicit one, which the wire
+	// already distinguishes (both are *string on BriefInput).
+	if b.AssertDeliveryType != nil && *b.AssertDeliveryType != updated.DeliveryType {
+		return nil, fmt.Errorf("%w: delivery_type is %q, cannot become %q",
+			domain.ErrBriefIdentityImmutable, updated.DeliveryType, *b.AssertDeliveryType)
+	}
+	if b.AssertStage != nil && *b.AssertStage != updated.Stage {
+		return nil, fmt.Errorf("%w: stage is %q, cannot become %q",
+			domain.ErrBriefIdentityImmutable, updated.Stage, *b.AssertStage)
+	}
+
 	if eerr := enqueueBriefIndex(ctx, tx, updated, indexPayload); eerr != nil {
 		return nil, fmt.Errorf("replace brief: %w", eerr)
 	}
@@ -357,13 +416,13 @@ func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string, by *
 
 func scanBrief(row pgx.Row) (*model.CampaignBrief, error) {
 	var (
-		b                                model.CampaignBrief
-		programType, status              string
-		url                              *string
-		approvedBy, createdBy, updatedBy []byte
+		b                                 model.CampaignBrief
+		programType, status, deliveryType string
+		url                               *string
+		approvedBy, createdBy, updatedBy  []byte
 	)
 	if err := row.Scan(
-		&b.ID, &b.ProjectID, &programType, &b.EventSlug, &url,
+		&b.ID, &b.ProjectID, &programType, &b.EventSlug, &deliveryType, &b.Stage, &url,
 		&b.Platforms, &b.EventDetails, &b.Copy, &b.Keywords, &b.Targeting,
 		&status, &b.Version, &approvedBy, &b.ApprovedAt, &createdBy, &updatedBy,
 		&b.CreatedAt, &b.UpdatedAt,
@@ -371,6 +430,7 @@ func scanBrief(row pgx.Row) (*model.CampaignBrief, error) {
 		return nil, err
 	}
 	b.ProgramType = model.ProgramType(programType)
+	b.DeliveryType = model.DeliveryType(deliveryType)
 	b.Status = model.BriefStatus(status)
 	if url != nil {
 		b.URL = *url

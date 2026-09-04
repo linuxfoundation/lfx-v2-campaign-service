@@ -197,9 +197,30 @@ type BriefDoc struct {
 	ProjectID   string `json:"project_id"`
 	ProgramType string `json:"program_type"`
 	EventSlug   string `json:"event_slug"`
-	URL         string `json:"url,omitempty"`
-	Status      string `json:"status"`
-	Version     int64  `json:"version"`
+	// DeliveryType and Stage complete a brief's identity. Without them one event's paid brief and
+	// every stage of its email series index as the same thing -- same project, same slug, no
+	// discriminator -- so a consumer cannot tell which send a document describes.
+	//
+	// BACKFILL IS NOT AUTOMATIC, and a consumer must expect that. These fields are published on the
+	// next write to each brief; documents indexed before this change keep their old shape until
+	// something edits them. This service has no full-reindex path (see outbox_repo.go's prune
+	// comment), and migration 000030 backfills PostgreSQL only -- it does not enqueue index
+	// messages for existing rows. A consumer filtering on `delivery_type` will therefore miss
+	// untouched paid briefs, so treat an ABSENT field as "written before the widening", which for
+	// every such row means paid-marketing with an empty stage. Ordering a reindex is a deployment
+	// step, deliberately left out of the migration: enqueuing one message per brief inside a schema
+	// migration would make the migration's runtime a function of table size.
+	//
+	// NEITHER carries omitempty, and stage is why: "" is the paid brief's REAL stage, not a
+	// missing value. Omitting it would publish a document where absence means both "this is the
+	// paid brief" and "this producer predates stages", which a consumer cannot untangle. Emitting
+	// it always keeps the field's meaning single. delivery_type follows for symmetry -- the pair
+	// is one key and a half-published key is worse than none.
+	DeliveryType string `json:"delivery_type"`
+	Stage        string `json:"stage"`
+	URL          string `json:"url,omitempty"`
+	Status       string `json:"status"`
+	Version      int64  `json:"version"`
 
 	Platforms    []string `json:"platforms,omitempty"`
 	EventDetails any      `json:"event_details,omitempty"`

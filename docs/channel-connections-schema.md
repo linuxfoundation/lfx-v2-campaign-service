@@ -164,7 +164,9 @@ Non-secret platform account IDs currently configured in the Express BFF, retaine
 
 ## Campaign Tables
 
-Beyond connections, the service persists briefs and campaigns. Both carry the `version` iterator (ETag/If-Match). A **brief is the funnel unit** and holds the program type; a **brief is shared across channels**, so one brief has many `campaigns` rows (one per channel/platform), all sharing `brief_id`.
+Beyond connections, the service persists briefs and campaigns. Both carry the `version` iterator (ETag/If-Match). A **brief is the funnel unit** and holds the program type; one brief has many `campaigns` rows (one per channel/platform), all sharing `brief_id`.
+
+A brief is shared across the **paid** platforms, not across delivery surfaces. Migration `000030` made `delivery_type` and `stage` part of a brief's identity: paid and email are parallel channels on one event, and an email campaign is a series rather than a document. So one event carries a paid brief **and** an email brief per stage — all live at once, none able to displace another.
 
 ### campaign_briefs
 
@@ -174,7 +176,20 @@ CREATE TABLE campaign_briefs (
     project_id    TEXT        NOT NULL,                 -- project UUID or slug (migration 000003)
     program_type  TEXT        NOT NULL                 -- funnel context
                   CHECK (program_type IN ('events','education','membership')),
-    event_slug    TEXT        NOT NULL,                -- UNIQUE with project_id
+    event_slug    TEXT        NOT NULL,                -- part of the composite key, not unique alone
+    delivery_type TEXT        NOT NULL DEFAULT 'paid-marketing'   -- migration 000030
+                  CHECK (delivery_type IN ('paid-marketing','email')),
+    stage         TEXT        NOT NULL DEFAULT '',     -- '' for paid; a stage name for an email send
+    -- The identity COMBINATION, not just the two columns. Validating each alone still admits
+    -- (paid-marketing, 'Registration Push') and (email, ''), neither of which is a brief the
+    -- product has -- and each would take its own slot in the unique index below.
+    CONSTRAINT campaign_briefs_delivery_stage_pair_valid CHECK (
+        (delivery_type = 'paid-marketing' AND stage = '')
+        OR (delivery_type = 'email' AND stage IN (
+            'CFP Launch', 'Schedule Announcement', 'Registration Push',
+            'Discount Offer', 'Final Countdown', 'Post-Event'
+        ))
+    ),
     url           TEXT,
     platforms     JSONB,                               -- selected channels for this brief
     event_details JSONB,
@@ -191,11 +206,19 @@ CREATE TABLE campaign_briefs (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- (project_id, event_slug) uniqueness is a PARTIAL unique index excluding
--- archived briefs (migration 000003), so archiving a brief frees the slot for a
--- new brief with the same slug:
-CREATE UNIQUE INDEX uq_campaign_briefs_project_event
-    ON campaign_briefs (project_id, event_slug) WHERE status <> 'archived';
+-- Brief identity is (project_id, event_slug, delivery_type, stage) since migration 000030.
+-- Paid and email are PARALLEL channels on one event, and an email campaign is a SERIES rather
+-- than a document -- a CFP Launch and a Final Countdown for the same event are both live. The
+-- earlier (project_id, event_slug) key (000003) meant the second channel to save either
+-- overwrote the first or was refused.
+--
+-- `stage` is '' for paid, which has no series, and NOT NULL: NULLs never collide in a unique
+-- index, so a nullable stage would let unlimited duplicate paid briefs accumulate.
+--
+-- Still a PARTIAL index excluding archived briefs, so archiving frees the slot:
+CREATE UNIQUE INDEX uq_campaign_briefs_project_event_delivery_stage
+    ON campaign_briefs (project_id, event_slug, delivery_type, stage)
+    WHERE status <> 'archived';
 CREATE INDEX idx_campaign_briefs_project_id ON campaign_briefs (project_id);
 ```
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ import (
 // Pinning the order here makes that edit fail a test instead of silently corrupting an audit
 // trail; the fix is to change BOTH lists and then this constant, deliberately.
 var briefColumnOrder = []string{
-	"id", "project_id", "program_type", "event_slug", "url", "platforms", "event_details",
+	"id", "project_id", "program_type", "event_slug", "delivery_type", "stage", "url", "platforms", "event_details",
 	"copy", "keywords", "targeting", "status", "version", "approved_by", "approved_at",
 	"created_by", "updated_by", "created_at", "updated_at",
 }
@@ -80,7 +81,7 @@ func TestScanBrief_MapsEachColumnToItsField(t *testing.T) {
 	}
 
 	b, err := scanBrief(fakeRow{vals: []any{
-		"b-1", "cncf", "events", "kubecon-2026", &url,
+		"b-1", "cncf", "events", "kubecon-2026", "email", "Registration Push", &url,
 		json.RawMessage(`["google_ads"]`), json.RawMessage(`{"venue":"London"}`),
 		json.RawMessage(`{"headline":"h"}`), json.RawMessage(`["k8s"]`), json.RawMessage(`{"geo":"EU"}`),
 		"approved", int64(7),
@@ -93,6 +94,11 @@ func TestScanBrief_MapsEachColumnToItsField(t *testing.T) {
 	require.Equal(t, "b-1", b.ID)
 	require.Equal(t, "cncf", b.ProjectID)
 	require.Equal(t, model.ProgramType("events"), b.ProgramType)
+	// The identity columns are asserted like every other mapped field. Feeding them into `fakeRow`
+	// without checking them would let a scan regression that leaves either unset pass a test whose
+	// stated purpose is that every column maps.
+	require.Equal(t, model.DeliveryEmail, b.DeliveryType)
+	require.Equal(t, "Registration Push", b.Stage)
 	require.Equal(t, "kubecon-2026", b.EventSlug)
 	require.Equal(t, url, b.URL)
 	require.Equal(t, model.BriefStatus("approved"), b.Status)
@@ -113,7 +119,7 @@ func TestScanBrief_MapsEachColumnToItsField(t *testing.T) {
 // producing an all-empty Actor indistinguishable from a real one.
 func TestScanBrief_NullActorsAreNotRecorded(t *testing.T) {
 	b, err := scanBrief(fakeRow{vals: []any{
-		"b-1", "cncf", "events", "kubecon-2026", nil,
+		"b-1", "cncf", "events", "kubecon-2026", "paid-marketing", "", nil,
 		nil, nil, nil, nil, nil,
 		"draft", int64(1),
 		nil, nil,
@@ -131,17 +137,18 @@ func TestScanBrief_CorruptActorFails(t *testing.T) {
 	for _, col := range []string{"created_by", "updated_by"} {
 		t.Run(col, func(t *testing.T) {
 			vals := []any{
-				"b-1", "cncf", "events", "kubecon-2026", nil,
+				"b-1", "cncf", "events", "kubecon-2026", "paid-marketing", "", nil,
 				nil, nil, nil, nil, nil,
 				"draft", int64(1),
 				nil, nil,
 				nil, nil,
 				time.Time{}, time.Time{},
 			}
-			i := 14 // created_by
-			if col == "updated_by" {
-				i = 15
-			}
+			// Derived from briefColumnOrder rather than hardcoded. The literal 14/15 this replaces
+			// silently pointed at the wrong slot the moment a column was inserted ahead of them --
+			// which is exactly what 000030 did, moving created_by from 14 to 16.
+			i := slices.Index(briefColumnOrder, col)
+			require.GreaterOrEqual(t, i, 0, "%s is not in briefColumnOrder", col)
 			vals[i] = []byte(`{"name":`)
 			_, err := scanBrief(fakeRow{vals: vals})
 			require.ErrorContains(t, err, "unmarshal "+col,
@@ -193,7 +200,7 @@ var actorStampedWrites = map[string]struct {
 	// cols maps each actor column to the placeholder that must carry it.
 	cols map[string]string
 }{
-	"CreateBrief":  {createBriefQuery, map[string]string{"created_by": "$11", "updated_by": "$11"}},
+	"CreateBrief":  {createBriefQuery, map[string]string{"created_by": "$13", "updated_by": "$13"}},
 	"ReplaceBrief": {replaceBriefQuery, map[string]string{"updated_by": "$9"}},
 	"Approve":      {approveBriefQuery, map[string]string{"updated_by": "$1"}},
 	"ArchiveBrief": {archiveBriefQuery, map[string]string{"updated_by": "$3"}},
