@@ -411,12 +411,15 @@ func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc 
 	}
 }
 
-// FindBrief returns the saved brief for an event slug, or 404 when none exists.
+// FindBrief returns the saved brief for one event slug ON ONE SURFACE AND STAGE, or 404 when that
+// send has none.
 //
 // This is the "have I already generated a brief for this event?" lookup. The UI derives the
 // slug from a pasted event URL and calls this BEFORE generating: a 200 returns the stored
 // brief (with its AI-generated copy/keywords/targeting, plus any edits made since), and a
-// 404 means this event has no brief yet, so one should be generated.
+// 404 means THIS SEND has no brief yet, so one should be generated. Since 000030 widened the key
+// it no longer means the event has none at all: the same event may already carry a paid brief and
+// other stages of its email series, each addressable on its own.
 //
 // A 404 is an ORDINARY outcome, not a failure — first-time generation is the common case.
 // This endpoint never generates or mutates anything; regenerating is an explicit
@@ -683,6 +686,23 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// Same gate as create: adoption must not be the way around approval.
 	if brief.Status != model.BriefApproved {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "brief must be approved before adopting campaigns"}
+	}
+
+	// The same surface rule `CreateCampaigns` enforces, because adoption is the OTHER way a
+	// campaign gets bound to a brief. Without it an email brief could acquire a paid campaign row
+	// through this endpoint -- the identity invariant honoured on one path and not the other, which
+	// is the more dangerous shape, since whoever added the first check would reasonably assume it
+	// covered the model.
+	//
+	// BEFORE the upstream lookup, deliberately: a mismatch is answerable from what is already in
+	// hand, and asking the ad platform about a campaign this brief could never adopt spends a round
+	// trip to reach the same 400.
+	if want := deliveryChannelKind(brief.DeliveryType); platform.Kind() != want {
+		return nil, &briefs.BadRequestError{
+			Code: "400",
+			Message: fmt.Sprintf("platform %s is a %s channel, but this brief was authored for %s; "+
+				"adopt the campaign from a brief on that surface instead", p.Platform, platform.Kind(), brief.DeliveryType),
+		}
 	}
 
 	// Preflight: check if this brief already has a campaign on this platform. If it does,

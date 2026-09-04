@@ -432,6 +432,32 @@ func TestBriefService_CreateCampaigns_MatchesTheChannelToTheSurface(t *testing.T
 		}
 	})
 
+	// ADOPTION is the other way a campaign binds to a brief, and it had the same gap. Enforcing on
+	// one path and not the other is the more dangerous shape: whoever reads the CreateCampaigns
+	// check would reasonably assume the invariant holds everywhere.
+	adopt := func(s *BriefService, platform string) error {
+		_, err := s.AdoptCampaign(context.Background(), &briefs.AdoptCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", Platform: platform, PlatformCampaignID: "123456",
+		})
+		return err
+	}
+
+	t.Run("an email brief cannot adopt a paid campaign", func(t *testing.T) {
+		err := adopt(newService(model.DeliveryEmail, "CFP Launch"), "google-ads")
+
+		// The MESSAGE, not merely the type. `AdoptCampaign` returns a BadRequestError from several
+		// earlier guards -- including `ready()`, which this harness does not satisfy -- so an
+		// `errors.As` check alone passed even with the surface guard removed. Asserting the text
+		// is what makes this test bind to the guard it is named for.
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) {
+			t.Fatalf("AdoptCampaign(email brief, google-ads): err = %v, want *briefs.BadRequestError", err)
+		}
+		if !strings.Contains(bad.Message, "authored for") {
+			t.Errorf("AdoptCampaign rejected for the wrong reason: %q -- want the surface mismatch", bad.Message)
+		}
+	})
+
 	// The matching cases must still work, or the guard is just an outage.
 	t.Run("a paid brief launches paid ads", func(t *testing.T) {
 		if err := create(newService(model.DeliveryPaidMarketing, ""), "google-ads"); err != nil {
@@ -2285,7 +2311,12 @@ func TestFindBrief_ArchivedBriefDoesNotMatch(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefArchived,
+		// DeliveryType is set so the lookup MATCHES on identity and this test reaches the thing it
+		// names. Since FindBrief normalizes an omitted delivery type to paid-marketing, a fixture
+		// left at the zero value 404s on an identity mismatch instead -- so the test passed even
+		// with a DRAFT row, proving nothing about archiving. Verified before this line was added.
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryPaidMarketing, Status: model.BriefArchived,
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
@@ -2388,7 +2419,10 @@ func TestFindBrief_IsScopedToProject(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefDraft,
+		// Same reason as the archived fixture above: without an explicit delivery type the lookup
+		// misses on identity, and this test would pass without ever exercising project scoping.
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryPaidMarketing, Status: model.BriefDraft,
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
