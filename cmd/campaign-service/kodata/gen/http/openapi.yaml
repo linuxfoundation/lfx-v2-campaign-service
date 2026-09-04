@@ -70,6 +70,8 @@ paths:
                             - project_id
                             - program_type
                             - event_slug
+                            - delivery_type
+                            - stage
                             - status
                             - version
                     headers:
@@ -169,6 +171,8 @@ paths:
                             - project_id
                             - program_type
                             - event_slug
+                            - delivery_type
+                            - stage
                             - status
                             - version
                     headers:
@@ -266,6 +270,8 @@ paths:
                             - project_id
                             - program_type
                             - event_slug
+                            - delivery_type
+                            - stage
                             - status
                             - version
                     headers:
@@ -374,6 +380,8 @@ paths:
                             - project_id
                             - program_type
                             - event_slug
+                            - delivery_type
+                            - stage
                             - status
                             - version
                     headers:
@@ -573,6 +581,8 @@ paths:
                             - project_id
                             - program_type
                             - event_slug
+                            - delivery_type
+                            - stage
                             - status
                             - version
                     headers:
@@ -7423,6 +7433,8 @@ definitions:
             - project_id
             - program_type
             - event_slug
+            - delivery_type
+            - stage
             - status
             - version
     BriefInput:

@@ -687,6 +687,42 @@ func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
 	})
 }
 
+// TestLiveFindBriefZeroDeliveryTypeFindsTheMigratedPaidRow pins the normalization on the READ.
+//
+// A direct Go caller -- anything not arriving through Goa, which applies the design default first
+// -- leaves DeliveryType at the zero value. An earlier revision normalized that only for the
+// pair validation and then queried the RAW value, so the lookup asked for `delivery_type = ”`
+// while every row 000030 migrated stores `paid-marketing`. The caller was answered 404 for a paid
+// brief sitting right there.
+//
+// The seed is what makes this test able to fail: it stores an EXPLICIT `paid-marketing`, as a
+// migrated row does. Seeding a zero-valued model instead lets the repo's own default write
+// `paid-marketing` anyway, so a broken read still matches and the test passes vacuously -- which
+// is exactly how the defect survived its first review.
+func TestLiveFindBriefZeroDeliveryTypeFindsTheMigratedPaidRow(t *testing.T) {
+	ctx := context.Background()
+	repo := newBriefRepo(dbtest.Pool(t))
+	project, slug := dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug")
+
+	b := draftBrief(project, slug)
+	b.DeliveryType = model.DeliveryPaidMarketing
+	created, err := repo.CreateBrief(ctx, b, nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	found, err := repo.FindBriefByEventSlug(ctx, project, slug, model.DeliveryPaidMarketing, "")
+	if err != nil {
+		t.Fatalf("FindBriefByEventSlug for the migrated paid row: %v", err)
+	}
+	if found.ID != created.ID {
+		t.Errorf("found brief %q, want %q", found.ID, created.ID)
+	}
+	if found.DeliveryType != model.DeliveryPaidMarketing {
+		t.Errorf("stored delivery_type = %q, want %q", found.DeliveryType, model.DeliveryPaidMarketing)
+	}
+}
+
 // TestLiveBriefIdentityPairsAreConstrained pins the identity COMBINATIONS at the schema, not just
 // the two columns independently.
 //

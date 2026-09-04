@@ -163,8 +163,8 @@ func briefDoc(b *briefs.Brief) indexer.BriefDoc {
 		EventSlug:   b.EventSlug,
 		// Part of the key, not decoration: without these two, a paid brief and every stage of the
 		// same event's email series index identically and a consumer cannot tell them apart.
-		DeliveryType: derefStr(b.DeliveryType),
-		Stage:        derefStr(b.Stage),
+		DeliveryType: b.DeliveryType,
+		Stage:        b.Stage,
 		URL:          derefStr(b.URL),
 		Status:       b.Status,
 		Version:      b.Version,
@@ -436,10 +436,25 @@ func (s *BriefService) FindBrief(ctx context.Context, p *briefs.FindBriefPayload
 	// told 404 -- "no such brief" -- about an identity that could not name a brief in the first
 	// place. That is a true statement and a useless one; it sends a caller looking for a missing
 	// row instead of at the request it sent. 400 says which part is wrong.
-	if perr := briefIdentityPairProblem(deliveryTypeOrPaid(&p.DeliveryType), p.Stage); perr != nil {
+	// Normalized ONCE, and the same value is both validated and queried. An earlier revision
+	// normalized only for the validation and then passed the raw `p.DeliveryType` to the query, so
+	// a direct Go caller with the zero value passed the check and then asked the database for
+	// `delivery_type = ''` -- which matches nothing, because 000030 backfills every pre-existing
+	// row to `paid-marketing`. The caller got a 404 for a paid brief sitting right there. Only a
+	// direct caller could reach it, since Goa applies the design default first, and the live test
+	// missed it by seeding a zero-valued row rather than a migrated one.
+	// `deliveryTypeOrPaid` defaults a NIL pointer, and `FindBriefPayload.DeliveryType` is a plain
+	// string -- `&p.DeliveryType` is never nil -- so it cannot do the job here. The ZERO VALUE is
+	// what needs defaulting on this path, for the same reason: paid was the only surface whose
+	// brief could be saved before 000030, so "unsaid" means paid.
+	deliveryType := model.DeliveryType(p.DeliveryType)
+	if deliveryType == "" {
+		deliveryType = model.DeliveryPaidMarketing
+	}
+	if perr := briefIdentityPairProblem(deliveryType, p.Stage); perr != nil {
 		return nil, mapBriefErr(perr)
 	}
-	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug, model.DeliveryType(p.DeliveryType), p.Stage)
+	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug, deliveryType, p.Stage)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -1778,8 +1793,8 @@ func briefResult(b *model.CampaignBrief) *briefs.Brief {
 		EventSlug:   b.EventSlug,
 		// Returned so a caller can tell WHICH brief it received. With one event holding a paid brief
 		// and an email series, a response naming only the slug is ambiguous about its own row.
-		DeliveryType: &deliveryType,
-		Stage:        &stage,
+		DeliveryType: deliveryType,
+		Stage:        stage,
 		URL:          optStr(b.URL),
 		Platforms:    unmarshalStrings(b.Platforms),
 		EventDetails: unmarshalAny(b.EventDetails),

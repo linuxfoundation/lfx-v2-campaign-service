@@ -139,7 +139,13 @@ var Brief = Type("brief", func() {
 	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
-	Required("id", "project_id", "program_type", "event_slug", "status", "version")
+	// `delivery_type` and `stage` are REQUIRED on the response, unlike most attributes here. Both
+	// come from NOT NULL columns that 000030 backfills for every pre-existing row, and
+	// `briefResult` always supplies them — so no brief can be returned without them, and marking
+	// them optional published a contract looser than the data. That cost is concrete: generated
+	// clients expose pointers for the two fields that now IDENTIFY which brief a response
+	// describes, and a consumer must nil-check a value that cannot be absent.
+	Required("id", "project_id", "program_type", "event_slug", "delivery_type", "stage", "status", "version")
 })
 
 // ─── Campaign / job types ───

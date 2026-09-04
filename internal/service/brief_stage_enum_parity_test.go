@@ -59,6 +59,15 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 						} `json:"properties"`
 					} `json:"schemas"`
 				} `json:"components"`
+				Paths map[string]map[string]struct {
+					Parameters []struct {
+						Name   string `json:"name"`
+						In     string `json:"in"`
+						Schema struct {
+							Enum []string `json:"enum"`
+						} `json:"schema"`
+					} `json:"parameters"`
+				} `json:"paths"`
 			}
 			if err := json.Unmarshal(raw, &doc); err != nil {
 				t.Fatalf("parse %s: %v", rel, err)
@@ -83,6 +92,30 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 			if !equalStrings(stage.Enum, want) {
 				t.Errorf("%s: BriefInput.stage enum = %v, want %v (emailstage.Names() plus the "+
 					"empty paid stage)", rel, stage.Enum, want)
+			}
+
+			// The READ enum too, which is a SEPARATE hand-written list in the find-brief query
+			// payload. Pinning only the write side would let someone update `BriefInput` from
+			// `emailstage.Names()` and forget this one -- recreating exactly the asymmetry this
+			// whole feature exists to close: a stage accepted on write that no lookup can name.
+			var readEnum []string
+			for _, ops := range doc.Paths {
+				for _, op := range ops {
+					for _, prm := range op.Parameters {
+						if prm.Name == "stage" && prm.In == "query" && len(prm.Schema.Enum) > 0 {
+							readEnum = prm.Schema.Enum
+						}
+					}
+				}
+			}
+			if len(readEnum) == 0 {
+				t.Fatalf("%s: no find-brief `stage` QUERY parameter publishes an enum. The read "+
+					"path would accept any string while the write path enforces a fixed set.", rel)
+			}
+			if !equalStrings(readEnum, want) {
+				t.Errorf("%s: find-brief stage query enum = %v, want %v — the read and write "+
+					"enums have drifted, so a stage valid on one is unaddressable on the other",
+					rel, readEnum, want)
 			}
 		})
 	}

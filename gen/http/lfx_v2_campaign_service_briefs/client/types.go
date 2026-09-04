@@ -2488,8 +2488,8 @@ func NewCreateBriefBriefCreated(body *CreateBriefResponseBody, etag *string) *lf
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
-		DeliveryType: body.DeliveryType,
-		Stage:        body.Stage,
+		DeliveryType: *body.DeliveryType,
+		Stage:        *body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2596,8 +2596,8 @@ func NewFindBriefBriefOK(body *FindBriefResponseBody, etag *string) *lfxv2campai
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
-		DeliveryType: body.DeliveryType,
-		Stage:        body.Stage,
+		DeliveryType: *body.DeliveryType,
+		Stage:        *body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2704,8 +2704,8 @@ func NewGetBriefBriefOK(body *GetBriefResponseBody, etag *string) *lfxv2campaign
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
-		DeliveryType: body.DeliveryType,
-		Stage:        body.Stage,
+		DeliveryType: *body.DeliveryType,
+		Stage:        *body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2812,8 +2812,8 @@ func NewUpdateBriefBriefOK(body *UpdateBriefResponseBody, etag *string) *lfxv2ca
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
-		DeliveryType: body.DeliveryType,
-		Stage:        body.Stage,
+		DeliveryType: *body.DeliveryType,
+		Stage:        *body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2942,8 +2942,8 @@ func NewApproveBriefBriefOK(body *ApproveBriefResponseBody, etag *string) *lfxv2
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
-		DeliveryType: body.DeliveryType,
-		Stage:        body.Stage,
+		DeliveryType: *body.DeliveryType,
+		Stage:        *body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -4619,6 +4619,12 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 	if body.EventSlug == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "body"))
 	}
+	if body.DeliveryType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivery_type", "body"))
+	}
+	if body.Stage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("stage", "body"))
+	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
@@ -4662,6 +4668,12 @@ func ValidateFindBriefResponseBody(body *FindBriefResponseBody) (err error) {
 	}
 	if body.EventSlug == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "body"))
+	}
+	if body.DeliveryType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivery_type", "body"))
+	}
+	if body.Stage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("stage", "body"))
 	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
@@ -4707,6 +4719,12 @@ func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
 	if body.EventSlug == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "body"))
 	}
+	if body.DeliveryType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivery_type", "body"))
+	}
+	if body.Stage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("stage", "body"))
+	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
@@ -4751,6 +4769,12 @@ func ValidateUpdateBriefResponseBody(body *UpdateBriefResponseBody) (err error) 
 	if body.EventSlug == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "body"))
 	}
+	if body.DeliveryType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivery_type", "body"))
+	}
+	if body.Stage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("stage", "body"))
+	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
@@ -4794,6 +4818,12 @@ func ValidateApproveBriefResponseBody(body *ApproveBriefResponseBody) (err error
 	}
 	if body.EventSlug == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "body"))
+	}
+	if body.DeliveryType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivery_type", "body"))
+	}
+	if body.Stage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("stage", "body"))
 	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))

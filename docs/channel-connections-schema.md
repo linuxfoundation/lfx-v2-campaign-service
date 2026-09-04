@@ -180,6 +180,16 @@ CREATE TABLE campaign_briefs (
     delivery_type TEXT        NOT NULL DEFAULT 'paid-marketing'   -- migration 000030
                   CHECK (delivery_type IN ('paid-marketing','email')),
     stage         TEXT        NOT NULL DEFAULT '',     -- '' for paid; a stage name for an email send
+    -- The identity COMBINATION, not just the two columns. Validating each alone still admits
+    -- (paid-marketing, 'Registration Push') and (email, ''), neither of which is a brief the
+    -- product has -- and each would take its own slot in the unique index below.
+    CONSTRAINT campaign_briefs_delivery_stage_pair_valid CHECK (
+        (delivery_type = 'paid-marketing' AND stage = '')
+        OR (delivery_type = 'email' AND stage IN (
+            'CFP Launch', 'Schedule Announcement', 'Registration Push',
+            'Discount Offer', 'Final Countdown', 'Post-Event'
+        ))
+    ),
     url           TEXT,
     platforms     JSONB,                               -- selected channels for this brief
     event_details JSONB,

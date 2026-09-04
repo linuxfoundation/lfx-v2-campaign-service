@@ -234,9 +234,9 @@ type Brief struct {
 	// own: see delivery_type and stage.
 	EventSlug string
 	// Delivery surface this brief was authored for.
-	DeliveryType *string
+	DeliveryType string
 	// Stage within an email series. Empty for paid, which has no series.
-	Stage *string
+	Stage string
 	// Event/course page URL
 	URL *string
 	// Suggested default platforms (a planning hint; binding selection is on the

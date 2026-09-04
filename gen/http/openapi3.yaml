@@ -10078,6 +10078,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief2:
@@ -10186,6 +10188,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief3:
@@ -10292,6 +10296,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief4:
@@ -10400,6 +10406,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief5:
@@ -10507,6 +10515,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief6:
@@ -10613,6 +10623,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         BriefData:

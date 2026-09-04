@@ -1813,10 +1813,11 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 // document where a missing field means both "this is the paid brief" and "this producer predates
 // stages". A consumer cannot distinguish those, and the failure is silent at index time.
 func TestIndexedBriefDocCarriesTheWholeIdentity(t *testing.T) {
-	email, stage := "email", "Registration Push"
+	// Plain strings, not pointers: both are Required() on the Brief response, since they come from
+	// NOT NULL columns that briefResult always supplies.
 	raw, err := json.Marshal(briefDoc(&briefs.Brief{
 		ID: "b1", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon-eu-2026",
-		DeliveryType: &email, Stage: &stage, Status: "approved", Version: 1,
+		DeliveryType: "email", Stage: "Registration Push", Status: "approved", Version: 1,
 	}))
 	if err != nil {
 		t.Fatalf("marshal brief doc: %v", err)
@@ -1829,11 +1830,9 @@ func TestIndexedBriefDocCarriesTheWholeIdentity(t *testing.T) {
 	}
 
 	// The paid brief. Its stage is "" and that is a VALUE, so it must appear on the wire.
-	paid := "paid-marketing"
-	empty := ""
 	raw, err = json.Marshal(briefDoc(&briefs.Brief{
 		ID: "b2", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon-eu-2026",
-		DeliveryType: &paid, Stage: &empty, Status: "approved", Version: 1,
+		DeliveryType: "paid-marketing", Stage: "", Status: "approved", Version: 1,
 	}))
 	if err != nil {
 		t.Fatalf("marshal paid brief doc: %v", err)
@@ -2001,16 +2000,50 @@ func TestFindBrief_ParallelChannelsAndEmailSeries(t *testing.T) {
 func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()
+	// An EXPLICIT paid-marketing, as 000030 backfills every pre-existing row. Seeding the zero
+	// value instead made this pass against a lookup that queried the raw `""` -- see
+	// TestFindBrief_ZeroDeliveryTypeQueriesPaid, which exists because that masking hid a real bug.
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
 		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
-		Status: model.BriefDraft,
-		Copy:   json.RawMessage(`{"headlines":["Join KubeCon EU 2026"]}`),
+		DeliveryType: model.DeliveryPaidMarketing,
+		Status:       model.BriefDraft,
+		Copy:         json.RawMessage(`{"headlines":["Join KubeCon EU 2026"]}`),
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
 	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"})
 	if err != nil {
 		t.Fatalf("FindBrief: %v", err)
+	}
+	if got.ID != "b1" {
+		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
+// TestFindBrief_ZeroDeliveryTypeQueriesPaid pins that FindBrief normalizes ONCE — that the value
+// it validates is the value it queries.
+//
+// A direct Go caller leaves DeliveryType at the zero string; Goa applies the design default only
+// for HTTP. An earlier revision normalized for the pair validation and then passed the RAW value
+// to the repository, so the query asked for `delivery_type = ”` while every row 000030 migrated
+// stores `paid-marketing`, and the caller got a 404 for a brief sitting right there.
+//
+// The seeded row carries an EXPLICIT paid-marketing, which is what makes this able to fail: the
+// fake matches DeliveryType exactly, so a raw-value query finds nothing. A row seeded with the
+// zero value would match the broken query and pass vacuously.
+func TestFindBrief_ZeroDeliveryTypeQueriesPaid(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryPaidMarketing,
+		Status:       model.BriefDraft,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"})
+	if err != nil {
+		t.Fatalf("FindBrief with a zero delivery type must address the paid brief: %v", err)
 	}
 	if got.ID != "b1" {
 		t.Errorf("brief id = %q, want b1", got.ID)
@@ -2061,7 +2094,9 @@ func TestFindBrief_HandlesLongSlugs(t *testing.T) {
 	longSlug := strings.Repeat("a", 512)
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-		ID: "b1", ProjectID: "cncf", EventSlug: longSlug, Status: model.BriefDraft,
+		ID: "b1", ProjectID: "cncf", EventSlug: longSlug,
+		DeliveryType: model.DeliveryPaidMarketing,
+		Status:       model.BriefDraft,
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
@@ -2204,9 +2239,15 @@ func TestBriefResponse_StillDecodesLegacyEmptySlug(t *testing.T) {
 	status := "approved"
 	var version int64 = 1
 
+	// `delivery_type` and `stage` ARE supplied, because they are Required() on the response and a
+	// real one always carries them: 000030 declares both NOT NULL with defaults and backfills every
+	// pre-existing row, and `briefResult` sets both unconditionally. A legacy row is legacy in its
+	// SLUG, not in these — so omitting them here would test a body the service cannot produce.
+	deliveryType := "paid-marketing"
 	if err := briefsclient.ValidateGetBriefResponseBody(&briefsclient.GetBriefResponseBody{
 		ID: &id, ProjectID: &projectID, ProgramType: &programType,
-		EventSlug: &empty, Status: &status, Version: &version,
+		EventSlug: &empty, DeliveryType: &deliveryType, Stage: &empty,
+		Status: &status, Version: &version,
 	}); err != nil {
 		t.Fatalf("a legacy empty-slug row must still be readable, got: %v", err)
 	}

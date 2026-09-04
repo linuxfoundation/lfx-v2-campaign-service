@@ -97,9 +97,9 @@ type CreateBriefResponseBody struct {
 	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
-	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	DeliveryType string `form:"delivery_type" json:"delivery_type" xml:"delivery_type"`
 	// Stage within an email series. Empty for paid, which has no series.
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
+	Stage string `form:"stage" json:"stage" xml:"stage"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -132,9 +132,9 @@ type FindBriefResponseBody struct {
 	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
-	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	DeliveryType string `form:"delivery_type" json:"delivery_type" xml:"delivery_type"`
 	// Stage within an email series. Empty for paid, which has no series.
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
+	Stage string `form:"stage" json:"stage" xml:"stage"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -167,9 +167,9 @@ type GetBriefResponseBody struct {
 	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
-	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	DeliveryType string `form:"delivery_type" json:"delivery_type" xml:"delivery_type"`
 	// Stage within an email series. Empty for paid, which has no series.
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
+	Stage string `form:"stage" json:"stage" xml:"stage"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -202,9 +202,9 @@ type UpdateBriefResponseBody struct {
 	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
-	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	DeliveryType string `form:"delivery_type" json:"delivery_type" xml:"delivery_type"`
 	// Stage within an email series. Empty for paid, which has no series.
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
+	Stage string `form:"stage" json:"stage" xml:"stage"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -237,9 +237,9 @@ type ApproveBriefResponseBody struct {
 	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
-	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	DeliveryType string `form:"delivery_type" json:"delivery_type" xml:"delivery_type"`
 	// Stage within an email series. Empty for paid, which has no series.
-	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
+	Stage string `form:"stage" json:"stage" xml:"stage"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
