@@ -49,9 +49,10 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 - `000001` — connection tables.
 - `000002` — brief, campaign, and async-job tables. Indexes: `campaign_jobs`
   on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform, variant)` /
-  `(project_id, event_slug, delivery_type, stage)` uniqueness covers those leftmost columns.
+  `(project_id, event_slug)` uniqueness covers those leftmost columns.
 - `000003` — brief `project_id` UUID→TEXT and partial-unique
-  `(project_id, event_slug, delivery_type, stage)` excluding archived rows (widened by 000030: one event carries a paid brief and an email series at once).
+  `(project_id, event_slug)` excluding archived rows (widened to
+  `(project_id, event_slug, delivery_type, stage)` by 000030).
 - `000004` — partial index `idx_campaign_jobs_recovery` on
   `campaign_jobs (updated_at) WHERE status IN ('queued','running')`, supporting
   the periodic stuck-job recovery sweep (`JobRepo.FailStuckJobs`) so it does not

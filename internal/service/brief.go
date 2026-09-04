@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 
 	"goa.design/goa/v3/security"
@@ -322,6 +325,14 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		return nil, err
 	}
 	in := p.Brief
+	// The PAIR, before the write. Each column validates independently at the edge, so nothing
+	// upstream can see that `(paid-marketing, "Registration Push")` or `(email, "")` is not a
+	// brief the product has. Migration 000030's CHECK refuses both, but a constraint violation is
+	// SQLSTATE 23514 -- unclassified by the repository -- so it would reach the caller as a 500
+	// for a request that is merely invalid. Answering here makes it the 400 it is.
+	if perr := briefIdentityPairProblem(deliveryTypeOrPaid(in.DeliveryType), derefOrEmpty(in.Stage)); perr != nil {
+		return nil, mapBriefErr(perr)
+	}
 	b := &model.CampaignBrief{
 		ProjectID:   p.ProjectID,
 		ProgramType: model.ProgramType(in.ProgramType),
@@ -419,6 +430,15 @@ func (s *BriefService) FindBrief(ctx context.Context, p *briefs.FindBriefPayload
 	// the identity every caller predating 000030 meant, since paid was the only surface whose
 	// brief could be saved. Passed through rather than re-defaulted here so there is one place
 	// that decides what an omitted delivery type means.
+	//
+	// The pair is checked on the READ too, and the reason is specific to a lookup: no brief can
+	// ever carry an impossible pair, so the query is guaranteed to miss and the caller would be
+	// told 404 -- "no such brief" -- about an identity that could not name a brief in the first
+	// place. That is a true statement and a useless one; it sends a caller looking for a missing
+	// row instead of at the request it sent. 400 says which part is wrong.
+	if perr := briefIdentityPairProblem(deliveryTypeOrPaid(&p.DeliveryType), p.Stage); perr != nil {
+		return nil, mapBriefErr(perr)
+	}
 	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug, model.DeliveryType(p.DeliveryType), p.Stage)
 	if err != nil {
 		return nil, mapBriefErr(err)
@@ -1843,6 +1863,55 @@ func deliveryTypeOrPaid(v *string) model.DeliveryType {
 	return model.DeliveryType(*v)
 }
 
+// briefIdentityPairProblem reports why a delivery_type/stage COMBINATION cannot exist, or nil.
+//
+// The two columns validate independently at the edge -- Goa's enums accept every value here -- so
+// nothing before this point can see that `(paid-marketing, "Registration Push")` and
+// `(email, "")` are not briefs the product has. Paid has no series, and an email send is always
+// some stage.
+//
+// Checked HERE rather than left to migration 000030's `campaign_briefs_delivery_stage_pair_valid`
+// because a CHECK violation is SQLSTATE 23514, which no repository path classifies, so it reaches
+// the caller as a 500 for a request that is simply invalid. The constraint stays as the backstop
+// for writers that never pass through this service; this is the answer an API client gets.
+//
+// The stage list is deliberately `emailstage.Names()` rather than a fourth hand-written copy --
+// see TestPublishedStageEnumMatchesEmailStageNames, which pins the published enum to the same
+// function.
+func briefIdentityPairProblem(delivery model.DeliveryType, stage string) error {
+	switch delivery {
+	case model.DeliveryPaidMarketing:
+		if stage != "" {
+			return fmt.Errorf("%w: a paid-marketing brief has no series, so its stage must be empty, got %q",
+				domain.ErrBriefIdentityPairInvalid, stage)
+		}
+		return nil
+	case model.DeliveryEmail:
+		if slices.Contains(emailstage.Names(), stage) {
+			return nil
+		}
+		return fmt.Errorf("%w: an email brief names one send in the series, so its stage must be one of %v, got %q",
+			domain.ErrBriefIdentityPairInvalid, emailstage.Names(), stage)
+	case "":
+		// The Go ZERO value, which only a direct in-process caller can produce: Goa applies the
+		// design default before an HTTP payload reaches here, so over the wire an omitted
+		// delivery_type is already "paid-marketing". Treated as paid for exactly the reason
+		// `deliveryTypeOrPaid` treats a nil pointer that way -- paid was the only surface whose
+		// brief could be saved before 000030, so "unsaid" means paid. Rejecting it instead broke
+		// every direct FindBrief caller, tests included, since none of them names a surface.
+		if stage != "" {
+			return fmt.Errorf("%w: a paid-marketing brief has no series, so its stage must be empty, got %q",
+				domain.ErrBriefIdentityPairInvalid, stage)
+		}
+		return nil
+	default:
+		// A non-empty value that is not a known surface. Unreachable through HTTP -- the generated
+		// validator rejects a non-enum delivery_type first -- but the pair cannot be judged without
+		// knowing the surface, and the CHECK would refuse the write anyway.
+		return fmt.Errorf("%w: unknown delivery type %q", domain.ErrBriefIdentityPairInvalid, delivery)
+	}
+}
+
 // assertedDeliveryType carries an update caller's explicit delivery_type through as a claim about
 // the brief's identity, preserving ABSENCE. It deliberately does not default: unlike
 // deliveryTypeOrPaid, whose nil-means-paid rule is about what a NEW brief IS, a nil here means the
@@ -1884,6 +1953,11 @@ func mapBriefErr(err error) error {
 		// caller's ETag may be perfectly current, so 412 would send them off to refetch and
 		// rebuild a request that was already correct — the right advice is simply to retry.
 		return &briefs.ConflictError{Code: "409", Message: "another write to this campaign is already in progress; retry shortly"}
+	case errors.Is(err, domain.ErrBriefIdentityPairInvalid):
+		// 400, not 409: nothing conflicts and no state is in the way -- the request itself names a
+		// combination that cannot exist. The message carries the pair, because each value alone is
+		// valid and a caller told only "invalid stage" would look at a stage that is on the list.
+		return &briefs.BadRequestError{Code: "400", Message: err.Error()}
 	case errors.Is(err, domain.ErrBriefIdentityImmutable):
 		// A 409 like the others, but the generic "already exists" would be actively misleading:
 		// nothing conflicts, and the caller's request was well formed. What they attempted is

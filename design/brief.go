@@ -43,7 +43,8 @@ var BriefData = Type("brief-data", func() {
 	// Unlike `event_slug` above, constraining it here is safe for the response type: every
 	// persisted row's stage is either "" or one of these six, so no stored brief becomes
 	// undecodable. Keep this list identical to `emailstage.Names()` plus "" --
-	// TestDesignStageEnumMatchesEmailStageNames fails the build if they drift.
+	// TestPublishedStageEnumMatchesEmailStageNames fails the build if they drift -- it reads the
+	// PUBLISHED artifact rather than this source, so a design edit never regenerated fails too.
 	//
 	// Deliberately NOT applied to generate-email's `stage` param: that endpoint RESOLVES an
 	// unrecognised stage to Registration Push under a 200 by documented contract, because copy

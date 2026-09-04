@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // briefColumnOrder is the exact column list briefCols selects, in order.
@@ -331,4 +332,77 @@ func TestMigration000015_AddsBriefActorColumns(t *testing.T) {
 			"down migration leaves %s behind, so a down-then-up cycle hits an already-present "+
 				"column and the pair drift apart", col)
 	}
+}
+
+// TestMigration000030_PairCheckMatchesEmailStageNames closes the last leg of the triangle.
+//
+// The six stage names are hand-copied in THREE places: `emailstage`'s constants, the Goa design
+// enum, and this migration's pair CHECK. `TestPublishedStageEnumMatchesEmailStageNames` ties the
+// first two together; nothing tied the third, and the migration's own comment says "keep this list
+// in step with emailstage.Names()" without anything enforcing it.
+//
+// The drift is silent and asymmetric, which is why a comment is not enough. Add a seventh stage to
+// `emailstage` and the parity test forces a deliberate review of the design enum -- but the CHECK
+// stays at six, so a brief carrying the new stage passes every HTTP validator and then dies on a
+// constraint violation. That is SQLSTATE 23514, which no repository path classifies, so it reaches
+// the caller as a 500. The mirror image of the defect 000030 exists to close.
+//
+// Reads the migration SQL from `migrations.FS`, matching TestMigration000015_AddsBriefActorColumns
+// and the audience-repo tests -- the file that actually runs, not a restatement of it.
+func TestMigration000030_PairCheckMatchesEmailStageNames(t *testing.T) {
+	up, err := fs.ReadFile(migrations.FS, "000030_brief_delivery_stage_key.up.sql")
+	require.NoError(t, err)
+	upSQL := normalizeWS(string(up))
+
+	require.Contains(t, upSQL, "campaign_briefs_delivery_stage_pair_valid",
+		"000030 must name the pair constraint; the per-column CHECK alone still admits "+
+			"(paid-marketing, 'Registration Push') and (email, ''), each of which takes its own "+
+			"slot in the widened unique index")
+
+	// Both directions are covered by the set comparison below. Asserting per-stage with
+	// require.Contains against the whole file dumped ~4KB of migration into the failure and buried
+	// the one line that named the offending stage.
+
+	// The reverse direction: a stage REMOVED from emailstage must not linger in the CHECK, or the
+	// database keeps accepting an identity the service no longer has a template for. Compared as
+	// SETS rather than counts, so a failure names the offending stage instead of a bare number.
+	//
+	// The CHECK's own list is read back out of the SQL rather than restated here -- restating it
+	// would make this test a fourth copy of the very list it exists to stop multiplying.
+	inCheck := stageLiteralsInPairCheck(upSQL)
+	slices.Sort(inCheck)
+	want := slices.Clone(emailstage.Names())
+	slices.Sort(want)
+	require.Equal(t, want, inCheck,
+		"000030's pair CHECK and emailstage.Names() disagree on the stage list")
+}
+
+// stageLiteralsInPairCheck returns the single-quoted stage names inside 000030's pair constraint.
+//
+// Scoped to the constraint's own parentheses, not the whole file: the migration mentions several
+// stage names in its header prose, and matching those would let a CHECK that dropped a stage pass
+// because the comment above it still said the word.
+func stageLiteralsInPairCheck(upSQL string) []string {
+	// LastIndex, not Index: the constraint is named twice -- first by the idempotent
+	// `DROP CONSTRAINT IF EXISTS`, then by the `ADD CONSTRAINT` that carries the list. Slicing from
+	// the first occurrence stops at the DROP's semicolon and extracts nothing, which reads as "the
+	// CHECK has no stages" rather than as a broken locator.
+	const marker = "campaign_briefs_delivery_stage_pair_valid"
+	i := strings.LastIndex(upSQL, marker)
+	if i < 0 {
+		return nil
+	}
+	body := upSQL[i:]
+	if end := strings.Index(body, ";"); end >= 0 {
+		body = body[:end]
+	}
+	var out []string
+	for _, m := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(body, -1) {
+		// The paid brief's stage is the empty string and is not an email stage, so it is not part
+		// of what emailstage.Names() declares.
+		if m[1] != "" && m[1] != "paid-marketing" && m[1] != "email" {
+			out = append(out, m[1])
+		}
+	}
+	return out
 }
