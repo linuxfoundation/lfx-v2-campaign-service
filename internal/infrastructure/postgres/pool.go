@@ -367,15 +367,20 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
 		"(platform = 'google-ads'::text))",
 }, {
-	// at most one LIVE brief per (project, event slug). 000003 does not add this index
-	// alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key and
-	// replaces it, so from 000003 onward the index is the only thing there is. Absent, two
-	// briefs for the same event coexist and every later lookup that assumes one picks
+	// at most one LIVE brief per (project, event slug, delivery type, stage). 000003 does not
+	// add this index alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key
+	// and replaces it, so from 000003 onward the index is the only thing there is. Absent, two
+	// briefs with the same identity coexist and every later lookup that assumes one picks
 	// arbitrarily between them.
-	name:      "uq_campaign_briefs_project_event",
+	//
+	// 000030 widened the key from (project, event) and this entry moved with it. The narrow
+	// version is deliberately NOT kept alongside: it would enforce one-brief-per-event, which is
+	// the constraint 000030 exists to lift — an event carries a paid brief and an email series at
+	// once. Leaving it here would refuse boot on exactly the schema the service now requires.
+	name:      "uq_campaign_briefs_project_event_delivery_stage",
 	table:     "campaign_briefs",
 	unique:    true,
-	keys:      []string{"project_id", "event_slug"},
+	keys:      []string{"project_id", "event_slug", "delivery_type", "stage"},
 	predicate: "(status <> 'archived'::text)",
 }}
 

@@ -17,21 +17,62 @@ import (
 
 // ─── Brief types ───
 
-// BriefData holds the shared brief attributes used by response types. It is Reference()d by
-// the Brief RESPONSE type. Do not add constraints here — they reach the response type through
-// Reference, breaking already-persisted empty-slug rows. Constraints belong in BriefInput
-// (the create/update payload type) only. Keep the two in sync: see BriefInput's doc comment.
+// BriefData holds the shared brief attributes used by response types. It is Reference()d by the
+// Brief RESPONSE type, and goa copies validations through Reference — so a constraint here also
+// constrains every brief response.
+//
+// The test for adding one is therefore whether every PERSISTED row already satisfies it, not
+// whether it would be right on a request. A constraint a stored row can fail makes that row
+// undecodable by generated clients, get-brief included.
+//
+// `MinLength` on `event_slug` fails that test (empty slugs were creatable before BriefInput
+// carried the constraint) and lives on BriefInput only. The `delivery_type` and `stage` enums pass
+// it — 000030 backfills every row and its CHECKs refuse anything else — and must be here, because
+// a value accepted on write and rejected on read writes a row no lookup can name. Per-attribute
+// reasoning is on each one below; keep in sync with BriefInput's doc comment.
 var BriefData = Type("brief-data", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")
 	})
-	// NO MinLength here: BriefData is Reference()d by the Brief RESPONSE type, and goa copies
-	// validations through Reference — so constraining it here also constrains every brief
-	// response, making an already-persisted empty-slug row undecodable by generated clients
-	// (get-brief included). The empty-slug REQUEST is rejected by BriefInput below — the
-	// create/update payload type, which carries MinLength(1) — which is where the constraint
-	// belongs. Keep the two in sync: see BriefInput's doc comment.
-	Attribute("event_slug", String, "Event/course slug (unique within the project)")
+	// The test for a constraint HERE is whether every PERSISTED row already satisfies it, not
+	// whether it belongs on a request. BriefData is Reference()d by the Brief RESPONSE type and goa
+	// copies validations through Reference, so anything added here also constrains every brief
+	// response — and a constraint a stored row can fail makes that row undecodable by generated
+	// clients, get-brief included.
+	//
+	// So `event_slug` carries NO MinLength: an empty slug was creatable before BriefInput's
+	// MinLength(1) existed, so such rows may be in the table. Request-only constraints like that
+	// one belong on BriefInput below; keep the two in sync, see its doc comment.
+	//
+	// The `delivery_type` and `stage` enums below ARE here, deliberately, and pass the same test:
+	// 000030 backfills every pre-existing row to `paid-marketing`/`''` and its CHECK constraints
+	// refuse anything else, so no stored brief can fail them. They must be on BriefData rather than
+	// only on BriefInput because a stage accepted on WRITE but rejected on READ writes a row no
+	// lookup can name — see the note on `stage`.
+	Attribute("event_slug", String, "Event/course slug. Part of a brief's composite identity, not unique on its own: see delivery_type and stage.")
+	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
+		Enum("paid-marketing", "email")
+		Example("email")
+	})
+	// The Enum is here on BriefData -- the WRITE side -- and not only on find-brief, because a
+	// stage is part of a brief's IDENTITY. find-brief validates the stage it is asked for, so a
+	// stage this type accepted but that enum rejects writes a row no lookup can ever name: the
+	// typo returns 400 (a generated enum rejection) and the correct spelling returns 404. The row
+	// is reachable only by id.
+	// Unlike `event_slug` above, constraining it here is safe for the response type: every
+	// persisted row's stage is either "" or one of these six, so no stored brief becomes
+	// undecodable. Keep this list identical to `emailstage.Names()` plus "" --
+	// TestPublishedStageEnumMatchesEmailStageNames fails the build if they drift -- it reads the
+	// PUBLISHED artifact rather than this source, so a design edit never regenerated fails too.
+	//
+	// Deliberately NOT applied to generate-email's `stage` param: that endpoint RESOLVES an
+	// unrecognised stage to Registration Push under a 200 by documented contract, because copy
+	// generation should never be blocked by a misspelling. Storage is the opposite -- a
+	// misspelling there is unrecoverable, so it must fail at the edge.
+	Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
+		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+		Example("Registration Push")
+	})
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms (a planning hint; binding selection is on the campaign)")
 	Attribute("event_details", Any, "Extracted event/course details")
@@ -57,9 +98,13 @@ var BriefData = Type("brief-data", func() {
 var BriefInput = Type("brief-input", func() {
 	Reference(BriefData)
 	Attribute("program_type")
-	Attribute("event_slug", String, "Event/course slug (unique within the project)", func() {
+	Attribute("event_slug", String, "Event/course slug. Unique with delivery_type and stage, not alone.", func() {
 		MinLength(1)
 	})
+	// Part of the brief's IDENTITY under 000030, not merely descriptive: one event carries a paid
+	// brief and an email series at once, so two briefs differing only in these are different rows.
+	Attribute("delivery_type")
+	Attribute("stage")
 	Attribute("url")
 	Attribute("platforms")
 	Attribute("event_details")
@@ -88,6 +133,10 @@ var Brief = Type("brief", func() {
 	// constraint is meant to prevent going forward. Requests reject empty slugs; responses
 	// stay readable for legacy data.
 	Attribute("event_slug")
+	// Returned so a caller can tell WHICH brief it got. With one event carrying a paid brief and
+	// an email series, a response that named only the slug would be ambiguous about its own row.
+	Attribute("delivery_type")
+	Attribute("stage")
 	Attribute("url")
 	Attribute("platforms")
 	Attribute("event_details")
@@ -100,7 +149,13 @@ var Brief = Type("brief", func() {
 	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
-	Required("id", "project_id", "program_type", "event_slug", "status", "version")
+	// `delivery_type` and `stage` are REQUIRED on the response, unlike most attributes here. Both
+	// come from NOT NULL columns that 000030 backfills for every pre-existing row, and
+	// `briefResult` always supplies them — so no brief can be returned without them, and marking
+	// them optional published a contract looser than the data. That cost is concrete: generated
+	// clients expose pointers for the two fields that now IDENTIFY which brief a response
+	// describes, and a consumer must nil-check a value that cannot be absent.
+	Required("id", "project_id", "program_type", "event_slug", "delivery_type", "stage", "status", "version")
 })
 
 // ─── Campaign / job types ───
@@ -889,6 +944,21 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Example("kubecon-eu-2026")
 				MinLength(1)
 			})
+			// One event holds a paid brief and an email SERIES at the same time (000030), so the
+			// slug alone no longer names a brief. Both are OPTIONAL and default to the paid
+			// surface's identity, which is what every caller predating this meant: paid was the
+			// only surface whose brief could be saved, so an omitted pair addresses exactly the
+			// row such a caller would have found before.
+			Attribute("delivery_type", String, "Delivery surface the brief was authored for.", func() {
+				Enum("paid-marketing", "email")
+				Default("paid-marketing")
+				Example("email")
+			})
+			Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
+				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+				Default("")
+				Example("Registration Push")
+			})
 			Required("project_id", "event_slug")
 		})
 		Result(Brief)
@@ -898,6 +968,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// a lookup that legitimately MISSES is the common case (404 = generate one).
 			GET("/projects/{project_id}/briefs")
 			Param("event_slug")
+			Param("delivery_type")
+			Param("stage")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
 			briefErrorResponses()

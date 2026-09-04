@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // The brief repository's write path has, until now, been asserted only over SQL SOURCE
@@ -561,6 +564,413 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 	if after.UpdatedBy == nil || after.UpdatedBy.Name != "Ada Lovelace" {
 		t.Errorf("updated_by = %+v after a refused cross-project replace, want the original author", after.UpdatedBy)
 	}
+}
+
+// TestLiveReplaceBriefRejectsAnIdentityChange covers the third state of the update path, which is
+// the one that used to be silent.
+//
+// `replaceBriefQuery` omits delivery_type and stage from its SET list because they are identity
+// under 000030's key. Omitting them alone meant a caller could PUT a changed delivery_type, get a
+// 200, and read the OLD value back -- told the change landed when it had been dropped.
+//
+// The first subtest is the one that keeps the guard honest. An omitted delivery_type arrives as the
+// zero value, and rejecting THAT would break every ordinary content edit on an email brief, so
+// "not restated" and "asked to change" must stay distinguishable. A guard that simply compared
+// b.DeliveryType against the stored row would pass the second subtest and fail this one.
+func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	// An EMAIL brief, because that is where the zero-value trap bites: paid is what an omitted
+	// value would default to, so a paid brief cannot tell the two apart.
+	newEmailBrief := func(t *testing.T) *model.CampaignBrief {
+		t.Helper()
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		b.DeliveryType = model.DeliveryEmail
+		b.Stage = "Registration Push"
+		created, err := repo.CreateBrief(ctx, b, nil)
+		if err != nil {
+			t.Fatalf("CreateBrief: %v", err)
+		}
+		return created
+	}
+
+	t.Run("an edit that does not restate the identity is allowed", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		edit.Copy = json.RawMessage(`{"headline":"edited"}`)
+		// Assert* left nil: exactly what UpdateBrief passes when the payload omits both fields.
+
+		updated, err := repo.ReplaceBrief(ctx, edit, created.Version, nil)
+		if err != nil {
+			t.Fatalf("ReplaceBrief without restating identity: %v", err)
+		}
+		// The identity must SURVIVE the edit, not be reset to the paid default.
+		if updated.DeliveryType != model.DeliveryEmail {
+			t.Errorf("delivery_type after edit = %q, want %q", updated.DeliveryType, model.DeliveryEmail)
+		}
+		if updated.Stage != "Registration Push" {
+			t.Errorf("stage after edit = %q, want %q", updated.Stage, "Registration Push")
+		}
+		assertJSONEqual(t, "copy", updated.Copy, `{"headline":"edited"}`)
+	})
+
+	t.Run("changing the delivery type is rejected", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		paid := model.DeliveryPaidMarketing
+		edit.AssertDeliveryType = &paid
+		edit.AssertStage = &created.Stage
+
+		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
+			t.Fatalf("ReplaceBrief moving the surface: err = %v, want ErrBriefIdentityImmutable", err)
+		}
+
+		// The WHOLE request must roll back, not just the identity column. The UPDATE ran before
+		// the guard, so a missing rollback would leave the content edited and the version bumped
+		// while the caller was told the request failed.
+		after, err := repo.GetBrief(ctx, created.ProjectID, created.ID)
+		if err != nil {
+			t.Fatalf("GetBrief after a rejected identity change: %v", err)
+		}
+		if after.Version != created.Version {
+			t.Errorf("version = %d after a REJECTED update, want %d: the content update was not rolled back",
+				after.Version, created.Version)
+		}
+		assertJSONEqual(t, "copy", after.Copy, `{"headline":"original"}`)
+	})
+
+	t.Run("changing the stage is rejected", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		edit.AssertDeliveryType = &created.DeliveryType
+		countdown := "Final Countdown"
+		edit.AssertStage = &countdown
+
+		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
+			t.Fatalf("ReplaceBrief moving the stage: err = %v, want ErrBriefIdentityImmutable", err)
+		}
+	})
+
+	// The case a value-based guard cannot see. "" is a REAL stage -- the paid brief's -- so an
+	// explicit `{"stage": ""}` on an email brief asks to move it to the paid surface, and is not
+	// the same request as omitting the field. A guard that skipped every empty value as "not
+	// restated" committed the content and returned 200 with the stage unchanged, telling the
+	// caller a refused identity change had succeeded. Confirmed against a live database before
+	// the Assert* fields existed.
+	t.Run("an explicitly empty stage is a change, not an omission", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		empty := ""
+		edit.AssertStage = &empty
+		edit.Copy = json.RawMessage(`{"headline":"moved"}`)
+
+		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
+			t.Fatalf("ReplaceBrief with an explicit empty stage: err = %v, want ErrBriefIdentityImmutable", err)
+		}
+
+		after, err := repo.GetBrief(ctx, created.ProjectID, created.ID)
+		if err != nil {
+			t.Fatalf("GetBrief: %v", err)
+		}
+		if after.Version != created.Version {
+			t.Errorf("version = %d after a REJECTED update, want %d: the content update was not rolled back",
+				after.Version, created.Version)
+		}
+		assertJSONEqual(t, "copy", after.Copy, `{"headline":"original"}`)
+	})
+}
+
+// TestLiveFindBriefZeroDeliveryTypeFindsTheMigratedPaidRow pins the normalization on the READ.
+//
+// A direct Go caller -- anything not arriving through Goa, which applies the design default first
+// -- leaves DeliveryType at the zero value. An earlier revision normalized that only for the
+// pair validation and then queried the RAW value, so the lookup asked for `delivery_type = ”`
+// while every row 000030 migrated stores `paid-marketing`. The caller was answered 404 for a paid
+// brief sitting right there.
+//
+// The seed is what makes this test able to fail: it stores an EXPLICIT `paid-marketing`, as a
+// migrated row does. Seeding a zero-valued model instead lets the repo's own default write
+// `paid-marketing` anyway, so a broken read still matches and the test passes vacuously -- which
+// is exactly how the defect survived its first review.
+func TestLiveFindBriefZeroDeliveryTypeFindsTheMigratedPaidRow(t *testing.T) {
+	ctx := context.Background()
+	repo := newBriefRepo(dbtest.Pool(t))
+	project, slug := dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug")
+
+	b := draftBrief(project, slug)
+	b.DeliveryType = model.DeliveryPaidMarketing
+	created, err := repo.CreateBrief(ctx, b, nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	found, err := repo.FindBriefByEventSlug(ctx, project, slug, model.DeliveryPaidMarketing, "")
+	if err != nil {
+		t.Fatalf("FindBriefByEventSlug for the migrated paid row: %v", err)
+	}
+	if found.ID != created.ID {
+		t.Errorf("found brief %q, want %q", found.ID, created.ID)
+	}
+	if found.DeliveryType != model.DeliveryPaidMarketing {
+		t.Errorf("stored delivery_type = %q, want %q", found.DeliveryType, model.DeliveryPaidMarketing)
+	}
+}
+
+// TestLivePairCheckMatchesEmailStageNames pins the pair CHECK against the LIVE schema, after every
+// migration has run — not against 000030's file.
+//
+// An earlier version read the migration SQL directly and compared it to `emailstage.Names()`. That
+// looked equivalent and was not: 000030 is a FROZEN historical artifact. A seventh stage arrives as
+// a NEW migration altering the constraint, and the old file must not change, because databases
+// already past it will never re-run it. Pinning today's taxonomy to that file would have failed on
+// a correct change and pressured whoever hit it into editing migration history — the one thing a
+// migration directory must never do.
+//
+// Reading the constraint from `pg_constraint` asks the question that actually matters: does the
+// schema this service will run against accept exactly the stages it knows about? That answer stays
+// correct however many migrations later amend it.
+func TestLivePairCheckMatchesEmailStageNames(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+
+	var def string
+	err := pool.QueryRow(ctx,
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		 WHERE conname = 'campaign_briefs_delivery_stage_pair_valid'`).Scan(&def)
+	if err != nil {
+		t.Fatalf("read the pair constraint from the live schema: %v", err)
+	}
+
+	for _, stage := range emailstage.Names() {
+		if !strings.Contains(def, "'"+stage+"'") {
+			t.Errorf("the live pair CHECK omits %q, which emailstage.Names() declares — a brief "+
+				"naming it passes the API enum and then fails the constraint as a 500.\nconstraint: %s",
+				stage, def)
+		}
+	}
+
+	// The reverse: a stage removed from `emailstage` must not linger in the schema, or the database
+	// keeps accepting an identity the service has no template for.
+	//
+	// Read out of the ARRAY(...) the email arm builds, rather than counting quotes across the whole
+	// definition: Postgres renders each literal as `'x'::text` and the constraint also names
+	// 'paid-marketing' and '' in the paid arm, so a whole-text count answers a different question
+	// than the one asked. Scoping to the array is what makes this the reverse of the loop above.
+	arrayStart := strings.Index(def, "ARRAY[")
+	if arrayStart < 0 {
+		t.Fatalf("the live pair CHECK has no ARRAY of email stages.\nconstraint: %s", def)
+	}
+	arrayEnd := strings.Index(def[arrayStart:], "]")
+	if arrayEnd < 0 {
+		t.Fatalf("the live pair CHECK's stage ARRAY is unterminated.\nconstraint: %s", def)
+	}
+	inSchema := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(def[arrayStart:arrayStart+arrayEnd], -1)
+	if len(inSchema) != len(emailstage.Names()) {
+		var got []string
+		for _, m := range inSchema {
+			got = append(got, m[1])
+		}
+		t.Errorf("the live pair CHECK names stages %v, want %v — a stage removed from emailstage "+
+			"still lingers in the schema, or one was added without a migration.", got, emailstage.Names())
+	}
+}
+
+// TestLiveWidenedKeyPermitsSiblingsAndRejectsDuplicates exercises the INDEX that is the whole
+// point of 000030, against the real PostgreSQL definition.
+//
+// Every other test here proves a piece around it -- the CHECKs, the rollback guard, the repo's
+// scoping -- and the service fake cannot help at all: it matches on struct fields, so a wrong
+// index definition (three columns, or a non-partial one) would leave every fake-backed test green.
+// The only thing that can catch that is asking Postgres.
+//
+// Three properties, and they only mean something together:
+//  1. an event holds a paid brief AND several email stages at once -- the state that was
+//     unrepresentable before, and the reason the key widened;
+//  2. an EXACT duplicate of any one of them is still refused as ErrConflict -- widening must not
+//     have become "no uniqueness at all";
+//  3. archiving frees ONLY that full-key slot, leaving its siblings untouched -- the partial
+//     predicate still applies, and it applies per-identity rather than per-event.
+func TestLiveWidenedKeyPermitsSiblingsAndRejectsDuplicates(t *testing.T) {
+	ctx := context.Background()
+	repo := newBriefRepo(dbtest.Pool(t))
+	project := dbtest.UniqueID(t, "project")
+	slug := dbtest.UniqueID(t, "slug")
+
+	create := func(t *testing.T, delivery model.DeliveryType, stage string) (*model.CampaignBrief, error) {
+		t.Helper()
+		b := draftBrief(project, slug)
+		b.DeliveryType = delivery
+		b.Stage = stage
+		return repo.CreateBrief(ctx, b, nil)
+	}
+
+	// 1. One event, four live briefs: the paid plan and three sends of its series.
+	identities := []struct {
+		delivery model.DeliveryType
+		stage    string
+	}{
+		{model.DeliveryPaidMarketing, ""},
+		{model.DeliveryEmail, "CFP Launch"},
+		{model.DeliveryEmail, "Registration Push"},
+		{model.DeliveryEmail, "Final Countdown"},
+	}
+	created := make(map[string]*model.CampaignBrief, len(identities))
+	for _, id := range identities {
+		b, err := create(t, id.delivery, id.stage)
+		if err != nil {
+			t.Fatalf("CreateBrief(%q, %q) on an event that already has siblings: %v", id.delivery, id.stage, err)
+		}
+		created[string(id.delivery)+"|"+id.stage] = b
+	}
+	if len(created) != len(identities) {
+		t.Fatalf("expected %d distinct briefs for one event, got %d", len(identities), len(created))
+	}
+
+	// 2. An exact duplicate of any one of them is still a conflict.
+	for _, id := range identities {
+		if _, err := create(t, id.delivery, id.stage); !errors.Is(err, domain.ErrConflict) {
+			t.Errorf("duplicate CreateBrief(%q, %q) = %v, want domain.ErrConflict -- the widened "+
+				"index must still be UNIQUE on the full key", id.delivery, id.stage, err)
+		}
+	}
+
+	// 3. Archiving frees that slot and ONLY that slot.
+	victim := created["email|Registration Push"]
+	if _, err := repo.ArchiveBrief(ctx, project, victim.ID, victim.CreatedBy, nil); err != nil {
+		t.Fatalf("ArchiveBrief: %v", err)
+	}
+	if _, err := create(t, model.DeliveryEmail, "Registration Push"); err != nil {
+		t.Errorf("CreateBrief after archiving the same identity: %v -- archiving must free its slot", err)
+	}
+	for _, id := range identities {
+		if id.delivery == model.DeliveryEmail && id.stage == "Registration Push" {
+			continue
+		}
+		if _, err := create(t, id.delivery, id.stage); !errors.Is(err, domain.ErrConflict) {
+			t.Errorf("after archiving one sibling, CreateBrief(%q, %q) = %v, want domain.ErrConflict "+
+				"-- archiving one identity must not free another's slot", id.delivery, id.stage, err)
+		}
+	}
+}
+
+// TestLiveBriefIdentityPairsAreConstrained pins the identity COMBINATIONS at the schema, not just
+// the two columns independently.
+//
+// Validating each column alone still admits `(paid-marketing, "Registration Push")` and
+// `(email, "")` -- neither is a brief the product has, since paid has no series and an email send
+// is always some stage -- and each occupies its OWN slot in the widened unique index, so they are
+// extra live briefs for one event rather than inert bad data. A free-text stage is worse: it is a
+// slot no lookup can ever name, because find-brief validates against the same list. All three were
+// storable before the pair CHECK; this test is what keeps them out.
+//
+// At the DATABASE, not only the HTTP edge, because this is the invariant the KEY rests on. The
+// generated validators cover HTTP callers; a migration, a backfill or a psql session answers to
+// the constraint alone.
+func TestLiveBriefIdentityPairsAreConstrained(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	create := func(t *testing.T, delivery model.DeliveryType, stage string) error {
+		t.Helper()
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		b.DeliveryType = delivery
+		b.Stage = stage
+		_, err := repo.CreateBrief(ctx, b, nil)
+		return err
+	}
+
+	for _, tc := range []struct {
+		name     string
+		delivery model.DeliveryType
+		stage    string
+	}{
+		{"paid with an email stage", model.DeliveryPaidMarketing, "Registration Push"},
+		{"email with no stage", model.DeliveryEmail, ""},
+		{"email with a stage nothing can look up", model.DeliveryEmail, "Nonsense Stage"},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			if err := create(t, tc.delivery, tc.stage); err == nil {
+				t.Fatalf("CreateBrief stored (%q, %q); that pair is not a brief the product has, "+
+					"and it consumes a live slot in the unique key", tc.delivery, tc.stage)
+			}
+		})
+	}
+
+	// The two real shapes must still be storable. A constraint that rejected these would refuse
+	// every brief in the system, so this is the half that proves the rule is the right one.
+	for _, tc := range []struct {
+		name     string
+		delivery model.DeliveryType
+		stage    string
+	}{
+		{"a paid brief", model.DeliveryPaidMarketing, ""},
+		{"an email send", model.DeliveryEmail, "Final Countdown"},
+	} {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			if err := create(t, tc.delivery, tc.stage); err != nil {
+				t.Fatalf("CreateBrief refused (%q, %q), which is a real brief: %v", tc.delivery, tc.stage, err)
+			}
+		})
+	}
+}
+
+// TestLiveCreateBriefDefaultsOnlyTheZeroDeliveryType pins both halves of the normalisation in
+// CreateBrief, because they pull in opposite directions and a fix for one can undo the other.
+//
+// It exists because 000030's CHECK broke every live test in this file at once: `draftBrief` never
+// set DeliveryType, the insert names the column explicitly so the column DEFAULT could not apply,
+// and `”` reached the constraint. Nothing local caught it -- these tests skip without
+// TEST_DATABASE_URL, so a laptop run reported success while CI failed on nine tests.
+//
+// The second subtest is the one that stops the fix from becoming a different bug. Defaulting the
+// ZERO value is a convenience for a Go caller; defaulting an UNRECOGNISED value would silently
+// file a typo'd brief as paid -- and under 000030's widened key, `(project, slug, paid-marketing,
+// ”)` is the real paid brief's slot, so a misspelling could displace it. The bad value must reach
+// the CHECK.
+func TestLiveCreateBriefDefaultsOnlyTheZeroDeliveryType(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	t.Run("an unset delivery type is stored as paid-marketing", func(t *testing.T) {
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		if b.DeliveryType != "" {
+			t.Fatalf("precondition: draftBrief must leave DeliveryType unset, got %q", b.DeliveryType)
+		}
+
+		created, err := repo.CreateBrief(ctx, b, nil)
+		if err != nil {
+			t.Fatalf("CreateBrief with an unset delivery type: %v", err)
+		}
+		// Asserted on the value READ BACK, not on err == nil: a write that stored the wrong
+		// surface would still return a nil error, and under the widened key the surface is
+		// part of which brief this row IS.
+		if created.DeliveryType != model.DeliveryPaidMarketing {
+			t.Errorf("stored delivery_type = %q, want %q", created.DeliveryType, model.DeliveryPaidMarketing)
+		}
+	})
+
+	t.Run("an unrecognised delivery type is rejected, not defaulted", func(t *testing.T) {
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		b.DeliveryType = model.DeliveryType("e-mail") // a plausible typo for "email"
+
+		created, err := repo.CreateBrief(ctx, b, nil)
+		if err == nil {
+			t.Fatalf("CreateBrief accepted delivery_type %q and stored it as %q; the CHECK must reject it",
+				"e-mail", created.DeliveryType)
+		}
+	})
 }
 
 // assertJSONEqual compares a jsonb column against expected JSON semantically. jsonb

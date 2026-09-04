@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 
 	"goa.design/goa/v3/security"
@@ -158,9 +161,13 @@ func briefDoc(b *briefs.Brief) indexer.BriefDoc {
 		ProjectID:   b.ProjectID,
 		ProgramType: b.ProgramType,
 		EventSlug:   b.EventSlug,
-		URL:         derefStr(b.URL),
-		Status:      b.Status,
-		Version:     b.Version,
+		// Part of the key, not decoration: without these two, a paid brief and every stage of the
+		// same event's email series index identically and a consumer cannot tell them apart.
+		DeliveryType: b.DeliveryType,
+		Stage:        b.Stage,
+		URL:          derefStr(b.URL),
+		Status:       b.Status,
+		Version:      b.Version,
 
 		// The revisable content: without it a copy-only edit indexes a new version showing
 		// nothing changed, so revision history cannot answer "what was revised?".
@@ -318,10 +325,24 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		return nil, err
 	}
 	in := p.Brief
+	// The PAIR, before the write. Each column validates independently at the edge, so nothing
+	// upstream can see that `(paid-marketing, "Registration Push")` or `(email, "")` is not a
+	// brief the product has. Migration 000030's CHECK refuses both, but a constraint violation is
+	// SQLSTATE 23514 -- unclassified by the repository -- so it would reach the caller as a 500
+	// for a request that is merely invalid. Answering here makes it the 400 it is.
+	if perr := briefIdentityPairProblem(deliveryTypeOrPaid(in.DeliveryType), derefOrEmpty(in.Stage)); perr != nil {
+		return nil, mapBriefErr(perr)
+	}
 	b := &model.CampaignBrief{
-		ProjectID:    p.ProjectID,
-		ProgramType:  model.ProgramType(in.ProgramType),
-		EventSlug:    in.EventSlug,
+		ProjectID:   p.ProjectID,
+		ProgramType: model.ProgramType(in.ProgramType),
+		EventSlug:   in.EventSlug,
+		// Defaulted here rather than at the column, because the column's default exists to backfill
+		// rows written before 000030 -- it must not also quietly absorb a NEW brief whose caller
+		// forgot to say which surface it belongs to. An omitted value means paid for the same
+		// reason it does on the read: paid was the only surface that could save one.
+		DeliveryType: deliveryTypeOrPaid(in.DeliveryType),
+		Stage:        derefOrEmpty(in.Stage),
 		URL:          strVal(in.URL),
 		Platforms:    marshalStrings(in.Platforms),
 		EventDetails: marshalAny(in.EventDetails),
@@ -390,12 +411,15 @@ func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc 
 	}
 }
 
-// FindBrief returns the saved brief for an event slug, or 404 when none exists.
+// FindBrief returns the saved brief for one event slug ON ONE SURFACE AND STAGE, or 404 when that
+// send has none.
 //
 // This is the "have I already generated a brief for this event?" lookup. The UI derives the
 // slug from a pasted event URL and calls this BEFORE generating: a 200 returns the stored
 // brief (with its AI-generated copy/keywords/targeting, plus any edits made since), and a
-// 404 means this event has no brief yet, so one should be generated.
+// 404 means THIS SEND has no brief yet, so one should be generated. Since 000030 widened the key
+// it no longer means the event has none at all: the same event may already carry a paid brief and
+// other stages of its email series, each addressable on its own.
 //
 // A 404 is an ORDINARY outcome, not a failure — first-time generation is the common case.
 // This endpoint never generates or mutates anything; regenerating is an explicit
@@ -405,7 +429,35 @@ func (s *BriefService) FindBrief(ctx context.Context, p *briefs.FindBriefPayload
 	if err != nil {
 		return nil, err
 	}
-	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug)
+	// Goa applies the design's defaults, so an omitted pair arrives as ("paid-marketing", "") --
+	// the identity every caller predating 000030 meant, since paid was the only surface whose
+	// brief could be saved. Passed through rather than re-defaulted here so there is one place
+	// that decides what an omitted delivery type means.
+	//
+	// The pair is checked on the READ too, and the reason is specific to a lookup: no brief can
+	// ever carry an impossible pair, so the query is guaranteed to miss and the caller would be
+	// told 404 -- "no such brief" -- about an identity that could not name a brief in the first
+	// place. That is a true statement and a useless one; it sends a caller looking for a missing
+	// row instead of at the request it sent. 400 says which part is wrong.
+	// Normalized ONCE, and the same value is both validated and queried. An earlier revision
+	// normalized only for the validation and then passed the raw `p.DeliveryType` to the query, so
+	// a direct Go caller with the zero value passed the check and then asked the database for
+	// `delivery_type = ''` -- which matches nothing, because 000030 backfills every pre-existing
+	// row to `paid-marketing`. The caller got a 404 for a paid brief sitting right there. Only a
+	// direct caller could reach it, since Goa applies the design default first, and the live test
+	// missed it by seeding a zero-valued row rather than a migrated one.
+	// `deliveryTypeOrPaid` defaults a NIL pointer, and `FindBriefPayload.DeliveryType` is a plain
+	// string -- `&p.DeliveryType` is never nil -- so it cannot do the job here. The ZERO VALUE is
+	// what needs defaulting on this path, for the same reason: paid was the only surface whose
+	// brief could be saved before 000030, so "unsaid" means paid.
+	deliveryType := model.DeliveryType(p.DeliveryType)
+	if deliveryType == "" {
+		deliveryType = model.DeliveryPaidMarketing
+	}
+	if perr := briefIdentityPairProblem(deliveryType, p.Stage); perr != nil {
+		return nil, mapBriefErr(perr)
+	}
+	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug, deliveryType, p.Stage)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -435,16 +487,28 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 	}
 	in := p.Brief
 	b := &model.CampaignBrief{
-		ID:           p.BriefID,
-		ProjectID:    p.ProjectID,
-		ProgramType:  model.ProgramType(in.ProgramType),
-		EventSlug:    in.EventSlug,
-		URL:          strVal(in.URL),
-		Platforms:    marshalStrings(in.Platforms),
-		EventDetails: marshalAny(in.EventDetails),
-		Copy:         marshalAny(in.Copy),
-		Keywords:     marshalAny(in.Keywords),
-		Targeting:    marshalAny(in.Targeting),
+		ID:          p.BriefID,
+		ProjectID:   p.ProjectID,
+		ProgramType: model.ProgramType(in.ProgramType),
+		EventSlug:   in.EventSlug,
+		// Passed as ASSERTIONS, not as values to write: replaceBriefQuery omits both columns
+		// because they are identity under 000030's key. ReplaceBrief compares them against the
+		// stored row and rejects a change, since silently dropping them returned 200 with the
+		// old values -- telling a caller its change had landed when it had not.
+		//
+		// The POINTERS go through untouched. Defaulting or dereferencing here would destroy the
+		// distinction the wire draws: an omitted `stage` means "I am not touching the identity",
+		// while an explicit `"stage": ""` means "move this to the paid stage" -- a real request
+		// that must be REFUSED rather than ignored. Flattening both to "" answered the second
+		// one with a 200 and no change.
+		AssertDeliveryType: assertedDeliveryType(in.DeliveryType),
+		AssertStage:        in.Stage,
+		URL:                strVal(in.URL),
+		Platforms:          marshalStrings(in.Platforms),
+		EventDetails:       marshalAny(in.EventDetails),
+		Copy:               marshalAny(in.Copy),
+		Keywords:           marshalAny(in.Keywords),
+		Targeting:          marshalAny(in.Targeting),
 		// Only updated_by moves on an edit; created_by is untouched by the UPDATE and
 		// keeps naming the original author.
 		UpdatedBy: attributedActor(ctx, "update brief"),
@@ -531,6 +595,24 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 			// (brief_id, platform)-unique persistence can record.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "duplicate platform: " + pl}
 		}
+		// The channel must match the SURFACE the brief was authored for. `delivery_type` is part of
+		// a brief's identity under 000030, and a brief carries content specific to its channel:
+		// RSA headlines and a keyword list on paid, a subject and preheader on email. Without this,
+		// an email brief could launch paid ads and a paid brief could stage a HubSpot send -- each
+		// dispatching content the platform has no field for, and each recording a campaign row
+		// against a brief that never meant it.
+		//
+		// Checked here rather than in the orchestrator because this is where the caller's choice
+		// arrives and where a 400 is the right answer. An empty Kind() is unreachable: `Valid()` is
+		// defined in terms of Kind(), so a provider that classifies as nothing is already rejected
+		// above.
+		if want := deliveryChannelKind(brief.DeliveryType); prov.Kind() != want {
+			return nil, &briefs.BadRequestError{
+				Code: "400",
+				Message: fmt.Sprintf("platform %s is a %s channel, but this brief was authored for %s; "+
+					"create the campaign from a brief on that surface instead", pl, prov.Kind(), brief.DeliveryType),
+			}
+		}
 		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
@@ -604,6 +686,23 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// Same gate as create: adoption must not be the way around approval.
 	if brief.Status != model.BriefApproved {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "brief must be approved before adopting campaigns"}
+	}
+
+	// The same surface rule `CreateCampaigns` enforces, because adoption is the OTHER way a
+	// campaign gets bound to a brief. Without it an email brief could acquire a paid campaign row
+	// through this endpoint -- the identity invariant honoured on one path and not the other, which
+	// is the more dangerous shape, since whoever added the first check would reasonably assume it
+	// covered the model.
+	//
+	// BEFORE the upstream lookup, deliberately: a mismatch is answerable from what is already in
+	// hand, and asking the ad platform about a campaign this brief could never adopt spends a round
+	// trip to reach the same 400.
+	if want := deliveryChannelKind(brief.DeliveryType); platform.Kind() != want {
+		return nil, &briefs.BadRequestError{
+			Code: "400",
+			Message: fmt.Sprintf("platform %s is a %s channel, but this brief was authored for %s; "+
+				"adopt the campaign from a brief on that surface instead", p.Platform, platform.Kind(), brief.DeliveryType),
+		}
 	}
 
 	// Preflight: check if this brief already has a campaign on this platform. If it does,
@@ -1720,11 +1819,21 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 // ─── mapping helpers ───
 
 func briefResult(b *model.CampaignBrief) *briefs.Brief {
+	// Both are REQUIRED on the response, so the generated type takes plain strings rather than
+	// pointers -- which matches the row: the columns are NOT NULL, and an omitted delivery type is
+	// resolved to paid at write time rather than stored as absent. The locals exist only to convert
+	// `model.DeliveryType` to its underlying string.
+	deliveryType := string(b.DeliveryType)
+	stage := b.Stage
 	return &briefs.Brief{
-		ID:           b.ID,
-		ProjectID:    b.ProjectID,
-		ProgramType:  string(b.ProgramType),
-		EventSlug:    b.EventSlug,
+		ID:          b.ID,
+		ProjectID:   b.ProjectID,
+		ProgramType: string(b.ProgramType),
+		EventSlug:   b.EventSlug,
+		// Returned so a caller can tell WHICH brief it received. With one event holding a paid brief
+		// and an email series, a response naming only the slug is ambiguous about its own row.
+		DeliveryType: deliveryType,
+		Stage:        stage,
 		URL:          optStr(b.URL),
 		Platforms:    unmarshalStrings(b.Platforms),
 		EventDetails: unmarshalAny(b.EventDetails),
@@ -1787,6 +1896,110 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 	return v, nil
 }
 
+// deliveryTypeOrPaid resolves an ABSENT delivery type to the surface that wrote the brief.
+//
+// Absent means paid, and that is a statement about history rather than a convenience: paid was the
+// only surface whose brief could be saved before 000030, so a caller that names none is a caller
+// that predates the distinction.
+//
+// Only absence defaults. An earlier revision also coerced an UNRECOGNISED value to paid, reasoning
+// that the column's CHECK would otherwise turn a typo into a write error. That was wrong twice
+// over. It could not fire for an HTTP caller -- the generated validator rejects a non-enum
+// delivery_type before this runs -- so it could only ever act on a value the design admitted and
+// the model did not, which is precisely the drift you want to fail loudly. And under 000030's
+// widened key, `(project, slug, paid-marketing, ”)` is the REAL paid brief's slot: silently
+// filing a misspelled email brief there does not correct the typo, it aims the write at another
+// brief. A bad value now reaches the CHECK and the write fails, which is the correct outcome.
+func deliveryTypeOrPaid(v *string) model.DeliveryType {
+	if v == nil {
+		return model.DeliveryPaidMarketing
+	}
+	return model.DeliveryType(*v)
+}
+
+// deliveryChannelKind maps a brief's delivery surface to the channel its campaigns must use.
+//
+// The two vocabularies are separate on purpose -- `DeliveryType` describes what a BRIEF is,
+// `ChannelKind` what a PROVIDER does -- and this is the one place they meet. An unrecognised
+// surface maps to paid, matching every other "unsaid means paid" rule in this file; it is
+// unreachable in practice, since a brief's delivery type is constrained by both the design enum
+// and the column's CHECK.
+func deliveryChannelKind(d model.DeliveryType) model.ChannelKind {
+	if d == model.DeliveryEmail {
+		return model.ChannelEmail
+	}
+	return model.ChannelPaidAds
+}
+
+// briefIdentityPairProblem reports why a delivery_type/stage COMBINATION cannot exist, or nil.
+//
+// The two columns validate independently at the edge -- Goa's enums accept every value here -- so
+// nothing before this point can see that `(paid-marketing, "Registration Push")` and
+// `(email, "")` are not briefs the product has. Paid has no series, and an email send is always
+// some stage.
+//
+// Checked HERE rather than left to migration 000030's `campaign_briefs_delivery_stage_pair_valid`
+// because a CHECK violation is SQLSTATE 23514, which no repository path classifies, so it reaches
+// the caller as a 500 for a request that is simply invalid. The constraint stays as the backstop
+// for writers that never pass through this service; this is the answer an API client gets.
+//
+// The stage list is deliberately `emailstage.Names()` rather than a fourth hand-written copy --
+// see TestPublishedStageEnumMatchesEmailStageNames, which pins the published enum to the same
+// function.
+func briefIdentityPairProblem(delivery model.DeliveryType, stage string) error {
+	switch delivery {
+	case model.DeliveryPaidMarketing:
+		if stage != "" {
+			return fmt.Errorf("%w: a paid-marketing brief has no series, so its stage must be empty, got %q",
+				domain.ErrBriefIdentityPairInvalid, stage)
+		}
+		return nil
+	case model.DeliveryEmail:
+		if slices.Contains(emailstage.Names(), stage) {
+			return nil
+		}
+		return fmt.Errorf("%w: an email brief names one send in the series, so its stage must be one of %v, got %q",
+			domain.ErrBriefIdentityPairInvalid, emailstage.Names(), stage)
+	default:
+		// Anything else, INCLUDING the empty string. An earlier revision accepted `""` as paid, to
+		// spare a direct Go caller that leaves the field at its zero value -- but both call sites
+		// now normalize before calling here (`CreateBrief` via `deliveryTypeOrPaid`, `FindBrief`
+		// via its own zero check), so the only way to reach this with `""` is to pass it
+		// EXPLICITLY. The model says that is not a delivery type: `DeliveryType.Valid()` rejects
+		// it and the column's CHECK refuses it. Accepting it here contradicted both, and the
+		// "only absence defaults" rule the rest of this file states.
+		//
+		// Unreachable through HTTP for any other value -- the generated validator rejects a
+		// non-enum delivery_type first -- but the pair cannot be judged without knowing the
+		// surface, and the CHECK would refuse the write regardless.
+		return fmt.Errorf("%w: unknown delivery type %q", domain.ErrBriefIdentityPairInvalid, delivery)
+	}
+}
+
+// assertedDeliveryType carries an update caller's explicit delivery_type through as a claim about
+// the brief's identity, preserving ABSENCE. It deliberately does not default: unlike
+// deliveryTypeOrPaid, whose nil-means-paid rule is about what a NEW brief IS, a nil here means the
+// request said nothing about identity and the guard must skip it. Defaulting would turn every
+// ordinary content edit on an email brief into a rejected attempt to move it to the paid surface.
+func assertedDeliveryType(v *string) *model.DeliveryType {
+	if v == nil {
+		return nil
+	}
+	d := model.DeliveryType(*v)
+	return &d
+}
+
+// derefOrEmpty reads an optional string, treating absence as the empty value.
+//
+// For `stage` the empty string is not a fallback but the real stage of a paid brief, which has no
+// series -- and it is what the column stores, since NULL cannot participate in the unique index.
+func derefOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
 func mapBriefErr(err error) error {
 	switch {
 	case err == nil:
@@ -1804,6 +2017,18 @@ func mapBriefErr(err error) error {
 		// caller's ETag may be perfectly current, so 412 would send them off to refetch and
 		// rebuild a request that was already correct — the right advice is simply to retry.
 		return &briefs.ConflictError{Code: "409", Message: "another write to this campaign is already in progress; retry shortly"}
+	case errors.Is(err, domain.ErrBriefIdentityPairInvalid):
+		// 400, not 409: nothing conflicts and no state is in the way -- the request itself names a
+		// combination that cannot exist. The message carries the pair, because each value alone is
+		// valid and a caller told only "invalid stage" would look at a stage that is on the list.
+		return &briefs.BadRequestError{Code: "400", Message: err.Error()}
+	case errors.Is(err, domain.ErrBriefIdentityImmutable):
+		// A 409 like the others, but the generic "already exists" would be actively misleading:
+		// nothing conflicts, and the caller's request was well formed. What they attempted is
+		// not an edit at all -- delivery_type and stage identify WHICH brief this is, so
+		// changing one names a different brief. Say what to do instead, because "immutable"
+		// alone leaves a caller who wants a second channel or another send with no next step.
+		return &briefs.ConflictError{Code: "409", Message: "a brief's delivery type and stage are part of its identity and cannot be changed; create a brief for the other surface or stage instead"}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

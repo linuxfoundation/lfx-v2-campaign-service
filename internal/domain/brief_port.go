@@ -14,10 +14,20 @@ import (
 type BriefReader interface {
 	// GetBrief returns a brief by id (scoped to the project), or ErrNotFound.
 	GetBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error)
-	// FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
-	// ErrNotFound when none exists. ErrNotFound is an ORDINARY outcome here, not a failure:
-	// it is how the caller learns this event has no brief yet and one should be generated.
-	FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error)
+	// FindBriefByEventSlug returns the non-archived brief for
+	// (projectID, eventSlug, deliveryType, stage), or ErrNotFound when none exists. ErrNotFound is
+	// an ORDINARY outcome here, not a failure: it is how the caller learns this surface has no
+	// brief yet for this event and one should be generated.
+	//
+	// The delivery type and stage are REQUIRED rather than optional, because one event holds a
+	// paid brief and an email series at the same time (000030). A lookup that named only the
+	// event would have to choose one of them arbitrarily.
+	FindBriefByEventSlug(
+		ctx context.Context,
+		projectID, eventSlug string,
+		deliveryType model.DeliveryType,
+		stage string,
+	) (*model.CampaignBrief, error)
 	// ConfirmBriefApproved reports nil when the brief is STILL approved at expectedVersion,
 	// ErrStaleApproval when it is not, and ErrNotFound when it is missing or archived.
 	//
@@ -51,7 +61,8 @@ type BriefReader interface {
 // BriefWriter mutates campaign briefs.
 type BriefWriter interface {
 	// CreateBrief inserts a brief. Returns ErrConflict on the
-	// UNIQUE(project_id, event_slug) violation.
+	// UNIQUE(project_id, event_slug, delivery_type, stage) violation -- the full identity since
+	// 000030, so one event's paid brief and each stage of its email series are separate rows.
 	CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// ReplaceBrief replaces a brief's mutable fields, gating on expectedVersion.
 	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
