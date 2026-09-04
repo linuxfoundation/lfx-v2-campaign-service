@@ -592,6 +592,24 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 			// (brief_id, platform)-unique persistence can record.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "duplicate platform: " + pl}
 		}
+		// The channel must match the SURFACE the brief was authored for. `delivery_type` is part of
+		// a brief's identity under 000030, and a brief carries content specific to its channel:
+		// RSA headlines and a keyword list on paid, a subject and preheader on email. Without this,
+		// an email brief could launch paid ads and a paid brief could stage a HubSpot send -- each
+		// dispatching content the platform has no field for, and each recording a campaign row
+		// against a brief that never meant it.
+		//
+		// Checked here rather than in the orchestrator because this is where the caller's choice
+		// arrives and where a 400 is the right answer. An empty Kind() is unreachable: `Valid()` is
+		// defined in terms of Kind(), so a provider that classifies as nothing is already rejected
+		// above.
+		if want := deliveryChannelKind(brief.DeliveryType); prov.Kind() != want {
+			return nil, &briefs.BadRequestError{
+				Code: "400",
+				Message: fmt.Sprintf("platform %s is a %s channel, but this brief was authored for %s; "+
+					"create the campaign from a brief on that surface instead", pl, prov.Kind(), brief.DeliveryType),
+			}
+		}
 		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
@@ -1877,6 +1895,20 @@ func deliveryTypeOrPaid(v *string) model.DeliveryType {
 		return model.DeliveryPaidMarketing
 	}
 	return model.DeliveryType(*v)
+}
+
+// deliveryChannelKind maps a brief's delivery surface to the channel its campaigns must use.
+//
+// The two vocabularies are separate on purpose -- `DeliveryType` describes what a BRIEF is,
+// `ChannelKind` what a PROVIDER does -- and this is the one place they meet. An unrecognised
+// surface maps to paid, matching every other "unsaid means paid" rule in this file; it is
+// unreachable in practice, since a brief's delivery type is constrained by both the design enum
+// and the column's CHECK.
+func deliveryChannelKind(d model.DeliveryType) model.ChannelKind {
+	if d == model.DeliveryEmail {
+		return model.ChannelEmail
+	}
+	return model.ChannelPaidAds
 }
 
 // briefIdentityPairProblem reports why a delivery_type/stage COMBINATION cannot exist, or nil.

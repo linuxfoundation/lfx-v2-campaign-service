@@ -413,6 +413,103 @@ func withDatabase(dsn, name string) (string, error) {
 	return u.String(), nil
 }
 
+// TestLiveMigration000030RefusesToDropALiveEmailBrief pins the DATA-DEPENDENT half of 000030's
+// rollback guard, which no other test reaches.
+//
+// `TestLiveMigrationsGoDownAndUpAgain` rolls back an EMPTY schema, so every down file runs with
+// nothing to protect and this guard is never evaluated. Deleting the guard — or narrowing it back
+// to the collision-only form it started as — would leave that test green while a revert silently
+// stripped a live email brief of its delivery type and stage, after which the pre-000030 service
+// would serve its email content as the event's paid brief.
+//
+// One live email brief and no paid one is the case that matters, and the case the narrow unique
+// index CANNOT catch: there is nothing for it to collide with. So the assertion is that
+// `Steps(-1)` FAILS, and that the schema is left exactly as it was — version, both columns, and
+// the wide index — because a refused revert must be a no-op rather than a partial one.
+func TestLiveMigration000030RefusesToDropALiveEmailBrief(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(30); err != nil {
+		t.Fatalf("migrate to 30: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	// A SINGLE live email brief. No paid brief for the same event, deliberately: a pair would trip
+	// the narrow index and prove nothing about the guard.
+	if _, err = conn.Exec(ctx,
+		`INSERT INTO campaign_briefs (project_id, program_type, event_slug, delivery_type, stage)
+		 VALUES ('p-guard', 'events', 's-guard', 'email', 'CFP Launch')`); err != nil {
+		t.Fatalf("seed a live email brief: %v", err)
+	}
+
+	if err = m.Steps(-1); err == nil {
+		t.Fatal("Steps(-1) SUCCEEDED with a live email brief present; the revert would have " +
+			"dropped delivery_type and stage, leaving that row's email content indistinguishable " +
+			"from the event's paid brief")
+	}
+
+	// A refused revert is a NO-OP. Assert the schema, not merely the error: a guard that raised
+	// after the drops would produce the same error and a destroyed table.
+	//
+	// The version is read over a SEPARATE plain connection, not through a migrator. The migrator
+	// that just failed holds a connection stuck in an aborted transaction -- the RAISE inside the
+	// DO block poisons it -- so reusing it answers SQLSTATE 25P02, and building a SECOND migrator
+	// blocks on the advisory lock the first still holds. Both are properties of the refusal rather
+	// than problems with it: the failed statement and its transaction are precisely what must not
+	// have committed.
+	//
+	// `m` is closed first so its lock is released before anything else touches the database.
+	if _, cerr := m.Close(); cerr != nil {
+		t.Fatalf("close the migrator after the refused revert: %v", cerr)
+	}
+
+	var version int
+	var dirty bool
+	if verr := conn.QueryRow(ctx, `SELECT version, dirty FROM public.schema_migrations LIMIT 1`).Scan(&version, &dirty); verr != nil {
+		t.Fatalf("read version after the refused revert: %v", verr)
+	}
+	// DIRTY at 29 is what golang-migrate leaves behind, and it is correct rather than a defect:
+	// the version is stamped BEFORE the down file runs, and the dirty flag is exactly the marker
+	// that says "a migration was attempted and did not complete -- do not proceed automatically".
+	// An operator resolves it with `force` after archiving the briefs the guard named. What must
+	// NOT happen is the schema losing the columns, and that is what the rest of this test asserts.
+	if version != 29 || !dirty {
+		t.Errorf("after a refused revert: version = %d dirty = %v, want 29 and dirty -- "+
+			"golang-migrate stamps the target version before running the down file, so a refusal "+
+			"is expected to leave that marker", version, dirty)
+	}
+
+	for _, col := range []string{"delivery_type", "stage"} {
+		var exists bool
+		if err = conn.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			  WHERE table_name = 'campaign_briefs' AND column_name = $1)`, col).Scan(&exists); err != nil {
+			t.Fatalf("check column %s: %v", col, err)
+		}
+		if !exists {
+			t.Errorf("column %s was dropped by a revert that reported failure", col)
+		}
+	}
+
+	var indexExists bool
+	if err = conn.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes
+		  WHERE indexname = 'uq_campaign_briefs_project_event_delivery_stage')`).Scan(&indexExists); err != nil {
+		t.Fatalf("check the wide index: %v", err)
+	}
+	if !indexExists {
+		t.Error("the wide unique index was dropped by a revert that reported failure")
+	}
+}
+
 // TestLiveMigrationsGoDownAndUpAgain drives the embedded migration set to its top
 // version, all the way back down to zero, and up again on a database of its own.
 //

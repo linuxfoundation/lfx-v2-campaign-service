@@ -389,6 +389,63 @@ func TestBriefService_CreateCampaigns_RejectsUnapprovedBrief(t *testing.T) {
 	}
 }
 
+// TestBriefService_CreateCampaigns_MatchesTheChannelToTheSurface pins the delivery discriminator
+// at DISPATCH, which is where it was missing.
+//
+// `delivery_type` became part of a brief's identity in 000030, but nothing compared it to the
+// channel a caller asked to launch on. So an EMAIL brief could start paid ads and a PAID brief
+// could stage a HubSpot send -- each dispatching content the platform has no field for (RSA
+// headlines and keywords on one side, a subject and preheader on the other) and each recording a
+// campaign row against a brief that never meant it.
+//
+// Both directions are asserted, and so is the MATCHING case: a guard that refused everything would
+// pass a test that only checked refusals.
+func TestBriefService_CreateCampaigns_MatchesTheChannelToTheSurface(t *testing.T) {
+	newService := func(delivery model.DeliveryType, stage string) *BriefService {
+		repo := newFakeBriefRepo()
+		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+			ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: delivery, Stage: stage,
+			Status: model.BriefApproved, Version: 1,
+		}
+		return newTestBriefService(repo)
+	}
+	create := func(s *BriefService, platform string) error {
+		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Input: &briefs.CampaignCreateInput{Platforms: []string{platform}},
+		})
+		return err
+	}
+
+	t.Run("an email brief cannot launch paid ads", func(t *testing.T) {
+		var bad *briefs.BadRequestError
+		if err := create(newService(model.DeliveryEmail, "CFP Launch"), "google-ads"); !errors.As(err, &bad) {
+			t.Fatalf("CreateCampaigns(email brief, google-ads): err = %v, want *briefs.BadRequestError", err)
+		}
+	})
+
+	t.Run("a paid brief cannot stage an email", func(t *testing.T) {
+		var bad *briefs.BadRequestError
+		if err := create(newService(model.DeliveryPaidMarketing, ""), "hubspot"); !errors.As(err, &bad) {
+			t.Fatalf("CreateCampaigns(paid brief, hubspot): err = %v, want *briefs.BadRequestError", err)
+		}
+	})
+
+	// The matching cases must still work, or the guard is just an outage.
+	t.Run("a paid brief launches paid ads", func(t *testing.T) {
+		if err := create(newService(model.DeliveryPaidMarketing, ""), "google-ads"); err != nil {
+			t.Fatalf("CreateCampaigns(paid brief, google-ads): %v", err)
+		}
+	})
+
+	t.Run("an email brief stages an email", func(t *testing.T) {
+		if err := create(newService(model.DeliveryEmail, "CFP Launch"), "hubspot"); err != nil {
+			t.Fatalf("CreateCampaigns(email brief, hubspot): %v", err)
+		}
+	})
+}
+
 // CreateCampaigns must reject an empty platform set (400) rather than creating a
 // no-op job that instantly aggregates to succeeded.
 // CreateBrief and CreateCampaigns must reject a project_id that is a UUID (or any

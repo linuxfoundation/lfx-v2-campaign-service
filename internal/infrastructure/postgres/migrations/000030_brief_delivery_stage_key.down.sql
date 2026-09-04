@@ -62,6 +62,14 @@ ALTER TABLE campaign_briefs
 -- To proceed, the operator must first archive or migrate every non-paid brief. That is a decision
 -- about content -- which sends are worth keeping -- and it is not one a rollback should make
 -- silently on their behalf.
+--
+-- WHAT A REFUSAL LEAVES BEHIND, so the operator is not surprised by it: golang-migrate stamps the
+-- target version BEFORE running this file, so the refusal leaves `schema_migrations` at version 29
+-- and DIRTY. That marker is doing its job -- it says a migration was attempted and did not
+-- complete, so nothing should proceed automatically. The TABLE is untouched: both columns and the
+-- wide index survive, which is what the transaction guarantees. Recovery is
+-- `migrate force 30` after archiving or migrating the briefs named above, then retry.
+-- Verified by TestLiveMigration000030RefusesToDropALiveEmailBrief.
 DO $$
 BEGIN
     IF EXISTS (
