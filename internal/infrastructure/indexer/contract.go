@@ -197,9 +197,20 @@ type BriefDoc struct {
 	ProjectID   string `json:"project_id"`
 	ProgramType string `json:"program_type"`
 	EventSlug   string `json:"event_slug"`
-	URL         string `json:"url,omitempty"`
-	Status      string `json:"status"`
-	Version     int64  `json:"version"`
+	// DeliveryType and Stage complete a brief's identity. Without them one event's paid brief and
+	// every stage of its email series index as the same thing -- same project, same slug, no
+	// discriminator -- so a consumer cannot tell which send a document describes.
+	//
+	// NEITHER carries omitempty, and stage is why: "" is the paid brief's REAL stage, not a
+	// missing value. Omitting it would publish a document where absence means both "this is the
+	// paid brief" and "this producer predates stages", which a consumer cannot untangle. Emitting
+	// it always keeps the field's meaning single. delivery_type follows for symmetry -- the pair
+	// is one key and a half-published key is worse than none.
+	DeliveryType string `json:"delivery_type"`
+	Stage        string `json:"stage"`
+	URL          string `json:"url,omitempty"`
+	Status       string `json:"status"`
+	Version      int64  `json:"version"`
 
 	Platforms    []string `json:"platforms,omitempty"`
 	EventDetails any      `json:"event_details,omitempty"`

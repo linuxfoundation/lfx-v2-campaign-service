@@ -599,8 +599,7 @@ func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
 		edit := draftBrief(created.ProjectID, created.EventSlug)
 		edit.ID = created.ID
 		edit.Copy = json.RawMessage(`{"headline":"edited"}`)
-		// DeliveryType and Stage left at the zero value: exactly what UpdateBrief passes when
-		// the payload omits them.
+		// Assert* left nil: exactly what UpdateBrief passes when the payload omits both fields.
 
 		updated, err := repo.ReplaceBrief(ctx, edit, created.Version, nil)
 		if err != nil {
@@ -621,8 +620,9 @@ func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
 
 		edit := draftBrief(created.ProjectID, created.EventSlug)
 		edit.ID = created.ID
-		edit.DeliveryType = model.DeliveryPaidMarketing
-		edit.Stage = created.Stage
+		paid := model.DeliveryPaidMarketing
+		edit.AssertDeliveryType = &paid
+		edit.AssertStage = &created.Stage
 
 		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
 			t.Fatalf("ReplaceBrief moving the surface: err = %v, want ErrBriefIdentityImmutable", err)
@@ -647,12 +647,43 @@ func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
 
 		edit := draftBrief(created.ProjectID, created.EventSlug)
 		edit.ID = created.ID
-		edit.DeliveryType = created.DeliveryType
-		edit.Stage = "Final Countdown"
+		edit.AssertDeliveryType = &created.DeliveryType
+		countdown := "Final Countdown"
+		edit.AssertStage = &countdown
 
 		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
 			t.Fatalf("ReplaceBrief moving the stage: err = %v, want ErrBriefIdentityImmutable", err)
 		}
+	})
+
+	// The case a value-based guard cannot see. "" is a REAL stage -- the paid brief's -- so an
+	// explicit `{"stage": ""}` on an email brief asks to move it to the paid surface, and is not
+	// the same request as omitting the field. A guard that skipped every empty value as "not
+	// restated" committed the content and returned 200 with the stage unchanged, telling the
+	// caller a refused identity change had succeeded. Confirmed against a live database before
+	// the Assert* fields existed.
+	t.Run("an explicitly empty stage is a change, not an omission", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		empty := ""
+		edit.AssertStage = &empty
+		edit.Copy = json.RawMessage(`{"headline":"moved"}`)
+
+		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
+			t.Fatalf("ReplaceBrief with an explicit empty stage: err = %v, want ErrBriefIdentityImmutable", err)
+		}
+
+		after, err := repo.GetBrief(ctx, created.ProjectID, created.ID)
+		if err != nil {
+			t.Fatalf("GetBrief: %v", err)
+		}
+		if after.Version != created.Version {
+			t.Errorf("version = %d after a REJECTED update, want %d: the content update was not rolled back",
+				after.Version, created.Version)
+		}
+		assertJSONEqual(t, "copy", after.Copy, `{"headline":"original"}`)
 	})
 }
 

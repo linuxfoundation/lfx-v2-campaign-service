@@ -48,7 +48,7 @@ shipped. Add it with the caller that needs it, not before.
   they supplied names an address this service will not connect to.
 
 `BriefService` implements brief CRUD and campaign endpoints. `FindBrief` looks a brief up by
-`(project_id, event_slug)` rather than by id — the key a caller holds when re-visiting an event
+`(project_id, event_slug, delivery_type, stage)` rather than by id — the key a caller holds when re-visiting an event
 page — returning `ErrNotFound` when the event has no brief yet. That 404 is an ordinary
 outcome (first-time generation), not a failure. It never generates or mutates: regeneration is
 an explicit `UpdateBrief`, so edits to the AI-generated copy are never silently overwritten. Campaign creation

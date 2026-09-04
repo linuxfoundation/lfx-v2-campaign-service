@@ -1799,6 +1799,51 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 	}
 }
 
+// TestIndexedBriefDocCarriesTheWholeIdentity pins delivery_type and stage into the indexed
+// document, and pins that the paid brief's EMPTY stage is still emitted.
+//
+// Brief lists and revision history are served from the Query Service, which sees only this
+// document. Without these two fields an event's paid brief and every stage of its email series
+// index as the same thing -- same project_id, same event_slug, nothing to tell them apart -- so a
+// consumer cannot say which send a document describes, and 000030's whole point is invisible
+// downstream.
+//
+// The empty-stage case is the one worth a test rather than a comment. `omitempty` would be the
+// obvious tag and is wrong here: "" is the paid brief's REAL stage, so omitting it publishes a
+// document where a missing field means both "this is the paid brief" and "this producer predates
+// stages". A consumer cannot distinguish those, and the failure is silent at index time.
+func TestIndexedBriefDocCarriesTheWholeIdentity(t *testing.T) {
+	email, stage := "email", "Registration Push"
+	raw, err := json.Marshal(briefDoc(&briefs.Brief{
+		ID: "b1", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon-eu-2026",
+		DeliveryType: &email, Stage: &stage, Status: "approved", Version: 1,
+	}))
+	if err != nil {
+		t.Fatalf("marshal brief doc: %v", err)
+	}
+	for _, want := range []string{`"delivery_type":"email"`, `"stage":"Registration Push"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("indexed brief doc missing %s: a consumer cannot tell this document from "+
+				"another stage of the same event\ngot: %s", want, raw)
+		}
+	}
+
+	// The paid brief. Its stage is "" and that is a VALUE, so it must appear on the wire.
+	paid := "paid-marketing"
+	empty := ""
+	raw, err = json.Marshal(briefDoc(&briefs.Brief{
+		ID: "b2", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon-eu-2026",
+		DeliveryType: &paid, Stage: &empty, Status: "approved", Version: 1,
+	}))
+	if err != nil {
+		t.Fatalf("marshal paid brief doc: %v", err)
+	}
+	if !strings.Contains(string(raw), `"stage":""`) {
+		t.Errorf(`paid brief doc omits "stage":"" -- with omitempty a consumer cannot tell the `+
+			"paid brief from a producer that predates stages"+"\ngot: %s", raw)
+	}
+}
+
 // TestIndexedDocsUseSnakeCase pins the INDEXED wire shape.
 //
 // The generated goa types carry no json tags, so publishing them directly emitted Go field

@@ -49,9 +49,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 - `000001` — connection tables.
 - `000002` — brief, campaign, and async-job tables. Indexes: `campaign_jobs`
   on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform, variant)` /
-  `(project_id, event_slug)` uniqueness covers those leftmost columns.
+  `(project_id, event_slug, delivery_type, stage)` uniqueness covers those leftmost columns.
 - `000003` — brief `project_id` UUID→TEXT and partial-unique
-  `(project_id, event_slug)` excluding archived rows.
+  `(project_id, event_slug, delivery_type, stage)` excluding archived rows (widened by 000030: one event carries a paid brief and an email series at once).
 - `000004` — partial index `idx_campaign_jobs_recovery` on
   `campaign_jobs (updated_at) WHERE status IN ('queued','running')`, supporting
   the periodic stuck-job recovery sweep (`JobRepo.FailStuckJobs`) so it does not
@@ -1075,7 +1075,7 @@ deleted.
 The other two writes are shaped differently and are worth distinguishing, because assuming the
 classifier is universal is how a reader ends up looking for it in the wrong place.
 `CreateBrief` is an INSERT: it has no gate at all, and its only error mapping is
-`isUniqueViolation` → `ErrConflict` on the partial unique `(project_id, event_slug)`.
+`isUniqueViolation` → `ErrConflict` on the partial unique `(project_id, event_slug, delivery_type, stage)`.
 `ArchiveBrief` is a guarded UPDATE but is NOT version-gated — its guard is
 `status <> 'archived'` — so a no-row result has one meaning and it maps straight to
 `ErrNotFound` without consulting the classifier.

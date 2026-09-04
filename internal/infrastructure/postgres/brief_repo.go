@@ -289,17 +289,19 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 	// the deferred Rollback -- returning before Commit discards the content update too, which is
 	// what makes this a rejection of the whole request rather than a partial apply.
 	//
-	// A ZERO value is not a change request. `deliveryTypeOrPaid` maps an omitted delivery_type to
-	// paid-marketing, so a caller editing an EMAIL brief's copy without restating its surface
-	// arrives here with paid -- rejecting that would make every such edit fail. Only a value that
-	// is both non-empty and different is treated as an attempt to move the brief.
-	if b.DeliveryType != "" && b.DeliveryType != updated.DeliveryType {
+	// PRESENCE, not value. An earlier revision compared the plain DeliveryType/Stage fields and
+	// skipped an empty one as "not restated", which was wrong for `stage`: "" is a real stage --
+	// the paid brief's -- so `{"stage": ""}` on an email brief is a genuine request to move it,
+	// and that revision committed the content and answered 200 with the stage unchanged. The
+	// Assert* fields keep an omitted field distinguishable from an explicit one, which the wire
+	// already distinguishes (both are *string on BriefInput).
+	if b.AssertDeliveryType != nil && *b.AssertDeliveryType != updated.DeliveryType {
 		return nil, fmt.Errorf("%w: delivery_type is %q, cannot become %q",
-			domain.ErrBriefIdentityImmutable, updated.DeliveryType, b.DeliveryType)
+			domain.ErrBriefIdentityImmutable, updated.DeliveryType, *b.AssertDeliveryType)
 	}
-	if b.Stage != "" && b.Stage != updated.Stage {
+	if b.AssertStage != nil && *b.AssertStage != updated.Stage {
 		return nil, fmt.Errorf("%w: stage is %q, cannot become %q",
-			domain.ErrBriefIdentityImmutable, updated.Stage, b.Stage)
+			domain.ErrBriefIdentityImmutable, updated.Stage, *b.AssertStage)
 	}
 
 	if eerr := enqueueBriefIndex(ctx, tx, updated, indexPayload); eerr != nil {

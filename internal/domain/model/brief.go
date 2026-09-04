@@ -85,17 +85,33 @@ type CampaignBrief struct {
 	// Stage places this brief within an email series (CFP Launch, Registration Push, ...). Empty
 	// for paid, which has no series -- and empty rather than absent because it participates in a
 	// unique index, where NULLs never collide and would let duplicates accumulate unchecked.
-	Stage        string
-	URL          string
-	Platforms    json.RawMessage // selected channels (a planning hint)
-	EventDetails json.RawMessage
-	Copy         json.RawMessage
-	Keywords     json.RawMessage
-	Targeting    json.RawMessage
-	Status       BriefStatus
-	Version      int64
-	ApprovedBy   *Actor
-	ApprovedAt   *time.Time
+	Stage string
+	// AssertDeliveryType / AssertStage carry an UPDATE caller's explicit claim about this brief's
+	// identity, and only that. Nil means "the request did not mention it".
+	//
+	// Separate from the two fields above because presence and value are different questions here,
+	// and the wire can express both: `stage` is a *string on BriefInput, so an explicit
+	// `"stage": ""` is a real request -- "move this to the paid stage" -- and is NOT the same as
+	// omitting the field. Reading the plain Stage field alone flattens the two into "", so an
+	// email brief asked to become a paid one was answered 200 with its stage unchanged: the
+	// caller was told a rejected identity change had succeeded. Verified against a live database
+	// before this field existed.
+	//
+	// Only ReplaceBrief reads them, and only to REJECT. They are never written to a column --
+	// delivery_type and stage are immutable under 000030's key -- so they carry no meaning on
+	// create, where the fields above already say what the brief IS.
+	AssertDeliveryType *DeliveryType
+	AssertStage        *string
+	URL                string
+	Platforms          json.RawMessage // selected channels (a planning hint)
+	EventDetails       json.RawMessage
+	Copy               json.RawMessage
+	Keywords           json.RawMessage
+	Targeting          json.RawMessage
+	Status             BriefStatus
+	Version            int64
+	ApprovedBy         *Actor
+	ApprovedAt         *time.Time
 	// CreatedBy / UpdatedBy name the human behind the write. Nil means "not
 	// recorded", which has THREE causes, and they are not equally benign:
 	//

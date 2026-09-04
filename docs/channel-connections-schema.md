@@ -174,7 +174,10 @@ CREATE TABLE campaign_briefs (
     project_id    TEXT        NOT NULL,                 -- project UUID or slug (migration 000003)
     program_type  TEXT        NOT NULL                 -- funnel context
                   CHECK (program_type IN ('events','education','membership')),
-    event_slug    TEXT        NOT NULL,                -- UNIQUE with project_id
+    event_slug    TEXT        NOT NULL,                -- part of the composite key, not unique alone
+    delivery_type TEXT        NOT NULL DEFAULT 'paid-marketing'   -- migration 000030
+                  CHECK (delivery_type IN ('paid-marketing','email')),
+    stage         TEXT        NOT NULL DEFAULT '',     -- '' for paid; a stage name for an email send
     url           TEXT,
     platforms     JSONB,                               -- selected channels for this brief
     event_details JSONB,
@@ -191,11 +194,19 @@ CREATE TABLE campaign_briefs (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- (project_id, event_slug) uniqueness is a PARTIAL unique index excluding
--- archived briefs (migration 000003), so archiving a brief frees the slot for a
--- new brief with the same slug:
-CREATE UNIQUE INDEX uq_campaign_briefs_project_event
-    ON campaign_briefs (project_id, event_slug) WHERE status <> 'archived';
+-- Brief identity is (project_id, event_slug, delivery_type, stage) since migration 000030.
+-- Paid and email are PARALLEL channels on one event, and an email campaign is a SERIES rather
+-- than a document -- a CFP Launch and a Final Countdown for the same event are both live. The
+-- earlier (project_id, event_slug) key (000003) meant the second channel to save either
+-- overwrote the first or was refused.
+--
+-- `stage` is '' for paid, which has no series, and NOT NULL: NULLs never collide in a unique
+-- index, so a nullable stage would let unlimited duplicate paid briefs accumulate.
+--
+-- Still a PARTIAL index excluding archived briefs, so archiving frees the slot:
+CREATE UNIQUE INDEX uq_campaign_briefs_project_event_delivery_stage
+    ON campaign_briefs (project_id, event_slug, delivery_type, stage)
+    WHERE status <> 'archived';
 CREATE INDEX idx_campaign_briefs_project_id ON campaign_briefs (project_id);
 ```
 

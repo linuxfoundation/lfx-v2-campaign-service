@@ -158,9 +158,13 @@ func briefDoc(b *briefs.Brief) indexer.BriefDoc {
 		ProjectID:   b.ProjectID,
 		ProgramType: b.ProgramType,
 		EventSlug:   b.EventSlug,
-		URL:         derefStr(b.URL),
-		Status:      b.Status,
-		Version:     b.Version,
+		// Part of the key, not decoration: without these two, a paid brief and every stage of the
+		// same event's email series index identically and a consumer cannot tell them apart.
+		DeliveryType: derefStr(b.DeliveryType),
+		Stage:        derefStr(b.Stage),
+		URL:          derefStr(b.URL),
+		Status:       b.Status,
+		Version:      b.Version,
 
 		// The revisable content: without it a copy-only edit indexes a new version showing
 		// nothing changed, so revision history cannot answer "what was revised?".
@@ -449,23 +453,24 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		ProjectID:   p.ProjectID,
 		ProgramType: model.ProgramType(in.ProgramType),
 		EventSlug:   in.EventSlug,
-		// Carried through NOT to be written -- replaceBriefQuery omits both columns -- but so
-		// ReplaceBrief can compare them against the stored row and REJECT a change. They are
-		// identity under 000030's key, and silently dropping them returned 200 with the old
-		// values, telling a caller its change had landed when it had not.
+		// Passed as ASSERTIONS, not as values to write: replaceBriefQuery omits both columns
+		// because they are identity under 000030's key. ReplaceBrief compares them against the
+		// stored row and rejects a change, since silently dropping them returned 200 with the
+		// old values -- telling a caller its change had landed when it had not.
 		//
-		// `derefOrEmpty`, not `deliveryTypeOrPaid`: an omitted delivery_type must stay the zero
-		// value here so the guard reads it as "not restated" rather than as "make this paid".
-		// Defaulting it would turn every content edit on an EMAIL brief into a rejected attempt
-		// to move that brief to the paid surface.
-		DeliveryType: model.DeliveryType(derefOrEmpty(in.DeliveryType)),
-		Stage:        derefOrEmpty(in.Stage),
-		URL:          strVal(in.URL),
-		Platforms:    marshalStrings(in.Platforms),
-		EventDetails: marshalAny(in.EventDetails),
-		Copy:         marshalAny(in.Copy),
-		Keywords:     marshalAny(in.Keywords),
-		Targeting:    marshalAny(in.Targeting),
+		// The POINTERS go through untouched. Defaulting or dereferencing here would destroy the
+		// distinction the wire draws: an omitted `stage` means "I am not touching the identity",
+		// while an explicit `"stage": ""` means "move this to the paid stage" -- a real request
+		// that must be REFUSED rather than ignored. Flattening both to "" answered the second
+		// one with a 200 and no change.
+		AssertDeliveryType: assertedDeliveryType(in.DeliveryType),
+		AssertStage:        in.Stage,
+		URL:                strVal(in.URL),
+		Platforms:          marshalStrings(in.Platforms),
+		EventDetails:       marshalAny(in.EventDetails),
+		Copy:               marshalAny(in.Copy),
+		Keywords:           marshalAny(in.Keywords),
+		Targeting:          marshalAny(in.Targeting),
 		// Only updated_by moves on an edit; created_by is untouched by the UPDATE and
 		// keeps naming the original author.
 		UpdatedBy: attributedActor(ctx, "update brief"),
@@ -1836,6 +1841,19 @@ func deliveryTypeOrPaid(v *string) model.DeliveryType {
 		return model.DeliveryPaidMarketing
 	}
 	return model.DeliveryType(*v)
+}
+
+// assertedDeliveryType carries an update caller's explicit delivery_type through as a claim about
+// the brief's identity, preserving ABSENCE. It deliberately does not default: unlike
+// deliveryTypeOrPaid, whose nil-means-paid rule is about what a NEW brief IS, a nil here means the
+// request said nothing about identity and the guard must skip it. Defaulting would turn every
+// ordinary content edit on an email brief into a rejected attempt to move it to the paid surface.
+func assertedDeliveryType(v *string) *model.DeliveryType {
+	if v == nil {
+		return nil
+	}
+	d := model.DeliveryType(*v)
+	return &d
 }
 
 // derefOrEmpty reads an optional string, treating absence as the empty value.

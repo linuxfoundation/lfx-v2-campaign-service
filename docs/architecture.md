@@ -429,7 +429,7 @@ erDiagram
 
 **Tables:**
 - **Per-provider connection tables** — `google_ads_connections`, `linkedin_ads_connections`, `meta_ads_connections`, `reddit_ads_connections`, `twitter_ads_connections`, `microsoft_ads_connections`, `hubspot_connections`. One strongly-typed table per provider; credentials app-encrypted; provider-specific config as first-class columns. Full definitions in [channel-connections-schema.md](channel-connections-schema.md).
-- `campaign_briefs` — campaign briefs, keyed by (project_id, event_slug). Tracks approval. Must be approved before campaigns can be created from it. `version` powers ETag/If-Match; edit history served by Query Service.
+- `campaign_briefs` — campaign briefs, keyed by (project_id, event_slug, delivery_type, stage) since 000030: paid and email are parallel channels on one event, and an email campaign is a SERIES with one brief per stage, so the slug alone does not name one brief. Tracks approval. Must be approved before campaigns can be created from it. `version` powers ETag/If-Match; edit history served by Query Service.
 - `campaigns` — one row per platform campaign created or updated from a brief (subordinate to the brief). Stores campaign name, platform, platform campaign ID, budget, dates. Updated in place (not recreated) when a brief changes after campaigns exist.
 - `campaign_jobs` — async job queue for multi-platform dispatch. One job per brief submission dispatches to multiple `campaigns` (one per platform).
 
