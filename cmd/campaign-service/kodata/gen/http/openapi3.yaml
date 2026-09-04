@@ -26,6 +26,37 @@ paths:
                     example: kubecon-eu-2026
                     minLength: 1
                   example: kubecon-eu-2026
+                - name: delivery_type
+                  in: query
+                  description: Delivery surface the brief was authored for.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Delivery surface the brief was authored for.
+                    default: paid-marketing
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
+                  example: email
+                - name: stage
+                  in: query
+                  description: Stage within an email series. Empty for paid, which has no series.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    default: ""
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
+                  example: Registration Push
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -52,6 +83,7 @@ paths:
                                 $ref: '#/components/schemas/Brief3'
                             example:
                                 copy: Magnam quisquam et consequuntur ut sunt.
+                                delivery_type: email
                                 event_details: Provident repudiandae sit qui aut aut.
                                 event_slug: Qui temporibus quis iste eaque.
                                 id: Nobis soluta odit odio praesentium perferendis.
@@ -61,6 +93,7 @@ paths:
                                     - Dolor corporis consequatur voluptatem voluptates sed.
                                 program_type: education
                                 project_id: Sint voluptatibus quam dicta voluptate consequuntur.
+                                stage: Registration Push
                                 status: archived
                                 targeting: Officiis beatae sed aut.
                                 url: Debitis nam.
@@ -166,6 +199,7 @@ paths:
                         example:
                             brief:
                                 copy: Ullam distinctio dolore velit.
+                                delivery_type: email
                                 event_details: Eius dicta.
                                 event_slug: 1a1
                                 keywords: Non assumenda perspiciatis.
@@ -175,6 +209,7 @@ paths:
                                     - Suscipit non iusto.
                                     - Consequatur in vero soluta.
                                 program_type: education
+                                stage: Registration Push
                                 targeting: Porro ut et cupiditate.
                                 url: Nostrum ratione id.
             responses:
@@ -194,6 +229,7 @@ paths:
                                 $ref: '#/components/schemas/Brief2'
                             example:
                                 copy: Tempore sunt itaque omnis.
+                                delivery_type: email
                                 event_details: In ipsa tempore incidunt velit provident perspiciatis.
                                 event_slug: Aut fugit alias.
                                 id: Repudiandae necessitatibus dolorem enim beatae quia.
@@ -204,6 +240,7 @@ paths:
                                     - Architecto autem iste.
                                 program_type: education
                                 project_id: Vero at ut quis.
+                                stage: Registration Push
                                 status: archived
                                 targeting: Modi voluptatum veniam molestiae quibusdam.
                                 url: Qui maiores quia non unde deserunt.
@@ -429,6 +466,7 @@ paths:
                                 $ref: '#/components/schemas/Brief4'
                             example:
                                 copy: Aut ut.
+                                delivery_type: email
                                 event_details: Vitae consequatur eos.
                                 event_slug: Vel ut laborum earum.
                                 id: Voluptatibus aspernatur.
@@ -438,6 +476,7 @@ paths:
                                     - Et vel beatae molestiae fuga.
                                 program_type: events
                                 project_id: Accusamus nam cupiditate.
+                                stage: Registration Push
                                 status: archived
                                 targeting: Labore quia esse consectetur tenetur eum.
                                 url: Autem omnis qui debitis eum ipsa sed.
@@ -560,6 +599,7 @@ paths:
                         example:
                             brief:
                                 copy: Ullam distinctio dolore velit.
+                                delivery_type: email
                                 event_details: Eius dicta.
                                 event_slug: 1a1
                                 keywords: Non assumenda perspiciatis.
@@ -569,6 +609,7 @@ paths:
                                     - Suscipit non iusto.
                                     - Consequatur in vero soluta.
                                 program_type: education
+                                stage: Registration Push
                                 targeting: Porro ut et cupiditate.
                                 url: Nostrum ratione id.
             responses:
@@ -588,6 +629,7 @@ paths:
                                 $ref: '#/components/schemas/Brief5'
                             example:
                                 copy: Deleniti voluptas quo nostrum quia.
+                                delivery_type: email
                                 event_details: Voluptatem nostrum.
                                 event_slug: Voluptatum et impedit quod.
                                 id: Ex ipsa nihil esse voluptate in consectetur.
@@ -599,6 +641,7 @@ paths:
                                     - Hic minima est distinctio accusamus a perferendis.
                                 program_type: events
                                 project_id: Culpa quaerat.
+                                stage: Registration Push
                                 status: archived
                                 targeting: Velit quis.
                                 url: Magni omnis.
@@ -748,6 +791,7 @@ paths:
                                 $ref: '#/components/schemas/Brief6'
                             example:
                                 copy: Quo vel iste aut cum voluptatem.
+                                delivery_type: email
                                 event_details: Tenetur ut.
                                 event_slug: Ex et alias ea asperiores quas.
                                 id: Id sint.
@@ -757,6 +801,7 @@ paths:
                                     - Est placeat explicabo aliquid.
                                 program_type: events
                                 project_id: Aut quo.
+                                stage: Registration Push
                                 status: draft
                                 targeting: Voluptas quis nihil tempora rem asperiores.
                                 url: Corporis dolorem laborum maiores est ea ducimus.
@@ -9931,6 +9976,13 @@ components:
                 copy:
                     description: Ad copy
                     example: Consequatur sed ut.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 etag:
                     type: string
                     description: ETag header value (mirrors version)
@@ -9940,7 +9992,7 @@ components:
                     example: Omnis harum aut ab quasi recusandae totam.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: At odit magni ipsa sapiente libero.
                 id:
                     type: string
@@ -9970,6 +10022,18 @@ components:
                     type: string
                     description: Owning project
                     example: Et rem voluptas nulla sed harum.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -9992,6 +10056,7 @@ components:
                     format: int64
             example:
                 copy: Veniam ea nihil quia.
+                delivery_type: email
                 etag: Ducimus enim animi unde vel quasi.
                 event_details: Tenetur omnis iste ratione.
                 event_slug: Assumenda architecto.
@@ -10003,6 +10068,7 @@ components:
                     - Dolorem placeat commodi et aspernatur qui.
                 program_type: events
                 project_id: Perspiciatis enim quos velit et.
+                stage: Registration Push
                 status: draft
                 targeting: Pariatur enim magnam.
                 url: Aliquid molestiae nesciunt sit illo.
@@ -10012,6 +10078,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief2:
@@ -10020,12 +10088,19 @@ components:
                 copy:
                     description: Ad copy
                     example: Quo officia molestias necessitatibus.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Debitis ducimus modi vel delectus.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Nemo enim alias sapiente dolor.
                 id:
                     type: string
@@ -10057,6 +10132,18 @@ components:
                     type: string
                     description: Owning project
                     example: Quia eveniet.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10079,6 +10166,7 @@ components:
                     format: int64
             example:
                 copy: Dolore necessitatibus unde dolorem.
+                delivery_type: email
                 event_details: Minima natus sint.
                 event_slug: Quia architecto aut.
                 id: Ut inventore ut voluptatem dolor.
@@ -10090,6 +10178,7 @@ components:
                     - Sequi quia vel voluptatem dolore vitae harum.
                 program_type: membership
                 project_id: Occaecati voluptas magnam optio nulla consequatur consectetur.
+                stage: Registration Push
                 status: draft
                 targeting: Incidunt ea ut consequuntur qui voluptatem aut.
                 url: Ut rerum adipisci illum enim.
@@ -10099,6 +10188,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief3:
@@ -10107,12 +10198,19 @@ components:
                 copy:
                     description: Ad copy
                     example: Iure tempora.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Excepturi minus similique architecto.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Magnam cum eaque aut eos.
                 id:
                     type: string
@@ -10142,6 +10240,18 @@ components:
                     type: string
                     description: Owning project
                     example: Quisquam adipisci et sint.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10164,6 +10274,7 @@ components:
                     format: int64
             example:
                 copy: Excepturi et asperiores laudantium laudantium.
+                delivery_type: email
                 event_details: Ut ut et saepe.
                 event_slug: Ut sint odio possimus blanditiis voluptates nobis.
                 id: Autem dolor aliquid amet quasi.
@@ -10175,6 +10286,7 @@ components:
                     - Quis ut ad repellendus quia dolor et.
                 program_type: membership
                 project_id: At deserunt optio.
+                stage: Registration Push
                 status: archived
                 targeting: Qui qui necessitatibus a dolorem ea.
                 url: Eos est itaque dolorum.
@@ -10184,6 +10296,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief4:
@@ -10192,12 +10306,19 @@ components:
                 copy:
                     description: Ad copy
                     example: Eum adipisci in.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Eum velit suscipit nostrum nobis.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Omnis et sint repellendus.
                 id:
                     type: string
@@ -10229,6 +10350,18 @@ components:
                     type: string
                     description: Owning project
                     example: Adipisci soluta temporibus sunt molestiae magnam.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10251,6 +10384,7 @@ components:
                     format: int64
             example:
                 copy: Fugiat beatae expedita.
+                delivery_type: email
                 event_details: Aut excepturi dolor eum impedit eos.
                 event_slug: Voluptate ut adipisci similique.
                 id: Laudantium qui ea.
@@ -10262,6 +10396,7 @@ components:
                     - Nobis voluptatem ipsum laboriosam.
                 program_type: events
                 project_id: Veniam nemo illo labore.
+                stage: Registration Push
                 status: archived
                 targeting: Et facere voluptatem.
                 url: Quae veritatis commodi amet commodi.
@@ -10271,6 +10406,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief5:
@@ -10279,12 +10416,19 @@ components:
                 copy:
                     description: Ad copy
                     example: Cumque nobis voluptatem perferendis.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Repellat qui.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Minus inventore.
                 id:
                     type: string
@@ -10316,6 +10460,18 @@ components:
                     type: string
                     description: Owning project
                     example: Laudantium et corporis.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10338,6 +10494,7 @@ components:
                     format: int64
             example:
                 copy: Tenetur ducimus velit dignissimos molestias.
+                delivery_type: email
                 event_details: Sed tempore incidunt.
                 event_slug: Nobis et occaecati cum rerum adipisci.
                 id: Aperiam fugiat ipsam cum dolores.
@@ -10348,6 +10505,7 @@ components:
                     - Rem minima est.
                 program_type: membership
                 project_id: Provident iure error odio.
+                stage: Registration Push
                 status: approved
                 targeting: Non rem eum doloremque odit.
                 url: Consequatur modi et commodi.
@@ -10357,6 +10515,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         Brief6:
@@ -10365,12 +10525,19 @@ components:
                 copy:
                     description: Ad copy
                     example: Dolorum accusantium aut.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Enim libero.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: In magnam enim et aut.
                 id:
                     type: string
@@ -10400,6 +10567,18 @@ components:
                     type: string
                     description: Owning project
                     example: Aut cupiditate.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10422,6 +10601,7 @@ components:
                     format: int64
             example:
                 copy: Ut qui.
+                delivery_type: email
                 event_details: Sunt soluta perferendis.
                 event_slug: Nam eos voluptatem deleniti aut.
                 id: Repudiandae incidunt a rerum saepe voluptatem beatae.
@@ -10433,6 +10613,7 @@ components:
                     - Doloremque rerum.
                 program_type: membership
                 project_id: Harum facilis id.
+                stage: Registration Push
                 status: draft
                 targeting: Inventore corrupti at.
                 url: Ipsa quis.
@@ -10442,6 +10623,8 @@ components:
                 - project_id
                 - program_type
                 - event_slug
+                - delivery_type
+                - stage
                 - status
                 - version
         BriefData:
@@ -10450,12 +10633,19 @@ components:
                 copy:
                     description: Ad copy
                     example: Autem quasi et ab aliquam voluptatem voluptatibus.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Dolore autem veniam quae.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Quam possimus ex delectus ea ullam.
                 keywords:
                     description: Keyword list
@@ -10478,6 +10668,18 @@ components:
                         - events
                         - education
                         - membership
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 targeting:
                     description: Targeting recommendation
                     example: Dolore aut nemo rerum.
@@ -10487,6 +10689,7 @@ components:
                     example: Reiciendis optio fuga nam vero repellendus et.
             example:
                 copy: Voluptatem fugiat.
+                delivery_type: email
                 event_details: Qui qui molestias.
                 event_slug: Delectus est.
                 keywords: Ratione ab assumenda dignissimos aperiam dolorem commodi.
@@ -10495,6 +10698,7 @@ components:
                     - Facilis quidem qui repellat at ducimus.
                     - Consequatur fugiat iure sint.
                 program_type: events
+                stage: Registration Push
                 targeting: Sapiente dignissimos nobis.
                 url: In iure omnis rem.
             required:
@@ -10506,12 +10710,19 @@ components:
                 copy:
                     description: Ad copy
                     example: A voluptates et quia enim dignissimos.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
                 event_details:
                     description: Extracted event/course details
                     example: Consequatur aut enim quod voluptas.
                 event_slug:
                     type: string
-                    description: Event/course slug (unique within the project)
+                    description: Event/course slug. Unique with delivery_type and stage, not alone.
                     example: h
                     minLength: 1
                 keywords:
@@ -10534,6 +10745,18 @@ components:
                         - events
                         - education
                         - membership
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 targeting:
                     description: Targeting recommendation
                     example: Et quasi maiores ipsa dolores nulla nesciunt.
@@ -10543,6 +10766,7 @@ components:
                     example: Sed distinctio dicta.
             example:
                 copy: Explicabo sunt libero.
+                delivery_type: email
                 event_details: Tempore accusamus modi deleniti.
                 event_slug: xdn
                 keywords: Maxime assumenda et numquam officia est sit.
@@ -10552,6 +10776,7 @@ components:
                     - Aperiam magni maxime fugiat repudiandae laudantium tenetur.
                     - Est exercitationem inventore et quia eum.
                 program_type: membership
+                stage: Registration Push
                 targeting: Vero et perferendis quia.
                 url: Debitis ipsum dolorem qui.
             required:
@@ -11572,6 +11797,7 @@ components:
             example:
                 brief:
                     copy: Ullam distinctio dolore velit.
+                    delivery_type: email
                     event_details: Eius dicta.
                     event_slug: 1a1
                     keywords: Non assumenda perspiciatis.
@@ -11581,6 +11807,7 @@ components:
                         - Suscipit non iusto.
                         - Consequatur in vero soluta.
                     program_type: education
+                    stage: Registration Push
                     targeting: Porro ut et cupiditate.
                     url: Nostrum ratione id.
             required:

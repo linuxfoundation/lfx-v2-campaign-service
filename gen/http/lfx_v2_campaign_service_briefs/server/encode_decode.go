@@ -220,20 +220,39 @@ func DecodeFindBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 	return func(r *http.Request) (*lfxv2campaignservicebriefs.FindBriefPayload, error) {
 		var payload *lfxv2campaignservicebriefs.FindBriefPayload
 		var (
-			projectID   string
-			eventSlug   string
-			bearerToken *string
-			err         error
+			projectID    string
+			eventSlug    string
+			deliveryType string
+			stage        string
+			bearerToken  *string
+			err          error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
-		eventSlug = r.URL.Query().Get("event_slug")
+		qp := r.URL.Query()
+		eventSlug = qp.Get("event_slug")
 		if eventSlug == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "query string"))
 		}
 		if utf8.RuneCountInString(eventSlug) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 1, true))
+		}
+		deliveryTypeRaw := qp.Get("delivery_type")
+		if deliveryTypeRaw != "" {
+			deliveryType = deliveryTypeRaw
+		} else {
+			deliveryType = "paid-marketing"
+		}
+		if !(deliveryType == "paid-marketing" || deliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email"}))
+		}
+		stageRaw := qp.Get("stage")
+		if stageRaw != "" {
+			stage = stageRaw
+		}
+		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
 		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
@@ -242,7 +261,7 @@ func DecodeFindBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		if err != nil {
 			return payload, err
 		}
-		payload = NewFindBriefPayload(projectID, eventSlug, bearerToken)
+		payload = NewFindBriefPayload(projectID, eventSlug, deliveryType, stage, bearerToken)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")
@@ -3561,6 +3580,8 @@ func unmarshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(v *Bri
 	res := &lfxv2campaignservicebriefs.BriefInput{
 		ProgramType:  *v.ProgramType,
 		EventSlug:    *v.EventSlug,
+		DeliveryType: v.DeliveryType,
+		Stage:        v.Stage,
 		URL:          v.URL,
 		EventDetails: v.EventDetails,
 		Copy:         v.Copy,

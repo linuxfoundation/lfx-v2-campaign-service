@@ -18,6 +18,38 @@ const (
 	ProgramMembership ProgramType = "membership"
 )
 
+// DeliveryType is the surface a brief was authored for. Paid and email are PARALLEL channels on
+// one event rather than alternatives, which is why it participates in the brief's unique key
+// (000030) instead of merely describing it.
+type DeliveryType string
+
+// Delivery types.
+const (
+	DeliveryPaidMarketing DeliveryType = "paid-marketing"
+	DeliveryEmail         DeliveryType = "email"
+)
+
+// Valid reports whether d is a known delivery type.
+//
+// The empty string is NOT valid, and that is a statement about STORED values rather than about
+// what a caller may send. The column is NOT NULL with a CHECK, so `”` is a write the database
+// refuses; no brief can carry it.
+//
+// A caller MAY omit the field, and that is a different thing. `deliveryTypeOrPaid` in the service
+// and `CreateBrief` in the repository both map the zero value to `paid-marketing` before the write
+// — paid was the only surface whose brief could be saved before 000030, so "unsaid" means paid.
+// Only the ZERO value defaults: a non-empty value that is not a known surface is passed through so
+// the CHECK refuses it, because under the widened key `(project, slug, paid-marketing, ”)` is the
+// REAL paid brief's slot and silently filing a typo there aims the write at another brief.
+func (d DeliveryType) Valid() bool {
+	switch d {
+	case DeliveryPaidMarketing, DeliveryEmail:
+		return true
+	default:
+		return false
+	}
+}
+
 // Valid reports whether p is a known program type.
 func (p ProgramType) Valid() bool {
 	switch p {
@@ -43,20 +75,50 @@ const (
 // all sharing brief_id. Briefs are indexed into the Query Service (unlike
 // connections), so lists and revision history are served from there.
 type CampaignBrief struct {
-	ID           string
-	ProjectID    string
-	ProgramType  ProgramType
-	EventSlug    string // UNIQUE with project_id
-	URL          string
-	Platforms    json.RawMessage // selected channels (a planning hint)
-	EventDetails json.RawMessage
-	Copy         json.RawMessage
-	Keywords     json.RawMessage
-	Targeting    json.RawMessage
-	Status       BriefStatus
-	Version      int64
-	ApprovedBy   *Actor
-	ApprovedAt   *time.Time
+	ID          string
+	ProjectID   string
+	ProgramType ProgramType
+	// EventSlug is PART of a brief's composite identity, not the whole of it. 000030 widened the
+	// unique index to (project_id, event_slug, delivery_type, stage) because one event carries a
+	// paid brief and an email SERIES at the same time; an earlier comment here claimed the slug
+	// was unique with project_id alone, which stopped being true with that migration.
+	EventSlug string
+	// DeliveryType names the surface that authored this brief. Paid and email are parallel
+	// channels on one event, so this is what keeps them from displacing each other -- a read
+	// scoped to one surface must not return the other's brief, and a write must not replace it.
+	// Rows predating 000030 carry "paid-marketing", which is a fact about them rather than a
+	// default: the paid surface was the only one whose brief could be saved.
+	DeliveryType DeliveryType
+	// Stage places this brief within an email series (CFP Launch, Registration Push, ...). Empty
+	// for paid, which has no series -- and empty rather than absent because it participates in a
+	// unique index, where NULLs never collide and would let duplicates accumulate unchecked.
+	Stage string
+	// AssertDeliveryType / AssertStage carry an UPDATE caller's explicit claim about this brief's
+	// identity, and only that. Nil means "the request did not mention it".
+	//
+	// Separate from the two fields above because presence and value are different questions here,
+	// and the wire can express both: `stage` is a *string on BriefInput, so an explicit
+	// `"stage": ""` is a real request -- "move this to the paid stage" -- and is NOT the same as
+	// omitting the field. Reading the plain Stage field alone flattens the two into "", so an
+	// email brief asked to become a paid one was answered 200 with its stage unchanged: the
+	// caller was told a rejected identity change had succeeded. Verified against a live database
+	// before this field existed.
+	//
+	// Only ReplaceBrief reads them, and only to REJECT. They are never written to a column --
+	// delivery_type and stage are immutable under 000030's key -- so they carry no meaning on
+	// create, where the fields above already say what the brief IS.
+	AssertDeliveryType *DeliveryType
+	AssertStage        *string
+	URL                string
+	Platforms          json.RawMessage // selected channels (a planning hint)
+	EventDetails       json.RawMessage
+	Copy               json.RawMessage
+	Keywords           json.RawMessage
+	Targeting          json.RawMessage
+	Status             BriefStatus
+	Version            int64
+	ApprovedBy         *Actor
+	ApprovedAt         *time.Time
 	// CreatedBy / UpdatedBy name the human behind the write. Nil means "not
 	// recorded", which has THREE causes, and they are not equally benign:
 	//
