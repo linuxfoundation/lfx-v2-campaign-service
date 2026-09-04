@@ -8,17 +8,26 @@
 -- Postgres refuses instead, and the operator resolves it deliberately by archiving the rows they
 -- do not want before retrying.
 --
--- WRAPPED IN A TRANSACTION, and that is load-bearing rather than decorative. golang-migrate does
--- not wrap a migration's statements for us, so an earlier revision -- which simply ordered the
--- index restore before the column drops -- left a database in a state worse than either endpoint
--- when it failed: verified by running it against a seeded database, where the index creation
--- errored on the duplicate key and the two ALTER TABLEs then ran anyway, dropping
--- `delivery_type` and `stage` while the duplicate rows they distinguished remained. The table
--- was left with data it could no longer tell apart and neither index in place.
+-- WRAPPED IN A TRANSACTION, as a defensive guarantee rather than as a fix for a live hazard.
+-- Under THIS repository's configuration the batch is already atomic: `pgxURL` (pool.go) rewrites
+-- only the URL scheme and never sets `x-multi-statement`, so the pgx5 driver submits the whole
+-- file in one ExecContext and PostgreSQL wraps a multi-statement simple query in an IMPLICIT
+-- transaction. The migrations README states the same thing at line 59, where it explains why
+-- CREATE INDEX CONCURRENTLY must live alone in its own file.
 --
--- With the transaction, a failed revert is a no-op: the columns and the wide index survive
--- exactly as they were, and the operator sees the duplicate-key error naming the event to
--- resolve.
+-- An earlier revision of this comment claimed the opposite -- that golang-migrate ran the
+-- statements individually, so a failing index restore would let the column drops run anyway and
+-- strand duplicate rows with their discriminator gone. That failure mode is not reachable here,
+-- and the claim was wrong: it was reasoned from the fix working rather than checked against the
+-- driver's configuration.
+--
+-- The BEGIN/COMMIT stays for two reasons that do hold. It survives someone enabling
+-- `x-multi-statement` later -- the flag exists precisely so a file CAN be run
+-- statement-by-statement -- and it states the atomicity requirement HERE rather than leaving it
+-- to a driver default two layers away.
+--
+-- Either way a failed revert is a no-op: the columns and the wide index survive exactly as they
+-- were, and the operator sees the duplicate-key error naming the event to resolve.
 
 BEGIN;
 

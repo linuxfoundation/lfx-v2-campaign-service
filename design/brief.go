@@ -17,10 +17,19 @@ import (
 
 // ─── Brief types ───
 
-// BriefData holds the shared brief attributes used by response types. It is Reference()d by
-// the Brief RESPONSE type. Do not add constraints here — they reach the response type through
-// Reference, breaking already-persisted empty-slug rows. Constraints belong in BriefInput
-// (the create/update payload type) only. Keep the two in sync: see BriefInput's doc comment.
+// BriefData holds the shared brief attributes used by response types. It is Reference()d by the
+// Brief RESPONSE type, and goa copies validations through Reference — so a constraint here also
+// constrains every brief response.
+//
+// The test for adding one is therefore whether every PERSISTED row already satisfies it, not
+// whether it would be right on a request. A constraint a stored row can fail makes that row
+// undecodable by generated clients, get-brief included.
+//
+// `MinLength` on `event_slug` fails that test (empty slugs were creatable before BriefInput
+// carried the constraint) and lives on BriefInput only. The `delivery_type` and `stage` enums pass
+// it — 000030 backfills every row and its CHECKs refuse anything else — and must be here, because
+// a value accepted on write and rejected on read writes a row no lookup can name. Per-attribute
+// reasoning is on each one below; keep in sync with BriefInput's doc comment.
 var BriefData = Type("brief-data", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")

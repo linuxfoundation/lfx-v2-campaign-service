@@ -2020,6 +2020,66 @@ func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
 	}
 }
 
+// TestBriefIdentityPairsRejectedAt400 pins the ERROR MAPPING for an impossible identity pair, at
+// both call sites, which the database tests cannot reach.
+//
+// The live tests prove the CHECK refuses such a write. They say nothing about what a CALLER sees:
+// a constraint violation is SQLSTATE 23514, which no repository path classifies, so without the
+// service-layer guard it surfaces as a 500 on create and as a misleading 404 on find. Those are
+// the outcomes this guard exists to replace, and only a service test can observe them.
+//
+// Asserting the repository is never touched is the other half. A guard that ran AFTER the write
+// would still return 400 while leaving the row's fate to the CHECK, which is a different contract
+// -- and on find it would mean the useless 404 is merely relabelled rather than avoided.
+func TestBriefIdentityPairsRejectedAt400(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		delivery string
+		stage    string
+	}{
+		{"paid with an email stage", "paid-marketing", "Registration Push"},
+		{"email with no stage", "email", ""},
+		{"email with an unknown stage", "email", "Nonsense Stage"},
+	} {
+		t.Run("create rejects "+tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			s := newBriefServiceWithRepo(t, repo)
+
+			_, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
+				ProjectID: "cncf",
+				Brief: &briefs.BriefInput{
+					ProgramType: "events", EventSlug: "kubecon-eu-2026",
+					DeliveryType: &tc.delivery, Stage: &tc.stage,
+				},
+			})
+
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("CreateBrief(%q, %q): err = %v, want *briefs.BadRequestError", tc.delivery, tc.stage, err)
+			}
+			if len(repo.briefs) != 0 {
+				t.Errorf("CreateBrief wrote a row for an impossible pair; the guard must run BEFORE the repository")
+			}
+		})
+
+		t.Run("find rejects "+tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			s := newBriefServiceWithRepo(t, repo)
+
+			_, err := s.FindBrief(context.Background(), &briefs.FindBriefPayload{
+				ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+				DeliveryType: tc.delivery, Stage: tc.stage,
+			})
+
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("FindBrief(%q, %q): err = %v, want *briefs.BadRequestError (a 404 would send "+
+					"the caller looking for a row that could never exist)", tc.delivery, tc.stage, err)
+			}
+		})
+	}
+}
+
 // TestFindBrief_ZeroDeliveryTypeQueriesPaid pins that FindBrief normalizes ONCE — that the value
 // it validates is the value it queries.
 //

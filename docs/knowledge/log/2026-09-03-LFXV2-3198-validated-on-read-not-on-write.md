@@ -11,17 +11,24 @@ new unique key. Every subsequent lookup then fails in both directions: asking fo
 is reachable only by id, and because `replaceBriefQuery` deliberately omits `stage` from its SET
 list it cannot be repaired by an update either — the only exit is archive-by-id.
 
-Nothing else covered it. There is no CHECK on `stage` (unlike `delivery_type`), and the service
-layer passed the string straight through.
+Nothing else covered it AT THE TIME: there was no CHECK on `stage` (unlike `delivery_type`), and
+the service layer passed the string straight through.
 
-Two guards now close it:
+Three guards now close it, added over the course of this ticket:
 
 - The `Enum` moved onto `BriefData.stage`, so the write path rejects a bad stage at the edge exactly
   as `delivery_type` already did. Safe for the response type too: every persisted stage is either
   `''` or one of the six, so no stored brief becomes undecodable.
-- `TestPublishedStageEnumMatchesEmailStageNames` pins the published enum to `emailstage.Names()`.
-  The design DSL cannot import a service package without inverting the contract direction, so the
-  list is hand-copied there; the test is what makes the copy safe.
+- `TestPublishedStageEnumMatchesEmailStageNames` pins the published enum to `emailstage.Names()`,
+  on BOTH the write payload and the find-brief query parameter. The design DSL cannot import a
+  service package without inverting the contract direction, so the list is hand-copied there; the
+  test is what makes the copy safe.
+- `campaign_briefs_delivery_stage_pair_valid`, added to 000030 later in this same ticket, is the
+  schema backstop. It refuses not just an unknown stage but the impossible PAIRS -- a paid brief
+  with an email stage, an email brief with none -- which the two per-column enums admit
+  individually. It answers for writers that never pass through this service at all: a migration, a
+  backfill, a psql session. The service validates the pair before the write so an API caller gets
+  a 400 rather than the 500 a raw constraint violation would produce.
 
 **The general shape:** when a value is validated at one end of a round trip and not the other, the
 gap is not "unvalidated input" — it is a state the system can enter and cannot leave. Ask of any
