@@ -413,6 +413,85 @@ func withDatabase(dsn, name string) (string, error) {
 	return u.String(), nil
 }
 
+// TestLiveMigration000030BackfillsLegacyBriefsAsPaid exercises the BACKFILL, which is the one
+// claim 000030 makes about rows that already exist.
+//
+// The sibling test in brief_repo_live_test.go cannot: `dbtest.Pool` hands back an
+// already-migrated schema, so a row created through the repo there is written by post-000030 code
+// and both columns are populated on the way in. It never sees a row that PREDATES the migration.
+// A regression in the DEFAULT clauses would leave legacy briefs carrying an empty delivery type --
+// unfindable, since every lookup normalizes to paid-marketing -- while that test stayed green.
+//
+// So this one seeds at version 29, where the columns do not exist yet, then migrates to 30 and
+// asserts what the backfill produced: `paid-marketing` and the empty stage, which is a statement
+// of FACT about those rows rather than a convenient default. Paid was the only surface whose brief
+// could be saved before this migration.
+func TestLiveMigration000030BackfillsLegacyBriefsAsPaid(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	defer func() { _, _ = m.Close() }()
+
+	// Stop BEFORE the widening. At 29 `campaign_briefs` has no delivery_type and no stage.
+	if err := m.Migrate(29); err != nil {
+		t.Fatalf("migrate to 29: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	var legacyID string
+	if err = conn.QueryRow(ctx,
+		`INSERT INTO campaign_briefs (project_id, program_type, event_slug)
+		 VALUES ('p-legacy', 'events', 's-legacy') RETURNING id`).Scan(&legacyID); err != nil {
+		t.Fatalf("seed a pre-000030 brief: %v", err)
+	}
+
+	// Guard the premise: if the columns already existed at 29, this test proves nothing.
+	var columnCount int
+	if err = conn.QueryRow(ctx,
+		`SELECT count(*) FROM information_schema.columns
+		  WHERE table_name = 'campaign_briefs' AND column_name IN ('delivery_type', 'stage')`).Scan(&columnCount); err != nil {
+		t.Fatalf("check the pre-migration schema: %v", err)
+	}
+	if columnCount != 0 {
+		t.Fatalf("delivery_type/stage already exist at version 29 (%d of 2); this test's premise is wrong", columnCount)
+	}
+
+	if err = m.Migrate(30); err != nil {
+		t.Fatalf("migrate 29 -> 30 with a legacy brief present: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	var delivery, stage string
+	if err = conn.QueryRow(ctx,
+		`SELECT delivery_type, stage FROM campaign_briefs WHERE id = $1`, legacyID).Scan(&delivery, &stage); err != nil {
+		t.Fatalf("read the backfilled identity: %v", err)
+	}
+	if delivery != "paid-marketing" || stage != "" {
+		t.Errorf("backfilled identity = (%q, %q), want (paid-marketing, \"\") -- every row written "+
+			"before 000030 came from the paid surface", delivery, stage)
+	}
+
+	// And it must be FINDABLE under that identity, which is what the backfill is for: a lookup
+	// normalizes an omitted delivery type to paid-marketing, so a row left at '' would be
+	// unreachable through the only endpoint that addresses a brief by slug.
+	var found string
+	if err = conn.QueryRow(ctx,
+		`SELECT id FROM campaign_briefs
+		  WHERE project_id = 'p-legacy' AND event_slug = 's-legacy'
+		    AND delivery_type = 'paid-marketing' AND stage = ''`).Scan(&found); err != nil {
+		t.Fatalf("a backfilled legacy brief must be findable under the paid identity: %v", err)
+	}
+	if found != legacyID {
+		t.Errorf("found brief %q, want the legacy row %q", found, legacyID)
+	}
+}
+
 // TestLiveMigration000030RefusesToDropALiveEmailBrief pins the DATA-DEPENDENT half of 000030's
 // rollback guard, which no other test reaches.
 //

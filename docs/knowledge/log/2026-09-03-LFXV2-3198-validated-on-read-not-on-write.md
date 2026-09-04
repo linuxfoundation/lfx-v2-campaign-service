@@ -7,7 +7,8 @@
 The two asymmetric ends produced a row that could be written and never read. `POST` a brief with
 `stage: "Registration push"` (lowercase p) and it is stored, returns 201, and occupies a slot in the
 new unique key. Every subsequent lookup then fails in both directions: asking for the typo returns
-422 from the enum, asking for the correct spelling returns 404 because no such row exists. The brief
+400 from the enum -- a generated validation rejection, not a 422 -- and asking for the correct
+spelling returns 404 because no such row exists. The brief
 is reachable only by id, and because `replaceBriefQuery` deliberately omits `stage` from its SET
 list it cannot be repaired by an update either — the only exit is archive-by-id.
 
