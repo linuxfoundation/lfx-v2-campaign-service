@@ -31,12 +31,26 @@ var BriefData = Type("brief-data", func() {
 	// (get-brief included). The empty-slug REQUEST is rejected by BriefInput below — the
 	// create/update payload type, which carries MinLength(1) — which is where the constraint
 	// belongs. Keep the two in sync: see BriefInput's doc comment.
-	Attribute("event_slug", String, "Event/course slug. One QUARTER of a brief's identity, not unique on its own: see delivery_type and stage.")
+	Attribute("event_slug", String, "Event/course slug. Part of a brief's composite identity, not unique on its own: see delivery_type and stage.")
 	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
 		Enum("paid-marketing", "email")
 		Example("email")
 	})
+	// The Enum is here on BriefData -- the WRITE side -- and not only on find-brief, because a
+	// stage is part of a brief's IDENTITY. find-brief validates the stage it is asked for, so a
+	// stage this type accepted but that enum rejects writes a row no lookup can ever name: the
+	// typo returns 422 and the correct spelling returns 404. The row is reachable only by id.
+	// Unlike `event_slug` above, constraining it here is safe for the response type: every
+	// persisted row's stage is either "" or one of these six, so no stored brief becomes
+	// undecodable. Keep this list identical to `emailstage.Names()` plus "" --
+	// TestDesignStageEnumMatchesEmailStageNames fails the build if they drift.
+	//
+	// Deliberately NOT applied to generate-email's `stage` param: that endpoint RESOLVES an
+	// unrecognised stage to Registration Push under a 200 by documented contract, because copy
+	// generation should never be blocked by a misspelling. Storage is the opposite -- a
+	// misspelling there is unrecoverable, so it must fail at the edge.
 	Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
+		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
 		Example("Registration Push")
 	})
 	Attribute("url", String, "Event/course page URL")

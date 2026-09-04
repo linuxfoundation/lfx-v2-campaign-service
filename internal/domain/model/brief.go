@@ -71,7 +71,7 @@ type CampaignBrief struct {
 	ID          string
 	ProjectID   string
 	ProgramType ProgramType
-	// EventSlug is one FOURTH of a brief's identity, not the whole of it. 000030 widened the
+	// EventSlug is PART of a brief's composite identity, not the whole of it. 000030 widened the
 	// unique index to (project_id, event_slug, delivery_type, stage) because one event carries a
 	// paid brief and an email SERIES at the same time; an earlier comment here claimed the slug
 	// was unique with project_id alone, which stopped being true with that migration.

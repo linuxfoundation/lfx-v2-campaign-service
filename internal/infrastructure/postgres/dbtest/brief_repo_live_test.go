@@ -563,6 +563,147 @@ func TestLiveGetBriefIsTenantScoped(t *testing.T) {
 	}
 }
 
+// TestLiveReplaceBriefRejectsAnIdentityChange covers the third state of the update path, which is
+// the one that used to be silent.
+//
+// `replaceBriefQuery` omits delivery_type and stage from its SET list because they are identity
+// under 000030's key. Omitting them alone meant a caller could PUT a changed delivery_type, get a
+// 200, and read the OLD value back -- told the change landed when it had been dropped.
+//
+// The first subtest is the one that keeps the guard honest. An omitted delivery_type arrives as the
+// zero value, and rejecting THAT would break every ordinary content edit on an email brief, so
+// "not restated" and "asked to change" must stay distinguishable. A guard that simply compared
+// b.DeliveryType against the stored row would pass the second subtest and fail this one.
+func TestLiveReplaceBriefRejectsAnIdentityChange(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	// An EMAIL brief, because that is where the zero-value trap bites: paid is what an omitted
+	// value would default to, so a paid brief cannot tell the two apart.
+	newEmailBrief := func(t *testing.T) *model.CampaignBrief {
+		t.Helper()
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		b.DeliveryType = model.DeliveryEmail
+		b.Stage = "Registration Push"
+		created, err := repo.CreateBrief(ctx, b, nil)
+		if err != nil {
+			t.Fatalf("CreateBrief: %v", err)
+		}
+		return created
+	}
+
+	t.Run("an edit that does not restate the identity is allowed", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		edit.Copy = json.RawMessage(`{"headline":"edited"}`)
+		// DeliveryType and Stage left at the zero value: exactly what UpdateBrief passes when
+		// the payload omits them.
+
+		updated, err := repo.ReplaceBrief(ctx, edit, created.Version, nil)
+		if err != nil {
+			t.Fatalf("ReplaceBrief without restating identity: %v", err)
+		}
+		// The identity must SURVIVE the edit, not be reset to the paid default.
+		if updated.DeliveryType != model.DeliveryEmail {
+			t.Errorf("delivery_type after edit = %q, want %q", updated.DeliveryType, model.DeliveryEmail)
+		}
+		if updated.Stage != "Registration Push" {
+			t.Errorf("stage after edit = %q, want %q", updated.Stage, "Registration Push")
+		}
+		assertJSONEqual(t, "copy", updated.Copy, `{"headline":"edited"}`)
+	})
+
+	t.Run("changing the delivery type is rejected", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		edit.DeliveryType = model.DeliveryPaidMarketing
+		edit.Stage = created.Stage
+
+		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
+			t.Fatalf("ReplaceBrief moving the surface: err = %v, want ErrBriefIdentityImmutable", err)
+		}
+
+		// The WHOLE request must roll back, not just the identity column. The UPDATE ran before
+		// the guard, so a missing rollback would leave the content edited and the version bumped
+		// while the caller was told the request failed.
+		after, err := repo.GetBrief(ctx, created.ProjectID, created.ID)
+		if err != nil {
+			t.Fatalf("GetBrief after a rejected identity change: %v", err)
+		}
+		if after.Version != created.Version {
+			t.Errorf("version = %d after a REJECTED update, want %d: the content update was not rolled back",
+				after.Version, created.Version)
+		}
+		assertJSONEqual(t, "copy", after.Copy, `{"headline":"original"}`)
+	})
+
+	t.Run("changing the stage is rejected", func(t *testing.T) {
+		created := newEmailBrief(t)
+
+		edit := draftBrief(created.ProjectID, created.EventSlug)
+		edit.ID = created.ID
+		edit.DeliveryType = created.DeliveryType
+		edit.Stage = "Final Countdown"
+
+		if _, err := repo.ReplaceBrief(ctx, edit, created.Version, nil); !errors.Is(err, domain.ErrBriefIdentityImmutable) {
+			t.Fatalf("ReplaceBrief moving the stage: err = %v, want ErrBriefIdentityImmutable", err)
+		}
+	})
+}
+
+// TestLiveCreateBriefDefaultsOnlyTheZeroDeliveryType pins both halves of the normalisation in
+// CreateBrief, because they pull in opposite directions and a fix for one can undo the other.
+//
+// It exists because 000030's CHECK broke every live test in this file at once: `draftBrief` never
+// set DeliveryType, the insert names the column explicitly so the column DEFAULT could not apply,
+// and `”` reached the constraint. Nothing local caught it -- these tests skip without
+// TEST_DATABASE_URL, so a laptop run reported success while CI failed on nine tests.
+//
+// The second subtest is the one that stops the fix from becoming a different bug. Defaulting the
+// ZERO value is a convenience for a Go caller; defaulting an UNRECOGNISED value would silently
+// file a typo'd brief as paid -- and under 000030's widened key, `(project, slug, paid-marketing,
+// ”)` is the real paid brief's slot, so a misspelling could displace it. The bad value must reach
+// the CHECK.
+func TestLiveCreateBriefDefaultsOnlyTheZeroDeliveryType(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := newBriefRepo(pool)
+
+	t.Run("an unset delivery type is stored as paid-marketing", func(t *testing.T) {
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		if b.DeliveryType != "" {
+			t.Fatalf("precondition: draftBrief must leave DeliveryType unset, got %q", b.DeliveryType)
+		}
+
+		created, err := repo.CreateBrief(ctx, b, nil)
+		if err != nil {
+			t.Fatalf("CreateBrief with an unset delivery type: %v", err)
+		}
+		// Asserted on the value READ BACK, not on err == nil: a write that stored the wrong
+		// surface would still return a nil error, and under the widened key the surface is
+		// part of which brief this row IS.
+		if created.DeliveryType != model.DeliveryPaidMarketing {
+			t.Errorf("stored delivery_type = %q, want %q", created.DeliveryType, model.DeliveryPaidMarketing)
+		}
+	})
+
+	t.Run("an unrecognised delivery type is rejected, not defaulted", func(t *testing.T) {
+		b := draftBrief(dbtest.UniqueID(t, "project"), dbtest.UniqueID(t, "slug"))
+		b.DeliveryType = model.DeliveryType("e-mail") // a plausible typo for "email"
+
+		created, err := repo.CreateBrief(ctx, b, nil)
+		if err == nil {
+			t.Fatalf("CreateBrief accepted delivery_type %q and stored it as %q; the CHECK must reject it",
+				"e-mail", created.DeliveryType)
+		}
+	})
+}
+
 // assertJSONEqual compares a jsonb column against expected JSON semantically. jsonb
 // reorders object keys and strips insignificant whitespace, so a byte comparison against
 // the literal that was inserted fails for reasons that have nothing to do with the code

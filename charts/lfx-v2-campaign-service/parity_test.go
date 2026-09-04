@@ -614,6 +614,17 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 // SILENTLY swallowed by ON CONFLICT DO NOTHING (RowsAffected 0, read back as "already
 // claimed"). So the ordering guarantee has to come from the rollout strategy, and a future
 // edit that "restores the default" would quietly reopen the window.
+//
+// 000014 is no longer the only migration relying on this. 000030 narrows the brief unique key
+// from (project_id, event_slug) to (project_id, event_slug, delivery_type, stage), and its
+// safety rests on the SAME guarantee from the other direction: with Recreate and replicaCount 1
+// there is no overlap in which a pre-000030 pod queries `WHERE project_id=$1 AND event_slug=$2`
+// against a table now holding several briefs per event, where it would match an arbitrary member
+// of that set. It is also why 000030 can use a plain CREATE UNIQUE INDEX rather than
+// CONCURRENTLY, which its multi-statement form forbids anyway.
+//
+// Recorded here so the pin has TWO named owners: retiring 000014 alone is not sufficient reason
+// to relax this, and the next reader should not have to rediscover the second dependency.
 func TestDeploymentUsesRecreateStrategy(t *testing.T) {
 	deployment := helmTemplate(t, "templates/deployment.yaml")
 

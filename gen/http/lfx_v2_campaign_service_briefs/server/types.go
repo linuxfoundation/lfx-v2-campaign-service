@@ -93,8 +93,8 @@ type CreateBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
-	// see delivery_type and stage.
+	// Event/course slug. Part of a brief's composite identity, not unique on its
+	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
@@ -128,8 +128,8 @@ type FindBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
-	// see delivery_type and stage.
+	// Event/course slug. Part of a brief's composite identity, not unique on its
+	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
@@ -163,8 +163,8 @@ type GetBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
-	// see delivery_type and stage.
+	// Event/course slug. Part of a brief's composite identity, not unique on its
+	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
@@ -198,8 +198,8 @@ type UpdateBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
-	// see delivery_type and stage.
+	// Event/course slug. Part of a brief's composite identity, not unique on its
+	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
@@ -233,8 +233,8 @@ type ApproveBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
-	// see delivery_type and stage.
+	// Event/course slug. Part of a brief's composite identity, not unique on its
+	// own: see delivery_type and stage.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
@@ -4883,6 +4883,11 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	if body.DeliveryType != nil {
 		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		}
+	}
+	if body.Stage != nil {
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
 		}
 	}
 	return

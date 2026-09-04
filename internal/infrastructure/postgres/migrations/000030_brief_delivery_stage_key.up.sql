@@ -28,6 +28,24 @@
 -- Partial on `status <> 'archived'` exactly as 000003 was, so archiving still frees the slot.
 -- The old index is dropped rather than left alongside: keeping it would enforce the very
 -- constraint this migration exists to lift.
+--
+-- NOT `CONCURRENTLY`, deliberately, and the reason is worth stating because the repo checklist
+-- otherwise reads as requiring it. Two independent reasons:
+--
+--   1. It is FORBIDDEN here. `CONCURRENTLY` may not run inside a transaction, and the checklist
+--      in this directory's README requires it to live ALONE in its file for exactly that reason:
+--      a multi-statement migration is batched in an implicit transaction. This file is
+--      multi-statement (two ALTERs, a constraint swap, a DROP INDEX and a CREATE INDEX).
+--   2. It is UNNECESSARY. The chart pins `strategy.type: Recreate` (deployment.yaml) with
+--      `replicaCount: 1` (values.yaml), so the old pod is fully terminated before the new one
+--      starts and migrates. There is no concurrent writer for a plain CREATE INDEX to block,
+--      and no window in which old code meets the new schema -- which is also why the narrowing
+--      this migration performs satisfies the README's expand/contract rule.
+--
+-- BOTH of those are load-bearing. Raising `replicaCount` above 1, or restoring `RollingUpdate`,
+-- reintroduces an overlap window in which a pre-000030 pod reads `WHERE project_id=$1 AND
+-- event_slug=$2` against a table now holding several briefs per event -- and it would match an
+-- arbitrary member of that set. Revisit this migration if either changes.
 
 ALTER TABLE campaign_briefs
     ADD COLUMN IF NOT EXISTS delivery_type TEXT NOT NULL DEFAULT 'paid-marketing';

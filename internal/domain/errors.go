@@ -38,6 +38,18 @@ var (
 	// Maps to 409.
 	ErrAudienceBuildInFlight = errors.New("an audience build for this brief and platform is already in progress")
 
+	// ErrBriefIdentityImmutable indicates an update tried to change a brief's delivery_type or
+	// stage. Under 000030 those two columns are part of a brief's IDENTITY -- the unique key is
+	// (project_id, event_slug, delivery_type, stage) -- so changing one does not edit this brief,
+	// it names a DIFFERENT one. `replaceBriefQuery` therefore omits both from its SET list.
+	//
+	// A distinct sentinel rather than ErrValidation because the remedy is specific and otherwise
+	// non-obvious: the caller wanted another surface or another send in the series, and the way to
+	// get one is to CREATE that brief, not to edit this one. Without this, the update silently
+	// succeeded and returned 200 with the OLD values -- the caller was told its change landed when
+	// the field had been dropped on the floor. Maps to 409.
+	ErrBriefIdentityImmutable = errors.New("a brief's delivery type and stage are immutable")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")

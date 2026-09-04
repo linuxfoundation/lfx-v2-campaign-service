@@ -230,8 +230,8 @@ type Brief struct {
 	ProjectID string
 	// Funnel context
 	ProgramType string
-	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
-	// see delivery_type and stage.
+	// Event/course slug. Part of a brief's composite identity, not unique on its
+	// own: see delivery_type and stage.
 	EventSlug string
 	// Delivery surface this brief was authored for.
 	DeliveryType *string

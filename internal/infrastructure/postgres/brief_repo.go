@@ -210,8 +210,22 @@ func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, ind
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// An unset DeliveryType is the zero string, and the insert names the column explicitly, so the
+	// column DEFAULT never applies -- the write reaches 000030's CHECK as `''` and fails. The
+	// service layer's deliveryTypeOrPaid() covers the HTTP path only; a Go caller that builds a
+	// CampaignBrief and skips this field gets a constraint violation instead of the paid default
+	// the column documents. Normalising HERE puts the default on the path every writer shares.
+	//
+	// Only the ZERO value defaults. A non-empty value that is not a valid surface is passed
+	// through unchanged so the CHECK rejects it: a typo must not be silently filed as paid,
+	// which -- under 000030's widened key -- is a slot that can displace the real paid brief.
+	deliveryType := b.DeliveryType
+	if deliveryType == "" {
+		deliveryType = model.DeliveryPaidMarketing
+	}
+
 	row := tx.QueryRow(ctx, createBriefQuery,
-		b.ProjectID, string(b.ProgramType), b.EventSlug, string(b.DeliveryType), b.Stage, nullStr(b.URL),
+		b.ProjectID, string(b.ProgramType), b.EventSlug, string(deliveryType), b.Stage, nullStr(b.URL),
 		nullJSON(b.Platforms), nullJSON(b.EventDetails), nullJSON(b.Copy),
 		nullJSON(b.Keywords), nullJSON(b.Targeting), approvedBy, createdBy,
 	)
@@ -264,6 +278,30 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 		// Distinguish missing from stale version, THROUGH THIS TRANSACTION (see classifyNoRowTx).
 		return nil, classifyNoRowTx(ctx, tx, b.ProjectID, b.ID)
 	}
+	// Identity is checked AFTER the update and BEFORE the commit, against the row the UPDATE
+	// returned. `replaceBriefQuery` deliberately omits delivery_type and stage from its SET list
+	// -- they are identity under 000030's key -- but omitting them silently meant a caller could
+	// PUT a changed delivery_type, receive 200, and read the OLD value back in the response with
+	// nothing saying its change had been dropped.
+	//
+	// Compared against `updated` rather than a separate read: it is the committed row from this
+	// same statement and this same transaction, so nothing can land in between. The rollback is
+	// the deferred Rollback -- returning before Commit discards the content update too, which is
+	// what makes this a rejection of the whole request rather than a partial apply.
+	//
+	// A ZERO value is not a change request. `deliveryTypeOrPaid` maps an omitted delivery_type to
+	// paid-marketing, so a caller editing an EMAIL brief's copy without restating its surface
+	// arrives here with paid -- rejecting that would make every such edit fail. Only a value that
+	// is both non-empty and different is treated as an attempt to move the brief.
+	if b.DeliveryType != "" && b.DeliveryType != updated.DeliveryType {
+		return nil, fmt.Errorf("%w: delivery_type is %q, cannot become %q",
+			domain.ErrBriefIdentityImmutable, updated.DeliveryType, b.DeliveryType)
+	}
+	if b.Stage != "" && b.Stage != updated.Stage {
+		return nil, fmt.Errorf("%w: stage is %q, cannot become %q",
+			domain.ErrBriefIdentityImmutable, updated.Stage, b.Stage)
+	}
+
 	if eerr := enqueueBriefIndex(ctx, tx, updated, indexPayload); eerr != nil {
 		return nil, fmt.Errorf("replace brief: %w", eerr)
 	}

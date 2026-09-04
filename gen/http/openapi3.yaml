@@ -9992,7 +9992,7 @@ components:
                     example: Omnis harum aut ab quasi recusandae totam.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: At odit magni ipsa sapiente libero.
                 id:
                     type: string
@@ -10026,6 +10026,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10090,7 +10098,7 @@ components:
                     example: Debitis ducimus modi vel delectus.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Nemo enim alias sapiente dolor.
                 id:
                     type: string
@@ -10126,6 +10134,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10190,7 +10206,7 @@ components:
                     example: Excepturi minus similique architecto.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Magnam cum eaque aut eos.
                 id:
                     type: string
@@ -10224,6 +10240,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10288,7 +10312,7 @@ components:
                     example: Eum velit suscipit nostrum nobis.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Omnis et sint repellendus.
                 id:
                     type: string
@@ -10324,6 +10348,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10388,7 +10420,7 @@ components:
                     example: Repellat qui.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Minus inventore.
                 id:
                     type: string
@@ -10424,6 +10456,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10487,7 +10527,7 @@ components:
                     example: Enim libero.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: In magnam enim et aut.
                 id:
                     type: string
@@ -10521,6 +10561,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 status:
                     type: string
                     description: Lifecycle status
@@ -10585,7 +10633,7 @@ components:
                     example: Dolore autem veniam quae.
                 event_slug:
                     type: string
-                    description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                     example: Quam possimus ex delectus ea ullam.
                 keywords:
                     description: Keyword list
@@ -10612,6 +10660,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 targeting:
                     description: Targeting recommendation
                     example: Dolore aut nemo rerum.
@@ -10681,6 +10737,14 @@ components:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
                     example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
                 targeting:
                     description: Targeting recommendation
                     example: Et quasi maiores ipsa dolores nulla nesciunt.

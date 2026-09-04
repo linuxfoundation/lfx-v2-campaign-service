@@ -7339,7 +7339,7 @@ definitions:
                 example: Suscipit consequatur iure dolor sit quis ut.
             event_slug:
                 type: string
-                description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
+                description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
                 example: Ea et sequi aperiam impedit omnis explicabo.
             id:
                 type: string
@@ -7373,6 +7373,14 @@ definitions:
                 type: string
                 description: Stage within an email series. Empty for paid, which has no series.
                 example: Registration Push
+                enum:
+                    - ""
+                    - CFP Launch
+                    - Schedule Announcement
+                    - Registration Push
+                    - Discount Offer
+                    - Final Countdown
+                    - Post-Event
             status:
                 type: string
                 description: Lifecycle status
@@ -7464,6 +7472,14 @@ definitions:
                 type: string
                 description: Stage within an email series. Empty for paid, which has no series.
                 example: Registration Push
+                enum:
+                    - ""
+                    - CFP Launch
+                    - Schedule Announcement
+                    - Registration Push
+                    - Discount Offer
+                    - Final Countdown
+                    - Post-Event
             targeting:
                 description: Targeting recommendation
                 example: Ratione architecto corporis totam et.

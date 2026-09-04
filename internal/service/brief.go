@@ -449,11 +449,16 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		ProjectID:   p.ProjectID,
 		ProgramType: model.ProgramType(in.ProgramType),
 		EventSlug:   in.EventSlug,
-		// Defaulted here rather than at the column, because the column's default exists to backfill
-		// rows written before 000030 -- it must not also quietly absorb a NEW brief whose caller
-		// forgot to say which surface it belongs to. An omitted value means paid for the same
-		// reason it does on the read: paid was the only surface that could save one.
-		DeliveryType: deliveryTypeOrPaid(in.DeliveryType),
+		// Carried through NOT to be written -- replaceBriefQuery omits both columns -- but so
+		// ReplaceBrief can compare them against the stored row and REJECT a change. They are
+		// identity under 000030's key, and silently dropping them returned 200 with the old
+		// values, telling a caller its change had landed when it had not.
+		//
+		// `derefOrEmpty`, not `deliveryTypeOrPaid`: an omitted delivery_type must stay the zero
+		// value here so the guard reads it as "not restated" rather than as "make this paid".
+		// Defaulting it would turn every content edit on an EMAIL brief into a rejected attempt
+		// to move that brief to the paid surface.
+		DeliveryType: model.DeliveryType(derefOrEmpty(in.DeliveryType)),
 		Stage:        derefOrEmpty(in.Stage),
 		URL:          strVal(in.URL),
 		Platforms:    marshalStrings(in.Platforms),
@@ -1812,22 +1817,25 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 	return v, nil
 }
 
-// deliveryTypeOrPaid resolves an optional delivery type to the surface that wrote the brief.
+// deliveryTypeOrPaid resolves an ABSENT delivery type to the surface that wrote the brief.
 //
 // Absent means paid, and that is a statement about history rather than a convenience: paid was the
 // only surface whose brief could be saved before 000030, so a caller that names none is a caller
-// that predates the distinction. An UNRECOGNISED value also resolves to paid rather than being
-// stored: the column carries a CHECK constraint, so passing it through would turn a caller's typo
-// into a database error at write time instead of a brief filed on the surface they meant.
+// that predates the distinction.
+//
+// Only absence defaults. An earlier revision also coerced an UNRECOGNISED value to paid, reasoning
+// that the column's CHECK would otherwise turn a typo into a write error. That was wrong twice
+// over. It could not fire for an HTTP caller -- the generated validator rejects a non-enum
+// delivery_type before this runs -- so it could only ever act on a value the design admitted and
+// the model did not, which is precisely the drift you want to fail loudly. And under 000030's
+// widened key, `(project, slug, paid-marketing, ”)` is the REAL paid brief's slot: silently
+// filing a misspelled email brief there does not correct the typo, it aims the write at another
+// brief. A bad value now reaches the CHECK and the write fails, which is the correct outcome.
 func deliveryTypeOrPaid(v *string) model.DeliveryType {
 	if v == nil {
 		return model.DeliveryPaidMarketing
 	}
-	d := model.DeliveryType(*v)
-	if !d.Valid() {
-		return model.DeliveryPaidMarketing
-	}
-	return d
+	return model.DeliveryType(*v)
 }
 
 // derefOrEmpty reads an optional string, treating absence as the empty value.
@@ -1858,6 +1866,13 @@ func mapBriefErr(err error) error {
 		// caller's ETag may be perfectly current, so 412 would send them off to refetch and
 		// rebuild a request that was already correct — the right advice is simply to retry.
 		return &briefs.ConflictError{Code: "409", Message: "another write to this campaign is already in progress; retry shortly"}
+	case errors.Is(err, domain.ErrBriefIdentityImmutable):
+		// A 409 like the others, but the generic "already exists" would be actively misleading:
+		// nothing conflicts, and the caller's request was well formed. What they attempted is
+		// not an edit at all -- delivery_type and stage identify WHICH brief this is, so
+		// changing one names a different brief. Say what to do instead, because "immutable"
+		// alone leaves a caller who wants a second channel or another send with no next step.
+		return &briefs.ConflictError{Code: "409", Message: "a brief's delivery type and stage are part of its identity and cannot be changed; create a brief for the other surface or stage instead"}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
