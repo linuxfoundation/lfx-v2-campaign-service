@@ -230,8 +230,13 @@ type Brief struct {
 	ProjectID string
 	// Funnel context
 	ProgramType string
-	// Event/course slug (unique within the project)
+	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
+	// see delivery_type and stage.
 	EventSlug string
+	// Delivery surface this brief was authored for.
+	DeliveryType *string
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string
 	// Event/course page URL
 	URL *string
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -256,8 +261,12 @@ type Brief struct {
 type BriefInput struct {
 	// Funnel context
 	ProgramType string
-	// Event/course slug (unique within the project)
+	// Event/course slug. Unique with delivery_type and stage, not alone.
 	EventSlug string
+	// Delivery surface this brief was authored for.
+	DeliveryType *string
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string
 	// Event/course page URL
 	URL *string
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -650,6 +659,10 @@ type FindBriefPayload struct {
 	ProjectID string
 	// Event slug derived from the event page URL.
 	EventSlug string
+	// Delivery surface the brief was authored for.
+	DeliveryType string
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage string
 }
 
 // GenerateEmailCopyPayload is the payload type of the

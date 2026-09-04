@@ -25,9 +25,9 @@ func NewBriefRepo(pool *Pool) *BriefRepo { return &BriefRepo{db: pool} }
 
 var _ domain.BriefRepository = (*BriefRepo)(nil)
 
-const briefCols = `id::text, project_id::text, program_type, event_slug, url, platforms, event_details,
-	copy, keywords, targeting, status, version, approved_by, approved_at, created_by, updated_by,
-	created_at, updated_at`
+const briefCols = `id::text, project_id::text, program_type, event_slug, delivery_type, stage, url,
+	platforms, event_details, copy, keywords, targeting, status, version, approved_by, approved_at,
+	created_by, updated_by, created_at, updated_at`
 
 // The four write statements are package constants rather than function locals so the
 // invariant they share — every one of them stamps an actor column in the SAME statement
@@ -36,9 +36,9 @@ const briefCols = `id::text, project_id::text, program_type, event_slug, url, pl
 // in which the row changed and the attribution had not.
 const (
 	createBriefQuery = `INSERT INTO campaign_briefs
-		(project_id, program_type, event_slug, url, platforms, event_details, copy, keywords, targeting,
-		 approved_by, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING ` + briefCols
+		(project_id, program_type, event_slug, delivery_type, stage, url, platforms, event_details, copy,
+		 keywords, targeting, approved_by, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING ` + briefCols
 
 	// Replacing brief content invalidates any prior approval: reset the brief to
 	// 'draft' and clear the approver so a modified brief cannot silently retain
@@ -46,6 +46,9 @@ const (
 	// and dispatched without re-review). event_slug is included so a slug change
 	// is actually persisted (it is subject to the partial-unique index, which
 	// surfaces a conflict if the new slug collides with a live brief).
+	// `delivery_type` and `stage` are deliberately NOT in the SET list. They are identity under
+	// 000030's key, so changing one does not edit this brief -- it names a different one. A caller
+	// that wants the other surface or another stage of the series creates that brief instead.
 	replaceBriefQuery = `UPDATE campaign_briefs SET
 		program_type=$1, event_slug=$2, url=$3, platforms=$4, event_details=$5, copy=$6, keywords=$7, targeting=$8,
 		status='draft', approved_by=NULL, approved_at=NULL,
@@ -149,20 +152,35 @@ func classifyNoRowTx(ctx context.Context, tx pgx.Tx, projectID, id string) error
 	return domain.ErrPreconditionFailed
 }
 
-// FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
-// ErrNotFound when none exists. This is the "have I already generated a brief for this
-// event?" lookup: the UI derives the slug from a pasted event URL and calls this before
-// generating, so a previously generated brief (with its AI copy/keywords/targeting) is
-// reused instead of silently regenerated.
+// FindBriefByEventSlug returns the non-archived brief for
+// (projectID, eventSlug, deliveryType, stage), or ErrNotFound when none exists. This is the
+// "have I already generated a brief for this event?" lookup: the UI derives the slug from a
+// pasted event URL and calls this before generating, so a previously generated brief (with its
+// AI copy/keywords/targeting) is reused instead of silently regenerated.
 //
-// At most ONE row can match: uq_campaign_briefs_project_event is a UNIQUE index on
-// (project_id, event_slug) WHERE status <> 'archived' — the same predicate used here, so
-// this is an efficient unique-key lookup and archiving frees the slug for a fresh brief.
-// (Not an index-ONLY scan: briefCols selects every column while the index carries just the
-// two key columns, so the heap row is still fetched.)
-func (r *BriefRepo) FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
-	q := `SELECT ` + briefCols + ` FROM campaign_briefs WHERE project_id = $1 AND event_slug = $2 AND status <> 'archived'`
-	b, err := scanBrief(r.db.QueryRow(ctx, q, projectID, eventSlug))
+// DELIVERY TYPE AND STAGE ARE PART OF THE LOOKUP, not filters layered on top of it. Before
+// 000030 the comment here said "at most ONE row can match" on (project_id, event_slug), and that
+// was true of the old index. It stopped being true when one event began carrying a paid brief
+// and an email series at once: the same `QueryRow` against the widened table would return an
+// ARBITRARY member of that set — whichever row Postgres reached first — so a paid caller could
+// be handed a Final Countdown email brief and overwrite it. Narrowing the WHERE clause to the
+// full key restores the one-row guarantee rather than papering over a multi-row result.
+//
+// At most one row can match: uq_campaign_briefs_project_event_delivery_stage is UNIQUE on
+// (project_id, event_slug, delivery_type, stage) WHERE status <> 'archived' — the same predicate
+// used here, so this remains an efficient unique-key lookup and archiving still frees the slot.
+// (Not an index-ONLY scan: briefCols selects every column while the index carries just the four
+// key columns, so the heap row is still fetched.)
+func (r *BriefRepo) FindBriefByEventSlug(
+	ctx context.Context,
+	projectID, eventSlug string,
+	deliveryType model.DeliveryType,
+	stage string,
+) (*model.CampaignBrief, error) {
+	q := `SELECT ` + briefCols + ` FROM campaign_briefs
+		WHERE project_id = $1 AND event_slug = $2 AND delivery_type = $3 AND stage = $4
+		  AND status <> 'archived'`
+	b, err := scanBrief(r.db.QueryRow(ctx, q, projectID, eventSlug, string(deliveryType), stage))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -193,7 +211,7 @@ func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, ind
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	row := tx.QueryRow(ctx, createBriefQuery,
-		b.ProjectID, string(b.ProgramType), b.EventSlug, nullStr(b.URL),
+		b.ProjectID, string(b.ProgramType), b.EventSlug, string(b.DeliveryType), b.Stage, nullStr(b.URL),
 		nullJSON(b.Platforms), nullJSON(b.EventDetails), nullJSON(b.Copy),
 		nullJSON(b.Keywords), nullJSON(b.Targeting), approvedBy, createdBy,
 	)
@@ -357,13 +375,13 @@ func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string, by *
 
 func scanBrief(row pgx.Row) (*model.CampaignBrief, error) {
 	var (
-		b                                model.CampaignBrief
-		programType, status              string
-		url                              *string
-		approvedBy, createdBy, updatedBy []byte
+		b                                 model.CampaignBrief
+		programType, status, deliveryType string
+		url                               *string
+		approvedBy, createdBy, updatedBy  []byte
 	)
 	if err := row.Scan(
-		&b.ID, &b.ProjectID, &programType, &b.EventSlug, &url,
+		&b.ID, &b.ProjectID, &programType, &b.EventSlug, &deliveryType, &b.Stage, &url,
 		&b.Platforms, &b.EventDetails, &b.Copy, &b.Keywords, &b.Targeting,
 		&status, &b.Version, &approvedBy, &b.ApprovedAt, &createdBy, &updatedBy,
 		&b.CreatedAt, &b.UpdatedAt,
@@ -371,6 +389,7 @@ func scanBrief(row pgx.Row) (*model.CampaignBrief, error) {
 		return nil, err
 	}
 	b.ProgramType = model.ProgramType(programType)
+	b.DeliveryType = model.DeliveryType(deliveryType)
 	b.Status = model.BriefStatus(status)
 	if url != nil {
 		b.URL = *url

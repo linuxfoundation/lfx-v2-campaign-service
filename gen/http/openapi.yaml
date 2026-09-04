@@ -27,6 +27,29 @@ paths:
                   required: true
                   type: string
                   minLength: 1
+                - name: delivery_type
+                  in: query
+                  description: Delivery surface the brief was authored for.
+                  required: false
+                  type: string
+                  default: paid-marketing
+                  enum:
+                    - paid-marketing
+                    - email
+                - name: stage
+                  in: query
+                  description: Stage within an email series. Empty for paid, which has no series.
+                  required: false
+                  type: string
+                  default: ""
+                  enum:
+                    - ""
+                    - CFP Launch
+                    - Schedule Announcement
+                    - Registration Push
+                    - Discount Offer
+                    - Final Countdown
+                    - Post-Event
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -7304,12 +7327,19 @@ definitions:
             copy:
                 description: Ad copy
                 example: Natus enim non.
+            delivery_type:
+                type: string
+                description: Delivery surface this brief was authored for.
+                example: email
+                enum:
+                    - paid-marketing
+                    - email
             event_details:
                 description: Extracted event/course details
                 example: Suscipit consequatur iure dolor sit quis ut.
             event_slug:
                 type: string
-                description: Event/course slug (unique within the project)
+                description: 'Event/course slug. One QUARTER of a brief''s identity, not unique on its own: see delivery_type and stage.'
                 example: Ea et sequi aperiam impedit omnis explicabo.
             id:
                 type: string
@@ -7339,6 +7369,10 @@ definitions:
                 type: string
                 description: Owning project
                 example: Optio enim repellendus commodi quia quod sit.
+            stage:
+                type: string
+                description: Stage within an email series. Empty for paid, which has no series.
+                example: Registration Push
             status:
                 type: string
                 description: Lifecycle status
@@ -7361,6 +7395,7 @@ definitions:
                 format: int64
         example:
             copy: Facere dolorum rem laborum dolor provident.
+            delivery_type: email
             event_details: Voluptas earum provident qui.
             event_slug: Inventore aliquam dolorem.
             id: Sunt odit aspernatur exercitationem delectus nisi minima.
@@ -7370,6 +7405,7 @@ definitions:
                 - Autem ratione est exercitationem sapiente a animi.
             program_type: events
             project_id: Voluptatem consequuntur dolore doloribus similique et et.
+            stage: Registration Push
             status: archived
             targeting: Vitae voluptas fuga aut minima inventore tenetur.
             url: Autem enim aut.
@@ -7388,12 +7424,19 @@ definitions:
             copy:
                 description: Ad copy
                 example: Deleniti dolorem voluptas harum soluta repudiandae quisquam.
+            delivery_type:
+                type: string
+                description: Delivery surface this brief was authored for.
+                example: email
+                enum:
+                    - paid-marketing
+                    - email
             event_details:
                 description: Extracted event/course details
                 example: Accusamus aut deleniti libero veritatis cum.
             event_slug:
                 type: string
-                description: Event/course slug (unique within the project)
+                description: Event/course slug. Unique with delivery_type and stage, not alone.
                 example: "2"
                 minLength: 1
             keywords:
@@ -7417,6 +7460,10 @@ definitions:
                     - events
                     - education
                     - membership
+            stage:
+                type: string
+                description: Stage within an email series. Empty for paid, which has no series.
+                example: Registration Push
             targeting:
                 description: Targeting recommendation
                 example: Ratione architecto corporis totam et.
@@ -7426,6 +7473,7 @@ definitions:
                 example: Ab vel et libero corporis.
         example:
             copy: Eum iure aut eaque autem possimus.
+            delivery_type: email
             event_details: Qui omnis et blanditiis asperiores.
             event_slug: ux
             keywords: Recusandae deserunt ratione eius culpa sit.
@@ -7434,6 +7482,7 @@ definitions:
                 - Dolorem necessitatibus blanditiis.
                 - Eligendi tempora reprehenderit eveniet in.
             program_type: education
+            stage: Registration Push
             targeting: Dolore esse quos quis.
             url: Magnam ea repellat qui ducimus eveniet dolor.
         required:
@@ -9513,6 +9562,7 @@ definitions:
         example:
             brief:
                 copy: Ullam distinctio dolore velit.
+                delivery_type: email
                 event_details: Eius dicta.
                 event_slug: 1a1
                 keywords: Non assumenda perspiciatis.
@@ -9522,6 +9572,7 @@ definitions:
                     - Suscipit non iusto.
                     - Consequatur in vero soluta.
                 program_type: education
+                stage: Registration Push
                 targeting: Porro ut et cupiditate.
                 url: Nostrum ratione id.
         required:
@@ -9597,6 +9648,7 @@ definitions:
         example:
             brief:
                 copy: Ullam distinctio dolore velit.
+                delivery_type: email
                 event_details: Eius dicta.
                 event_slug: 1a1
                 keywords: Non assumenda perspiciatis.
@@ -9606,6 +9658,7 @@ definitions:
                     - Suscipit non iusto.
                     - Consequatur in vero soluta.
                 program_type: education
+                stage: Registration Push
                 targeting: Porro ut et cupiditate.
                 url: Nostrum ratione id.
         required:

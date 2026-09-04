@@ -14,10 +14,20 @@ import (
 type BriefReader interface {
 	// GetBrief returns a brief by id (scoped to the project), or ErrNotFound.
 	GetBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error)
-	// FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
-	// ErrNotFound when none exists. ErrNotFound is an ORDINARY outcome here, not a failure:
-	// it is how the caller learns this event has no brief yet and one should be generated.
-	FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error)
+	// FindBriefByEventSlug returns the non-archived brief for
+	// (projectID, eventSlug, deliveryType, stage), or ErrNotFound when none exists. ErrNotFound is
+	// an ORDINARY outcome here, not a failure: it is how the caller learns this surface has no
+	// brief yet for this event and one should be generated.
+	//
+	// The delivery type and stage are REQUIRED rather than optional, because one event holds a
+	// paid brief and an email series at the same time (000030). A lookup that named only the
+	// event would have to choose one of them arbitrarily.
+	FindBriefByEventSlug(
+		ctx context.Context,
+		projectID, eventSlug string,
+		deliveryType model.DeliveryType,
+		stage string,
+	) (*model.CampaignBrief, error)
 	// ConfirmBriefApproved reports nil when the brief is STILL approved at expectedVersion,
 	// ErrStaleApproval when it is not, and ErrNotFound when it is missing or archived.
 	//

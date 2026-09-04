@@ -319,9 +319,15 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	}
 	in := p.Brief
 	b := &model.CampaignBrief{
-		ProjectID:    p.ProjectID,
-		ProgramType:  model.ProgramType(in.ProgramType),
-		EventSlug:    in.EventSlug,
+		ProjectID:   p.ProjectID,
+		ProgramType: model.ProgramType(in.ProgramType),
+		EventSlug:   in.EventSlug,
+		// Defaulted here rather than at the column, because the column's default exists to backfill
+		// rows written before 000030 -- it must not also quietly absorb a NEW brief whose caller
+		// forgot to say which surface it belongs to. An omitted value means paid for the same
+		// reason it does on the read: paid was the only surface that could save one.
+		DeliveryType: deliveryTypeOrPaid(in.DeliveryType),
+		Stage:        derefOrEmpty(in.Stage),
 		URL:          strVal(in.URL),
 		Platforms:    marshalStrings(in.Platforms),
 		EventDetails: marshalAny(in.EventDetails),
@@ -405,7 +411,11 @@ func (s *BriefService) FindBrief(ctx context.Context, p *briefs.FindBriefPayload
 	if err != nil {
 		return nil, err
 	}
-	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug)
+	// Goa applies the design's defaults, so an omitted pair arrives as ("paid-marketing", "") --
+	// the identity every caller predating 000030 meant, since paid was the only surface whose
+	// brief could be saved. Passed through rather than re-defaulted here so there is one place
+	// that decides what an omitted delivery type means.
+	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug, model.DeliveryType(p.DeliveryType), p.Stage)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -435,10 +445,16 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 	}
 	in := p.Brief
 	b := &model.CampaignBrief{
-		ID:           p.BriefID,
-		ProjectID:    p.ProjectID,
-		ProgramType:  model.ProgramType(in.ProgramType),
-		EventSlug:    in.EventSlug,
+		ID:          p.BriefID,
+		ProjectID:   p.ProjectID,
+		ProgramType: model.ProgramType(in.ProgramType),
+		EventSlug:   in.EventSlug,
+		// Defaulted here rather than at the column, because the column's default exists to backfill
+		// rows written before 000030 -- it must not also quietly absorb a NEW brief whose caller
+		// forgot to say which surface it belongs to. An omitted value means paid for the same
+		// reason it does on the read: paid was the only surface that could save one.
+		DeliveryType: deliveryTypeOrPaid(in.DeliveryType),
+		Stage:        derefOrEmpty(in.Stage),
 		URL:          strVal(in.URL),
 		Platforms:    marshalStrings(in.Platforms),
 		EventDetails: marshalAny(in.EventDetails),
@@ -1720,11 +1736,20 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 // ─── mapping helpers ───
 
 func briefResult(b *model.CampaignBrief) *briefs.Brief {
+	// Locals because the generated response type models both as optional pointers, while the row
+	// always carries a value: the columns are NOT NULL, and an omitted delivery type was resolved
+	// to paid at write time rather than stored as absent. So these are never nil in practice.
+	deliveryType := string(b.DeliveryType)
+	stage := b.Stage
 	return &briefs.Brief{
-		ID:           b.ID,
-		ProjectID:    b.ProjectID,
-		ProgramType:  string(b.ProgramType),
-		EventSlug:    b.EventSlug,
+		ID:          b.ID,
+		ProjectID:   b.ProjectID,
+		ProgramType: string(b.ProgramType),
+		EventSlug:   b.EventSlug,
+		// Returned so a caller can tell WHICH brief it received. With one event holding a paid brief
+		// and an email series, a response naming only the slug is ambiguous about its own row.
+		DeliveryType: &deliveryType,
+		Stage:        &stage,
 		URL:          optStr(b.URL),
 		Platforms:    unmarshalStrings(b.Platforms),
 		EventDetails: unmarshalAny(b.EventDetails),
@@ -1785,6 +1810,35 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
 	}
 	return v, nil
+}
+
+// deliveryTypeOrPaid resolves an optional delivery type to the surface that wrote the brief.
+//
+// Absent means paid, and that is a statement about history rather than a convenience: paid was the
+// only surface whose brief could be saved before 000030, so a caller that names none is a caller
+// that predates the distinction. An UNRECOGNISED value also resolves to paid rather than being
+// stored: the column carries a CHECK constraint, so passing it through would turn a caller's typo
+// into a database error at write time instead of a brief filed on the surface they meant.
+func deliveryTypeOrPaid(v *string) model.DeliveryType {
+	if v == nil {
+		return model.DeliveryPaidMarketing
+	}
+	d := model.DeliveryType(*v)
+	if !d.Valid() {
+		return model.DeliveryPaidMarketing
+	}
+	return d
+}
+
+// derefOrEmpty reads an optional string, treating absence as the empty value.
+//
+// For `stage` the empty string is not a fallback but the real stage of a paid brief, which has no
+// series -- and it is what the column stores, since NULL cannot participate in the unique index.
+func derefOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func mapBriefErr(err error) error {

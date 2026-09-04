@@ -31,7 +31,14 @@ var BriefData = Type("brief-data", func() {
 	// (get-brief included). The empty-slug REQUEST is rejected by BriefInput below — the
 	// create/update payload type, which carries MinLength(1) — which is where the constraint
 	// belongs. Keep the two in sync: see BriefInput's doc comment.
-	Attribute("event_slug", String, "Event/course slug (unique within the project)")
+	Attribute("event_slug", String, "Event/course slug. One QUARTER of a brief's identity, not unique on its own: see delivery_type and stage.")
+	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
+		Enum("paid-marketing", "email")
+		Example("email")
+	})
+	Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
+		Example("Registration Push")
+	})
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms (a planning hint; binding selection is on the campaign)")
 	Attribute("event_details", Any, "Extracted event/course details")
@@ -57,9 +64,13 @@ var BriefData = Type("brief-data", func() {
 var BriefInput = Type("brief-input", func() {
 	Reference(BriefData)
 	Attribute("program_type")
-	Attribute("event_slug", String, "Event/course slug (unique within the project)", func() {
+	Attribute("event_slug", String, "Event/course slug. Unique with delivery_type and stage, not alone.", func() {
 		MinLength(1)
 	})
+	// Part of the brief's IDENTITY under 000030, not merely descriptive: one event carries a paid
+	// brief and an email series at once, so two briefs differing only in these are different rows.
+	Attribute("delivery_type")
+	Attribute("stage")
 	Attribute("url")
 	Attribute("platforms")
 	Attribute("event_details")
@@ -88,6 +99,10 @@ var Brief = Type("brief", func() {
 	// constraint is meant to prevent going forward. Requests reject empty slugs; responses
 	// stay readable for legacy data.
 	Attribute("event_slug")
+	// Returned so a caller can tell WHICH brief it got. With one event carrying a paid brief and
+	// an email series, a response that named only the slug would be ambiguous about its own row.
+	Attribute("delivery_type")
+	Attribute("stage")
 	Attribute("url")
 	Attribute("platforms")
 	Attribute("event_details")
@@ -889,6 +904,21 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Example("kubecon-eu-2026")
 				MinLength(1)
 			})
+			// One event holds a paid brief and an email SERIES at the same time (000030), so the
+			// slug alone no longer names a brief. Both are OPTIONAL and default to the paid
+			// surface's identity, which is what every caller predating this meant: paid was the
+			// only surface whose brief could be saved, so an omitted pair addresses exactly the
+			// row such a caller would have found before.
+			Attribute("delivery_type", String, "Delivery surface the brief was authored for.", func() {
+				Enum("paid-marketing", "email")
+				Default("paid-marketing")
+				Example("email")
+			})
+			Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
+				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+				Default("")
+				Example("Registration Push")
+			})
 			Required("project_id", "event_slug")
 		})
 		Result(Brief)
@@ -898,6 +928,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// a lookup that legitimately MISSES is the common case (404 = generate one).
 			GET("/projects/{project_id}/briefs")
 			Param("event_slug")
+			Param("delivery_type")
+			Param("stage")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
 			briefErrorResponses()

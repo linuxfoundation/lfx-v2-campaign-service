@@ -18,6 +18,31 @@ const (
 	ProgramMembership ProgramType = "membership"
 )
 
+// DeliveryType is the surface a brief was authored for. Paid and email are PARALLEL channels on
+// one event rather than alternatives, which is why it participates in the brief's unique key
+// (000030) instead of merely describing it.
+type DeliveryType string
+
+// Delivery types.
+const (
+	DeliveryPaidMarketing DeliveryType = "paid-marketing"
+	DeliveryEmail         DeliveryType = "email"
+)
+
+// Valid reports whether d is a known delivery type.
+//
+// The empty string is NOT valid. A brief that names no surface cannot be scoped to one, and the
+// column is NOT NULL with a CHECK constraint, so an empty value is a write that would be refused
+// by the database rather than a value with a sensible meaning. Callers that mean "paid" say so.
+func (d DeliveryType) Valid() bool {
+	switch d {
+	case DeliveryPaidMarketing, DeliveryEmail:
+		return true
+	default:
+		return false
+	}
+}
+
 // Valid reports whether p is a known program type.
 func (p ProgramType) Valid() bool {
 	switch p {
@@ -43,10 +68,24 @@ const (
 // all sharing brief_id. Briefs are indexed into the Query Service (unlike
 // connections), so lists and revision history are served from there.
 type CampaignBrief struct {
-	ID           string
-	ProjectID    string
-	ProgramType  ProgramType
-	EventSlug    string // UNIQUE with project_id
+	ID          string
+	ProjectID   string
+	ProgramType ProgramType
+	// EventSlug is one FOURTH of a brief's identity, not the whole of it. 000030 widened the
+	// unique index to (project_id, event_slug, delivery_type, stage) because one event carries a
+	// paid brief and an email SERIES at the same time; an earlier comment here claimed the slug
+	// was unique with project_id alone, which stopped being true with that migration.
+	EventSlug string
+	// DeliveryType names the surface that authored this brief. Paid and email are parallel
+	// channels on one event, so this is what keeps them from displacing each other -- a read
+	// scoped to one surface must not return the other's brief, and a write must not replace it.
+	// Rows predating 000030 carry "paid-marketing", which is a fact about them rather than a
+	// default: the paid surface was the only one whose brief could be saved.
+	DeliveryType DeliveryType
+	// Stage places this brief within an email series (CFP Launch, Registration Push, ...). Empty
+	// for paid, which has no series -- and empty rather than absent because it participates in a
+	// unique index, where NULLs never collide and would let duplicates accumulate unchecked.
+	Stage        string
 	URL          string
 	Platforms    json.RawMessage // selected channels (a planning hint)
 	EventDetails json.RawMessage

@@ -93,8 +93,13 @@ type CreateBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug (unique within the project)
+	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
+	// see delivery_type and stage.
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
+	// Delivery surface this brief was authored for.
+	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -123,8 +128,13 @@ type FindBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug (unique within the project)
+	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
+	// see delivery_type and stage.
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
+	// Delivery surface this brief was authored for.
+	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -153,8 +163,13 @@ type GetBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug (unique within the project)
+	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
+	// see delivery_type and stage.
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
+	// Delivery surface this brief was authored for.
+	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -183,8 +198,13 @@ type UpdateBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug (unique within the project)
+	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
+	// see delivery_type and stage.
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
+	// Delivery surface this brief was authored for.
+	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -213,8 +233,13 @@ type ApproveBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug (unique within the project)
+	// Event/course slug. One QUARTER of a brief's identity, not unique on its own:
+	// see delivery_type and stage.
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
+	// Delivery surface this brief was authored for.
+	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -2117,8 +2142,12 @@ type GetJobUnauthorizedResponseBody struct {
 type BriefInputRequestBody struct {
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug (unique within the project)
+	// Event/course slug. Unique with delivery_type and stage, not alone.
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
+	// Delivery surface this brief was authored for.
+	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
+	// Stage within an email series. Empty for paid, which has no series.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms (a planning hint; binding selection is on the
@@ -2459,6 +2488,8 @@ func NewCreateBriefBriefCreated(body *CreateBriefResponseBody, etag *string) *lf
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
+		DeliveryType: body.DeliveryType,
+		Stage:        body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2565,6 +2596,8 @@ func NewFindBriefBriefOK(body *FindBriefResponseBody, etag *string) *lfxv2campai
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
+		DeliveryType: body.DeliveryType,
+		Stage:        body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2671,6 +2704,8 @@ func NewGetBriefBriefOK(body *GetBriefResponseBody, etag *string) *lfxv2campaign
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
+		DeliveryType: body.DeliveryType,
+		Stage:        body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2777,6 +2812,8 @@ func NewUpdateBriefBriefOK(body *UpdateBriefResponseBody, etag *string) *lfxv2ca
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
+		DeliveryType: body.DeliveryType,
+		Stage:        body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -2905,6 +2942,8 @@ func NewApproveBriefBriefOK(body *ApproveBriefResponseBody, etag *string) *lfxv2
 		ProjectID:    *body.ProjectID,
 		ProgramType:  *body.ProgramType,
 		EventSlug:    *body.EventSlug,
+		DeliveryType: body.DeliveryType,
+		Stage:        body.Stage,
 		URL:          body.URL,
 		EventDetails: body.EventDetails,
 		Copy:         body.Copy,
@@ -4591,6 +4630,11 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
+	if body.DeliveryType != nil {
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -4623,6 +4667,11 @@ func ValidateFindBriefResponseBody(body *FindBriefResponseBody) (err error) {
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.DeliveryType != nil {
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
 		}
 	}
 	if body.Status != nil {
@@ -4659,6 +4708,11 @@ func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
+	if body.DeliveryType != nil {
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -4693,6 +4747,11 @@ func ValidateUpdateBriefResponseBody(body *UpdateBriefResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
+	if body.DeliveryType != nil {
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -4725,6 +4784,11 @@ func ValidateApproveBriefResponseBody(body *ApproveBriefResponseBody) (err error
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.DeliveryType != nil {
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
 		}
 	}
 	if body.Status != nil {
@@ -7064,6 +7128,11 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	}
 	if utf8.RuneCountInString(body.EventSlug) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", body.EventSlug, utf8.RuneCountInString(body.EventSlug), 1, true))
+	}
+	if body.DeliveryType != nil {
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		}
 	}
 	return
 }

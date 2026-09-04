@@ -71,9 +71,19 @@ func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bo
 
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
-func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
+// Matches on the FULL key, exactly as uq_campaign_briefs_project_event_delivery_stage does. A fake
+// that matched on (project, slug) alone would return an arbitrary member of an event's brief set --
+// which is the precise defect the widened key exists to prevent, so the fake would hide it.
+func (r *fakeBriefRepo) FindBriefByEventSlug(
+	_ context.Context,
+	projectID, eventSlug string,
+	deliveryType model.DeliveryType,
+	stage string,
+) (*model.CampaignBrief, error) {
 	for _, b := range r.briefs {
-		if b.ProjectID == projectID && b.EventSlug == eventSlug && b.Status != model.BriefArchived {
+		if b.ProjectID == projectID && b.EventSlug == eventSlug &&
+			b.DeliveryType == deliveryType && b.Stage == stage &&
+			b.Status != model.BriefArchived {
 			cp := *b
 			return &cp, nil
 		}
@@ -1890,6 +1900,59 @@ func newBriefServiceWithRepo(t *testing.T, repo *fakeBriefRepo) *BriefService {
 // TestFindBrief_ReturnsSavedBriefForEventSlug covers the re-paste path: a brief was already
 // generated and saved for this event, so the lookup returns it (with its AI-generated
 // copy/keywords/targeting and any later edits) instead of the caller regenerating.
+// TestFindBrief_ParallelChannelsAndEmailSeries pins the model 000030 exists for: paid and email
+// are PARALLEL channels on one event, and an email campaign is a SERIES rather than a document.
+// Before the widened key this state was unrepresentable -- the second channel to save either
+// overwrote the first or was refused, and an event could hold only one email brief.
+//
+// Asserts on the ID returned rather than merely on "no error", because the defect this prevents is
+// returning the WRONG member of the set, which a nil-error check cannot see.
+func TestFindBrief_ParallelChannelsAndEmailSeries(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	seed := func(id, delivery, stage string) {
+		repo.briefs[briefKey("cncf", id)] = &model.CampaignBrief{
+			ID: id, ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: model.DeliveryType(delivery), Stage: stage,
+			Status: model.BriefDraft,
+		}
+	}
+	// One event, five live briefs: one paid plan and a four-stage email series.
+	seed("paid", "paid-marketing", "")
+	seed("cfp", "email", "CFP Launch")
+	seed("reg", "email", "Registration Push")
+	seed("discount", "email", "Discount Offer")
+	seed("final", "email", "Final Countdown")
+	s := newBriefServiceWithRepo(t, repo)
+
+	for _, tc := range []struct{ delivery, stage, wantID string }{
+		{"paid-marketing", "", "paid"},
+		{"email", "CFP Launch", "cfp"},
+		{"email", "Registration Push", "reg"},
+		{"email", "Discount Offer", "discount"},
+		{"email", "Final Countdown", "final"},
+	} {
+		got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{
+			ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: tc.delivery, Stage: tc.stage,
+		})
+		if err != nil {
+			t.Fatalf("FindBrief(%s, %q): %v", tc.delivery, tc.stage, err)
+		}
+		if got.ID != tc.wantID {
+			t.Errorf("FindBrief(%s, %q) = %q, want %q", tc.delivery, tc.stage, got.ID, tc.wantID)
+		}
+	}
+
+	// A stage nobody has written is absent, not "some other stage of the series".
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{
+		ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: "email", Stage: "Post-Event",
+	}); err == nil {
+		t.Error("FindBrief for an unwritten stage returned a brief; want NotFound")
+	}
+}
+
 func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()

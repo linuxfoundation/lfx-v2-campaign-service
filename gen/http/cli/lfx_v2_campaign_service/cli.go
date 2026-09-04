@@ -36,7 +36,7 @@ func UsageCommands() []string {
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
 	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Et aut consequatur inventore enim reiciendis.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Et impedit at perspiciatis quisquam perferendis.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Alias quis nihil dolore.\",\n            \"Reprehenderit et aut animi.\",\n            \"Ullam omnis autem.\",\n            \"Id laboriosam nihil ea.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"48206388-8ba1-4258-bff3-5cb05d37bf60\" --bearer-token \"eyJhbGci...\"" + "\n" +
-		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
+		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Corporis corporis et iste impedit voluptas ut.\",\n         \"client_secret\": \"Officiis et accusamus provident omnis.\",\n         \"developer_token\": \"Eos earum fuga.\",\n         \"refresh_token\": \"Sint optio nobis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
 		""
@@ -91,10 +91,12 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsCreateBriefProjectIDFlag   = lfxV2CampaignServiceBriefsCreateBriefFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceBriefsCreateBriefBearerTokenFlag = lfxV2CampaignServiceBriefsCreateBriefFlags.String("bearer-token", "", "")
 
-		lfxV2CampaignServiceBriefsFindBriefFlags           = flag.NewFlagSet("find-brief", flag.ExitOnError)
-		lfxV2CampaignServiceBriefsFindBriefProjectIDFlag   = lfxV2CampaignServiceBriefsFindBriefFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
-		lfxV2CampaignServiceBriefsFindBriefEventSlugFlag   = lfxV2CampaignServiceBriefsFindBriefFlags.String("event-slug", "REQUIRED", "")
-		lfxV2CampaignServiceBriefsFindBriefBearerTokenFlag = lfxV2CampaignServiceBriefsFindBriefFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceBriefsFindBriefFlags            = flag.NewFlagSet("find-brief", flag.ExitOnError)
+		lfxV2CampaignServiceBriefsFindBriefProjectIDFlag    = lfxV2CampaignServiceBriefsFindBriefFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceBriefsFindBriefEventSlugFlag    = lfxV2CampaignServiceBriefsFindBriefFlags.String("event-slug", "REQUIRED", "")
+		lfxV2CampaignServiceBriefsFindBriefDeliveryTypeFlag = lfxV2CampaignServiceBriefsFindBriefFlags.String("delivery-type", "paid-marketing", "")
+		lfxV2CampaignServiceBriefsFindBriefStageFlag        = lfxV2CampaignServiceBriefsFindBriefFlags.String("stage", "", "")
+		lfxV2CampaignServiceBriefsFindBriefBearerTokenFlag  = lfxV2CampaignServiceBriefsFindBriefFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceBriefsGetBriefFlags           = flag.NewFlagSet("get-brief", flag.ExitOnError)
 		lfxV2CampaignServiceBriefsGetBriefProjectIDFlag   = lfxV2CampaignServiceBriefsGetBriefFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -891,7 +893,7 @@ func ParseEndpoint(
 				data, err = lfxv2campaignservicebriefsc.BuildCreateBriefPayload(*lfxV2CampaignServiceBriefsCreateBriefBodyFlag, *lfxV2CampaignServiceBriefsCreateBriefProjectIDFlag, *lfxV2CampaignServiceBriefsCreateBriefBearerTokenFlag)
 			case "find-brief":
 				endpoint = c.FindBrief()
-				data, err = lfxv2campaignservicebriefsc.BuildFindBriefPayload(*lfxV2CampaignServiceBriefsFindBriefProjectIDFlag, *lfxV2CampaignServiceBriefsFindBriefEventSlugFlag, *lfxV2CampaignServiceBriefsFindBriefBearerTokenFlag)
+				data, err = lfxv2campaignservicebriefsc.BuildFindBriefPayload(*lfxV2CampaignServiceBriefsFindBriefProjectIDFlag, *lfxV2CampaignServiceBriefsFindBriefEventSlugFlag, *lfxV2CampaignServiceBriefsFindBriefDeliveryTypeFlag, *lfxV2CampaignServiceBriefsFindBriefStageFlag, *lfxV2CampaignServiceBriefsFindBriefBearerTokenFlag)
 			case "get-brief":
 				endpoint = c.GetBrief()
 				data, err = lfxv2campaignservicebriefsc.BuildGetBriefPayload(*lfxV2CampaignServiceBriefsGetBriefProjectIDFlag, *lfxV2CampaignServiceBriefsGetBriefBriefIDFlag, *lfxV2CampaignServiceBriefsGetBriefBearerTokenFlag)
@@ -1311,7 +1313,7 @@ func lfxV2CampaignServiceBriefsCreateBriefUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsFindBriefUsage() {
@@ -1319,6 +1321,8 @@ func lfxV2CampaignServiceBriefsFindBriefUsage() {
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-briefs find-brief", os.Args[0])
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -event-slug STRING")
+	fmt.Fprint(os.Stderr, " -delivery-type STRING")
+	fmt.Fprint(os.Stderr, " -stage STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -1329,11 +1333,13 @@ func lfxV2CampaignServiceBriefsFindBriefUsage() {
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -event-slug STRING: `)
+	fmt.Fprintln(os.Stderr, `    -delivery-type STRING: `)
+	fmt.Fprintln(os.Stderr, `    -stage STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs find-brief --project-id \"cncf\" --event-slug \"kubecon-eu-2026\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs find-brief --project-id \"cncf\" --event-slug \"kubecon-eu-2026\" --delivery-type \"email\" --stage \"Registration Push\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsGetBriefUsage() {
@@ -1381,7 +1387,7 @@ func lfxV2CampaignServiceBriefsUpdateBriefUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --brief-id \"4e52e9bf-dcf9-4b52-a8a6-ad66dab6285a\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ullam distinctio dolore velit.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Eius dicta.\",\n         \"event_slug\": \"1a1\",\n         \"keywords\": \"Non assumenda perspiciatis.\",\n         \"platforms\": [\n            \"Aspernatur voluptate itaque fugit.\",\n            \"Cumque quae.\",\n            \"Suscipit non iusto.\",\n            \"Consequatur in vero soluta.\"\n         ],\n         \"program_type\": \"education\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Porro ut et cupiditate.\",\n         \"url\": \"Nostrum ratione id.\"\n      }\n   }' --project-id \"cncf\" --brief-id \"4e52e9bf-dcf9-4b52-a8a6-ad66dab6285a\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceBriefsApproveBriefUsage() {
