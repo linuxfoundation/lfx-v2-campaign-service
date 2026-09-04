@@ -201,6 +201,16 @@ type BriefDoc struct {
 	// every stage of its email series index as the same thing -- same project, same slug, no
 	// discriminator -- so a consumer cannot tell which send a document describes.
 	//
+	// BACKFILL IS NOT AUTOMATIC, and a consumer must expect that. These fields are published on the
+	// next write to each brief; documents indexed before this change keep their old shape until
+	// something edits them. This service has no full-reindex path (see outbox_repo.go's prune
+	// comment), and migration 000030 backfills PostgreSQL only -- it does not enqueue index
+	// messages for existing rows. A consumer filtering on `delivery_type` will therefore miss
+	// untouched paid briefs, so treat an ABSENT field as "written before the widening", which for
+	// every such row means paid-marketing with an empty stage. Ordering a reindex is a deployment
+	// step, deliberately left out of the migration: enqueuing one message per brief inside a schema
+	// migration would make the migration's runtime a function of table size.
+	//
 	// NEITHER carries omitempty, and stage is why: "" is the paid brief's REAL stage, not a
 	// missing value. Omitting it would publish a document where absence means both "this is the
 	// paid brief" and "this producer predates stages", which a consumer cannot untangle. Emitting

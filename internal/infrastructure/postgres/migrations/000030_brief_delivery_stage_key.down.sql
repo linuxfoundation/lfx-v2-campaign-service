@@ -45,6 +45,37 @@ ALTER TABLE campaign_briefs
 ALTER TABLE campaign_briefs
     DROP CONSTRAINT IF EXISTS campaign_briefs_delivery_stage_pair_valid;
 
+-- REFUSE while any live brief carries a non-paid identity, not merely when two rows collide.
+--
+-- The narrow index above only catches CARDINALITY: an event with one paid brief and one email
+-- brief trips it, but an event with a SINGLE live email brief does not -- there is nothing for it
+-- to collide with. The drops below would then erase that row's delivery_type and stage, and the
+-- pre-000030 service, which reads `WHERE project_id=$1 AND event_slug=$2`, would hand back its
+-- EMAIL content as the event's paid brief: RSA headlines and a keyword list that belong to a
+-- different channel, with nothing left in the row to say so. Verified against a seeded database.
+--
+-- So the guard is on the IDENTITY, not the collision. A `DO` block, because that is what lets a
+-- plain SQL migration raise a message an operator can act on rather than a bare constraint error;
+-- it aborts the surrounding transaction, so a refused revert is a no-op exactly as a duplicate-key
+-- failure is.
+--
+-- To proceed, the operator must first archive or migrate every non-paid brief. That is a decision
+-- about content -- which sends are worth keeping -- and it is not one a rollback should make
+-- silently on their behalf.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM campaign_briefs
+        WHERE status <> 'archived'
+          AND (delivery_type <> 'paid-marketing' OR stage <> '')
+    ) THEN
+        RAISE EXCEPTION
+            'cannot revert 000030: live briefs exist with a non-paid delivery_type or a stage. '
+            'Dropping these columns would leave that content indistinguishable from the paid '
+            'brief. Archive or migrate those rows first.';
+    END IF;
+END $$;
+
 ALTER TABLE campaign_briefs
     DROP COLUMN IF EXISTS delivery_type;
 

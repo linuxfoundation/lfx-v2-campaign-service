@@ -1907,22 +1907,18 @@ func briefIdentityPairProblem(delivery model.DeliveryType, stage string) error {
 		}
 		return fmt.Errorf("%w: an email brief names one send in the series, so its stage must be one of %v, got %q",
 			domain.ErrBriefIdentityPairInvalid, emailstage.Names(), stage)
-	case "":
-		// The Go ZERO value, which only a direct in-process caller can produce: Goa applies the
-		// design default before an HTTP payload reaches here, so over the wire an omitted
-		// delivery_type is already "paid-marketing". Treated as paid for exactly the reason
-		// `deliveryTypeOrPaid` treats a nil pointer that way -- paid was the only surface whose
-		// brief could be saved before 000030, so "unsaid" means paid. Rejecting it instead broke
-		// every direct FindBrief caller, tests included, since none of them names a surface.
-		if stage != "" {
-			return fmt.Errorf("%w: a paid-marketing brief has no series, so its stage must be empty, got %q",
-				domain.ErrBriefIdentityPairInvalid, stage)
-		}
-		return nil
 	default:
-		// A non-empty value that is not a known surface. Unreachable through HTTP -- the generated
-		// validator rejects a non-enum delivery_type first -- but the pair cannot be judged without
-		// knowing the surface, and the CHECK would refuse the write anyway.
+		// Anything else, INCLUDING the empty string. An earlier revision accepted `""` as paid, to
+		// spare a direct Go caller that leaves the field at its zero value -- but both call sites
+		// now normalize before calling here (`CreateBrief` via `deliveryTypeOrPaid`, `FindBrief`
+		// via its own zero check), so the only way to reach this with `""` is to pass it
+		// EXPLICITLY. The model says that is not a delivery type: `DeliveryType.Valid()` rejects
+		// it and the column's CHECK refuses it. Accepting it here contradicted both, and the
+		// "only absence defaults" rule the rest of this file states.
+		//
+		// Unreachable through HTTP for any other value -- the generated validator rejects a
+		// non-enum delivery_type first -- but the pair cannot be judged without knowing the
+		// surface, and the CHECK would refuse the write regardless.
 		return fmt.Errorf("%w: unknown delivery type %q", domain.ErrBriefIdentityPairInvalid, delivery)
 	}
 }
