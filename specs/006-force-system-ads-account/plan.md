@@ -73,8 +73,9 @@ untouched.
 
 ## Review
 
-Review follows the repository's current review guidance and configuration in
-`CLAUDE.md`; this plan carries no review lifecycle instructions of its own.
+Review follows the `## Review lifecycle configuration` section of `CLAUDE.md`,
+which configures the centrally owned review lifecycle; this plan carries no
+review lifecycle instructions of its own.
 No push / PR without explicit authorization.
 
 ## Verification

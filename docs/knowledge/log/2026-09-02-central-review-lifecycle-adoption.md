@@ -17,10 +17,16 @@ is updated to match.
 Deleted as obsolete: the repo-owned fallback launcher
 `.claude/skills/local-review-fallback` with its `.agents/skills/` link, and the
 generic `local-code-review` and `local-learnings-review` symlinks in
-`.claude/skills/`. The deleted launcher was
-this repo's own table for starting reviewer subagents; it is unrelated to the
-central lifecycle's own derived same-name `SKILL.md` fallback, for which the repo
-adds nothing.
+`.claude/skills/`. The deleted launcher was this repo's own table for starting
+reviewer subagents. These deletions are made against the target contract in
+[lfx-skills#73](https://github.com/linuxfoundation/lfx-skills/pull/73), under
+which the lifecycle derives its only permitted fallback from the declared
+reviewer names and this repo adds nothing for it. The currently published
+`lfx-local-review` (v0.1.1) still probes the two alias paths and prefers a
+repo-owned `local-review-fallback/SKILL.md` when present, so until that central
+change merges and publishes — the coordinated release's documented merge gate —
+this repo is intentionally not independently runnable against the published
+lifecycle; no restoration or override bridge is added, by design.
 
 Retained: the two repo-owned reviewer skills
 `.claude/skills/campaign-service-code-reviewer` and
