@@ -1323,10 +1323,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"returns every campaign in the portal the connection authenticates against, regardless " +
 			"of which project scopes the path. " +
 			"`project_id` gates permission AND selects WHICH portal is visible: a HubSpot connection " +
-			"is stored per project with its own token and `portal_id`, and the LF system fallback is " +
-			"refused for HubSpot — so two projects see the same campaigns only when they are " +
-			"configured against the same portal, which is common under the LF umbrella but is not " +
-			"guaranteed. The portal-wide part is a property of HubSpot's data model rather than a " +
+			"is stored per project with its own token and `portal_id`, and a project with none " +
+			"resolves the LF system connection — so two projects see the same campaigns when they " +
+			"are configured against the same portal, which is the ordinary case under the LF " +
+			"umbrella, whose foundations share one portal. The portal-wide part is a property of HubSpot's data model rather than a " +
 			"gap in the scoping here, and it is why the create route below needs a warning. " +
 			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
 			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
@@ -1407,9 +1407,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"portal this project's connection authenticates against, so a campaign created here " +
 			"appears for everyone working in that portal however this path is scoped. WHICH portal " +
 			"depends on the connection — they are stored per project with their own token and " +
-			"`portal_id`, and the LF system fallback is refused for HubSpot — so this is not " +
-			"necessarily every foundation, and projects on different portals do not see each " +
-			"other's campaigns. A caller MUST warn before invoking it, and must not put anything " +
+			"`portal_id`, and a project with none resolves the LF system connection — so for LF " +
+			"foundations, which share one portal, this IS visible to every other foundation " +
+			"working in it; projects on a different portal do not see each " +
 			"project-sensitive in the name. " +
 			"**It does not check for an existing campaign first, and that is deliberate.** A " +
 			"search-then-create inside one call would still race any concurrent caller and could not " +

@@ -188,7 +188,19 @@ func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*
 
 // client resolves the project's HubSpot connection and builds a client from it, mirroring
 // HubSpotDispatcher.Dispatch — the credentials live per project as encrypted connections.
-func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspot.Client, error) {
+// The NAMED return plus the deferred systemScoped below is the same construction
+// HubSpotDispatcher.resolveHubSpotClientWithCreds uses, and for the same reason: a return site
+// added later cannot forget to tag itself.
+//
+// This path used to tag nothing, and that cost nothing while credsSource refused the reserved
+// scope for HubSpot — every credential defect here belonged to the requesting project, so there
+// was no origin to record. Now that a foundation with no HubSpot connection of its own resolves
+// the LF system row (the ordinary case, not the exception), an inactive or malformed LF row is
+// ONE operator-owned defect that every foundation hits at once. Untagged, it reaches
+// audienceBuildErr carrying none of the sentinels that arm matches, and each of them is told to
+// audit a HubSpot configuration that is correct — exactly the misattribution the arm exists to
+// prevent, on the one path it was added to serve.
+func (b *AudienceBuilder) client(ctx context.Context, projectID string) (client *hubspot.Client, err error) {
 	if strings.TrimSpace(projectID) == "" {
 		// Fail loudly: without a project there is no connection to resolve, and silently
 		// picking one would build the audience in the wrong portal.
@@ -198,15 +210,25 @@ func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspo
 	if rerr != nil {
 		return nil, rerr
 	}
+	defer func() { err = res.systemScoped(err) }()
+
 	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("hubspot connection for project %s is %s, not active", projectID, res.status)
+		return nil, fmt.Errorf("%w: %w: hubspot connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	var creds hubspotCreds
 	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
-		return nil, fmt.Errorf("decode hubspot credentials: %w", uerr)
+		// The unmarshal error is DROPPED rather than wrapped, matching the dispatcher: it is
+		// derived from the DECRYPTED credential blob, and encoding/json quotes its input, so
+		// wrapping it would put credential-derived bytes in the log line for exactly the
+		// connection whose credentials are malformed. The remedy is "re-save the credential",
+		// not "fix byte 41".
+		return nil, fmt.Errorf("%w: %w: hubspot credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if strings.TrimSpace(creds.PrivateAppToken) == "" {
-		return nil, fmt.Errorf("hubspot credentials are incomplete (need privateAppToken)")
+		return nil, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: creds.PrivateAppToken},

@@ -923,11 +923,17 @@ reads. The index was present, named for the column, and covered none of the rows
 Migration 000017 adds the mirror-image partial index on the six paid-ads tables, so the two
 partition the table between them and neither pays for the other's rows.
 
-Only paid-ads tables are indexed, because `credsSource` gates the probe behind
-`provider.IsPaidAds()` — the system account is an ad-ACCOUNT fallback and HubSpot never
-reaches it, so an index on `hubspot_connections` would be write cost for a query never issued.
+EVERY connection table is indexed. 000017 covered the six paid-ads tables only, because
+`credsSource` then gated the probe behind `provider.IsPaidAds()` and an index on
+`hubspot_connections` would have been write cost for a query never issued — and it said so
+alongside the trigger for revisiting: "if that gate ever widens, this migration widens with it".
+It widened, so **migration 000031** adds the mirror-image partial index on
+`hubspot_connections`. A foundation with no HubSpot connection of its own now reaches the probe
+on every audience build and email dispatch, which after the fallback change is the ordinary case
+rather than the exception.
 
-`TestDisconnectedProbeIsIndexed` binds it, and it is a PLAN assertion rather than a timing
+`TestDisconnectedProbeIsIndexed` binds it across all seven providers (it walks
+`AllProviders()` rather than the paid-ads subset), and it is a PLAN assertion rather than a timing
 one: the query returns the same answer indexed or not, so no correctness test can see the
 difference. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a surviving `Seq Scan`.
 Turning seqscan off does not force an index to be used — it cannot be, if none applies — it

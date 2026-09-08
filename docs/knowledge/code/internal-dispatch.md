@@ -1770,9 +1770,12 @@ A guard at the top of `credsSource.resolve` routes to `resolveForcedSystem` when
 the provider `IsPaidAds()`, and the request is not already at `model.SystemProjectID`. All three
 matter:
 
-- **Gated on `IsPaidAds()`** — HubSpot/email is NEVER forced, the same trade the fallback's
-  `systemConn` refuses: forcing a project's audience build onto the system HubSpot row would write
-  its contacts into the LF portal. The default path still handles email exactly as before.
+- **Gated on `IsPaidAds()`** — HubSpot/email is NEVER forced, because forcing redirects
+  ad-ACCOUNT selection and an email connection has no ad account to redirect. Note this is no
+  longer the same trade as the fallback: `systemConn` now serves the email channel, so HubSpot
+  DOES reach the LF portal — by the ordinary fallback, never by this flag. The two are told apart
+  by the scopes asked (forcing consults the system scope alone; the fallback asks the project
+  first).
 - **`SystemProjectID` short-circuits** — a request already in the reserved scope drops to the
   ordinary path; forcing it would re-issue the identical lookup, and there is no project
   connection to override.
@@ -1909,8 +1912,8 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 `HubSpotDispatcher` implements `service.CampaignSearcher`: `SearchCampaigns` and
 `CreateCampaign`, backed by the client's two campaign operations. `projectID` selects which
 connection's credential to use — and therefore which PORTAL is visible, since HubSpot connections
-are stored per project with their own token and `portal_id` and `credsSource` refuses the LF
-system fallback for HubSpot.
+are stored per project with their own token and `portal_id` and a project with none resolves the
+LF system connection via `credsSource`.
 
 **The create translates platform errors into domain sentinels HERE**, which is the layer that
 talks to the platform. The service must tell a definite rejection (nothing created, report it as

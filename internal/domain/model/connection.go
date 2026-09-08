@@ -247,8 +247,9 @@ type AccessibleAccount struct {
 // THE NAMESPACE IS PORTAL-WIDE, NOT PROJECT-SCOPED. HubSpot campaigns are not scoped to a
 // project or a sub-account, so a campaign reachable here is reachable by everyone holding that
 // portal's token. WHICH portal is the connection's: HubSpot connections are stored per project
-// with their own token and portal_id, and credsSource refuses the LF system fallback for
-// HubSpot — so two projects share this namespace only when configured against the same portal.
+// with their own token and portal_id, and a project with none resolves the LF system connection
+// — so two projects share this namespace when configured against the same portal, which for LF
+// foundations is the ordinary case since they share one portal.
 // That is HubSpot's data model, not a gap in this service's scoping, and it is why the create
 // path is documented as needing an operator warning.
 type HubSpotCampaign struct {

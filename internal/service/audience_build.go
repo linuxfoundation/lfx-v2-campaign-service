@@ -85,6 +85,30 @@ func audienceUnavailableErr() error {
 // response. Reconciliation IDs and the UNCONFIRMED marker (if present) are preserved as they
 // are safe and necessary for operators to reconcile orphaned state.
 func audienceBuildErr(err error) error {
+	// WHOSE connection failed decides who can repair it, and until the reserved-scope fallback
+	// began serving the email channel this distinction could not arise here: HubSpot never
+	// resolved the LF system row, so every credential defect on this path belonged to the
+	// project. It can now be the shared LF row instead — one row, reachable by every foundation
+	// that has not connected its own portal, and repairable by nobody but an operator.
+	//
+	// Collapsing that into "the audience build failed upstream" sends every affected foundation
+	// to look at HubSpot, and scatters one incident across as many reports as there are
+	// projects. systemConn tags the origin precisely so this arm can say it once, correctly.
+	// Placed FIRST because systemScoped WRAPS rather than replaces — a broader match below
+	// would win and re-attribute the LF row's defect to the caller.
+	// ErrSystemConnectionMissing is matched alongside the other two even though the fallback
+	// cannot produce it today (it is wrapped only inside resolveForcedSystem, which HubSpot
+	// never enters). If the fallback's miss is ever marked with it — an improvement the
+	// rollout note names — this arm keeps working instead of silently regressing to the
+	// generic upstream message. One errors.Is, and the arm is correct under both readings.
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) ||
+		errors.Is(err, domain.ErrSystemConnectionMissing) ||
+		errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		return &audiences.InternalServerError{
+			Code:    "500",
+			Message: "the shared LF HubSpot connection is not usable; an operator must reinstall it (bootstrap-system-account -provider hubspot). Nothing is wrong with this project's configuration",
+		}
+	}
 	msg := "the audience build failed upstream"
 	if safe := reconciliationText(err); safe != "" {
 		msg += ": " + safe

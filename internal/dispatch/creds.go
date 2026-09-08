@@ -312,14 +312,13 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 		// the same no-fix-forward failure this function exists to prevent, arriving through
 		// the error path instead of the success path.
 		//
-		// Only a recorded provenance justifies the extra lookup: an EMPTY creationAccountID
-		// says the row records nothing, there is no system claim to honour, and the project's
-		// error is the honest answer.
 		// Two preconditions, and both are structural rather than conventional.
 		//
-		// A non-paid provider must never reach resolveForcedSystem: it is the same
-		// LF-system redirect that resolve() gates on IsPaidAds() so HubSpot/email is never
-		// pointed at the LF portal (FR-003, and the tenant-mixing trade systemConn refuses).
+		// A non-paid provider must never reach resolveForcedSystem: it is the LF-system
+		// REDIRECT that resolve() gates on IsPaidAds(), so HubSpot/email is never FORCED
+		// there (FR-003). Note this is no longer the same trade systemConn makes — that
+		// fallback now serves the email channel, so HubSpot does reach the LF portal, by
+		// falling back rather than by being redirected.
 		// Every caller of resolveExisting today is one of the five paid-ads dispatchers, but
 		// that is a fact about call sites; asking here makes it a property of the function.
 		//
@@ -525,8 +524,9 @@ func trimAccountPrefix(id string) string {
 func (s *credsSource) resolve(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
 	// Forced-primary mode: every PAID-ADS campaign authenticates as the LF-owned system
 	// account, so the project's own connection is not consulted at all. Gated on
-	// IsPaidAds() so HubSpot/email is never redirected to the LF portal (the same trade
-	// systemConn refuses for the fallback). A request already in the system scope drops
+	// IsPaidAds() so HubSpot/email is never REDIRECTED here — it reaches the LF portal by
+	// the ordinary fallback instead, which systemConn now serves for every provider. A
+	// request already in the system scope drops
 	// through to the normal path below: forcing it would re-issue the identical lookup,
 	// and there is no project connection to override.
 	if s.forceSystemPaidAds && provider.IsPaidAds() && projectID != model.SystemProjectID {
@@ -698,21 +698,26 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 		// Already the system scope: a second identical Get would return the same miss.
 		return nil, nil
 	}
-	// The fallback is an ad-ACCOUNT fallback, and credsSource is shared by more than the
-	// ad paths: AudienceBuilder resolves ProviderHubSpot through this same function. What
-	// falls back there is not a budget but a CRM portal, so a project with no HubSpot
-	// connection would have its contact lists written into the LF's own portal — real
-	// contact data landing in the wrong tenant, silently, and contradicting the documented
-	// behaviour that the build fails. Spending LF ad budget on an LF-run campaign is the
-	// deliberate trade this fallback makes; mixing tenants' contacts is not the same trade
-	// and was never the intent.
+	// HubSpot used to be refused here (LFXV2-3040) on the reasoning that what falls back for
+	// the email channel is a CRM portal rather than a budget, so an unconnected project would
+	// write its contact lists into another tenant's portal. That hazard was real for a
+	// per-tenant-portal topology; it does not describe this one. Every LF foundation shares
+	// the LF HubSpot portal and a single org-wide private app token, so there is no second
+	// tenant for a list to land in — and the code already assumes exactly that: list names are
+	// PORTAL-GLOBAL and are disambiguated by event name plus build ref (internal/audience
+	// Plan.listName), not by tenancy. Refusing the fallback therefore protected nothing and
+	// left the email channel unable to resolve any credential at all, since bootstrap also
+	// refused to install the row it would have needed.
 	//
-	// Asked as a CLASSIFICATION rather than as `provider != ProviderHubSpot`, per Kind()'s
-	// own guidance: a provider added later returns "" from Kind() until someone classifies
-	// it, so it is denied the LF credential by default instead of inheriting it.
-	if !provider.IsPaidAds() {
-		return nil, nil
-	}
+	// What still holds is the rule this function is really about, and it is provider-agnostic:
+	// ONLY a genuine absence falls back (the ErrNotFound branch above), and a project that
+	// stated something — including a disconnect — is never overridden by the LF row. That is
+	// the invariant TestSystemFallbackRequiresAGenuineAbsence pins.
+	//
+	// Nothing tenant-specific is inherited from the system row: hubspot.AccountConfig carries
+	// only an optional PortalID (used to build app links), and every operation supplies its own
+	// target at runtime — list ids are results of CreateList, not connection config.
+	//
 	// A project that DISCONNECTED its account said something, and the LF account is not it.
 	// Delete soft-deletes and Get filters status = 'deleted' out, so an explicit disconnect
 	// reaches the caller as the same domain.ErrNotFound as never having connected at all —

@@ -1,0 +1,25 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Index the disconnect probe for hubspot_connections.
+--
+-- 000017 added this partial index to the six PAID-ADS connection tables and deliberately
+-- skipped HubSpot, stating the reason and the trigger for revisiting it: the probe is called
+-- from credsSource.systemConn below a `provider.IsPaidAds()` gate, "so hubspot_connections
+-- would carry an index nothing queries and every write would pay for it. If that gate ever
+-- widens, this migration widens with it."
+--
+-- That gate has now widened. The reserved-scope fallback serves the email channel, so a
+-- foundation with no HubSpot connection of its own — which after that change is the ordinary
+-- case, not the exception — reaches Disconnected() on every audience build and every email
+-- dispatch. Without this index each of those is a sequential scan on the hot path of the
+-- channel the change exists to enable.
+--
+-- Partial on `status = 'deleted'` for the same reason as 000017: the probe asks only whether a
+-- project TOMBSTONED its connection, so the index covers the rows that answer it rather than
+-- the whole table, and stays small while ordinary active rows cost nothing to write.
+--
+-- Plain CREATE INDEX rather than CONCURRENTLY, matching 000017: the migration runner holds a
+-- transaction, CONCURRENTLY cannot run inside one, and this table is small enough that the
+-- brief ACCESS EXCLUSIVE lock is not worth the split-migration machinery.
+CREATE INDEX IF NOT EXISTS idx_hubspot_connections_project_deleted ON hubspot_connections (project_id) WHERE status = 'deleted';

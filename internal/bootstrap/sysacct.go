@@ -500,7 +500,24 @@ var accountDiscoveryProviders = map[model.Provider]bool{
 // does: on a rotation that omits -account-id the row keeps the id it already has, and that
 // satisfies this.
 func requireAccountID(provider model.Provider, effective string) error {
-	if accountDiscoveryProviders[provider] || strings.TrimSpace(effective) != "" {
+	// The EMAIL channel is exempt, and the reason is the same one accountDiscoveryProviders
+	// encodes: this requirement exists because a dispatcher refuses a connection without an
+	// account id. That is a statement about the five paid-ads adapters — its own doc comment
+	// enumerates them ("internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on
+	// it") — and it was never true of HubSpot. internal/dispatch/hubspot.go reads no AccountID
+	// and emits no ErrAccountNotSelected; hubspot.AccountConfig carries only an optional
+	// PortalID, and api-catalog.md documents HubSpot as the one adapter that never answers
+	// reason=account_not_selected, because an email connection has no ad account to choose.
+	//
+	// Asking IsPaidAds() rather than naming HubSpot keeps this in step with the classification
+	// the rest of the service uses: a provider added later is exempt only once someone has
+	// classified it as email, never by default.
+	//
+	// This became reachable when systemConn stopped refusing the email channel: before that a
+	// HubSpot install was rejected earlier, so the requirement below was unreachable for it and
+	// its inaccuracy cost nothing. It now sits between an operator and the exact command
+	// docs/api-catalog.md tells them to run.
+	if accountDiscoveryProviders[provider] || !provider.IsPaidAds() || strings.TrimSpace(effective) != "" {
 		return nil
 	}
 	return fmt.Errorf("bootstrap: %s requires -account-id: its dispatcher refuses a connection without one and "+
@@ -581,21 +598,13 @@ func InstallSystemCredentials(
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
 	}
-	// Valid() is broader than what this row can ever be USED for. The reserved-scope
-	// fallback in credsSource.systemConn is gated on Kind() == paid ads, deliberately:
-	// the audience builder resolves HubSpot through the same function, and a fallback
-	// there would write one project's contact lists into the LF's own portal. So a
-	// HubSpot system row is installable, reports success, and is then reachable by
-	// nothing — the same install-a-dead-row failure requireAccountID and
-	// requireKnownConfigKeys exist to prevent, one level up. Refuse it here rather than
-	// leave an operator holding a row they cannot use and cannot tell is unused.
-	//
-	// Asked as a classification, not as a name comparison, so a provider added later is
-	// admitted only once it is classified — the same default-deny the fallback uses.
-	if !provider.IsPaidAds() {
-		return fmt.Errorf("bootstrap: %s is not a paid-ads provider, so a system-scope row for it "+
-			"could never be used: the reserved-scope fallback resolves paid-ads providers only", provider)
-	}
+	// This once refused every non-paid-ads provider, because the reserved-scope fallback in
+	// credsSource.systemConn was itself gated on Kind() == paid ads — so a HubSpot system row
+	// was installable, reported success, and was then reachable by nothing. That gate is gone
+	// (see systemConn): every LF foundation shares the one LF HubSpot portal, so the email
+	// channel resolves the system row exactly as the ad channels do, and the row this installs
+	// is used. Provider VALIDITY is still required above, and still asked as a classification,
+	// so a provider added later is rejected until someone has classified it.
 	if err := requireKnownConfigKeys(provider, providerConfig); err != nil {
 		return err
 	}

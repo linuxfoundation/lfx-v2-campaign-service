@@ -96,14 +96,27 @@ func parseProviderConfig(s string) (map[string]string, error) {
 	return cfg, nil
 }
 
-// paidAdsProviders lists the providers this command can actually install, for its usage
-// error. Derived by asking IsPaidAds rather than hand-listing, so it stays in step with the
-// same classification bootstrap.InstallSystemAccount enforces — a provider added later is
-// offered here exactly when it starts being accepted there, never before.
-func paidAdsProviders() []model.Provider {
+// installableProviders is the set this subcommand can actually write a system row for, and it is
+// deliberately derived from Valid() rather than IsPaidAds().
+//
+// The two were the same set while the reserved-scope fallback resolved paid-ads providers only:
+// a HubSpot row installed cleanly and was then reachable by nothing, so naming it in the usage
+// error sent an operator to a value that could not succeed. Now that the fallback serves the
+// email channel too, the installable set is simply the VALID set — and asking Valid() keeps this
+// list in step with model.Provider automatically, so a provider added later is offered here the
+// moment it is classified rather than waiting for someone to remember this function.
+//
+// Note what that couples, because it is the decision point rather than a side effect: Valid() is
+// `table != "" && kind != ""`, and credsSource.systemConn is now gated on the same coarser
+// predicate. So giving a NEW provider a Table() and a Kind() grants it system-row installability
+// AND fallback eligibility together — the LF credential becomes available to it in the same commit
+// that registers it. Default-deny survives (an unclassified provider is still refused), but the
+// question "should the LF row serve this provider?" is answered by classifying it, so answer it
+// deliberately. TestInstallKeepsTheInstallableAndUsableSetsTheSame pins the two halves in step.
+func installableProviders() []model.Provider {
 	out := make([]model.Provider, 0, len(model.AllProviders()))
 	for _, p := range model.AllProviders() {
-		if p.IsPaidAds() {
+		if p.Valid() {
 			out = append(out, p)
 		}
 	}
@@ -135,10 +148,13 @@ func runSysacctBootstrap(args []string) error {
 	}
 
 	if *provider == "" {
-		// Only the paid-ads providers, not AllProviders(): a HubSpot row is refused further
-		// down (the reserved-scope fallback resolves paid ads only), so offering it here
-		// would send an operator to a value that cannot succeed.
-		return fmt.Errorf("-provider is required (one of %v)", paidAdsProviders())
+		// EVERY valid provider, not just the paid-ads ones. This offered `paidAdsProviders()`
+		// while a HubSpot row was refused further down, so naming it would have sent an
+		// operator to a value that could not succeed. The reserved-scope fallback now resolves
+		// the email channel too (see dispatch.credsSource.systemConn), so a HubSpot row both
+		// installs and is used — and omitting it here would hide the one provider whose system
+		// row every foundation depends on.
+		return fmt.Errorf("-provider is required (one of %v)", installableProviders())
 	}
 	cfg, err := parseProviderConfig(*configKV)
 	if err != nil {

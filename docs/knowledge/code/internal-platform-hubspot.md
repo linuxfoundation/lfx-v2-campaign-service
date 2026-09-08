@@ -373,9 +373,10 @@ closing it needs an association read, not another search endpoint.
 scoped to a project or a sub-account, so every campaign in a portal is visible to any caller
 holding that portal's token. `projectID` selects which connection's credential to use — and
 therefore WHICH portal is visible, not merely whether the caller is allowed to look. Connections
-are stored per project with their own token and `portal_id`, and `credsSource` refuses the LF
-system fallback for HubSpot, so two projects see the same campaigns only when configured against
-the same portal. Common under the LF umbrella; not guaranteed. That is HubSpot's data
+are stored per project with their own token and `portal_id`, and a project with none resolves the
+LF system connection via `credsSource`, so two projects see the same campaigns when configured
+against the same portal. That is the ordinary case under the LF umbrella, whose foundations share
+one portal. That is HubSpot's data
 model rather than a gap in this service's scoping, which is why the create path is documented as
 requiring an operator warning rather than being narrowed here.
 

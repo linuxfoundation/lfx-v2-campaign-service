@@ -269,11 +269,14 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 		build    func(connReader) campaignDispatcher
 		config   json.RawMessage
 		// fallbackEligible reports whether this provider may reach the LF system account at
-		// all. Only PAID ADS providers may: credsSource.systemConn refuses the fallback for
-		// anything else, because HubSpot is a CRM portal rather than an ad account and
-		// falling back would write one project's contacts into the LF's own portal. So the
-		// hubspot row runs the project-owned scope ONLY — asserting a system-served hubspot
-		// campaign would be asserting a behaviour the service deliberately does not have.
+		// all. EVERY provider may now, including HubSpot: credsSource.systemConn once refused
+		// the email channel, on the reasoning that a CRM portal is not an ad account and
+		// falling back would write one project's contacts into the LF's own portal — but every
+		// LF foundation shares the one LF portal, so there is no second tenant for that to
+		// happen to, and refusing left the email channel with no credential at all.
+		//
+		// Kept as a field rather than deleted: a provider added later is unclassified until
+		// someone decides, and a row that opts out must say so here rather than by omission.
 		fallbackEligible bool
 		// wantErrContains records WHICH EXIT this row actually drives, and is asserted rather
 		// than ignored. Empty means "expect a clean create"; non-empty is a substring the
@@ -362,7 +365,10 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 					hubspot.WithBaseURL(hsSrv.URL))
 			},
 			json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`),
-			false,
+			// Eligible as of the systemConn change: an email campaign staged by a foundation
+			// with no HubSpot connection of its own runs on the LF portal's credential, and
+			// must record that provenance like any other system-served dispatch.
+			true,
 			"",
 		},
 	}

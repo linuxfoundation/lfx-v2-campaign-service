@@ -1142,3 +1142,44 @@ func TestBuildAudience_FailureLogIsRedactedEndToEnd(t *testing.T) {
 		t.Fatalf("fixture precondition: expected a build failure log, got:\n%s", logged)
 	}
 }
+
+// TestAudienceBuildErrNamesTheSystemRowsOwner: whose HubSpot connection failed decides who can
+// repair it, and this path could not tell them apart until recently.
+//
+// While the reserved-scope fallback refused the email channel, every credential defect reaching
+// audienceBuildErr belonged to the requesting project — so one message pointing at HubSpot was
+// the only honest answer. HubSpot now resolves the LF system row, so the SAME defect can instead
+// be one shared row that no foundation can fix and every foundation hits. Collapsing that into
+// "the audience build failed upstream" sends each of them to audit a configuration that is
+// correct, and splits one operator incident across as many reports as there are projects.
+//
+// Both directions are asserted, because the arm is only worth having if it stays narrow: a
+// project's OWN broken connection must keep the original message, or the fix trades one
+// misattribution for its mirror image.
+func TestAudienceBuildErrNamesTheSystemRowsOwner(t *testing.T) {
+	systemDefects := map[string]error{
+		"unusable system row": fmt.Errorf("resolve: %w", domain.ErrSystemConnectionNotUsable),
+		"system origin tag":   fmt.Errorf("resolve: %w", domain.ErrSystemConnectionOrigin),
+	}
+	for name, err := range systemDefects {
+		t.Run(name, func(t *testing.T) {
+			got, ok := audienceBuildErr(err).(*audiences.InternalServerError)
+			require.True(t, ok, "audienceBuildErr must return the typed InternalServerError")
+			assert.Contains(t, got.Message, "shared LF HubSpot connection",
+				"a defect in the LF row must name that row: the caller cannot address the system scope")
+			assert.Contains(t, got.Message, "bootstrap-system-account",
+				"the message must carry the remedy, since the only person who can act is an operator")
+			assert.NotContains(t, got.Message, "failed upstream",
+				"must not send the caller to audit HubSpot when one LF row is the fault")
+		})
+	}
+
+	// A defect in the PROJECT's own connection is unchanged — it is the owner's to fix, and the
+	// upstream wording is the right answer there.
+	own, ok := audienceBuildErr(fmt.Errorf("resolve: %w", domain.ErrConnectionNotUsable)).(*audiences.InternalServerError)
+	require.True(t, ok)
+	assert.Contains(t, own.Message, "failed upstream",
+		"a project's own connection defect must keep the original message")
+	assert.NotContains(t, own.Message, "shared LF HubSpot connection",
+		"a project's own defect must NOT be attributed to the LF system row")
+}
