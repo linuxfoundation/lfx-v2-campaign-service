@@ -572,9 +572,13 @@ func clearedKeys(cfg map[string]string) []string {
 //
 // accountID and providerConfig are TRI-STATE, and which state an omission means depends on
 // whether a row is already there — the distinction this signature exists to make. On a first
-// install an omitted accountID is the credentials-first state, accepted only for a provider with
-// account discovery (see accountDiscoveryProviders); for the rest it would install a row every
-// dispatch refuses and nothing can complete. On a ROTATION an omission means keep, so a run that
+// install an omitted accountID is accepted in two DIFFERENT situations, and conflating them is
+// what makes this read as one rule with an exception. A paid-ads provider with account discovery
+// (see accountDiscoveryProviders) is in the credentials-first state: the row is unfinished and
+// the discovery endpoint finishes it. The EMAIL channel is not credentials-first at all — there
+// is no account to select, nothing in the HubSpot adapter reads AccountID, so the row is COMPLETE
+// without one. Every other paid-ads provider is refused, because for them an omission installs a
+// row every dispatch refuses and nothing can complete. On a ROTATION an omission means keep, so a run that
 // rotates onto a credential for a DIFFERENT account and says nothing about -account-id would
 // otherwise dispatch the new credential at the old account — silently, and with both values
 // individually valid. clearAccountID and an empty config value are how a caller says remove
