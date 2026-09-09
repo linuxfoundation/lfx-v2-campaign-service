@@ -77,8 +77,8 @@ They are separate constants because they measure different things — the caller
 input plus the stage template — and getting the second number wrong fails in TWO opposite
 directions, both of which this file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (6364 runes COMPOSED -- framing plus its 3637-rune ContentPrompt and the registration-URL line, at zero caller input) left
-  only **136** runes for caller fields (6500 - 6364), so anything from 137 runes upward was
+- **Too low rejects valid input.** At 6500 the Post-Event stage (6344 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
+  only **156** runes for caller fields (6500 - 6344), so anything from 157 runes upward was
   refused — 1618 runes of event details passed the 3000 pre-check and were then refused by the
   composed one, two bounds contradicting each other, with the caller told their input was too
   large immediately after the first accepted it.
@@ -95,11 +95,12 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event composes to a 6345-rune floor from a 3637-rune ContentPrompt) and hand-edited.
+— the templates are large (Post-Event composes to a 6344-rune floor from a 3637-rune ContentPrompt) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 8764 (Post-Event floors at 6364 with a
-registration URL present; 6345 without, since the URL line is omitted entirely when absent), so
-9300 clears it with 536 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
+With the input bound at 2400 the worst valid composition is 8744 (Post-Event floors at 6344), so
+9300 clears it with 556 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
+action is "Share Feedback", not a registration ask — so the 19-rune URL line is not part of its
+composition; it still leads on ContentPrompt length, so which stage is worst did not change. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
 
 That test was a **false green** for one revision: once the input bound moved to 2400, its 2500-rune
@@ -113,6 +114,27 @@ constraint, and a post-hoc check formats a 50MB stored event name into a new str
 measuring it — the allocation the guard exists to prevent, performed by the guard's own input. The
 counted fields alone cannot exceed the total, so the pre-check is a sound necessary condition; it
 is not sufficient, because the fixed template counts too, which is what the second check is for.
+
+### The link rule is scoped to registration stages
+
+The shared system prompt tells the model that every `href` in the body must be the brief's
+Registration URL. That is right while the stage's call to action asks the reader to register, and
+wrong for the three stages whose RUNNING button asks for something else: CFP Launch renders
+"Submit Your Proposal", Post-Event renders "Share Feedback" (the fallback branch — nothing supplies
+`[RECORDINGS_URL]`), and Final Countdown renders "See You There", a farewell to people who have
+already registered.
+
+The brief carries one `url` column and no CFP-form or survey field, so there is no correct
+destination to substitute. `emailstage.Stage.LinksToRegistration` therefore WITHHOLDS the URL for
+those stages, which reuses the path the prompt already defines for a brief with no url at all: a
+plain-text call to action. A reader gets a button that is not a link, rather than a proposal button
+pointing at a registration form or a feedback button pointing at registration for an event that has
+already happened.
+
+Two tests keep the declaration honest: **TestStageLinkPolicyMatchesCTA** fails if a stage's policy
+disagrees with the button it actually renders (checking the FALLBACK when the declared CTA is gated
+on a placeholder nothing supplies), and **TestStageLinkPolicyCoversEveryStage** fails when a new
+stage inherits the `false` zero value without a deliberate decision.
 
 **Which fields are counted depends on the prompt path**, and that is deliberate rather than an
 oversight. `eventName`, `location` and `dates` always count. `registrationURL` counts only when a
@@ -135,8 +157,8 @@ Runes, not bytes, because the limit is stated to the caller and logged as a char
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at a 6345-rune COMPOSED floor (its ContentPrompt alone is 3637),
-and with the maximum 2400 runes of caller input it composes to 8764 against the 9300 bound.
+shared prompt or any template changes: Post-Event is the largest stage at a 6344-rune COMPOSED floor (its ContentPrompt alone is 3637),
+and with the maximum 2400 runes of caller input it composes to 8744 against the 9300 bound.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
 template grew — three times, most recently when a paragraph added to the shared system prompt grew
@@ -206,6 +228,7 @@ nothing greps for it.
 - **TestGenerateEmailCopy_BriefNotFound**: Validates 404 when brief does not exist.
 - **TestGenerateEmailCopy_InvalidEventDetails**: Validates 400 when event details lack a required name.
 - **TestGenerateEmailCopy_LLMError**: Validates 503 when the LLM platform returns an error.
+- **TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages**: Pins that the registration URL reaches only the stages whose call to action is a registration ask, and that the "Registration URL:" label is never emitted with nothing after it.
 - **TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt**: Pins which fields the caller-input bound covers on each prompt path — the registration URL counts only when a stage is present, because the frozen legacy prompt never formats it.
 - **TestGenerateEmailCopy_HappyPath**: Validates the full flow with valid brief and LLM response.
 - **TestGenerateEmailCopy_RejectsIncompleteCopy**: Validates 503 when any required field (subject/preheader/body/CTA) is blank.

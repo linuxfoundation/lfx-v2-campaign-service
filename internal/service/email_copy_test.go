@@ -1474,6 +1474,12 @@ func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
 // and therefore the one the bound must clear. composeEmailCopyPrompt omits the whole
 // "\nRegistration URL: " line when the value is empty, so measuring without one understates the
 // floor by 19 runes and leaves the label outside every bound derived from this helper.
+//
+// Supplying a URL for EVERY stage is deliberate even though three of them now withhold it
+// (emailstage.LinksToRegistration): those stages simply drop the line, so their measured floor is
+// their real one, while the registration-linked stages measure with the line as they should. The
+// helper takes the MAX across stages, so it still returns the true worst case — and it keeps
+// working if a stage's link policy flips, which a hand-picked "the stage with the URL" would not.
 func worstStageFloor() int {
 	worst := 0
 	for _, name := range emailstage.Names() {
@@ -1542,6 +1548,22 @@ func TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt(t *testing.T) {
 		}
 	})
 
+	t.Run("a stage that withholds the url does not count it", func(t *testing.T) {
+		// CFP Launch never receives the URL (emailstage.LinksToRegistration=false), so counting it
+		// would refuse this caller for a value their prompt never sees — the same defect as the
+		// no-stage case above, one level down.
+		result, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+			Stage: strPtr(emailstage.CFPLaunch),
+		})
+		if err != nil {
+			t.Fatalf("a CFP Launch caller was refused for a url that stage never receives: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected a non-nil EmailCopy")
+		}
+	})
+
 	t.Run("with a stage: the url is counted", func(t *testing.T) {
 		_, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
 			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
@@ -1552,4 +1574,54 @@ func TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt(t *testing.T) {
 			t.Fatalf("error = %v, want a 400: the stage-aware prompt formats this url, so it counts", err)
 		}
 	})
+}
+
+// TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages is the end of the chain that
+// emailstage.LinksToRegistration starts: the flag only matters if the URL actually stays out of
+// the composed prompt.
+//
+// The shared rule tells the model that EVERY href in the body must be the Registration URL. For a
+// stage whose call to action is not registration, supplying that URL is how a "Submit Your
+// Proposal" button ends up pointing at a registration form, and a "Share Feedback" button at
+// registration for an event that already happened. Withholding the line reuses the path the prompt
+// already defines for a brief with no url: a plain-text call to action.
+func TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages(t *testing.T) {
+	const regURL = "https://events.linuxfoundation.org/kubecon/register/"
+
+	for _, tc := range []struct {
+		stage string
+		want  bool // is the URL expected in the prompt?
+	}{
+		{emailstage.RegistrationPush, true},
+		{emailstage.ScheduleAnnouncement, true},
+		{emailstage.DiscountOffer, true},
+		// The three whose running CTA asks for something other than registration.
+		{emailstage.CFPLaunch, false},
+		{emailstage.PostEvent, false},
+		{emailstage.FinalCountdown, false},
+	} {
+		t.Run(tc.stage, func(t *testing.T) {
+			_, userPrompt := composeEmailCopyPrompt(emailCopyPromptVars{
+				eventName:       "KubeCon EU 2026",
+				location:        "Barcelona",
+				dates:           "June 17 - June 20",
+				registrationURL: regURL,
+				stage:           tc.stage,
+			})
+			got := strings.Contains(userPrompt, regURL)
+			if got != tc.want {
+				verb := "withheld from"
+				if tc.want {
+					verb = "present in"
+				}
+				t.Errorf("registration URL in prompt = %v, want the url %s the %s prompt", got, verb, tc.stage)
+			}
+			// Whether or not the URL is supplied, the label must never appear with nothing after
+			// it: "Registration URL:" reads as supplied-but-blank, which is the shape that
+			// produced href="#" when nothing was supplied at all.
+			if strings.Contains(userPrompt, "Registration URL:") && !got {
+				t.Errorf("prompt carries an EMPTY 'Registration URL:' label; the line must be omitted entirely")
+			}
+		})
+	}
 }
