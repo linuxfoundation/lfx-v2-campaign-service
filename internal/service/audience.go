@@ -259,12 +259,16 @@ func refuseProvenanceBreakingPatch(cur *model.CampaignAudience, in *audiences.Au
 	// against a live database, not inferred: `SELECT '["a","b"]' = ('["a","b"]'::jsonb)::text` is
 	// false.
 	//
-	// Order IS significant here, deliberately. These are suppression lists whose ids are applied as
-	// a set, so reordering changes nothing semantically -- but treating a reorder as "no change"
-	// means comparing sorted copies, and that would let a caller who genuinely swapped one id for
-	// another slip through if the swap happened to preserve the sorted sequence. Refusing a
-	// reordered resend is the safe error: the caller rebuilds, which is the documented remedy
-	// anyway. A false refusal costs a rebuild; a false accept costs the guarantee.
+	// Compared as a SET, on sorted clones. These ids are applied as a set -- reordering them
+	// changes nothing about who the send reaches -- so a reordered resend must not be refused.
+	//
+	// An earlier version of this comment argued the opposite: that sorting could let a genuine
+	// swap through if it preserved the sorted sequence. That is simply false, and checking it
+	// took one probe: equal sorted slices contain the same multiset, so a swap, a drop, an add
+	// and a duplicate ALL differ after sorting. Only a pure permutation compares equal, which is
+	// exactly the case that should be a no-op. The clones matter because slices.Sort mutates,
+	// and neither the caller's payload nor the stored row may be reordered as a side effect of
+	// being inspected.
 	if in.ClearSuppressionLists != nil && *in.ClearSuppressionLists {
 		// Only a clear that actually removes something is a change.
 		if len(unmarshalStrings(cur.SuppressionListIDs)) > 0 {
@@ -272,9 +276,13 @@ func refuseProvenanceBreakingPatch(cur *model.CampaignAudience, in *audiences.Au
 		}
 		return nil
 	}
-	if len(in.SuppressionListIds) > 0 &&
-		!slices.Equal(in.SuppressionListIds, unmarshalStrings(cur.SuppressionListIDs)) {
-		return domain.ErrAudienceProvenanceImmutable
+	if len(in.SuppressionListIds) > 0 {
+		want, got := slices.Clone(in.SuppressionListIds), unmarshalStrings(cur.SuppressionListIDs)
+		slices.Sort(want)
+		slices.Sort(got)
+		if !slices.Equal(want, got) {
+			return domain.ErrAudienceProvenanceImmutable
+		}
 	}
 	return nil
 }

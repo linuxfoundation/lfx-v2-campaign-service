@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -713,6 +714,25 @@ func TestUpdateAudience_ProvenanceMakesTheListIdsImmutable(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("an unchanged suppression list read back from the database must not be "+
 				"refused -- JSONB re-renders the bytes, and only the VALUES are the change: %v", err)
+		}
+	})
+
+	t.Run("REORDERED suppression ids are the same set, not a change", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		repo.items[id].SuppressionListIDs = marshalStrings([]string{"s-1", "s-2", "s-3"})
+		payload := []string{"s-3", "s-1", "s-2"}
+		if _, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{SuppressionListIds: payload},
+		}); err != nil {
+			t.Fatalf("suppression ids are applied as a SET, so a permutation reaches the same "+
+				"contacts and must not force a rebuild: %v", err)
+		}
+		// slices.Sort mutates, so the comparison works on clones. A caller's payload being
+		// reordered as a side effect of being inspected would be a silent, surprising write.
+		if !slices.Equal(payload, []string{"s-3", "s-1", "s-2"}) {
+			t.Errorf("the caller's slice was reordered in place: %v", payload)
 		}
 	})
 
