@@ -566,3 +566,58 @@ func TestCreateHubspotCampaign_MarkedNotSentIsNotUnconfirmed(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateHubspotCampaign_SystemOwnedPermissionFailureIsNotTheCallersFault pins the STATUS as
+// well as the message, because the two answer different questions and only one of them was wrong
+// in an interesting way.
+//
+// A 401/403 on the shared LF token reaches a project that has no HubSpot connection of its own.
+// The project-owned wording ("check that the connection's private app token...") sends them to a
+// connection they do not have, and a 400 tells them it is theirs to correct -- but the system
+// scope is unaddressable over HTTP (rejectSystemScope), so nothing they can do resolves it and the
+// retry a 400 invites cannot succeed until an operator acts.
+//
+// classifyDiscoveryError already settled this for the read path: its ErrSystemConnectionNotUsable
+// arm returns 500, logs at ERROR to page an operator, and says nothing specific to the caller.
+// This is the same situation reached by the create path, so it answers the same way -- otherwise
+// one incident looks like two different faults depending on which button was pressed.
+func TestCreateHubspotCampaign_SystemOwnedPermissionFailureIsNotTheCallersFault(t *testing.T) {
+	systemOwned := fmt.Errorf("create hubspot campaign: %w",
+		errors.Join(domain.ErrSystemConnectionOrigin, domain.ErrPlatformPermission, domain.ErrPlatformRejected,
+			errors.New("403 insufficient scope")))
+
+	_, err := newCampaignSvc(&mockCampaignSearcherDispatcher{createErr: systemOwned}).
+		CreateHubspotCampaign(context.Background(),
+			&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+	if err == nil {
+		t.Fatal("a refused create was reported as success")
+	}
+
+	ise, ok := err.(*conn.InternalServerError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *conn.InternalServerError: 400 means caller-correctable, and "+
+			"this caller cannot edit the reserved LF row", err, err)
+	}
+	// Read the Message FIELD, not Error(): the generated types return "" from Error(), so an
+	// assertion on that passes against any message at all.
+	if strings.Contains(ise.Message, "private app token") || strings.Contains(ise.Message, "check that") {
+		t.Errorf("the response hands a project remediation only an operator can perform: %q", ise.Message)
+	}
+
+	// The project-owned case must NOT have moved with it. Losing that distinction would replace
+	// one misattribution with its mirror image -- every project's own bad token reported as an
+	// LF outage, with the 400 that would have told them how to fix it turned into a 500.
+	projectOwned := fmt.Errorf("create hubspot campaign: %w",
+		errors.Join(domain.ErrPlatformPermission, domain.ErrPlatformRejected, errors.New("403 insufficient scope")))
+	_, perr := newCampaignSvc(&mockCampaignSearcherDispatcher{createErr: projectOwned}).
+		CreateHubspotCampaign(context.Background(),
+			&conn.CreateHubspotCampaignPayload{ProjectID: "cncf", Name: "KubeCon NA 2027"})
+	bre, ok := perr.(*conn.BadRequestError)
+	if !ok {
+		t.Fatalf("a project's OWN permission failure = %T (%v), want *conn.BadRequestError: they can "+
+			"fix their own token, and a 500 would hide that", perr, perr)
+	}
+	if !strings.Contains(bre.Message, "private app token") {
+		t.Errorf("the project-owned case lost its remediation: %q", bre.Message)
+	}
+}

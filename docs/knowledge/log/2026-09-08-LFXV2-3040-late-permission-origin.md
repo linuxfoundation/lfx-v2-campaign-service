@@ -36,7 +36,24 @@ asserts the original tag in the system-owned row precisely to catch a "fix" that
 than adds — mutation-verified in both directions, including the false-positive one where every
 failure is marked system-owned.
 
-The service-side message splits to match, in `ConnectionService`'s create arm: the project-owned
+`SearchEmails` is the third caller and was the worst of the three: it had no permission tagging at
+all, so a 401/403 fell through as a bare upstream error and `classifyDiscoveryError` answered a
+retryable 503 for an invalid token. The email picker is newer than the campaign picker and the arm
+was simply never added, so the two answered differently for identical failures. It now matches
+`SearchCampaigns` exactly.
+
+The service-side answer follows `classifyDiscoveryError`'s existing `ErrSystemConnectionNotUsable`
+arm rather than inventing a second convention: **500**, an ERROR log that pages an operator, and
+nothing specific to the caller. A first attempt returned 400 with the LF remediation in the message,
+which is wrong twice over — 400 means caller-correctable, and the system scope is unaddressable over
+HTTP (`rejectSystemScope`), so it told every fallback project to repair something only an operator
+can touch and invited a retry that cannot succeed until they do. The same situation reached by two
+paths must not look like two different faults.
+
+The project-owned case keeps its 400 and its remediation, and the test asserts BOTH: a fix that sent
+everything to 500 would replace one misattribution with its mirror image.
+
+The message splits in `ConnectionService`'s create arm: the project-owned
 wording ("check that the connection's private app token…") is kept, and the system-owned case says
 the shared LF connection was used and that this is an operator fault. Naming the right system is
 the whole point of the tag; leaving one message for both would have made the sentinel invisible

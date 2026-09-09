@@ -1369,9 +1369,24 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 				// projects as share the row. The dispatcher joins ErrSystemConnectionOrigin when
 				// the LF row served the request precisely so this message can split.
 				if errors.Is(cerr, domain.ErrSystemConnectionOrigin) {
-					return nil, &conn.BadRequestError{
-						Code:    "400",
-						Message: "hubspot refused the campaign creation on permissions, using the shared LF HubSpot connection; nothing was created. This is an operator fault, not this project's configuration — the LF private app token needs to be valid and hold the marketing campaigns write scope",
+					// 500 and an ERROR log, matching classifyDiscoveryError's
+					// ErrSystemConnectionNotUsable arm exactly -- the same situation reached by a
+					// different path, so answering it differently would make one incident look
+					// like two faults.
+					//
+					// Not a 400: this caller has no connection of their own, the system scope is
+					// unaddressable over HTTP (rejectSystemScope), and 400 means caller-correctable.
+					// It would tell every fallback project to repair something only an operator
+					// can touch, and the retry it invites cannot succeed until they do.
+					//
+					// The message says nothing specific, for the same reason that arm does not:
+					// the remedy is an operator's, so it belongs in the log that pages them rather
+					// than in a response to a project that cannot act on it.
+					slog.ErrorContext(ctx, "the shared LF HubSpot connection was refused on permissions; campaign creation is failing for every project without its own connection",
+						"project_id", p.ProjectID, "provider", string(model.ProviderHubSpot))
+					return nil, &conn.InternalServerError{
+						Code:    "500",
+						Message: "the campaign could not be created",
 					}
 				}
 				return nil, &conn.BadRequestError{

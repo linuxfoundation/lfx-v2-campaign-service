@@ -990,6 +990,14 @@ func TestHubSpot_LatePermissionFailureCarriesTheCredentialOrigin(t *testing.T) {
 			tagWhenProjectOwned: domain.ErrConnectionNotUsable,
 		},
 		{
+			name: "SearchEmails",
+			call: func(d *HubSpotDispatcher) error {
+				_, err := d.SearchEmails(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon")
+				return err
+			},
+			tagWhenProjectOwned: domain.ErrConnectionNotUsable,
+		},
+		{
 			name: "CreateCampaign",
 			call: func(d *HubSpotDispatcher) error {
 				_, err := d.CreateCampaign(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon NA 2027")

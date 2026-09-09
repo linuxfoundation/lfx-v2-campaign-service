@@ -733,13 +733,25 @@ func hubSpotCreationPortalID(campaign *model.Campaign) string {
 // archived rows. Nothing here can surface them, and `State` could not express their absence
 // even if it tried.
 func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
-	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	// WithCreds for the same reason as SearchCampaigns: the permission arm below fires after a
+	// clean resolution, so the origin cannot be re-derived once the status is visible.
+	client, res, err := d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
 
 	emails, err := client.SearchEmails(ctx, query)
 	if err != nil {
+		// A 401/403 is tagged HERE, where the status is still visible -- the same treatment
+		// SearchCampaigns gives it, and for the same reason. Wrapped bare, it reached
+		// classifyDiscoveryError's default arm as a retryable 503, but an invalid token or a
+		// missing marketing-email read scope does not recover by retrying. This path had no
+		// tagging at all: the email picker is newer than the campaign picker and the arm was
+		// never added, so the two answered differently for identical failures.
+		if hubspot.IsPermissionRejection(err) {
+			return nil, res.systemScoped(
+				fmt.Errorf("%w: search hubspot marketing emails: %w", domain.ErrConnectionNotUsable, err))
+		}
 		return nil, fmt.Errorf("search hubspot marketing emails: %w", err)
 	}
 
