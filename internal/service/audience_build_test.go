@@ -1443,3 +1443,64 @@ func TestBuildAudience_StaleApprovalIsRejectedWhenTheBriefMovesDuringThePortalLo
 	require.Len(t, rows, 1)
 	assert.Equal(t, model.AudienceFailed, rows[0].Status, "the abandoned claim must be released")
 }
+
+// TestBuildAudience_SystemRowFailureLogsAtError pins WHO finds out about a defect in the shared LF
+// connection, which is a different question from what the caller is told.
+//
+// audienceBuildErr already returns the operator-fault message. But the recipient of that message is
+// a foundation with no HubSpot connection of its own, which cannot act on it — and at WARN the one
+// person who CAN rotate the LF credential is never paged. Every affected foundation then files the
+// same incident against its own configuration, which is the failure this stack's tagging work
+// exists to prevent, arriving through the logs instead of the response.
+//
+// classifyDiscoveryError's system arm settled this for the read path (connection.go:392). This is
+// the same fault reaching the build path, so it answers the same way.
+//
+// The project-owned row is asserted alongside it: promoting every build failure to ERROR would page
+// an operator for a foundation's own bad credential, which trains them to ignore the alert.
+func TestBuildAudience_SystemRowFailureLogsAtError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cause     error
+		wantLevel string
+	}{
+		{
+			name:      "the shared LF row pages an operator",
+			cause:     fmt.Errorf("resolve: %w", domain.ErrSystemConnectionNotUsable),
+			wantLevel: "ERROR",
+		},
+		{
+			name:      "a project's own failure stays a warning",
+			cause:     errors.New("hubspot 429"),
+			wantLevel: "WARN",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, createErr: tc.cause, failOnNth: 1}
+			s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+			_, _ = s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+				ProjectID: "cncf", BriefID: "brief-1",
+			})
+
+			out := buf.String()
+			if !strings.Contains(out, "audience build did not complete") {
+				t.Fatalf("the build-failure line was not emitted at all: %q", out)
+			}
+			// The message and fields are identical either way -- only the level differs -- so a
+			// grep for the message keeps matching and only the alerting changes.
+			for _, line := range strings.Split(out, "\n") {
+				if strings.Contains(line, "audience build did not complete") {
+					if !strings.Contains(line, "level="+tc.wantLevel) {
+						t.Errorf("want level=%s, got: %s", tc.wantLevel, line)
+					}
+				}
+			}
+		})
+	}
+}

@@ -515,7 +515,22 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		// HubSpot list and then failed on the master list produced no log line at all, leaving
 		// an operator holding list ids with nothing explaining what went wrong. Observed on a
 		// live build (list 30779 created, master list failed, service log silent).
-		slog.WarnContext(ctx, "audience build did not complete",
+		// A defect in the SHARED LF row is logged at ERROR, not WARN, and the difference is who
+		// finds out. audienceBuildErr already tells the CALLER it is an operator fault -- but the
+		// caller is a foundation that cannot act on it, and at WARN the one person who can rotate
+		// the credential is never paged. Every affected foundation then files the same incident
+		// against its own configuration. classifyDiscoveryError's system arm made this choice for
+		// the read path (connection.go:392); this is the same fault reaching the build path.
+		//
+		// The level is the only difference: same message, same fields, so nothing that greps for
+		// "audience build did not complete" stops matching.
+		buildLog := slog.WarnContext
+		if errors.Is(buildErr, domain.ErrSystemConnectionNotUsable) ||
+			errors.Is(buildErr, domain.ErrSystemConnectionMissing) ||
+			errors.Is(buildErr, domain.ErrSystemConnectionOrigin) {
+			buildLog = slog.ErrorContext
+		}
+		buildLog(ctx, "audience build did not complete",
 			"audience_id", created.ID, "brief_id", p.BriefID, "status", string(created.Status),
 			"created_lists", strings.Join(ids, ","), "unconfirmed", ambiguous,
 			// The RAW error for the HubSpot-API arm, matching the sibling persist-failure log
