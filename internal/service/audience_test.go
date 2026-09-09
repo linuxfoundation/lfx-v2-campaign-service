@@ -650,6 +650,14 @@ func TestUpdateAudience_ProvenanceMakesTheListIdsImmutable(t *testing.T) {
 			t.Errorf("the message must name the remedy; \"immutable\" alone leaves the caller stuck: %q",
 				conflict.Message)
 		}
+		// The DISCRIMINATOR, not just the prose. Every audience 409 sets one precisely so a client
+		// never pattern-matches English this repo rewords freely for operator clarity, and this
+		// remedy is the most distinct of the four: rebuild, where stale_approval says
+		// refresh-and-retry and audience_build_in_flight says wait-and-poll.
+		if conflict.Reason == nil || *conflict.Reason != "audience_provenance_immutable" {
+			t.Errorf("reason = %v, want audience_provenance_immutable: an unreasoned 409 in this "+
+				"group forces clients back onto the message text", conflict.Reason)
+		}
 		if got := repo.items[id].PlatformMasterListID; got != "30967" {
 			t.Errorf("the refused patch was applied anyway: master list id = %q", got)
 		}

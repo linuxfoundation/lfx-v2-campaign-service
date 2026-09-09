@@ -171,8 +171,12 @@ var NotFoundError = Type("not-found-error", func() {
 // It is deliberately NOT Required, because ConflictError is shared by every endpoint in
 // the API and the slugs are being introduced group by group rather than all at once.
 // Today only the audiences group populates it: `mapAudienceErr` sets a reason on all
-// three of its 409s, which is where the need was sharpest — those three carry OPPOSITE
-// remedies. The briefs group also distinguishes many conflicts, but does so in message
+// FOUR of its 409s, which is where the need was sharpest — they carry OPPOSITE remedies.
+// `audience_provenance_immutable` is the fourth (LFXV2-3040): the audience records the
+// portal its lists were built in, so its platform list ids can no longer be patched and
+// the remedy is a REBUILD — the opposite of `stale_approval`'s refresh-and-retry and of
+// `audience_build_in_flight`'s wait-and-poll. Leaving it unset would have made a client
+// parse prose for exactly the distinction this field exists to carry. The briefs group also distinguishes many conflicts, but does so in message
 // prose only and sets no reason yet; that is a gap to close, not the intended end state.
 // Until it is closed a client must treat an absent reason as "unspecified conflict" and
 // fall back to the message, which is what the message already says. Making the field
@@ -196,7 +200,7 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable")
 		Example("already_exists")
 	})
 })

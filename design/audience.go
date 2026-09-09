@@ -61,6 +61,19 @@ var AudienceInput = Type("audience-input", func() {
 // never a change; status and inclusion_summary stay patchable. Rows predating provenance record no
 // portal, are not backfilled, and stay editable.
 var AudienceUpdateInput = Type("audience-update-input", func() {
+	Description("Partial update for a campaign audience; only supplied fields change. " +
+		"IMMUTABILITY: once the audience records the HubSpot portal its lists were built in, " +
+		"platform_master_list_id and suppression_list_ids are frozen and a request that would " +
+		"CHANGE either is refused 409 with reason=audience_provenance_immutable; the remedy is to " +
+		"rebuild the audience, which re-creates its lists under the current connection. " +
+		"Re-sending the values a read returned is not a change and is never refused, suppression " +
+		"ids are compared as a set so reordering them is also not a change, and status and " +
+		"inclusion_summary stay editable throughout. The reason it cannot be relaxed: a PATCH " +
+		"carries ids rather than a credential, so the service cannot verify which portal new ids " +
+		"belong to, and dispatch checks the recorded portal against the connection it resolves " +
+		"rather than against the ids -- so an unverified change would be APPROVED at send time. " +
+		"Audiences created before provenance existed record no portal, are not backfilled, and " +
+		"remain fully editable.")
 	Reference(AudienceInput)
 	Attribute("platform_master_list_id")
 	Attribute("suppression_list_ids")

@@ -473,13 +473,14 @@ func mapAudienceErr(err error) error {
 		// row. The message has to carry the remedy, because "immutable" alone leaves a caller
 		// holding list ids they cannot apply and no idea what to do with them.
 		//
-		// Reason is deliberately OMITTED rather than reusing one of the three enum members. None
-		// of them describes this, and the design documents absence as meaningful -- "present only
-		// where an endpoint returns more than one kind of conflict. Absent means unspecified."
-		// Sending `already_exists` for a provenance refusal would publish a false discriminator to
-		// every client switching on it; adding a fourth member is a contract change and belongs in
-		// its own PR, not smuggled into a fix.
-		return &audiences.ConflictError{Code: "409", Message: "this audience's platform list ids cannot be changed: it records the HubSpot portal its existing lists were built in, and a patch cannot prove new ids belong to that portal. Rebuild the audience to create lists under the current connection"}
+		// Reason is SET, with its own slug. An earlier revision omitted it, reasoning that adding
+		// an enum member was a contract change for its own PR -- but that reading missed what the
+		// shared contract actually promises: the audiences group populates this discriminator on
+		// every one of its 409s precisely so a client never has to pattern-match prose this repo
+		// rewords freely. A fourth unreasoned conflict in that group breaks the invariant that
+		// makes the field usable, and this remedy is the most distinct of the four: REBUILD, where
+		// stale_approval says refresh-and-retry and audience_build_in_flight says wait-and-poll.
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("audience_provenance_immutable"), Message: "this audience's platform list ids cannot be changed: it records the HubSpot portal its existing lists were built in, and a patch cannot prove new ids belong to that portal. Rebuild the audience to create lists under the current connection"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Reason: conflictReason("already_exists"), Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
