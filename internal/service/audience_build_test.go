@@ -48,6 +48,14 @@ type fakeBuilder struct {
 	// to drive the refusal by ALSO setting noPortal, because newBuildService fills an empty
 	// portalID in for the many tests that predate this field and do not care about it.
 	portalID string
+	// portalErr makes BuiltInPortalID FAIL rather than answer emptily. The two are different
+	// refusals: an empty answer has no underlying defect to attribute, while an error can carry
+	// a tagged credential fault that audienceBuildErr must name instead of the generic message.
+	portalErr error
+	// duringPortalLookup, when set, runs inside BuiltInPortalID -- the window this lookup opened
+	// by being a network call (bounded by portalLookupTimeout, 10s) placed between the claim and
+	// the first list. A test uses it to land a concurrent ReplaceBrief exactly there.
+	duringPortalLookup func()
 	// noPortal makes BuiltInPortalID report "" even after newBuildService's default. A bare
 	// empty portalID cannot express this: the default would silently fill it, and the refusal
 	// case would pass while testing the happy path.
@@ -127,6 +135,12 @@ func (f *fakeBuilder) BeginBuild(ctx context.Context) context.Context { return c
 func (f *fakeBuilder) BuiltInPortalID(context.Context, string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.duringPortalLookup != nil {
+		f.duringPortalLookup()
+	}
+	if f.portalErr != nil {
+		return "", f.portalErr
+	}
 	return f.portalID, nil
 }
 
@@ -281,6 +295,13 @@ func TestBuildAudience_PartialBuildLeavesRowBuilding(t *testing.T) {
 	assert.Contains(t, rows[0].InclusionSummary, "ALREADY CREATED",
 		"a partial build must record what it left in the portal")
 	assert.Contains(t, rows[0].InclusionSummary, "list-"+b.names()[0])
+	// ...and so must the PORTAL those ids belong to. A list id is a bare numeric with no meaning
+	// outside its portal, so recording ids while leaving this NULL hands an operator exactly the
+	// half they cannot act on -- and the connection may be repointed before anyone investigates,
+	// after which nothing can say where these lists live. The portal is resolved before the first
+	// list is created, so it is always known by the time this row is written.
+	assert.Equal(t, "8112310", rows[0].BuiltInPortalID,
+		"a partial build records its list ids, so it must record the portal they belong to")
 
 	// It must stop at the failure rather than creating more unrecordable portal state.
 	assert.Len(t, b.names(), 2)
@@ -1286,4 +1307,103 @@ func TestBuildAudience_StampsTheBuildingPortal(t *testing.T) {
 				"a refused build records no portal")
 		}
 	})
+}
+
+// TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis pins that the portal refusal does not
+// FLATTEN the reason it refused.
+//
+// BuiltInPortalID used to swallow every failure into ("", nil), which was right while the stamp
+// was best-effort and wrong the moment it became required: cachedClient surfaces the tagged
+// credential defects -- ErrSystemConnectionNotUsable among them -- that audienceBuildErr has a
+// dedicated arm for. Collapsed to an empty answer, an unusable LF row reached the operator as
+// "retry once portal identity is readable": advice to retry a fault that cannot resolve itself,
+// sent to somebody who cannot repair it, while the one operator who can hears nothing.
+//
+// The generic arm is asserted alongside it deliberately. A fix that routed EVERY portal failure to
+// the system message would pass a system-only assertion and then blame the LF row for a project's
+// own defect, which is the same misattribution pointing the other way.
+func TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause       error
+		wantMessage string
+		notMessage  string
+	}{
+		{
+			name:        "an unusable LF system row names the operator's fault",
+			cause:       fmt.Errorf("resolve hubspot client: %w", domain.ErrSystemConnectionNotUsable),
+			wantMessage: "shared LF HubSpot connection",
+			notMessage:  "retry once",
+		},
+		{
+			name:        "an untagged failure keeps the portal message",
+			cause:       errors.New("dial tcp: i/o timeout"),
+			wantMessage: "portal",
+			notMessage:  "shared LF HubSpot connection",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, portalErr: tc.cause}
+			s, arepo, _ := newBuildService(t, b,
+				`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+			_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+				ProjectID: "cncf", BriefID: "brief-1",
+			})
+			require.Error(t, err)
+			var ise *audiences.InternalServerError
+			require.ErrorAs(t, err, &ise)
+			require.Contains(t, ise.Message, tc.wantMessage,
+				"the message must name the system an operator can actually act on")
+			require.NotContains(t, ise.Message, tc.notMessage,
+				"naming the wrong system sends the only person who can fix this to the wrong place")
+
+			// Whatever the cause, the refusal still costs nothing upstream and releases its claim.
+			require.Empty(t, b.created, "no list may be created by a build that could not resolve its portal")
+			for _, row := range arepo.items {
+				require.Equal(t, model.AudienceFailed, row.Status,
+					"a refused build must release its claim regardless of why it refused")
+			}
+		})
+	}
+}
+
+// TestBuildAudience_StaleApprovalIsRejectedWhenTheBriefMovesDuringThePortalLookup is
+// TestBuildAudience_StaleApprovalIsRejected for the window this change introduced.
+//
+// Requiring the portal added a NETWORK CALL between the claim and the first list -- bounded by
+// portalLookupTimeout, so up to ten seconds -- and the first revision put it AFTER
+// confirmStillApproved. That silently re-opened the exact window that check exists to close: a
+// ReplaceBrief landing during the lookup is invisible to a confirmation that already ran, and the
+// build goes on to create real HubSpot lists from a withdrawn approval.
+//
+// The ordering fix is what this pins: confirmStillApproved must be the LAST thing before
+// createPlanLists, with the portal resolved ahead of it. Reverting to portal-after-confirm makes
+// this fail while every other test still passes, which is precisely why it is worth its own test
+// rather than a comment.
+func TestBuildAudience_StaleApprovalIsRejectedWhenTheBriefMovesDuringThePortalLookup(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	brief := brepo.briefs[briefKey("cncf", "brief-1")]
+	brief.Version = 3
+	b.duringPortalLookup = func() {
+		brief.Status = model.BriefDraft
+		brief.Version = 4
+	}
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err, "a brief that moved during the portal lookup must not produce an audience")
+
+	var conflict *audiences.ConflictError
+	assert.ErrorAs(t, err, &conflict, "a moved brief is a 409")
+
+	assert.Empty(t, b.names(),
+		"no HubSpot list may be created from an approval withdrawn while the portal was being read")
+
+	rows := arepo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, model.AudienceFailed, rows[0].Status, "the abandoned claim must be released")
 }

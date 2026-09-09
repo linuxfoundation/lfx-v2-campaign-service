@@ -363,18 +363,6 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, audienceValidationErr(perr)
 	}
 
-	// LAST thing before the first upstream call: confirm the brief is STILL approved at the
-	// version the claim locked. The claim's own gate proves the brief was approved when the
-	// lease was taken, which is now BEFORE the warehouse round-trip rather than after it — so
-	// on its own it no longer says anything about the brief at the moment lists are created. A
-	// ReplaceBrief landing during that round-trip would otherwise build real HubSpot lists from
-	// an approval the operator has since withdrawn, which is the case the gate exists for. The
-	// two guards are not redundant: the claim's gate serializes builds, this one dates the approval.
-	if serr := confirmStillApproved(ctx, briefs, p.ProjectID, p.BriefID, approvedVersion); serr != nil {
-		releaseUnstartedClaim(ctx, repo, created, serr)
-		return nil, mapAudienceErr(serr)
-	}
-
 	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
 	// build's lists must land in one portal, but a credential rotated between builds must be
 	// picked up by the next one.
@@ -411,6 +399,37 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	if strings.TrimSpace(portalID) == "" {
 		releaseUnstartedClaim(ctx, repo, created, errPortalUnconfirmed)
 		return nil, audienceBuildErr(errPortalUnconfirmed)
+	}
+
+	// Set on the in-memory row HERE, the moment it is known and before the first list exists,
+	// rather than only on the success path below. Every later write of this row -- the success
+	// update AND the partial-failure update -- then carries it.
+	//
+	// The partial path is the one that needs it. It deliberately RECORDS the ids of lists that
+	// were created before the failure, because they are the only handles to real HubSpot lists
+	// and discarding them makes the row unreconcilable. A list id is a bare numeric with no
+	// meaning outside its portal, so recording ids while leaving the portal NULL hands an
+	// operator exactly the half that cannot be acted on -- and the connection may be repointed
+	// before anyone investigates, at which point nothing can say where those lists live.
+	created.BuiltInPortalID = portalID
+
+	// LAST thing before the first upstream call: confirm the brief is STILL approved at the
+	// version the claim locked. The claim's own gate proves the brief was approved when the
+	// lease was taken, which is now BEFORE the warehouse round-trip rather than after it — so
+	// on its own it no longer says anything about the brief at the moment lists are created. A
+	// ReplaceBrief landing during that round-trip would otherwise build real HubSpot lists from
+	// an approval the operator has since withdrawn, which is the case the gate exists for. The
+	// two guards are not redundant: the claim's gate serializes builds, this one dates the approval.
+	//
+	// It sits AFTER the portal resolution above, and the order is load-bearing rather than
+	// incidental. BuiltInPortalID is a network call bounded by portalLookupTimeout (10s), so
+	// confirming first and resolving second re-opens exactly the window this check closes: a
+	// ReplaceBrief landing during the lookup, and lists then built from a withdrawn approval.
+	// "Last before the first upstream call" is the invariant; anything inserted between this
+	// line and createPlanLists breaks it, which is what an earlier revision of this change did.
+	if serr := confirmStillApproved(ctx, briefs, p.ProjectID, p.BriefID, approvedVersion); serr != nil {
+		releaseUnstartedClaim(ctx, repo, created, serr)
+		return nil, mapAudienceErr(serr)
 	}
 
 	master, ids, buildErr := createPlanLists(buildCtx, builder, p.ProjectID, plan)
@@ -478,7 +497,8 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// Resolved above, before any list existed. A HubSpot list id is a bare numeric with no meaning
 	// outside its portal, so this is what lets a later dispatch prove the send list belongs to the
 	// portal it is about to send from.
-	created.BuiltInPortalID = portalID
+	// BuiltInPortalID was set above, as soon as the lookup answered, so the partial-failure
+	// path carries it too. Deliberately not re-assigned here.
 	if verr := created.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}

@@ -287,20 +287,32 @@ func isSupportedYear(s string) bool {
 // operator-supplied and a credential swap leaves it untouched, so it can name a portal the
 // current token cannot reach. The campaigns path made the same choice for the same reason.
 //
-// BEST-EFFORT by contract. A failure returns ("", nil), not an error: this is called after the
-// lists already exist upstream, and failing the build over unavailable provenance would orphan
-// real HubSpot lists to record a field. An empty value is honest — the dispatch guard treats it
-// as unprovable and refuses, rather than assuming.
+// Failures are RETURNED, not swallowed. This was best-effort — ("", nil) on every failure — while
+// the stamp ran after the lists already existed, where failing the build would have orphaned real
+// HubSpot lists to record a field. BuildAudience now resolves the portal BEFORE creating anything
+// and refuses when it cannot, so there is nothing upstream to orphan and the error is what makes
+// the refusal diagnosable.
+//
+// Swallowing it is actively harmful under that contract, because the errors this returns are not
+// interchangeable. cachedClient surfaces the tagged credential defects — ErrSystemConnectionNotUsable
+// among them — that audienceBuildErr has a dedicated arm for: "the shared LF HubSpot connection is
+// not usable; this is an operator fault", naming the row to repair. Collapsed to ("", nil) every one
+// of those reaches the operator as the generic "retry once portal identity is readable", which is
+// advice to retry a fault that cannot resolve itself, sent to somebody who cannot repair it.
+//
+// An empty id with a nil error stays possible and still means "the lookup answered, and the answer
+// names no portal". BuildAudience refuses on that too, with the generic message, which is correct:
+// there is no underlying defect to attribute it to.
 func (b *AudienceBuilder) BuiltInPortalID(ctx context.Context, projectID string) (string, error) {
 	client, err := b.cachedClient(ctx, projectID)
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 	portalCtx, cancel := context.WithTimeout(ctx, portalLookupTimeout)
 	defer cancel()
 	id, perr := client.AuthenticatedPortalID(portalCtx)
 	if perr != nil {
-		return "", nil
+		return "", fmt.Errorf("read the authenticated hubspot portal: %w", perr)
 	}
 	return strings.TrimSpace(id), nil
 }

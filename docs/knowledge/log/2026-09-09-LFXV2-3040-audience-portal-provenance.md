@@ -50,6 +50,31 @@ operator to check a platform this path never contacted.
 It reads the portal the token authenticates against rather than the operator-supplied `portal_id`
 config, which a credential swap leaves stale — the same choice the campaigns path makes.
 
+Three consequences of making it required, each found by review on the first cut:
+
+- `AudienceBuilder.BuiltInPortalID` no longer swallows failures into `("", nil)`. That was right
+  under best-effort and actively harmful under required: `cachedClient` surfaces the tagged
+  credential defects — `ErrSystemConnectionNotUsable` among them — that `audienceBuildErr` has a
+  dedicated arm for. Collapsed to an empty answer, an unusable LF row reached the operator as
+  "retry once portal identity is readable": advice to retry a fault that cannot resolve itself,
+  sent to somebody who cannot repair it.
+- The lookup is a network call bounded by `portalLookupTimeout` (10s), and the first cut placed it
+  AFTER `confirmStillApproved` — silently re-opening the stale-approval window that check exists to
+  close, since a `ReplaceBrief` landing during the lookup is invisible to a confirmation that
+  already ran. `confirmStillApproved` is the LAST thing before `createPlanLists`, with the portal
+  resolved ahead of it.
+- `created.BuiltInPortalID` is set the moment the lookup answers, not only on the success path, so
+  the PARTIAL-failure write carries it too. That path deliberately records the ids of lists created
+  before the failure; recording portal-scoped ids while leaving the portal NULL hands an operator
+  exactly the half they cannot act on.
+
+On the dispatch side, `assertAudiencePortal` now RETURNS the portal it verified and the second
+token-info call below it is gone. Both wanted the same fact, so every dispatch paid for two
+retrying round trips — and the two could disagree in the direction that matters, with the guard
+proving the portal while the stamp failed to read it, creating a campaign with no provenance that
+`ReadMetrics` then refuses. `TestHubSpot_DispatchReadsThePortalOnce` asserts the call COUNT, so a
+lookup reintroduced anywhere on that path fails.
+
 The public POST/PATCH still accept `status=built` without a portal, and that is deliberate: the
 API has no `built_in_portal_id` field for a caller to supply, so enforcing it in
 `CampaignAudience.Validate()` would reject every API-created built audience with no way to comply —

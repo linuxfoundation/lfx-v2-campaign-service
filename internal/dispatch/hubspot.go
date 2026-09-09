@@ -352,36 +352,21 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		}
 	}
 
-	if perr := assertAudiencePortal(ctx, client, audiencePortal); perr != nil {
+	portalID, perr := assertAudiencePortal(ctx, client, audiencePortal)
+	if perr != nil {
 		return nil, notCreated(perr)
 	}
 
-	// Resolve the portal this token authenticates against BEFORE anything is created, so the
-	// row can record where its email id means something. Deliberately BEST-EFFORT: it is one
-	// more network round trip before a send that is otherwise ready, and a provenance lookup
-	// is not worth failing a campaign over. The cost of an empty value lands entirely on
-	// ReadMetrics, which refuses rather than guessing — a campaign that sends and cannot be
-	// measured beats one that does not send.
+	// The portal is already known: assertAudiencePortal above confirmed the audience's lists live
+	// in the portal this token authenticates against, and returns the value it verified. The
+	// campaign's provenance stamp is exactly that value, so there is no second lookup here.
 	//
-	// "Best-effort" here does NOT mean the lookup is expected to fail. It reads the
-	// private-apps token-info endpoint, which a private-app token can always call; an earlier
-	// version read /account-info/v3/details, which requires the `oauth` scope no private app
-	// can hold, so it failed in EVERY account and this warning would have been the steady
-	// state rather than the exception. If this warning is common in the logs, that is a real
-	// problem to investigate, not background noise.
-	//
-	// Bounded with its OWN short deadline, separate from providerCallTimeout: the client's
-	// retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained throttling,
-	// which exceeds the whole 2-minute provider-call budget and would hand CloneEmail a
-	// context that is already cancelled. A best-effort lookup is not worth spending the
-	// mutating calls' budget on.
-	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
-	portalID, perr := client.AuthenticatedPortalID(portalCtx)
-	cancelPortal()
-	if perr != nil {
-		slog.WarnContext(ctx, "could not resolve the hubspot portal for this token; the campaign will be created without one and its metrics will not be readable",
-			"project_id", brief.ProjectID, "error", perr)
-	}
+	// This used to be an independent best-effort call to the same endpoint, warning and carrying
+	// on when it failed. That was correct while nothing upstream had verified the portal, but the
+	// guard makes it both redundant and worse than redundant: two retrying round trips per
+	// dispatch to learn one fact, and a window where the guard proved the portal while the stamp
+	// failed to read it, creating a campaign with no provenance that ReadMetrics then refuses.
+	// A verified portal cannot fail to be recorded, because recording it is no longer a request.
 
 	// STEP 1 (mutating): clone the template email. From here a failure MAY have created the
 	// clone upstream, so classify by whether the outcome is confirmable.
@@ -936,9 +921,18 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 // unsafe partial send this guard exists to prevent, reached by the guard's own fallback. An
 // unreadable identity is not a match; it is an unknown, and this refuses before any mutation so
 // the caller can retry once token-info answers.
-func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audiencePortal string) error {
+// It RETURNS the portal it verified. That value is exactly what the campaign's provenance stamp
+// needs, and returning it removes a second call to the same endpoint twenty lines below: every
+// dispatch was paying for two retrying network round trips to learn the same fact. Worse than the
+// cost, the two could disagree in one direction that matters -- the guard succeeding and the stamp
+// failing left a campaign created with NO provenance even though the portal had just been proven,
+// and ReadMetrics refuses an unprovenanced campaign, so the send was unmeasurable for a fact the
+// process already held.
+//
+// An empty return accompanies a non-nil error only; on success it is always the confirmed portal.
+func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audiencePortal string) (string, error) {
 	if strings.TrimSpace(audiencePortal) == "" {
-		return fmt.Errorf("hubspot: the brief's audience does not record which portal its lists were built in, "+
+		return "", fmt.Errorf("hubspot: the brief's audience does not record which portal its lists were built in, "+
 			"so they cannot be resolved against the portal this send authenticates against — rebuild the audience: %w",
 			errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
@@ -946,13 +940,13 @@ func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audienceP
 	defer cancel()
 	current, perr := client.AuthenticatedPortalID(portalCtx)
 	if perr != nil {
-		return fmt.Errorf("hubspot: could not confirm which portal this send authenticates against, so the "+
+		return "", fmt.Errorf("hubspot: could not confirm which portal this send authenticates against, so the "+
 			"audience's send list cannot be proven to exist there — retry once portal identity is readable: %w", perr)
 	}
 	if strings.TrimSpace(current) != strings.TrimSpace(audiencePortal) {
-		return fmt.Errorf("hubspot: the brief's audience was built in portal %s but this send authenticates "+
+		return "", fmt.Errorf("hubspot: the brief's audience was built in portal %s but this send authenticates "+
 			"against portal %s, so its send list does not exist there — rebuild the audience against the "+
 			"current connection: %w", audiencePortal, current, domain.ErrCampaignAccountMismatch)
 	}
-	return nil
+	return strings.TrimSpace(current), nil
 }

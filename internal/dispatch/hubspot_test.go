@@ -75,10 +75,14 @@ type hubspotRec struct {
 	sendListBody map[string]any
 	sawClone     bool
 	sawSendList  bool
-	taggedHTML   string
-	subjectSet   string
-	bodyHTMLSet  string
-	draftHTML    string
+	// tokenInfoCalls counts hits on the token-info endpoint. Dispatch must make exactly ONE:
+	// the cross-portal guard verifies the portal and RETURNS it for the provenance stamp, so a
+	// second call would be the duplicate that regression removed.
+	tokenInfoCalls int
+	taggedHTML     string
+	subjectSet     string
+	bodyHTMLSet    string
+	draftHTML      string
 	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
 	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
 	extraWidget bool
@@ -184,6 +188,9 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
+			rec.mu.Lock()
+			rec.tokenInfoCalls++
+			rec.mu.Unlock()
 			// The provenance lookup Dispatch makes before it creates anything: the portal
 			// the TOKEN authenticates against, which is what gets recorded in Result.
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
@@ -1205,5 +1212,53 @@ func TestHubSpot_DispatchRefusesWhenPortalIdentityIsUnreadable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "retry") {
 		t.Errorf("err = %v, want it to say retry: the identity may be readable later, unlike a real mismatch", err)
+	}
+}
+
+// TestHubSpot_DispatchReadsThePortalOnce pins that the cross-portal guard's verified portal is
+// REUSED for the campaign's provenance stamp rather than looked up a second time.
+//
+// The guard and the stamp both need the same fact -- which portal this token authenticates
+// against -- and both used to ask the network for it. That is two retrying round trips per
+// dispatch, each bounded at portalLookupTimeout, to learn one thing. The cost is the smaller half:
+// the two calls could also DISAGREE in the direction that matters, with the guard proving the
+// portal and the stamp then failing to read it, producing a campaign created with no provenance
+// for a fact the process had already established. ReadMetrics refuses an unprovenanced campaign,
+// so that send was unmeasurable.
+//
+// Asserting the count rather than the absence of a code path is deliberate: a future edit that
+// reintroduces the lookup anywhere on this path fails here, wherever it puts it.
+func TestHubSpot_DispatchReadsThePortalOnce(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`)},
+		identityEncryptor{},
+		// Built in the SAME portal the fixture's token reports, so the guard passes and dispatch
+		// runs to completion -- the path where a second lookup used to happen.
+		fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "8112310")},
+		hubspot.WithBaseURL(srv.URL))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	rec.mu.Lock()
+	calls := rec.tokenInfoCalls
+	rec.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("token-info was called %d times, want exactly 1: the guard verifies the portal and "+
+			"returns it, so the provenance stamp must not ask again", calls)
+	}
+
+	// And the stamp must actually carry the verified value -- reusing it is only a win if the
+	// campaign ends up provenanced. An empty stamp here would make ReadMetrics refuse.
+	if camp == nil {
+		t.Fatal("dispatch returned no campaign")
+	}
+	if got := hubSpotCreationPortalID(camp); got != "8112310" {
+		t.Errorf("the campaign recorded portal %q, want the verified 8112310 — reusing the guard's "+
+			"value is only a win if the stamp actually carries it, or ReadMetrics refuses the send", got)
 	}
 }
