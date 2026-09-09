@@ -441,6 +441,15 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 // "the longest" or "the one that looks like prose" WOULD be a guess, and would move between
 // templates; the top block is the same block every time.
 //
+// That contract rests entirely on the position being the LAYOUT's. GetEmailHTMLWidgets orders
+// layout-placed blocks by the drag-and-drop tree and appends everything else in sorted key
+// order, so on a CLASSIC template — no flexAreas at all — blocks[0] is merely whichever opaque
+// module id sorts first, and is as likely the unsubscribe footer as the lede. Writing there
+// would overwrite template furniture with the operator's copy and log it as "the first block",
+// which is why this requires blocks[0].Placed rather than trusting the index. Without a layout
+// there is no top of the email to speak of, so the draft keeps its template body and the log
+// says so — the same conservative answer as the no-rich-text-block case below it.
+//
 // Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
 // hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
 // success while HubSpot silently ignored it.
@@ -471,6 +480,13 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 	}
 
 	target := blocks[0]
+	if !target.Placed {
+		// Sorted key order, not reading order: see the contract note above. Info, not Warn —
+		// a classic template is a legitimate choice by whoever built it, not a failure.
+		slog.InfoContext(ctx, "email draft has no layout-placed rich-text block, so there is no first block to write the generated body into; it keeps the template's content",
+			"email_id", emailID, "block_count", len(blocks))
+		return
+	}
 	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{target.Key: bodyHTML}); perr != nil {
 		slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
 			"email_id", emailID, "widget", target.Key, "error", perr)

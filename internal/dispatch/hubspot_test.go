@@ -128,6 +128,11 @@ type hubspotRec struct {
 	// reversedLayout places module_2 ABOVE module_1 while the map's keys sort the other way, so
 	// only a caller that reads flexAreas can name the block at the top of the email.
 	reversedLayout bool
+	// classicTemplate drops the flexAreas layout entirely -- a non-drag-and-drop template, where
+	// NOTHING is placed and the block order is only a sort of opaque module ids. The fixture puts
+	// the footer at the lowest-sorting id, so a caller that trusts blocks[0] writes the operator's
+	// lede over the unsubscribe footer.
+	classicTemplate bool
 }
 
 // richModule is a rich-text drag-and-drop module: a body carrying `html`, plus the scaffolding
@@ -176,6 +181,11 @@ func (r *hubspotRec) seed() {
 		r.widgets["module_2"] = richModule("<p>top block</p>")
 		r.layout = []string{"module_2", "module_1"}
 	}
+	if r.classicTemplate {
+		// "a_footer" sorts BEFORE "module_1": with no layout, blocks[0] IS the footer.
+		r.widgets["a_footer"] = richModule("<p>Unsubscribe</p>")
+		r.layout = nil
+	}
 	// A template-level module the layout does not place, and which is not rich text at all. The
 	// real template's preview_text is exactly this, and it was the ONE widget that survived the
 	// destructive write — so a fixture without it cannot tell "everything survived" from
@@ -215,15 +225,25 @@ func (r *hubspotRec) draftPayload() []byte {
 			"columns": []any{map[string]any{"id": "column_" + id, "width": 12, "widgets": []string{id}}},
 		})
 	}
+	content := map[string]any{
+		"templatePath":  "@hubspot/email/dnd/Start_from_scratch.html",
+		"styleSettings": map[string]any{"backgroundColor": "#ffffff"},
+		"flexAreas":     map[string]any{"main": map[string]any{"boxed": true, "sections": sections}},
+		"widgets":       r.widgets,
+	}
+	mode := "DRAG_AND_DROP"
+	if r.classicTemplate {
+		// A classic template carries NO layout tree at all, and an empty flexAreas object is not
+		// the same shape: it would still let a reader believe a layout exists and simply placed
+		// nothing. Delete the key, and drop the mode with it.
+		delete(content, "flexAreas")
+		content["templatePath"] = "custom/email/classic_newsletter.html"
+		mode = "HTML"
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"id":                "999",
-		"emailTemplateMode": "DRAG_AND_DROP",
-		"content": map[string]any{
-			"templatePath":  "@hubspot/email/dnd/Start_from_scratch.html",
-			"styleSettings": map[string]any{"backgroundColor": "#ffffff"},
-			"flexAreas":     map[string]any{"main": map[string]any{"boxed": true, "sections": sections}},
-			"widgets":       r.widgets,
-		},
+		"emailTemplateMode": mode,
+		"content":           content,
 	})
 	return payload
 }
@@ -1459,5 +1479,45 @@ func TestHubSpot_DispatchReadsThePortalOnce(t *testing.T) {
 	if got := hubSpotCreationPortalID(camp); got != "8112310" {
 		t.Errorf("the campaign recorded portal %q, want the verified 8112310 — reusing the guard's "+
 			"value is only a win if the stamp actually carries it, or ReadMetrics refuses the send", got)
+	}
+}
+
+// TestHubSpot_ClassicTemplateKeepsItsBody pins the case the "first block" contract does NOT cover.
+//
+// applyEmailContent writes the generated lede into blocks[0], justified by the top of the email
+// being where a lede goes. That justification holds only while the position came from the LAYOUT.
+// A classic (non-drag-and-drop) template has no flexAreas, so every block falls through to sorted
+// key order and blocks[0] is whichever opaque module id sorts first. This fixture makes that id
+// the unsubscribe footer -- so a caller trusting the index overwrites template furniture with the
+// operator's copy and logs it as "the first block".
+//
+// The draft must keep its template body instead, the same conservative answer as a draft with no
+// rich-text block at all.
+func TestHubSpot_ClassicTemplateKeepsItsBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.classicTemplate = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The SUBJECT is still set: it addresses the email as a whole and needs no layout to be
+	// unambiguous. Only the body write depends on knowing which block is the top.
+	subject, body := rec.snapshotContent()
+	if subject != "Three days in Amsterdam" {
+		t.Errorf("subject = %q, want the generated subject — it does not depend on the layout", subject)
+	}
+	if strings.Contains(body, "Join us") {
+		t.Errorf("the generated body reached a draft with no layout to place it: %q", body)
+	}
+	if got := rec.BodyWidget(); got != "" {
+		t.Errorf("wrote into %q, want no body write at all on a classic template", got)
+	}
+	// And specifically not over the footer, which is what sorts first here.
+	if got, ok := rec.WidgetBody("a_footer", "html"); !ok || got != "<p>Unsubscribe</p>" {
+		t.Errorf("footer html = %q (present=%v), want the template's own footer untouched", got, ok)
 	}
 }

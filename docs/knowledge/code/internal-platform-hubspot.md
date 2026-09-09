@@ -21,9 +21,14 @@ draft first and PATCHes the whole `content` object back with only body.html chan
 every other byte re-sent verbatim, because HubSpot treats submitted content as
 AUTHORITATIVE on a drag-and-drop email: a partial patch destroys the draft rather than
 merging into it. GetEmailHTMLWidgets returns []EmailHTMLBlock in the layout reading
-order flexAreas records, not an unordered map, so "the first block" is well defined —
-a Go map's iteration order is randomised and the per-widget `order` field is absent on
-every drag-and-drop template observed), CRM
+order flexAreas records, not an unordered map — a Go map's iteration order is randomised
+and the per-widget `order` field is absent on every drag-and-drop template observed.
+"The first block" is well defined ONLY where the layout places one: a CLASSIC template
+has no flexAreas, so every block falls through to sorted key order and blocks[0] is
+whichever opaque module id sorts first — as likely the footer as the opening paragraph.
+Each block therefore carries `Placed`, reporting whether its position came from the
+layout or only from that sort, and a caller that means "the top of the email" must
+require it rather than trust the index), CRM
 contact-list search/get/create/filter-update (no delete), and event-definition
 lookups. Credentials and account
 configuration are injected via `NewClient`; the package never reads environment
