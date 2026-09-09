@@ -35,12 +35,6 @@
 -- account is an ad-ACCOUNT fallback, and HubSpot (ChannelEmail) never falls back, so
 -- hubspot_connections would carry an index nothing queries and every write would pay for
 -- it. If that gate ever widens, this migration widens with it.
---
--- SUPERSEDED 2026-09-08 (LFXV2-3040): that gate widened. credsSource.systemConn — the function
--- named "systemFallback" above, since renamed — now serves the email channel, so HubSpot DOES
--- reach the probe, and migration 000031 adds the matching index on hubspot_connections. The
--- paragraph above is left as written because this migration has already applied; read it as the
--- reasoning at the time, and 000031 for the current state.
 
 CREATE INDEX IF NOT EXISTS idx_google_ads_connections_project_deleted    ON google_ads_connections    (project_id) WHERE status = 'deleted';
 CREATE INDEX IF NOT EXISTS idx_linkedin_ads_connections_project_deleted  ON linkedin_ads_connections  (project_id) WHERE status = 'deleted';
