@@ -583,6 +583,12 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// output), so counting the URL there would let a no-stage caller be rejected with a 400 for a
 	// value that never reaches their prompt and cannot affect their result -- a behaviour change
 	// on the one path documented as unchanged.
+	//
+	// A no-stage call therefore RESOLVES a URL it never counts and never uses. That is bounded
+	// work, not a leak: httpURL already refused anything over maxPromptSize, so the parse and
+	// re-encode are at most ~2x of 2400 runes, and the value is then discarded. Skipping the
+	// resolve entirely for a blank stage would couple this function to the composer's branching,
+	// which is the coupling the frozen legacy prompt exists to avoid.
 	if strings.TrimSpace(promptVars.stage) != "" {
 		inputSize += utf8.RuneCountInString(promptVars.registrationURL)
 	}

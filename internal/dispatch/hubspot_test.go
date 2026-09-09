@@ -339,6 +339,24 @@ func (r *hubspotRec) ContentKeys() []string {
 }
 
 // WidgetBody is one module's current body field, and whether the draft still carries the module.
+// RichTextKeys returns the draft's rich-text widget ids in the SAME sorted order the client falls
+// back to when no layout places them. A test that depends on which block sorts first asks this
+// rather than restating the ids, so renaming a fixture widget cannot leave the assertion passing
+// while testing something else.
+func (r *hubspotRec) RichTextKeys() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	keys := make([]string, 0, len(r.widgets))
+	for k, w := range r.widgets {
+		body, _ := w["body"].(map[string]any)
+		if _, isRich := body["html"]; isRich {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (r *hubspotRec) WidgetBody(key, field string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1502,6 +1520,14 @@ func TestHubSpot_ClassicTemplateKeepsItsBody(t *testing.T) {
 	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The fixture only exercises the trap while the FOOTER is the block that sorts first — that is
+	// the whole point of the case, and it is invisible if it breaks. Renaming either widget to
+	// something that reorders them would leave every assertion below still passing while testing
+	// nothing, so assert the precondition rather than trusting it.
+	if keys := rec.RichTextKeys(); len(keys) < 2 || keys[0] != "a_footer" {
+		t.Fatalf("fixture no longer exercises the trap: rich-text keys sort to %v, want the footer first", keys)
 	}
 
 	// The SUBJECT is still set: it addresses the email as a whole and needs no layout to be
