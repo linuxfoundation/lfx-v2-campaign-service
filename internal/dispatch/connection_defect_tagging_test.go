@@ -13,6 +13,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
@@ -43,16 +44,29 @@ type badCreds struct {
 	// wrongType is syntactically valid JSON with a number where a required string belongs, so
 	// encoding/json returns a *json.UnmarshalTypeError naming that field.
 	wrongType string
+	// noAdAccount declares that this provider has no ad account to select, so the
+	// "no account selected" case does not apply to it.
+	//
+	// Only the email channel sets it. HubSpot's account_id is a marketing list id rather than an
+	// ad account, nothing in the adapter reads it (AccountConfig carries only an optional
+	// PortalID), and api-catalog.md documents that HubSpot is the one adapter that never emits
+	// reason=account_not_selected — "there is no ad account in an email connection to choose".
+	// Running the case anyway would assert a sentinel the adapter is documented not to produce,
+	// so it would have to be made to produce one: a defect invented to satisfy a test.
+	noAdAccount bool
 }
 
 func connDefectCases(bad badCreds) []connDefectCase {
-	return []connDefectCase{
+	cases := []connDefectCase{
 		{"inactive", func(c *model.Connection) { c.Status = model.StatusInactive }, domain.ErrConnectionInactive},
 		{"undecodable blob", func(c *model.Connection) { c.EncryptedCredentials = []byte(`{`) }, domain.ErrCredentialsUndecodable},
 		{"wrong-typed credential field", func(c *model.Connection) { c.EncryptedCredentials = []byte(bad.wrongType) }, domain.ErrCredentialsUndecodable},
 		{"incomplete credentials", func(c *model.Connection) { c.EncryptedCredentials = []byte(bad.incomplete) }, domain.ErrCredentialsIncomplete},
-		{"no account selected", func(c *model.Connection) { c.AccountID = "" }, domain.ErrAccountNotSelected},
 	}
+	if !bad.noAdAccount {
+		cases = append(cases, connDefectCase{"no account selected", func(c *model.Connection) { c.AccountID = "" }, domain.ErrAccountNotSelected})
+	}
+	return cases
 }
 
 // assertConnectionDefectTagged is the whole point of this file, and each assertion pins a
@@ -301,6 +315,96 @@ func TestMicrosoft_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 				},
 				"ReadMetrics": func() error {
 					_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.MetricsWindowLast7Days)
+					return err
+				},
+			}
+		},
+	)
+}
+
+// TestHubSpot_UnusableConnectionIsTaggedOnEveryPath is the email channel's copy of the suite the
+// five paid-ads adapters already run, and its lf-system-fallback half is newly load-bearing.
+//
+// While credsSource refused the reserved scope for HubSpot, a system-scoped defect on this
+// adapter was unreachable, so the omission cost nothing. It is now the OPPOSITE of an edge case:
+// a foundation with no HubSpot connection of its own resolves the LF row, and after the gate was
+// lifted that is the ordinary state rather than the exception. One expired LF token, or one
+// CREDENTIAL_ENCRYPTION_KEY rotation, is therefore a single defect that surfaces simultaneously
+// for every foundation on the shared portal.
+//
+// What must survive that is the ATTRIBUTION. resolveHubSpotClientWithCreds tags system-scoped
+// failures from a deferred closure; drop it and each affected foundation is told to repair a
+// connection row it does not own and cannot reach, while nobody pages whoever installed the LF
+// credential. Every other HubSpot test uses a project-owned row, so without this case that
+// regression passes the whole suite — the same hole LFXV2-3196 closed for LinkedIn.
+func TestHubSpot_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
+	srv := unreachablePlatform(t)
+	camp := &model.Campaign{Platform: model.ProviderHubSpot, PlatformCampaignID: "999"}
+	runConnDefectSuite(t,
+		badCreds{
+			// The email connection carries ONE credential field, so "incomplete" is the empty
+			// token rather than a subset of several — the shape resolveHubSpotClientWithCreds
+			// rejects with ErrCredentialsIncomplete.
+			incomplete: `{"PrivateAppToken":""}`,
+			wrongType:  `{"PrivateAppToken":123}`,
+			// See badCreds.noAdAccount: an email connection has no ad account to select.
+			noAdAccount: true,
+		},
+		func() *model.Connection { return activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`) },
+		func(repo connReader) map[string]func() error {
+			d := NewHubSpotDispatcher(repo, identityEncryptor{},
+				fakeAudienceReader{auds: builtHubSpotAudience("30967", nil)},
+				hubspot.WithBaseURL(srv.URL))
+			return map[string]func() error{
+				// The three entry points that resolve a client and can be driven without a
+				// staged campaign. Dispatch is covered here too because it resolves through
+				// the same helper rather than validating inline.
+				"Dispatch": func() error {
+					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, nil)
+					return err
+				},
+				"ReadMetrics": func() error {
+					_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderHubSpot, camp, model.MetricsWindowLast7Days)
+					return err
+				},
+				"SearchCampaigns": func() error {
+					_, err := d.SearchCampaigns(context.Background(), "proj", model.ProviderHubSpot, "KubeCon")
+					return err
+				},
+			}
+		},
+	)
+}
+
+// TestAudienceBuilder_UnusableConnectionIsTaggedOnEveryPath covers the OTHER HubSpot resolver.
+//
+// AudienceBuilder.client is a sibling of HubSpotDispatcher.resolveHubSpotClientWithCreds — same
+// three post-resolve defects, same credentials — but it is reached from
+// POST /briefs/{id}/audiences/build rather than from dispatch, and it tagged none of them until
+// the reserved-scope fallback began serving the email channel. That was harmless while a HubSpot
+// resolve could only ever return the project's OWN row: there was no origin to record.
+//
+// It is not harmless now. A foundation with no HubSpot connection resolves the LF system row, so
+// an inactive or malformed LF row is one operator-owned defect that reaches every foundation at
+// once. Untagged, it arrives at audienceBuildErr carrying none of the sentinels that arm matches
+// and degrades to "the audience build failed upstream" — telling each of them to audit a
+// configuration that is correct, which is the precise failure the arm was added to prevent.
+func TestAudienceBuilder_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
+	srv := unreachablePlatform(t)
+	runConnDefectSuite(t,
+		badCreds{
+			incomplete:  `{"PrivateAppToken":""}`,
+			wrongType:   `{"PrivateAppToken":123}`,
+			noAdAccount: true,
+		},
+		func() *model.Connection { return activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`) },
+		func(repo connReader) map[string]func() error {
+			b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+			return map[string]func() error{
+				// CreateList is the write the whole path exists for, and the one whose
+				// misattribution sends a foundation to the wrong place.
+				"CreateList": func() error {
+					_, err := b.CreateList(context.Background(), "proj", "Some List", json.RawMessage(`{}`))
 					return err
 				},
 			}

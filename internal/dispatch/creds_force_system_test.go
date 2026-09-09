@@ -155,11 +155,16 @@ func TestForcedSystemMarksUnusableRowOrigin(t *testing.T) {
 	}
 }
 
-// TestForcedSystemNeverForcesHubSpot: FR-003 — the forced path gates on IsPaidAds(), so
-// even with the flag on, ProviderHubSpot (email) is NEVER redirected to the system
-// account. Forcing it would write a project's contacts into the LF portal. With the flag
-// on and no project HubSpot connection, resolution takes the ordinary path and refuses,
-// and the forced path must not have consulted the system scope on HubSpot's behalf.
+// TestForcedSystemNeverForcesHubSpot: FR-003 — the forced path gates on IsPaidAds(), so even
+// with the flag on, ProviderHubSpot (email) is NEVER redirected to the system account. Forcing
+// redirects ad-ACCOUNT selection, and an email connection has no ad account to redirect.
+//
+// What this test can no longer observe is a REFUSAL, and the distinction is the whole point.
+// HubSpot now reaches the LF portal by the ordinary fallback, so "did it resolve the system row?"
+// is true either way and cannot separate the two mechanisms. The scopes asked can: forcing
+// consults the system scope ALONE, skipping the project's own row, while the fallback asks the
+// project first and only then falls back. A HubSpot resolve that consulted a single scope would
+// mean the flag had captured the email channel after all.
 func TestForcedSystemNeverForcesHubSpot(t *testing.T) {
 	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
 	sysRow := usableConn(`{"sys":true}`, "lf-portal")
@@ -168,19 +173,19 @@ func TestForcedSystemNeverForcesHubSpot(t *testing.T) {
 
 	got, err := newCredsSource(repo, identityEncryptor{}).
 		resolve(context.Background(), "cncf", model.ProviderHubSpot)
-	if err == nil {
-		t.Fatalf("resolve = %+v, want an error: a project with no HubSpot connection must not be forced onto the LF portal", got)
+	// HubSpot DOES reach the LF portal now — every foundation shares it — but it must get
+	// there by the ordinary fallback, never by forcing. The two are told apart by the scopes
+	// asked: forcing consults the system scope ALONE, skipping the project's own row entirely.
+	// If the flag ever captured the email channel, this resolve would ask exactly one scope.
+	if err != nil {
+		t.Fatalf("resolve = %v, want the LF portal via the ordinary fallback", err)
 	}
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Errorf("err = %v, want a plain absence — HubSpot is neither forced nor falls back", err)
+	if !got.fromSystem {
+		t.Errorf("fromSystem = false, want the resolution attributed to the system scope")
 	}
-	if errors.Is(err, domain.ErrSystemConnectionOrigin) {
-		t.Errorf("err = %v, must not be system-attributed: HubSpot was never resolved against the LF row", err)
-	}
-	for _, scope := range repo.gets {
-		if scope == model.SystemProjectID {
-			t.Errorf("scopes asked = %v, want the system scope never consulted for HubSpot even with the flag on", repo.gets)
-		}
+	if len(repo.gets) != 2 || repo.gets[0] != "cncf" || repo.gets[1] != model.SystemProjectID {
+		t.Errorf("scopes asked = %v, want the project's own row consulted FIRST: "+
+			"forcing is ad-account-only and must never capture HubSpot", repo.gets)
 	}
 }
 
@@ -211,15 +216,24 @@ func TestForcedSystemAppliesToEveryPaidAdsProvider(t *testing.T) {
 				}
 				return
 			}
-			// A non-paid-ads provider is not forced: the system scope must not be consulted
-			// on its behalf, and it takes the ordinary (refusing) path.
-			if err == nil {
-				t.Fatalf("resolve(%s) succeeded; only paid-ads providers may be forced onto the LF account", p)
+			// A non-paid-ads provider is not FORCED, and that is still a paid-ads-only
+			// behaviour: forcing redirects ad-ACCOUNT selection, which the email channel has
+			// no equivalent of. It reaches the system row by the ordinary FALLBACK instead —
+			// so the observable difference is not whether it resolves (it does, since the
+			// project has no connection of its own) but HOW MANY scopes were asked.
+			//
+			// Forcing asks the system scope ONLY. The fallback asks the project first, misses,
+			// then asks the system scope — so a HubSpot resolve that consulted a single scope
+			// would mean the flag had captured the email channel after all.
+			if err != nil {
+				t.Fatalf("resolve(%s): %v; the fallback still serves a project with no connection of its own", p, err)
 			}
-			for _, scope := range repo.gets {
-				if scope == model.SystemProjectID {
-					t.Errorf("resolve(%s) consulted the system scope; forcing is paid-ads only", p)
-				}
+			if !got.fromSystem {
+				t.Errorf("resolve(%s) = %+v, want the system row via the ordinary fallback", p, got)
+			}
+			if len(repo.gets) != 2 || repo.gets[0] != "cncf" || repo.gets[1] != model.SystemProjectID {
+				t.Errorf("resolve(%s) scopes asked = %v, want the project then the system scope: "+
+					"forcing (system only) must not capture a non-paid-ads provider", p, repo.gets)
 			}
 		})
 	}

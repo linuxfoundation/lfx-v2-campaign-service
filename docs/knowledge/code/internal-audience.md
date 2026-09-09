@@ -292,6 +292,14 @@ The two exits also use DIFFERENT error prefixes, because they blame different sy
 the one system known to be fine. Reusing the upstream wording there would send an operator to
 investigate the platform when the remedy is to reconcile the listed ids.
 
+"Failed upstream" is `audienceBuildErr`'s DEFAULT, not its only message — it classifies the cause
+first, and two arms name a different system. `ErrSystemConnectionNotUsable` and its siblings say
+the shared LF connection is at fault and the remedy is an operator's, so one incident is not
+scattered across every foundation that shares the row. `errPortalUnconfirmed` says the portal
+lookup could not answer and the build refused BEFORE contacting HubSpot at all — calling that
+upstream would send an operator to a platform this path never reached. Both exist for the same
+reason the two prefixes do: the message decides which system somebody goes and looks at.
+
 ## Every ambiguous outcome says UNCONFIRMED in the RESPONSE
 
 `hubspot.IsUnconfirmed` classifies four ambiguous sources — a 2xx-with-no-id, a mutating 429, a

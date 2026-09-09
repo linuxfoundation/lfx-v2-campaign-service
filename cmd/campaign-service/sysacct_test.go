@@ -112,23 +112,33 @@ func TestRunSysacctBootstrapRejectsResidualArguments(t *testing.T) {
 }
 
 // TestSysacctUsageOffersOnlyInstallableProviders keeps the -provider usage error in step with
-// what InstallSystemAccount accepts. A HubSpot system row is refused there (the reserved-scope
-// fallback resolves paid ads only), so naming it here would send an operator to a value that
-// cannot succeed — the usage message is the only place they learn the valid set.
+// what InstallSystemCredentials accepts — the usage message is the only place an operator learns
+// the valid set, so a name missing from it is a name they will never try.
+//
+// The invariant is unchanged; the accepted set is not. This test previously asserted HubSpot was
+// ABSENT, because the reserved-scope fallback resolved paid-ads providers only and a HubSpot row
+// would have installed cleanly and then been reachable by nothing. The fallback now serves the
+// email channel, so the same invariant requires the opposite assertion: HubSpot installs, is
+// used, and must therefore be offered. Asserting the whole set rather than one name is what makes
+// this bind — a provider dropped from the usage error fails here rather than going unnoticed.
 func TestSysacctUsageOffersOnlyInstallableProviders(t *testing.T) {
 	err := runSysacctBootstrap(nil)
 	if err == nil {
 		t.Fatal("runSysacctBootstrap(nil) succeeded; -provider is required")
 	}
-	if strings.Contains(err.Error(), string(model.ProviderHubSpot)) {
-		t.Errorf("error = %v, but a hubspot system row is refused further down", err)
+	for _, p := range installableProviders() {
+		if !strings.Contains(err.Error(), string(p)) {
+			t.Errorf("error = %v, want it to offer %s: every installable provider must be named", err, p)
+		}
 	}
-	if !strings.Contains(err.Error(), string(model.ProviderGoogleAds)) {
-		t.Errorf("error = %v, want it to offer the paid-ads providers", err)
+	// HubSpot specifically, because it is the one this changed and the one docs/api-catalog.md
+	// now sends operators to by name.
+	if !strings.Contains(err.Error(), string(model.ProviderHubSpot)) {
+		t.Errorf("error = %v, want hubspot offered: its system row is what the email channel resolves", err)
 	}
-	for _, p := range paidAdsProviders() {
-		if !p.IsPaidAds() {
-			t.Errorf("paidAdsProviders included %s, which is not a paid-ads provider", p)
+	for _, p := range installableProviders() {
+		if !p.Valid() {
+			t.Errorf("installableProviders included %s, which is not a valid provider", p)
 		}
 	}
 }

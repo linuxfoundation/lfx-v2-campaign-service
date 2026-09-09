@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,6 +184,12 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	if cur.Version != version {
 		return nil, &audiences.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
 	}
+	// BEFORE the merge, and against the STORED row rather than the patched one: once
+	// applyAudiencePatch has run, cur.PlatformMasterListID already holds the new value and
+	// "did this patch change the ids?" can no longer be asked.
+	if perr := refuseProvenanceBreakingPatch(cur, p.Audience); perr != nil {
+		return nil, mapAudienceErr(perr)
+	}
 	applyAudiencePatch(cur, p.Audience)
 	// Re-validate the MERGED row: a patch that sets status=built on a row with no
 	// master-list id, or clears the id on an already-built row, would leave "built"
@@ -219,6 +226,65 @@ func hasAudiencePatch(in *audiences.AudienceUpdateInput) bool {
 		(in.ClearSuppressionLists != nil && *in.ClearSuppressionLists) ||
 		in.InclusionSummary != nil ||
 		in.Status != nil
+}
+
+// refuseProvenanceBreakingPatch rejects a PATCH that would change the platform list ids on a row
+// that already records the portal those ids were built in.
+//
+// built_in_portal_id names the portal the EXISTING ids live in, and a PATCH cannot re-derive it:
+// the request carries ids, not a credential, so nothing here can ask HubSpot which portal the new
+// ids belong to. Letting the patch through leaves a stamp vouching for ids it never saw -- and
+// assertAudiencePortal, which compares that stamp to the CURRENTLY resolved portal rather than to
+// the ids, would then PASS. The guard would approve a send against list ids no lookup ever
+// verified, which is precisely the state the column was added to prevent.
+//
+// Scoped narrowly on purpose. Only the two id-carrying fields are refused; status, inclusion
+// summary and a suppression CLEAR that changes nothing are all still patchable on a stamped row.
+// And a row with no stamp is unaffected, so the pre-provenance rows this feature deliberately did
+// not backfill stay editable exactly as before.
+func refuseProvenanceBreakingPatch(cur *model.CampaignAudience, in *audiences.AudienceUpdateInput) error {
+	if in == nil || cur == nil || strings.TrimSpace(cur.BuiltInPortalID) == "" {
+		return nil
+	}
+	// A patch that re-sends the SAME master-list id is not a change and must not be refused --
+	// a caller PATCHing status on a row it read back would otherwise be blocked by a field it
+	// never meant to touch.
+	if in.PlatformMasterListID != nil && *in.PlatformMasterListID != cur.PlatformMasterListID {
+		return domain.ErrAudienceProvenanceImmutable
+	}
+	// Suppression ids are compared as DECODED VALUES, never as raw bytes. The column is JSONB and
+	// Postgres re-renders it on the way out -- `["a","b"]` marshalled by this service comes back as
+	// `["a", "b"]` -- so a byte comparison reports a change for a list that is identical, refusing
+	// the very read-back-and-resend the master-list branch above explicitly allows. Verified
+	// against a live database, not inferred: `SELECT '["a","b"]' = ('["a","b"]'::jsonb)::text` is
+	// false.
+	//
+	// Compared as a SET, on sorted clones. These ids are applied as a set -- reordering them
+	// changes nothing about who the send reaches -- so a reordered resend must not be refused.
+	//
+	// An earlier version of this comment argued the opposite: that sorting could let a genuine
+	// swap through if it preserved the sorted sequence. That is simply false, and checking it
+	// took one probe: equal sorted slices contain the same multiset, so a swap, a drop, an add
+	// and a duplicate ALL differ after sorting. Only a pure permutation compares equal, which is
+	// exactly the case that should be a no-op. The clones matter because slices.Sort mutates,
+	// and neither the caller's payload nor the stored row may be reordered as a side effect of
+	// being inspected.
+	if in.ClearSuppressionLists != nil && *in.ClearSuppressionLists {
+		// Only a clear that actually removes something is a change.
+		if len(unmarshalStrings(cur.SuppressionListIDs)) > 0 {
+			return domain.ErrAudienceProvenanceImmutable
+		}
+		return nil
+	}
+	if len(in.SuppressionListIds) > 0 {
+		want, got := slices.Clone(in.SuppressionListIds), unmarshalStrings(cur.SuppressionListIDs)
+		slices.Sort(want)
+		slices.Sort(got)
+		if !slices.Equal(want, got) {
+			return domain.ErrAudienceProvenanceImmutable
+		}
+	}
+	return nil
 }
 
 // applyAudiencePatch merges the provided fields of in onto cur (PATCH semantics).
@@ -401,6 +467,20 @@ func mapAudienceErr(err error) error {
 		// (Plan.BuildRef, see internal/audience.listName), so that prefix finds them whether
 		// or not the row recorded anything, and the message names it as the primary handle.
 		return &audiences.ConflictError{Code: "409", Reason: conflictReason("audience_build_in_flight"), Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile its HubSpot lists, then PATCH its audience row to failed. Its lists are named with the first 8 characters of the audience row id in parentheses; search the portal for that, because a build that crashed before recording anything leaves lists behind with an EMPTY inclusion_summary"}
+	case errors.Is(err, domain.ErrAudienceProvenanceImmutable):
+		// 409 like the siblings above, and for ErrBriefIdentityImmutable's reason: nothing
+		// conflicts and the request is well formed, but what it attempts is not an edit of this
+		// row. The message has to carry the remedy, because "immutable" alone leaves a caller
+		// holding list ids they cannot apply and no idea what to do with them.
+		//
+		// Reason is SET, with its own slug. An earlier revision omitted it, reasoning that adding
+		// an enum member was a contract change for its own PR -- but that reading missed what the
+		// shared contract actually promises: the audiences group populates this discriminator on
+		// every one of its 409s precisely so a client never has to pattern-match prose this repo
+		// rewords freely. A fourth unreasoned conflict in that group breaks the invariant that
+		// makes the field usable, and this remedy is the most distinct of the four: REBUILD, where
+		// stale_approval says refresh-and-retry and audience_build_in_flight says wait-and-poll.
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("audience_provenance_immutable"), Message: "this audience's platform list ids cannot be changed: it records the HubSpot portal its existing lists were built in, and a patch cannot prove new ids belong to that portal. Rebuild the audience to create lists under the current connection"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Reason: conflictReason("already_exists"), Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

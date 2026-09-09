@@ -5,8 +5,16 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,4 +170,168 @@ func TestBeginBuild_ScopesTheClientCacheToOneBuild(t *testing.T) {
 	// A context with no scope must not share one either.
 	_, ok := context.Background().Value(scopeKey{}).(*buildScope)
 	assert.False(t, ok, "an unscoped context resolves fresh rather than reusing a cached client")
+}
+
+// TestBuiltInPortalID_SharesTheBuildScopedClientWithCreateList pins the adapter behaviour the
+// service-level tests structurally cannot see: they inject fakeBuilder, so nothing there exercises
+// the real method, and TestBeginBuild_ScopesTheClientCacheToOneBuild only inspects context values
+// without ever resolving a client.
+//
+// The invariant is that the portal reported and the lists created come from the SAME client. Both
+// go through cachedClient, so within one BeginBuild scope the connection is read once. A regression
+// to a fresh client in BuiltInPortalID would compile, pass every existing test, and produce the one
+// outcome the column exists to prevent: a connection rotated mid-build stamps the NEW portal onto
+// lists that live in the OLD one, and the dispatch guard then compares against a portal the ids were
+// never in -- worse than not stamping at all, because it looks verified.
+//
+// Proven through the repository's call log rather than by reaching into the cache, so the test
+// still holds if the caching mechanism is rewritten. Both halves matter: one read within a build,
+// and a fresh read for the NEXT build, since a cache that never expired would pin a revoked
+// credential across builds.
+func TestBuiltInPortalID_SharesTheBuildScopedClientWithCreateList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		default:
+			_, _ = io.WriteString(w, `{"listId":"30967"}`)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"cncf": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+
+	// ONE build: resolve the portal, then create a list, in the order BuildAudience uses.
+	buildCtx := b.BeginBuild(context.Background())
+	portal, err := b.BuiltInPortalID(buildCtx, "cncf")
+	require.NoError(t, err)
+	require.Equal(t, "8112310", portal)
+
+	_, cerr := b.CreateList(buildCtx, "cncf", "KubeCon NA 2026 — master", json.RawMessage(`{}`))
+	require.NoError(t, cerr)
+
+	require.Len(t, repo.gets, 1,
+		"the portal lookup and the list creation must share one build-scoped client; a second "+
+			"resolution here means a credential rotated mid-build can stamp a portal the list ids "+
+			"are not in, which the dispatch guard would then read as verified")
+
+	// A SEPARATE build must resolve again, or a revoked credential is pinned for the lifetime of
+	// the container-singleton builder.
+	nextCtx := b.BeginBuild(context.Background())
+	_, nerr := b.BuiltInPortalID(nextCtx, "cncf")
+	require.NoError(t, nerr)
+	require.Len(t, repo.gets, 2,
+		"each build must re-resolve, or a rotated or revoked credential stays live across builds")
+}
+
+// TestBuiltInPortalID_LatePermissionFailureCarriesTheOrigin pins that a token the RESOLUTION
+// accepted and the platform then rejected is still attributed to the row it came from.
+//
+// cachedClient's systemScoped covers construction only: it tags what resolution itself can see. A
+// revoked or under-scoped token builds a client without complaint and is refused on the first real
+// call -- and that call was wrapped bare, so it reached audienceBuildErr with neither
+// ErrConnectionNotUsable nor an origin and fell through to the generic "retry once portal identity
+// is readable" 500.
+//
+// The consequence is specific: when the SHARED LF token is the revoked one, every foundation
+// without its own connection is told to retry a fault only an operator can fix, and nothing pages
+// that operator. Both rows are asserted, because tagging everything system-owned would blame the LF
+// row for a project's own bad token -- the same misattribution pointing the other way.
+func TestBuiltInPortalID_LatePermissionFailureCarriesTheOrigin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"insufficient scope"}`)
+	}))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		name       string
+		owner      string
+		wantSystem bool
+	}{
+		{name: "the shared LF token is an operator fault", owner: model.SystemProjectID, wantSystem: true},
+		{name: "the project's own token stays the project's", owner: "cncf", wantSystem: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &scopedConnReader{rows: map[string]*model.Connection{
+				tc.owner: activeHubSpotConn(goodHubSpotCreds),
+			}}
+			b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+
+			_, err := b.BuiltInPortalID(b.BeginBuild(context.Background()), "cncf")
+			require.Error(t, err, "a 403 on the portal lookup must not be reported as an empty portal")
+
+			require.True(t, errors.Is(err, domain.ErrConnectionNotUsable),
+				"an untagged permission failure reaches audienceBuildErr's generic arm and is "+
+					"reported as a transient outage worth retrying")
+			require.Equal(t, tc.wantSystem, errors.Is(err, domain.ErrSystemConnectionNotUsable),
+				"whose token was refused decides who can repair it, and the message follows the tag")
+		})
+	}
+}
+
+// TestCreateList_PermissionRejectionCarriesTheOriginWithoutFlatteningUnconfirmed pins both halves
+// of a narrow arm, because getting either one wrong is a real defect in the opposite direction.
+//
+// A 401/403 from list-create is the same incident as one from the portal lookup -- the LF token is
+// revoked or under-scoped -- and untagged it reported as a generic per-build upstream failure, so
+// every unconnected foundation blamed its own config while nothing paged the operator. That is the
+// half this arm fixes.
+//
+// The other half is what it must NOT break. Every other error passes through unwrapped so
+// hubspot.IsUnconfirmed can still read the concrete type: a 2xx with no parseable list id means a
+// list MAY exist upstream, and flattening that into a generic failure turns "go verify before
+// retrying" into "it failed" -- which is how a duplicate HubSpot list gets created. A permission
+// rejection is safe to wrap precisely because it is never ambiguous: 401/403 creates nothing.
+func TestCreateList_PermissionRejectionCarriesTheOriginWithoutFlatteningUnconfirmed(t *testing.T) {
+	t.Run("a 403 on the LF token is tagged system-owned", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"insufficient scope"}`)
+		}))
+		defer srv.Close()
+
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			model.SystemProjectID: activeHubSpotConn(goodHubSpotCreds),
+		}}
+		b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+
+		_, err := b.CreateList(b.BeginBuild(context.Background()), "cncf", "master", json.RawMessage(`{}`))
+		require.Error(t, err)
+		require.True(t, errors.Is(err, domain.ErrConnectionNotUsable),
+			"an untagged permission failure is reported as a generic upstream error worth retrying")
+		require.True(t, errors.Is(err, domain.ErrSystemConnectionNotUsable),
+			"a revoked LF token is an operator incident, not each foundation's own misconfiguration")
+	})
+
+	t.Run("an UNCONFIRMED create keeps its classification", func(t *testing.T) {
+		// 2xx with no list id: HubSpot may or may not have created it. This must NOT be wrapped,
+		// or IsUnconfirmed stops recognising it and a retry duplicates a real list.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		}))
+		defer srv.Close()
+
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			"cncf": activeHubSpotConn(goodHubSpotCreds),
+		}}
+		b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+
+		_, err := b.CreateList(b.BeginBuild(context.Background()), "cncf", "master", json.RawMessage(`{}`))
+		// Required, not conditional. Guarding the assertions behind `if err != nil` made this
+		// subtest pass on a nil error -- and on any error that had LOST the unconfirmed marker,
+		// which is the regression it exists to catch. A test that cannot fail is worse than none.
+		require.Error(t, err, "a 2xx with no list id is not a success: the caller must not record a list id it never received")
+		require.True(t, hubspot.IsUnconfirmed(err),
+			"the ambiguous outcome must survive to the caller: createPlanLists keeps the row BUILDING "+
+				"on this, and a flattened error would mark it failed and invite a retry that duplicates a real list")
+		require.False(t, errors.Is(err, domain.ErrConnectionNotUsable),
+			"only a permission rejection may be tagged; tagging an ambiguous outcome flattens "+
+				"\"a list may exist, verify first\" into \"it failed\"")
+	})
 }

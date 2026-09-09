@@ -355,6 +355,13 @@ func TestResolveAtTheSystemScopeDoesNotRecurse(t *testing.T) {
 // it. A defect in the project's own row is its owner's to edit and answers 400; the same
 // defect in the LF system row reaches a project that has no connection and cannot address the
 // system scope, so it must arrive carrying ErrSystemConnectionNotUsable and be paged instead.
+//
+// Runs over EVERY provider rather than one. Until the paid-ads gate was lifted from systemConn,
+// only paid-ads providers could reach the system row at all, so a single Google Ads case
+// covered the reachable set. HubSpot now resolves it too — which means the email channel can
+// now hit this error path, and an untested attribution here is the difference between paging
+// whoever installed the LF credential and telling a foundation to repair a connection it does
+// not have and cannot see. Walking AllProviders() keeps that true for the next provider as well.
 func TestUnusableSystemConnectionKeepsItsOrigin(t *testing.T) {
 	broken := func() *model.Connection {
 		c := usableConn(`{"sys":true}`, "sys-account")
@@ -362,26 +369,35 @@ func TestUnusableSystemConnectionKeepsItsOrigin(t *testing.T) {
 		return c
 	}
 
-	_, err := newCredsSource(&scopedConnReader{
-		rows: map[string]*model.Connection{model.SystemProjectID: broken()},
-	}, identityEncryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
-	if !errors.Is(err, domain.ErrConnectionNotUsable) {
-		t.Fatalf("system fallback err = %v, want ErrConnectionNotUsable", err)
-	}
-	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
-		t.Errorf("system fallback err = %v, want it to name the SYSTEM connection", err)
-	}
+	for _, p := range model.AllProviders() {
+		t.Run(string(p), func(t *testing.T) {
+			sysRow := broken()
+			sysRow.Provider = p
+			_, err := newCredsSource(&scopedConnReader{
+				rows: map[string]*model.Connection{model.SystemProjectID: sysRow},
+			}, identityEncryptor{}).resolve(context.Background(), "cncf", p)
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Fatalf("system fallback err = %v, want ErrConnectionNotUsable", err)
+			}
+			if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+				t.Errorf("system fallback err = %v, want it to name the SYSTEM connection", err)
+			}
 
-	// The project's own broken row must NOT pick up the system marker, or every 400 that
-	// tells an owner to fix their connection becomes a 500 that tells nobody anything.
-	_, err = newCredsSource(&scopedConnReader{
-		rows: map[string]*model.Connection{"cncf": broken()},
-	}, identityEncryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
-	if !errors.Is(err, domain.ErrConnectionNotUsable) {
-		t.Fatalf("project connection err = %v, want ErrConnectionNotUsable", err)
-	}
-	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
-		t.Errorf("project connection err = %v, must not be attributed to the system account", err)
+			// The project's own broken row must NOT pick up the system marker, or every 400
+			// that tells an owner to fix their connection becomes a 500 that tells nobody
+			// anything.
+			ownRow := broken()
+			ownRow.Provider = p
+			_, err = newCredsSource(&scopedConnReader{
+				rows: map[string]*model.Connection{"cncf": ownRow},
+			}, identityEncryptor{}).resolve(context.Background(), "cncf", p)
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Fatalf("project connection err = %v, want ErrConnectionNotUsable", err)
+			}
+			if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+				t.Errorf("project connection err = %v, must not be attributed to the system account", err)
+			}
+		})
 	}
 }
 
@@ -551,60 +567,98 @@ func TestSystemScopedCoversEveryCallerNotJustDiscovery(t *testing.T) {
 	}
 }
 
-// TestResolveDoesNotFallBackForNonAdProviders: the fallback is an ad-ACCOUNT fallback, and
-// credsSource is shared beyond the ad paths — AudienceBuilder resolves ProviderHubSpot
-// through the same function. What would fall back there is not a budget but a CRM portal, so
-// a project with no HubSpot connection would have its contact lists written into the LF's own
-// portal: real contact data in the wrong tenant, silently, and against the documented
-// behaviour that the build fails. Spending LF ad budget on an LF-run campaign is the trade
-// this fallback deliberately makes; mixing tenants' contacts is a different trade nobody made.
+// TestHubSpotResolvesTheLFPortalWhenTheProjectHasNoConnection is the email channel's half of the
+// fallback, and the direct inverse of what this file asserted before LFXV2-3040 was re-scoped.
 //
-// The system row EXISTS here, so the test fails if the gate is removed rather than passing
-// vacuously on a missing row.
-func TestResolveDoesNotFallBackForNonAdProviders(t *testing.T) {
+// It is the case the whole email channel rests on: LF runs one HubSpot portal with one org-wide
+// private app token, so a foundation with no connection of its own must resolve that row —
+// otherwise audience builds and email dispatch have no credential at all and the channel cannot
+// run for any project but the one that happens to hold a row.
+func TestHubSpotResolvesTheLFPortalWhenTheProjectHasNoConnection(t *testing.T) {
 	sysRow := usableConn(`{"sys":true}`, "lf-portal")
 	sysRow.Provider = model.ProviderHubSpot
 	repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: sysRow}}
 
 	got, err := newCredsSource(repo, identityEncryptor{}).
 		resolve(context.Background(), "cncf", model.ProviderHubSpot)
-	if err == nil {
-		t.Fatalf("resolve = %+v, want an error: a project with no HubSpot connection must not write its contact lists into the LF portal", got)
+	if err != nil {
+		t.Fatalf("resolve(hubspot) = %v, want the LF portal row: every foundation shares one portal", err)
 	}
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Errorf("error = %v, want it to stay a plain absence (the project has no connection), not a system-scoped failure", err)
+	if !got.fromSystem {
+		t.Errorf("fromSystem = false, want the resolution attributed to the system scope so a defect pages whoever installed the LF credential")
 	}
-	// The system scope must not even be CONSULTED: the gate is a classification question,
-	// answerable without a database round-trip.
+	if got.accountID != "lf-portal" {
+		t.Errorf("accountID = %q, want %q", got.accountID, "lf-portal")
+	}
+	// The system scope MUST be consulted here — that round-trip is the fallback doing its job.
+	var askedSystem bool
 	for _, scope := range repo.gets {
 		if scope == model.SystemProjectID {
-			t.Errorf("scopes asked = %v, want the system scope never consulted for a non-ad provider", repo.gets)
+			askedSystem = true
 		}
+	}
+	if !askedSystem {
+		t.Errorf("scopes asked = %v, want the system scope consulted after the project's own miss", repo.gets)
 	}
 }
 
-// TestSystemFallbackIsGatedByClassificationNotByName pins that the gate asks Kind() rather
-// than comparing against ProviderHubSpot. Every paid-ads provider must fall back, and every
-// provider that is not classified as paid ads must not — so a provider added later is denied
-// the LF credential by default until someone classifies it, instead of inheriting it.
-func TestSystemFallbackIsGatedByClassificationNotByName(t *testing.T) {
+// TestSystemFallbackResolvesForEveryProvider pins the invariant that replaced the paid-ads gate.
+//
+// This test previously asserted the OPPOSITE for the email channel — that HubSpot must never
+// resolve the LF system row (LFXV2-3040). That gate was scoped to the wrong axis. Its stated
+// hazard was one tenant's contact lists landing in another tenant's CRM portal, which describes a
+// per-tenant-portal topology; every LF foundation shares the one LF portal and a single org-wide
+// token. The code already assumes exactly that: list names are PORTAL-GLOBAL and are disambiguated
+// by event name plus build ref (internal/audience Plan.listName), never by tenancy. So the gate
+// protected nothing and left the email channel unable to resolve any credential at all — bootstrap
+// refused to install the very row the fallback refused to read.
+//
+// Walking AllProviders() is deliberate and unchanged in spirit: a provider added later is covered
+// without anyone remembering to add a case, so the fallback and the provider list cannot drift.
+func TestSystemFallbackResolvesForEveryProvider(t *testing.T) {
 	for _, p := range model.AllProviders() {
 		t.Run(string(p), func(t *testing.T) {
 			row := usableConn(`{"sys":true}`, "sys-account")
 			row.Provider = p
 			repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: row}}
 
-			_, err := newCredsSource(repo, identityEncryptor{}).
+			res, err := newCredsSource(repo, identityEncryptor{}).
 				resolve(context.Background(), "cncf", p)
-
-			if p.IsPaidAds() {
-				if err != nil {
-					t.Fatalf("resolve(%s): %v; every paid-ads provider falls back to the LF account", p, err)
-				}
-				return
+			if err != nil {
+				t.Fatalf("resolve(%s): %v; a project with no connection of its own falls back to the LF row", p, err)
 			}
-			if err == nil {
-				t.Fatalf("resolve(%s) succeeded; only paid-ads providers may use the LF system account", p)
+			if !res.fromSystem {
+				t.Errorf("resolve(%s): fromSystem = false, want the resolution attributed to the system scope", p)
+			}
+		})
+	}
+}
+
+// TestSystemFallbackRequiresAGenuineAbsence is the half of the old gate that still holds, and it
+// is the one doing the real work: the fallback exists for a project that never said anything, not
+// for one whose own row is present and unusable. Removing the paid-ads gate must not widen THIS.
+func TestSystemFallbackRequiresAGenuineAbsence(t *testing.T) {
+	for _, p := range model.AllProviders() {
+		t.Run(string(p), func(t *testing.T) {
+			own := usableConn(`{"own":true}`, "own-account")
+			own.Provider = p
+			sys := usableConn(`{"sys":true}`, "sys-account")
+			sys.Provider = p
+			repo := &scopedConnReader{rows: map[string]*model.Connection{
+				"cncf":                own,
+				model.SystemProjectID: sys,
+			}}
+
+			res, err := newCredsSource(repo, identityEncryptor{}).
+				resolve(context.Background(), "cncf", p)
+			if err != nil {
+				t.Fatalf("resolve(%s): %v; the project's OWN connection must resolve", p, err)
+			}
+			if res.fromSystem {
+				t.Errorf("resolve(%s): fromSystem = true; a project with its own connection must never be served the LF row", p)
+			}
+			if res.accountID != "own-account" {
+				t.Errorf("resolve(%s): accountID = %q, want the project's own account", p, res.accountID)
 			}
 		})
 	}

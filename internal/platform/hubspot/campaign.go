@@ -59,13 +59,12 @@ var campaignProps = []string{"hs_name", "hs_utm", "hs_start_date"}
 // everyone else working in it. That is a property of HubSpot's data model, not a gap in the
 // scoping here, and it is why the create path is documented as requiring a UI warning.
 //
-// WHICH portal is the connection's, not necessarily the LF's. A HubSpot connection is stored
-// per project and carries its own token and portal_id, and credsSource refuses the LF system
-// fallback for HubSpot (internal/dispatch/creds.go — that fallback is ad-account-only, because
-// writing one tenant's contacts into another's portal is not the trade it makes). So two
-// projects share this namespace only when they are configured against the SAME portal, which
-// is the common case for foundations under the LF umbrella but is not guaranteed. Do not read
-// "portal-wide" as "every foundation, always".
+// WHICH portal is the connection's. A HubSpot connection is stored per project and carries its
+// own token and portal_id; a project with none resolves the LF system connection
+// (internal/dispatch/creds.go). So two projects share this namespace when they are configured
+// against the SAME portal — and for LF foundations, which share the one LF portal and resolve
+// the same system row, that is the ordinary case rather than the exception. A project on its
+// own portal still sees only its own campaigns.
 type Campaign struct {
 	// ID is HubSpot's own object id (`hs_object_id`).
 	ID string

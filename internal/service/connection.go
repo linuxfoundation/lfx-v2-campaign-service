@@ -1362,6 +1362,33 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 			// a 401/403, so the "check the name" message would send the operator to change the
 			// one thing that was never at fault.
 			if errors.Is(cerr, domain.ErrPlatformPermission) {
+				// WHOSE token was refused decides who can fix it. A project with no HubSpot
+				// connection of its own creates against the shared LF row, and telling it to
+				// check "the connection's" token sends it to a connection it does not have --
+				// while the one operator who can repair the LF token hears nothing, from as many
+				// projects as share the row. The dispatcher joins ErrSystemConnectionOrigin when
+				// the LF row served the request precisely so this message can split.
+				if errors.Is(cerr, domain.ErrSystemConnectionOrigin) {
+					// 500 and an ERROR log, matching classifyDiscoveryError's
+					// ErrSystemConnectionNotUsable arm exactly -- the same situation reached by a
+					// different path, so answering it differently would make one incident look
+					// like two faults.
+					//
+					// Not a 400: this caller has no connection of their own, the system scope is
+					// unaddressable over HTTP (rejectSystemScope), and 400 means caller-correctable.
+					// It would tell every fallback project to repair something only an operator
+					// can touch, and the retry it invites cannot succeed until they do.
+					//
+					// The message says nothing specific, for the same reason that arm does not:
+					// the remedy is an operator's, so it belongs in the log that pages them rather
+					// than in a response to a project that cannot act on it.
+					slog.ErrorContext(ctx, "the shared LF HubSpot connection was refused on permissions; campaign creation is failing for every project without its own connection",
+						"project_id", p.ProjectID, "provider", string(model.ProviderHubSpot))
+					return nil, &conn.InternalServerError{
+						Code:    "500",
+						Message: "the campaign could not be created",
+					}
+				}
 				return nil, &conn.BadRequestError{
 					Code:    "400",
 					Message: "hubspot refused the campaign creation on permissions; nothing was created — check that the connection's private app token is valid and has the marketing campaigns write scope",

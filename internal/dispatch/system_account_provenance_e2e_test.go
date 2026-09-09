@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -269,11 +272,14 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 		build    func(connReader) campaignDispatcher
 		config   json.RawMessage
 		// fallbackEligible reports whether this provider may reach the LF system account at
-		// all. Only PAID ADS providers may: credsSource.systemConn refuses the fallback for
-		// anything else, because HubSpot is a CRM portal rather than an ad account and
-		// falling back would write one project's contacts into the LF's own portal. So the
-		// hubspot row runs the project-owned scope ONLY — asserting a system-served hubspot
-		// campaign would be asserting a behaviour the service deliberately does not have.
+		// all. EVERY provider may now, including HubSpot: credsSource.systemConn once refused
+		// the email channel, on the reasoning that a CRM portal is not an ad account and
+		// falling back would write one project's contacts into the LF's own portal — but every
+		// LF foundation shares the one LF portal, so there is no second tenant for that to
+		// happen to, and refusing left the email channel with no credential at all.
+		//
+		// Kept as a field rather than deleted: a provider added later is unclassified until
+		// someone decides, and a row that opts out must say so here rather than by omission.
 		fallbackEligible bool
 		// wantErrContains records WHICH EXIT this row actually drives, and is asserted rather
 		// than ignored. Empty means "expect a clean create"; non-empty is a substring the
@@ -362,7 +368,10 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 					hubspot.WithBaseURL(hsSrv.URL))
 			},
 			json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`),
-			false,
+			// Eligible as of the systemConn change: an email campaign staged by a foundation
+			// with no HubSpot connection of its own runs on the LF portal's credential, and
+			// must record that provenance like any other system-served dispatch.
+			true,
 			"",
 		},
 	}
@@ -491,4 +500,87 @@ func dispatchMethodCount(t *testing.T) int {
 			"zero here would make the coverage guard vacuous")
 	}
 	return n
+}
+
+// TestHubSpot_FallbackBuildAndDispatchAgreeOnThePortal walks the seam that two separately-reviewed
+// changes created and that no single test covered: the reserved-scope fallback resolving the LF
+// system row, the audience build stamping THAT portal, and dispatch verifying its send list against
+// the same one.
+//
+// Each half was tested on its own branch. The join was not, and it is exactly the join that can be
+// wrong while both halves pass: if the build stamped the portal from a freshly resolved credential
+// while dispatch resolved another, or if the fallback served the build but not the send, every
+// existing test would still be green and every real send would be refused -- or worse, approved
+// against list ids from a portal it never verified.
+//
+// The negative case is the one that proves the guard is load-bearing rather than decorative: the
+// SAME audience, dispatched once the project has connected its own portal, must be refused. That is
+// the lifetime bug the column exists for, and it only appears when the fallback and the guard are
+// exercised together.
+func TestHubSpot_FallbackBuildAndDispatchAgreeOnThePortal(t *testing.T) {
+	const lfPortal, ownPortal = "8112310", "26724"
+
+	// One server per portal, each reporting its own hub id from token-info.
+	portalSrv := func(hub string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.URL.Path == hubSpotTokenInfoPath:
+				_, _ = io.WriteString(w, `{"hubId":`+hub+`}`)
+			case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
+				_, _ = io.WriteString(w, `{"id":"999","name":"clone","state":"DRAFT"}`)
+			default:
+				_, _ = io.WriteString(w, `{"listId":"30967"}`)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	t.Run("a project with NO connection builds and dispatches on the LF row", func(t *testing.T) {
+		srv := portalSrv(lfPortal)
+		// Only the system row exists -- the fallback is the only way this resolves at all.
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			model.SystemProjectID: activeHubSpotConn(goodHubSpotCreds),
+		}}
+
+		b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+		portal, err := b.BuiltInPortalID(b.BeginBuild(context.Background()), "cncf")
+		require.NoError(t, err, "the fallback must serve the email channel, or no build is possible")
+		require.Equal(t, lfPortal, portal, "the build must stamp the portal the LF credential authenticates against")
+
+		// Dispatch resolves credentials AFRESH. It must reach the same portal and accept the stamp.
+		d := NewHubSpotDispatcher(repo, identityEncryptor{},
+			fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, portal)},
+			hubspot.WithBaseURL(srv.URL))
+		camp, derr := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+			json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+		require.NoError(t, derr, "a send whose audience was built on the same row must not be refused")
+		require.NotNil(t, camp)
+		require.Equal(t, lfPortal, hubSpotCreationPortalID(camp),
+			"the campaign must record the portal it was actually created in")
+	})
+
+	t.Run("the same audience is REFUSED once the project connects its own portal", func(t *testing.T) {
+		ownSrv := portalSrv(ownPortal)
+		// The project now has its own connection; dispatch prefers it over the LF row.
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			"cncf":                activeHubSpotConn(goodHubSpotCreds),
+			model.SystemProjectID: activeHubSpotConn(goodHubSpotCreds),
+		}}
+
+		d := NewHubSpotDispatcher(repo, identityEncryptor{},
+			// Built earlier on the LF portal -- the ids live there and nowhere else.
+			fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, lfPortal)},
+			hubspot.WithBaseURL(ownSrv.URL))
+
+		camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+			json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+		require.Error(t, err,
+			"the send list exists only in the LF portal; sending from the project's own portal "+
+				"hands SetSendList ids HubSpot cannot see")
+		require.True(t, errors.Is(err, domain.ErrCampaignAccountMismatch),
+			"the caller must be told to rebuild, not to retry")
+		require.Nil(t, camp, "the refusal must happen before CloneEmail, or it orphans a draft")
+	})
 }

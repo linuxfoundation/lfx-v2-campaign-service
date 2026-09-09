@@ -566,10 +566,16 @@ func TestSystemRowFaultIsNotReportedAsTheProjectsError(t *testing.T) {
 // TestExistingResolutionNeverReachesForTheSystemRowForHubSpot pins the paid-ads precondition
 // on the failure arm's system lookup.
 //
-// resolveForcedSystem is the LF-system redirect, and resolve() gates it on IsPaidAds()
-// precisely so HubSpot/email is never pointed at the LF portal — routing one tenant's contact
-// data through another's is not the trade the paid-ads fallback makes (FR-003). The failure
-// arm added to resolveExisting performs that same lookup, so it must carry the same gate.
+// resolveForcedSystem is the LF-system REDIRECT, and resolve() gates it on IsPaidAds() so
+// HubSpot/email is never redirected there (FR-003): forcing selects an ad ACCOUNT, and an email
+// connection has none. The failure arm added to resolveExisting performs that same lookup, so it
+// must carry the same gate.
+//
+// This is NOT "HubSpot must not reach the LF portal" — systemConn's fallback now serves the email
+// channel, so it reaches that portal routinely. What this pins is narrower and still true: the
+// project here DISCONNECTED, and a disconnect is a statement. The fallback honours it
+// (TestADisconnectedProjectDoesNotFallBackToTheLFAccount), and forcing must not override it
+// either.
 //
 // Every caller of resolveExisting today happens to be a paid-ads dispatcher, so a
 // call-site-only convention would test green while leaving the function itself willing to
@@ -590,8 +596,9 @@ func TestExistingResolutionNeverReachesForTheSystemRowForHubSpot(t *testing.T) {
 	_, err := newCredsSource(repo, identityEncryptor{}).
 		resolveExisting(context.Background(), "cncf", model.ProviderHubSpot, "act_999")
 	if err == nil {
-		t.Fatal("HubSpot resolution fell back to the LF SYSTEM row: forcing is scoped to paid ads " +
-			"(FR-003), and redirecting email would route one tenant's contact data through another's")
+		t.Fatal("HubSpot resolution was REDIRECTED to the LF SYSTEM row: forcing is scoped to paid " +
+			"ads (FR-003), and this project disconnected — a statement neither forcing nor the " +
+			"fallback may override")
 	}
 	for _, got := range repo.gets {
 		if got == model.SystemProjectID {

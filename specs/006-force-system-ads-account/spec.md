@@ -63,7 +63,9 @@ are enforced in code rather than left to operator discipline:
   fallback).
 - **FR-003**: The forced path applies **only to paid-ads providers**
   (`Provider.IsPaidAds()`). `ProviderHubSpot` (email) MUST NEVER be forced to the
-  system account — forcing it would write a project's contacts into the LF portal.
+  system account — forcing redirects ad-ACCOUNT selection, and an email connection has no
+  ad account to redirect. (HubSpot does reach the LF portal, by the ordinary
+  `credsSource.systemConn` fallback — never by this flag.)
   This holds even when the flag is on.
 - **FR-004**: A request already scoped to `model.SystemProjectID` MUST
   short-circuit (no second identical lookup), and the forced path MUST NOT run the

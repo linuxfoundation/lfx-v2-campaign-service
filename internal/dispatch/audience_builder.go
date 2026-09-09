@@ -46,6 +46,11 @@ type AudienceBuilder struct {
 type buildScope struct {
 	mu      sync.Mutex
 	clients map[string]*hubspot.Client
+	// fromSystem records, per project, whether the cached client was built from the LF system
+	// row. The client itself cannot answer that -- it holds a token, not its provenance -- and
+	// the resolved is gone by the time a LATE call fails, so the origin has to be remembered
+	// here or a 401/403 on the shared LF token is reported as the project's own fault.
+	fromSystem map[string]bool
 }
 
 // NewAudienceBuilder builds the audience builder. snow may be nil: the warehouse is used only
@@ -131,15 +136,33 @@ func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, lo
 // replaced or deactivated mid-build — scatter the lists across DIFFERENT portals, leaving a
 // master list pointing at ids that do not all exist in one place.
 func (b *AudienceBuilder) CreateList(ctx context.Context, projectID, name string, filter json.RawMessage) (string, error) {
-	client, err := b.cachedClient(ctx, projectID)
+	client, fromSystem, err := b.cachedClient(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
 	l, cerr := client.CreateList(ctx, name, filter)
 	if cerr != nil {
-		// Pass the error through unwrapped so an UNCONFIRMED create (a 2xx with no parseable
-		// list id) keeps its "verify before retrying" classification instead of being
-		// flattened into a generic failure.
+		// A PERMISSION rejection is tagged with its origin, the same as the portal lookup. This
+		// used to pass through untagged on the reasoning that createPlanLists already classifies
+		// the failure -- but that classification is a DIFFERENT axis: partial-vs-definite, which
+		// says whether lists exist upstream, not whose credential was refused. A token-info call
+		// that succeeds and a list-create that then 401s is a real sequence (token valid, scope
+		// missing), and untagged it reported a revoked LF credential as a generic per-build
+		// upstream failure -- every unconnected foundation blaming its own config while nothing
+		// pages the operator.
+		//
+		// Only this arm is wrapped. Everything else passes through UNWRAPPED so an UNCONFIRMED
+		// create (a 2xx with no parseable list id) keeps its "verify before retrying"
+		// classification -- hubspot.IsUnconfirmed reads the concrete error, and flattening it
+		// would turn "a list may exist, go look" into "it failed", which is how a duplicate
+		// gets made. A permission rejection is never unconfirmed: 401/403 creates nothing.
+		if hubspot.IsPermissionRejection(cerr) {
+			tagged := fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, cerr)
+			if fromSystem {
+				return "", fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, tagged)
+			}
+			return "", tagged
+		}
 		return "", cerr
 	}
 	if l == nil {
@@ -164,7 +187,11 @@ func (b *AudienceBuilder) BeginBuild(ctx context.Context) context.Context {
 }
 
 // cachedClient returns the client for a project, resolving it at most once per BUILD.
-func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
+// It also reports whether the credential came from the LF SYSTEM row. A caller that makes a further
+// request with this client -- BuiltInPortalID does -- needs that to classify a permission failure
+// the resolution itself could not see, and there is no way to recover it afterwards: res is out of
+// scope, and the client carries a token, not its origin.
+func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*hubspot.Client, bool, error) {
 	scope, ok := ctx.Value(scopeKey{}).(*buildScope)
 	if !ok {
 		// No build scope: resolve fresh. Never reuse across builds.
@@ -173,46 +200,71 @@ func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
 	if c, cached := scope.clients[projectID]; cached {
-		return c, nil
+		return c, scope.fromSystem[projectID], nil
 	}
-	c, err := b.client(ctx, projectID)
+	c, sys, err := b.client(ctx, projectID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if scope.clients == nil {
 		scope.clients = map[string]*hubspot.Client{}
+		scope.fromSystem = map[string]bool{}
 	}
 	scope.clients[projectID] = c
-	return c, nil
+	scope.fromSystem[projectID] = sys
+	return c, sys, nil
 }
 
 // client resolves the project's HubSpot connection and builds a client from it, mirroring
 // HubSpotDispatcher.Dispatch — the credentials live per project as encrypted connections.
-func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspot.Client, error) {
+// The NAMED return plus the deferred systemScoped below is the same construction
+// HubSpotDispatcher.resolveHubSpotClientWithCreds uses, and for the same reason: a return site
+// added later cannot forget to tag itself.
+//
+// This path used to tag nothing, and that cost nothing while credsSource refused the reserved
+// scope for HubSpot — every credential defect here belonged to the requesting project, so there
+// was no origin to record. Now that a foundation with no HubSpot connection of its own resolves
+// the LF system row (the ordinary case, not the exception), an inactive or malformed LF row is
+// ONE operator-owned defect that every foundation hits at once. Untagged, it reaches
+// audienceBuildErr carrying none of the sentinels that arm matches, and each of them is told to
+// audit a HubSpot configuration that is correct — exactly the misattribution the arm exists to
+// prevent, on the one path it was added to serve.
+func (b *AudienceBuilder) client(ctx context.Context, projectID string) (client *hubspot.Client, fromSystem bool, err error) {
 	if strings.TrimSpace(projectID) == "" {
 		// Fail loudly: without a project there is no connection to resolve, and silently
 		// picking one would build the audience in the wrong portal.
-		return nil, fmt.Errorf("audience build: a project id is required to resolve hubspot credentials")
+		return nil, false, fmt.Errorf("audience build: a project id is required to resolve hubspot credentials")
 	}
 	res, rerr := b.creds.resolve(ctx, projectID, model.ProviderHubSpot)
 	if rerr != nil {
-		return nil, rerr
+		return nil, false, rerr
 	}
+	fromSystem = res.isFromSystem()
+	defer func() { err = res.systemScoped(err) }()
+
 	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("hubspot connection for project %s is %s, not active", projectID, res.status)
+		return nil, false, fmt.Errorf("%w: %w: hubspot connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	var creds hubspotCreds
 	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
-		return nil, fmt.Errorf("decode hubspot credentials: %w", uerr)
+		// The unmarshal error is DROPPED rather than wrapped, matching the dispatcher: it is
+		// derived from the DECRYPTED credential blob, and encoding/json quotes its input, so
+		// wrapping it would put credential-derived bytes in the log line for exactly the
+		// connection whose credentials are malformed. The remedy is "re-save the credential",
+		// not "fix byte 41".
+		return nil, false, fmt.Errorf("%w: %w: hubspot credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if strings.TrimSpace(creds.PrivateAppToken) == "" {
-		return nil, fmt.Errorf("hubspot credentials are incomplete (need privateAppToken)")
+		return nil, false, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: creds.PrivateAppToken},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		b.opts...,
-	), nil
+	), fromSystem, nil
 }
 
 // yearIn extracts a 4-digit year (19xx/20xx) from an event name, so a brief whose details omit
@@ -251,4 +303,64 @@ func isSupportedYear(s string) bool {
 		return false
 	}
 	return s[2] >= '0' && s[2] <= '9' && s[3] >= '0' && s[3] <= '9'
+}
+
+// BuiltInPortalID reports the portal the resolved credential authenticates against, for the
+// audience row's provenance. See service.AudienceBuilder for the contract.
+//
+// It reuses the BUILD-SCOPED client, so the portal reported is the one the same credential the
+// lists were created with authenticates against — resolving a fresh client here could read a
+// different portal if the connection changed mid-build, which is precisely the confusion the
+// column exists to prevent.
+//
+// Read from the token rather than from providerConfig["portal_id"]: that config value is
+// operator-supplied and a credential swap leaves it untouched, so it can name a portal the
+// current token cannot reach. The campaigns path made the same choice for the same reason.
+//
+// Failures are RETURNED, not swallowed. This was best-effort — ("", nil) on every failure — while
+// the stamp ran after the lists already existed, where failing the build would have orphaned real
+// HubSpot lists to record a field. BuildAudience now resolves the portal BEFORE creating anything
+// and refuses when it cannot, so there is nothing upstream to orphan and the error is what makes
+// the refusal diagnosable.
+//
+// Swallowing it is actively harmful under that contract, because the errors this returns are not
+// interchangeable. cachedClient surfaces the tagged credential defects — ErrSystemConnectionNotUsable
+// among them — that audienceBuildErr has a dedicated arm for: "the shared LF HubSpot connection is
+// not usable; this is an operator fault", naming the row to repair. Collapsed to ("", nil) every one
+// of those reaches the operator as the generic "retry once portal identity is readable", which is
+// advice to retry a fault that cannot resolve itself, sent to somebody who cannot repair it.
+//
+// An empty id with a nil error stays possible and still means "the lookup answered, and the answer
+// names no portal". BuildAudience refuses on that too, with the generic message, which is correct:
+// there is no underlying defect to attribute it to.
+func (b *AudienceBuilder) BuiltInPortalID(ctx context.Context, projectID string) (string, error) {
+	client, fromSystem, err := b.cachedClient(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	portalCtx, cancel := context.WithTimeout(ctx, portalLookupTimeout)
+	defer cancel()
+	id, perr := client.AuthenticatedPortalID(portalCtx)
+	if perr != nil {
+		// A 401/403 HERE is a credential defect that resolution could not have seen: the client
+		// was built successfully and the token was only rejected when it was first used. Left as
+		// a bare wrap it carries no ErrConnectionNotUsable and no origin, so audienceBuildErr
+		// falls through to the generic "retry once portal identity is readable" 500 -- and when
+		// the shared LF token is the one revoked, EVERY unconnected foundation is told its own
+		// config is broken while nothing pages the operator who can rotate it.
+		//
+		// Tagged with ErrConnectionNotUsable so the classifier can see it at all, then with the
+		// origin: ErrSystemConnectionNotUsable for the LF row (audienceBuildErr's operator arm),
+		// or left project-scoped for a connection the caller owns and can repair themselves.
+		if hubspot.IsPermissionRejection(perr) {
+			tagged := fmt.Errorf("%w: read the authenticated hubspot portal: %w",
+				domain.ErrConnectionNotUsable, perr)
+			if fromSystem {
+				return "", fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, tagged)
+			}
+			return "", tagged
+		}
+		return "", fmt.Errorf("read the authenticated hubspot portal: %w", perr)
+	}
+	return strings.TrimSpace(id), nil
 }

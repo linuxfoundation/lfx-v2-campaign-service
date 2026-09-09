@@ -41,6 +41,26 @@ type fakeBuilder struct {
 	release   chan struct{}
 	enterOnce sync.Once
 
+	// portalID is the portal BuiltInPortalID reports. It is resolved BEFORE any list is
+	// created and it is required: a build cannot succeed without one, because a built row
+	// that cannot say which portal its list ids belong to is refused at every dispatch and
+	// cannot be repaired. newBuildService defaults it to a real value; a test sets it empty
+	// to drive the refusal by ALSO setting noPortal, because newBuildService fills an empty
+	// portalID in for the many tests that predate this field and do not care about it.
+	portalID string
+	// portalErr makes BuiltInPortalID FAIL rather than answer emptily. The two are different
+	// refusals: an empty answer has no underlying defect to attribute, while an error can carry
+	// a tagged credential fault that audienceBuildErr must name instead of the generic message.
+	portalErr error
+	// duringPortalLookup, when set, runs inside BuiltInPortalID -- the window this lookup opened
+	// by being a network call (bounded by portalLookupTimeout, 10s) placed between the claim and
+	// the first list. A test uses it to land a concurrent ReplaceBrief exactly there.
+	duringPortalLookup func()
+	// noPortal makes BuiltInPortalID report "" even after newBuildService's default. A bare
+	// empty portalID cannot express this: the default would silently fill it, and the refusal
+	// case would pass while testing the happy path.
+	noPortal bool
+
 	created   []string          // list names, in creation order
 	filters   map[string][]byte // name -> filter, so a test can assert the master's union
 	createErr error
@@ -109,6 +129,21 @@ func (f *fakeBuilder) filterFor(name string) []byte {
 // does not do.
 func (f *fakeBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
 
+// BuiltInPortalID reports f.portalID. Empty models a lookup that could not answer, which the
+// contract REFUSES the build on -- see TestBuildAudience_StampsTheBuildingPortal. Set noPortal
+// to get it, not a bare empty portalID: newBuildService fills that in.
+func (f *fakeBuilder) BuiltInPortalID(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.duringPortalLookup != nil {
+		f.duringPortalLookup()
+	}
+	if f.portalErr != nil {
+		return "", f.portalErr
+	}
+	return f.portalID, nil
+}
+
 func (f *fakeBuilder) names() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -118,6 +153,12 @@ func (f *fakeBuilder) names() []string {
 // newBuildService wires an AudienceService with all three dependencies plus a brief.
 func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceService, *fakeAudienceRepo, *fakeBriefRepo) {
 	t.Helper()
+	// A build REQUIRES a resolvable portal, so the default has to be one -- otherwise every
+	// caller of this helper exercises the refusal instead of the path it was written for. A test
+	// that wants the refusal sets noPortal, which survives this default.
+	if b.portalID == "" && !b.noPortal {
+		b.portalID = "8112310"
+	}
 	arepo := newFakeAudienceRepo()
 	brepo := newFakeBriefRepo()
 
@@ -254,6 +295,13 @@ func TestBuildAudience_PartialBuildLeavesRowBuilding(t *testing.T) {
 	assert.Contains(t, rows[0].InclusionSummary, "ALREADY CREATED",
 		"a partial build must record what it left in the portal")
 	assert.Contains(t, rows[0].InclusionSummary, "list-"+b.names()[0])
+	// ...and so must the PORTAL those ids belong to. A list id is a bare numeric with no meaning
+	// outside its portal, so recording ids while leaving this NULL hands an operator exactly the
+	// half they cannot act on -- and the connection may be repointed before anyone investigates,
+	// after which nothing can say where these lists live. The portal is resolved before the first
+	// list is created, so it is always known by the time this row is written.
+	assert.Equal(t, "8112310", rows[0].BuiltInPortalID,
+		"a partial build records its list ids, so it must record the portal they belong to")
 
 	// It must stop at the failure rather than creating more unrecordable portal state.
 	assert.Len(t, b.names(), 2)
@@ -669,6 +717,10 @@ func (r *recordingBuilder) CreateList(_ context.Context, _, name string, _ json.
 }
 
 func (r *recordingBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
+
+func (r *recordingBuilder) BuiltInPortalID(context.Context, string) (string, error) {
+	return "8112310", nil
+}
 
 // TestBuildAudience_StaleApprovalIsRejected pins the TOCTOU guard where it actually has to
 // hold: INSIDE the warehouse round-trip. The claim now runs before that round-trip, so the
@@ -1141,4 +1193,349 @@ func TestBuildAudience_FailureLogIsRedactedEndToEnd(t *testing.T) {
 	if !strings.Contains(logged, "audience build failed") && !strings.Contains(logged, "build") {
 		t.Fatalf("fixture precondition: expected a build failure log, got:\n%s", logged)
 	}
+}
+
+// TestAudienceBuildErrNamesTheSystemRowsOwner: whose HubSpot connection failed decides who can
+// repair it, and this path could not tell them apart until recently.
+//
+// While the reserved-scope fallback refused the email channel, every credential defect reaching
+// audienceBuildErr belonged to the requesting project — so one message pointing at HubSpot was
+// the only honest answer. HubSpot now resolves the LF system row, so the SAME defect can instead
+// be one shared row that no foundation can fix and every foundation hits. Collapsing that into
+// "the audience build failed upstream" sends each of them to audit a configuration that is
+// correct, and splits one operator incident across as many reports as there are projects.
+//
+// Both directions are asserted, because the arm is only worth having if it stays narrow: a
+// project's OWN broken connection must keep the original message, or the fix trades one
+// misattribution for its mirror image.
+func TestAudienceBuildErrNamesTheSystemRowsOwner(t *testing.T) {
+	systemDefects := map[string]error{
+		"unusable system row": fmt.Errorf("resolve: %w", domain.ErrSystemConnectionNotUsable),
+		"system origin tag":   fmt.Errorf("resolve: %w", domain.ErrSystemConnectionOrigin),
+	}
+	for name, err := range systemDefects {
+		t.Run(name, func(t *testing.T) {
+			got, ok := audienceBuildErr(err).(*audiences.InternalServerError)
+			require.True(t, ok, "audienceBuildErr must return the typed InternalServerError")
+			assert.Contains(t, got.Message, "shared LF HubSpot connection",
+				"a defect in the LF row must name that row: the caller cannot address the system scope")
+			assert.Contains(t, got.Message, "bootstrap-system-account",
+				"the message must carry the remedy, since the only person who can act is an operator")
+			assert.NotContains(t, got.Message, "failed upstream",
+				"must not send the caller to audit HubSpot when one LF row is the fault")
+		})
+	}
+
+	// A defect in the PROJECT's own connection is unchanged — it is the owner's to fix, and the
+	// upstream wording is the right answer there.
+	own, ok := audienceBuildErr(fmt.Errorf("resolve: %w", domain.ErrConnectionNotUsable)).(*audiences.InternalServerError)
+	require.True(t, ok)
+	assert.Contains(t, own.Message, "failed upstream",
+		"a project's own connection defect must keep the original message")
+	assert.NotContains(t, own.Message, "shared LF HubSpot connection",
+		"a project's own defect must NOT be attributed to the LF system row")
+}
+
+// TestBuildAudience_StampsTheBuildingPortal pins that a build records WHICH portal its list ids
+// belong to — the field the dispatch guard refuses on — and that it REFUSES TO START when it
+// cannot.
+//
+// The refusal is the half worth pinning, because the obvious alternative is wrong in a way that
+// only shows up later. Storing "" on an unavailable lookup keeps the build succeeding, but the
+// row it writes is refused by every subsequent dispatch and cannot be repaired: a retry re-reads
+// the stored empty value, and a rebuild mints a SECOND set of real HubSpot lists beside the first.
+// Resolving the portal BEFORE createPlanLists is what makes failing safe — nothing upstream has
+// been created yet, so the error orphans no lists and a retry starts clean. That ordering is the
+// invariant; a later refactor that moves the lookup after list creation re-introduces exactly the
+// orphaning hazard this ordering removes, so assert on both the error and the absence of state.
+func TestBuildAudience_StampsTheBuildingPortal(t *testing.T) {
+	t.Run("records the portal the credential authenticated against", func(t *testing.T) {
+		b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, portalID: "8112310"}
+		s, arepo, _ := newBuildService(t, b,
+			`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+		res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+			ProjectID: "cncf", BriefID: "brief-1",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.Equal(t, string(model.AudienceBuilt), res.Status)
+
+		var stored *model.CampaignAudience
+		for _, a := range arepo.items {
+			stored = a
+		}
+		require.NotNil(t, stored, "the build must persist the audience row")
+		require.Equal(t, "8112310", stored.BuiltInPortalID,
+			"the row's portal decides whether a later dispatch can prove its send list belongs there")
+	})
+
+	t.Run("an unresolvable portal refuses the build before creating anything", func(t *testing.T) {
+		b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, noPortal: true}
+		s, arepo, _ := newBuildService(t, b,
+			`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+		_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+			ProjectID: "cncf", BriefID: "brief-1",
+		})
+		require.Error(t, err,
+			"a build that cannot record its portal writes a row every dispatch refuses; refuse instead")
+		// Assert on Message, not Error(): the Goa error type's Error() does not render it, so a
+		// test that reads Error() passes on an empty message and the operator gets nothing.
+		var ise *audiences.InternalServerError
+		require.ErrorAs(t, err, &ise)
+		require.Contains(t, ise.Message, "portal",
+			"the message must name what could not be confirmed, so the operator knows what to restore")
+		require.NotContains(t, ise.Message, "upstream",
+			"nothing was sent to HubSpot; calling this an upstream failure sends the operator to the wrong system")
+
+		// The point of resolving the portal FIRST: the failure costs nothing upstream. If this
+		// ever regresses to a post-createPlanLists lookup, real HubSpot lists exist at this point
+		// and a retry duplicates them.
+		require.Empty(t, b.created,
+			"the refusal must happen before any platform list is created, so a retry is clean")
+		// The claim row itself is not deleted -- releaseUnstartedClaim marks it failed, which is
+		// how every other pre-upstream exit ends. What matters is that it does not stay
+		// `building`: a leaked lease refuses the next build for this brief as already in
+		// progress, by a build that never started and never will, making the retry this refusal
+		// promises impossible.
+		require.Len(t, arepo.items, 1, "the claim row stays, marked failed -- it is not deleted")
+		for _, row := range arepo.items {
+			require.Equal(t, model.AudienceFailed, row.Status,
+				"a refused build must release its claim, or the brief is wedged against every retry")
+			require.Empty(t, row.BuiltInPortalID,
+				"a refused build records no portal")
+		}
+	})
+}
+
+// TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis pins that the portal refusal does not
+// FLATTEN the reason it refused.
+//
+// BuiltInPortalID used to swallow every failure into ("", nil), which was right while the stamp
+// was best-effort and wrong the moment it became required: cachedClient surfaces the tagged
+// credential defects -- ErrSystemConnectionNotUsable among them -- that audienceBuildErr has a
+// dedicated arm for. Collapsed to an empty answer, an unusable LF row reached the operator as
+// "retry once portal identity is readable": advice to retry a fault that cannot resolve itself,
+// sent to somebody who cannot repair it, while the one operator who can hears nothing.
+//
+// The generic arm is asserted alongside it deliberately. A fix that routed EVERY portal failure to
+// the system message would pass a system-only assertion and then blame the LF row for a project's
+// own defect, which is the same misattribution pointing the other way.
+func TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause       error
+		wantMessage string
+		notMessage  string
+		// wantBadRequest marks the one arm that is the CALLER's to fix. The status is part of
+		// the diagnosis: a 500 tells a project their own disabled connection is somebody else's
+		// outage, and a 400 on the LF row tells them to repair a row they cannot reach.
+		wantBadRequest bool
+	}{
+		{
+			name:        "an unusable LF system row names the operator's fault",
+			cause:       fmt.Errorf("resolve hubspot client: %w", domain.ErrSystemConnectionNotUsable),
+			wantMessage: "shared LF HubSpot connection",
+			notMessage:  "retry once",
+		},
+		{
+			// The mirror of the arm above, and the one that is easy to lose: errPortalUnconfirmed
+			// wraps whatever BuiltInPortalID returned, and cachedClient returns the ORDINARY
+			// credential defects too. Left to the portal arm, a connection the project disabled
+			// reads as "retry once portal identity is readable" -- a transient-outage message for
+			// a fault nobody retries their way out of.
+			name:           "this project's own unusable connection stays the project's",
+			cause:          fmt.Errorf("%w: %w: connection is inactive", domain.ErrConnectionNotUsable, domain.ErrConnectionInactive),
+			wantMessage:    "connection_inactive",
+			notMessage:     "retry once",
+			wantBadRequest: true,
+		},
+		{
+			// noOwnConnection wraps ErrNotFound ALONE, so this misses the ErrConnectionNotUsable
+			// arm above and used to land on the generic retry 500 -- telling an operator with no
+			// HubSpot anywhere to retry a condition that can never clear itself.
+			name:           "no connection anywhere says connect, not retry",
+			cause:          fmt.Errorf("no hubspot connection configured for project cncf: %w", domain.ErrNotFound),
+			wantMessage:    "connect HubSpot",
+			notMessage:     "retry once",
+			wantBadRequest: true,
+		},
+		{
+			name:        "an untagged failure keeps the portal message",
+			cause:       errors.New("dial tcp: i/o timeout"),
+			wantMessage: "portal",
+			notMessage:  "shared LF HubSpot connection",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, portalErr: tc.cause}
+			s, arepo, _ := newBuildService(t, b,
+				`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+			_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+				ProjectID: "cncf", BriefID: "brief-1",
+			})
+			require.Error(t, err)
+			var message string
+			if tc.wantBadRequest {
+				var bre *audiences.BadRequestError
+				require.ErrorAs(t, err, &bre,
+					"a defect in the caller's OWN connection is caller-correctable; a 500 hides that from them")
+				message = bre.Message
+			} else {
+				var ise *audiences.InternalServerError
+				require.ErrorAs(t, err, &ise,
+					"a fault the caller cannot repair must not be reported as their bad request")
+				message = ise.Message
+			}
+			require.Contains(t, message, tc.wantMessage,
+				"the message must name the system an operator can actually act on")
+			require.NotContains(t, message, tc.notMessage,
+				"naming the wrong system sends the only person who can fix this to the wrong place")
+
+			// Whatever the cause, the refusal still costs nothing upstream and releases its claim.
+			require.Empty(t, b.created, "no list may be created by a build that could not resolve its portal")
+			for _, row := range arepo.items {
+				require.Equal(t, model.AudienceFailed, row.Status,
+					"a refused build must release its claim regardless of why it refused")
+			}
+		})
+	}
+}
+
+// TestBuildAudience_StaleApprovalIsRejectedWhenTheBriefMovesDuringThePortalLookup is
+// TestBuildAudience_StaleApprovalIsRejected for the window this change introduced.
+//
+// Requiring the portal added a NETWORK CALL between the claim and the first list -- bounded by
+// portalLookupTimeout, so up to ten seconds -- and the first revision put it AFTER
+// confirmStillApproved. That silently re-opened the exact window that check exists to close: a
+// ReplaceBrief landing during the lookup is invisible to a confirmation that already ran, and the
+// build goes on to create real HubSpot lists from a withdrawn approval.
+//
+// The ordering fix is what this pins: confirmStillApproved must be the LAST thing before
+// createPlanLists, with the portal resolved ahead of it. Reverting to portal-after-confirm makes
+// this fail while every other test still passes, which is precisely why it is worth its own test
+// rather than a comment.
+func TestBuildAudience_StaleApprovalIsRejectedWhenTheBriefMovesDuringThePortalLookup(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	brief := brepo.briefs[briefKey("cncf", "brief-1")]
+	brief.Version = 3
+	b.duringPortalLookup = func() {
+		brief.Status = model.BriefDraft
+		brief.Version = 4
+	}
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err, "a brief that moved during the portal lookup must not produce an audience")
+
+	var conflict *audiences.ConflictError
+	assert.ErrorAs(t, err, &conflict, "a moved brief is a 409")
+
+	assert.Empty(t, b.names(),
+		"no HubSpot list may be created from an approval withdrawn while the portal was being read")
+
+	rows := arepo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, model.AudienceFailed, rows[0].Status, "the abandoned claim must be released")
+}
+
+// TestBuildAudience_SystemRowFailureLogsAtError pins WHO finds out about a defect in the shared LF
+// connection, which is a different question from what the caller is told.
+//
+// audienceBuildErr already returns the operator-fault message. But the recipient of that message is
+// a foundation with no HubSpot connection of its own, which cannot act on it — and at WARN the one
+// person who CAN rotate the LF credential is never paged. Every affected foundation then files the
+// same incident against its own configuration, which is the failure this stack's tagging work
+// exists to prevent, arriving through the logs instead of the response.
+//
+// classifyDiscoveryError's system arm settled this for the read path (connection.go:392). This is
+// the same fault reaching the build path, so it answers the same way.
+//
+// The project-owned row is asserted alongside it: promoting every build failure to ERROR would page
+// an operator for a foundation's own bad credential, which trains them to ignore the alert.
+func TestBuildAudience_SystemRowFailureLogsAtError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cause     error
+		wantLevel string
+	}{
+		{
+			name:      "the shared LF row pages an operator",
+			cause:     fmt.Errorf("resolve: %w", domain.ErrSystemConnectionNotUsable),
+			wantLevel: "ERROR",
+		},
+		{
+			name:      "a project's own failure stays a warning",
+			cause:     errors.New("hubspot 429"),
+			wantLevel: "WARN",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, createErr: tc.cause, failOnNth: 1}
+			s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+			_, _ = s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+				ProjectID: "cncf", BriefID: "brief-1",
+			})
+
+			out := buf.String()
+			if !strings.Contains(out, "audience build did not complete") {
+				t.Fatalf("the build-failure line was not emitted at all: %q", out)
+			}
+			// The message and fields are identical either way -- only the level differs -- so a
+			// grep for the message keeps matching and only the alerting changes.
+			for _, line := range strings.Split(out, "\n") {
+				if strings.Contains(line, "audience build did not complete") {
+					if !strings.Contains(line, "level="+tc.wantLevel) {
+						t.Errorf("want level=%s, got: %s", tc.wantLevel, line)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestAudienceBuildErr_SystemArmKeepsTheReconciliationIds pins that naming WHOSE fault it is does
+// not cost the operator the list ids they need to clean up.
+//
+// The system arm can be reached AFTER real HubSpot lists exist: a later create fails on the shared
+// credential, the partial-build persist then fails too, and unrecordedListsErr attaches the only
+// surviving handles to those lists. The arm returned its generic wording and dropped them -- and
+// because the row was never written, nothing else records what exists upstream. The operator was
+// told to fix a credential while the lists it had already created were unfindable.
+//
+// Order is asserted, not just presence: the attribution has to LEAD, because whose fault it is
+// decides who acts on it. The ids follow as detail.
+func TestAudienceBuildErr_SystemArmKeepsTheReconciliationIds(t *testing.T) {
+	systemFault := fmt.Errorf("resolve: %w", domain.ErrSystemConnectionNotUsable)
+	withIDs := unrecordedListsErr(systemFault, "aud-1", []string{"30967", "30968"}, false)
+
+	got, ok := audienceBuildErr(withIDs).(*audiences.InternalServerError)
+	require.True(t, ok, "a system-row fault is an operator page, not a caller error")
+
+	require.Contains(t, got.Message, "shared LF HubSpot connection",
+		"the attribution must survive: this is not the caller's configuration to fix")
+	for _, id := range []string{"30967", "30968"} {
+		require.Contains(t, got.Message, id,
+			"the list ids are the ONLY handles to lists that exist in HubSpot; the row was never "+
+				"written, so dropping them here makes them unfindable")
+	}
+	require.Less(t, strings.Index(got.Message, "shared LF HubSpot connection"), strings.Index(got.Message, "30967"),
+		"whose fault it is decides who acts, so the attribution leads and the ids follow as detail")
+
+	// The ordinary case must not grow a stray separator when there is nothing to reconcile.
+	plain, ok := audienceBuildErr(systemFault).(*audiences.InternalServerError)
+	require.True(t, ok)
+	require.NotContains(t, plain.Message, "reconcile",
+		"a system fault with no created lists must not name a reconciliation that does not exist")
 }
