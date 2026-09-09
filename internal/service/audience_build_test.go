@@ -1328,12 +1328,28 @@ func TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis(t *testing.T) {
 		cause       error
 		wantMessage string
 		notMessage  string
+		// wantBadRequest marks the one arm that is the CALLER's to fix. The status is part of
+		// the diagnosis: a 500 tells a project their own disabled connection is somebody else's
+		// outage, and a 400 on the LF row tells them to repair a row they cannot reach.
+		wantBadRequest bool
 	}{
 		{
 			name:        "an unusable LF system row names the operator's fault",
 			cause:       fmt.Errorf("resolve hubspot client: %w", domain.ErrSystemConnectionNotUsable),
 			wantMessage: "shared LF HubSpot connection",
 			notMessage:  "retry once",
+		},
+		{
+			// The mirror of the arm above, and the one that is easy to lose: errPortalUnconfirmed
+			// wraps whatever BuiltInPortalID returned, and cachedClient returns the ORDINARY
+			// credential defects too. Left to the portal arm, a connection the project disabled
+			// reads as "retry once portal identity is readable" -- a transient-outage message for
+			// a fault nobody retries their way out of.
+			name:           "this project's own unusable connection stays the project's",
+			cause:          fmt.Errorf("%w: %w: connection is inactive", domain.ErrConnectionNotUsable, domain.ErrConnectionInactive),
+			wantMessage:    "connection_inactive",
+			notMessage:     "retry once",
+			wantBadRequest: true,
 		},
 		{
 			name:        "an untagged failure keeps the portal message",
@@ -1351,11 +1367,21 @@ func TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis(t *testing.T) {
 				ProjectID: "cncf", BriefID: "brief-1",
 			})
 			require.Error(t, err)
-			var ise *audiences.InternalServerError
-			require.ErrorAs(t, err, &ise)
-			require.Contains(t, ise.Message, tc.wantMessage,
+			var message string
+			if tc.wantBadRequest {
+				var bre *audiences.BadRequestError
+				require.ErrorAs(t, err, &bre,
+					"a defect in the caller's OWN connection is caller-correctable; a 500 hides that from them")
+				message = bre.Message
+			} else {
+				var ise *audiences.InternalServerError
+				require.ErrorAs(t, err, &ise,
+					"a fault the caller cannot repair must not be reported as their bad request")
+				message = ise.Message
+			}
+			require.Contains(t, message, tc.wantMessage,
 				"the message must name the system an operator can actually act on")
-			require.NotContains(t, ise.Message, tc.notMessage,
+			require.NotContains(t, message, tc.notMessage,
 				"naming the wrong system sends the only person who can fix this to the wrong place")
 
 			// Whatever the cause, the refusal still costs nothing upstream and releases its claim.

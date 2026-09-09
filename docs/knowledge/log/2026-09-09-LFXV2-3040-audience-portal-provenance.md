@@ -63,10 +63,31 @@ Three consequences of making it required, each found by review on the first cut:
   close, since a `ReplaceBrief` landing during the lookup is invisible to a confirmation that
   already ran. `confirmStillApproved` is the LAST thing before `createPlanLists`, with the portal
   resolved ahead of it.
+- The `errPortalUnconfirmed` wrapper swallowed the PROJECT's own defect the way the swallowed
+  return had swallowed the system's. `cachedClient` returns ordinary credential defects too — an
+  inactive row, an undecodable blob — and left to the portal arm those read as "retry once portal
+  identity is readable", a transient-outage message for a fault nobody retries their way out of.
+  `audienceBuildErr` now has an arm for it, gated on BOTH sentinels: `ErrConnectionNotUsable` alone
+  also arrives from `createPlanLists`, where lists may already exist and the caller must reconcile
+  rather than reconnect. It answers **400**, not the system arm's 500, because this caller can
+  actually fix it.
 - `created.BuiltInPortalID` is set the moment the lookup answers, not only on the success path, so
   the PARTIAL-failure write carries it too. That path deliberately records the ids of lists created
   before the failure; recording portal-scoped ids while leaving the portal NULL hands an operator
   exactly the half they cannot act on.
+
+The `AudienceBuilder` interface comment was still promising the best-effort contract. That is the
+one surface where staleness is not cosmetic: an alternate implementation following it would return
+`("", nil)` on a credential defect and silently produce permanently undispatchable audiences. It now
+states the pre-create requirement and why failures must be returned.
+
+`TestUpdateAudience_PortalRoundTripsThroughTheDatabase` (live PG) covers the write itself, which
+nothing else could see: the build tests use `fakeAudienceRepo`, the scan test exercises the read, and
+the column-order test compares SQL text. `updateAudienceQuery` binds `built_in_portal_id=$10` out of
+positional order, so a mis-numbered placeholder compiles, passes every one of those, and surfaces
+only as a build that succeeds in memory while the persisted row is refused at every dispatch.
+Mutation-verified against a real database: rebinding `$10` to `$1`, and dropping the column from the
+UPDATE, both fail it.
 
 On the dispatch side, `assertAudiencePortal` now RETURNS the portal it verified and the second
 token-info call below it is gone. Both wanted the same fact, so every dispatch paid for two

@@ -52,10 +52,20 @@ type AudienceBuilder interface {
 	// config, which a credential swap leaves untouched.
 	//
 	// Recorded on the audience row so a later dispatch can prove its list ids belong to the
-	// portal it is about to send from. Best-effort by contract: it returns ("", nil) when the
-	// lookup is unavailable, and the caller stores the empty value rather than failing a build
-	// whose lists already exist. Absence then reads as "cannot prove" at dispatch, which is the
-	// fail-closed answer.
+	// portal it is about to send from.
+	//
+	// REQUIRED, and called BEFORE any list is created. BuildAudience refuses the build on an
+	// error AND on an empty id, so an implementation must RETURN its failures rather than
+	// reporting ("", nil): the empty answer is reserved for "the lookup succeeded and names no
+	// portal", and collapsing a credential defect into it costs the caller the diagnosis --
+	// audienceBuildErr has arms that name the LF system row and the project's own connection,
+	// and both are unreachable through a swallowed error.
+	//
+	// This was best-effort while the stamp ran AFTER the lists existed, where failing a build to
+	// record a field would have orphaned real HubSpot lists. Resolving first removes that cost:
+	// nothing is created when it refuses, so a retry is clean, and an audience is never persisted
+	// with provenance dispatch will refuse forever. An implementation that keeps the old contract
+	// silently produces permanently undispatchable audiences.
 	BuiltInPortalID(ctx context.Context, projectID string) (string, error)
 }
 
@@ -132,8 +142,36 @@ func audienceBuildErr(err error) error {
 				"Check the system connection's status is active, then re-run bootstrap-system-account -provider hubspot to replace the credential",
 		}
 	}
+	// The PROJECT's own connection, checked before the portal arm below and for the same reason
+	// the system arm sits above it: errPortalUnconfirmed wraps whatever BuiltInPortalID returned,
+	// and cachedClient returns the ordinary credential defects too -- an inactive row, an
+	// undecodable blob, incomplete credentials. Left to the portal arm those all read as "retry
+	// once portal identity is readable", which is a transient-outage message for a fault that
+	// cannot resolve itself: nobody retries their way out of a connection they disabled.
+	//
+	// A 400, not a 500, and that is the whole difference from the system arm. This caller CAN fix
+	// it -- the connection is theirs, addressable over HTTP -- so the status has to say so, and
+	// unusableConnectionReason names which defect it is rather than making them guess.
+	//
+	// Gated on BOTH sentinels deliberately. ErrConnectionNotUsable alone also reaches this
+	// function from createPlanLists, where lists MAY already exist upstream and the caller must be
+	// told to reconcile rather than to reconnect and rebuild -- TestAudienceBuildErrNamesTheSystem
+	// RowsOwner pins that path keeping the upstream wording. The conjunction narrows this arm to
+	// the pre-create portal lookup, which is the only place that can promise nothing was created.
+	if errors.Is(err, errPortalUnconfirmed) && errors.Is(err, domain.ErrConnectionNotUsable) {
+		return &audiences.BadRequestError{
+			Code: "400",
+			Message: "this project's HubSpot connection is not usable (" + unusableConnectionReason(err) +
+				"), so the portal its audience lists would belong to could not be confirmed. Nothing was " +
+				"created -- reconnect HubSpot for this project, then build again",
+		}
+	}
 	// Not an upstream failure: nothing was sent to HubSpot. Saying "failed upstream" here would
 	// send an operator to check a platform that was never contacted on this path.
+	//
+	// Reached only when the cause is NEITHER a system-row defect nor this project's own -- a
+	// timeout, a transport failure, a lookup that answered with no portal. Those genuinely are
+	// worth retrying, which is what makes the message honest here and wrong in the two arms above.
 	if errors.Is(err, errPortalUnconfirmed) {
 		return &audiences.InternalServerError{
 			Code: "500",
