@@ -578,6 +578,20 @@ type EmailHTMLBlock struct {
 	// HTML is the block's body as the draft currently holds it. Empty is a real value, not a
 	// missing one: an empty block is one an operator can see and fill.
 	HTML string
+	// Placed reports whether the LAYOUT put this block at this position, or whether the position
+	// is only the fallback key sort.
+	//
+	// It exists because the two carry different authority and a caller cannot tell them apart from
+	// the slice alone. A placed block's index is the reading order an operator arranged in the
+	// drag-and-drop editor, so blocks[0] is genuinely the top of the email. An UNPLACED block's
+	// index is `sort.Strings` over opaque module ids -- deterministic, but with no relationship to
+	// where the block appears: on a classic template NOTHING is placed, so blocks[0] is simply
+	// whichever id sorts first and is as likely to be the footer as the opening paragraph.
+	//
+	// So a caller that means "the top of the email" must require Placed, and one that writes into
+	// an unplaced block is choosing arbitrarily and should say so to the operator rather than
+	// silently treating position 0 as the lede.
+	Placed bool
 }
 
 // GetEmailHTMLWidgets returns the draft's rich-text blocks in READING ORDER.
@@ -638,7 +652,7 @@ func (ec emailContent) htmlBlocks() []EmailHTMLBlock {
 			continue
 		}
 		placed[key] = true
-		out = append(out, EmailHTMLBlock{Key: key, HTML: body})
+		out = append(out, EmailHTMLBlock{Key: key, HTML: body, Placed: true})
 	}
 
 	// Widgets the layout does not place: every block of a classic template, and template-level
@@ -652,7 +666,7 @@ func (ec emailContent) htmlBlocks() []EmailHTMLBlock {
 	}
 	sort.Strings(rest)
 	for _, key := range rest {
-		out = append(out, EmailHTMLBlock{Key: key, HTML: rich[key]})
+		out = append(out, EmailHTMLBlock{Key: key, HTML: rich[key], Placed: false})
 	}
 	return out
 }

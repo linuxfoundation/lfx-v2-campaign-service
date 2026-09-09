@@ -269,7 +269,11 @@ func httpURL(raw string) string {
 		return ""
 	}
 	u, err := url.Parse(trimmed)
-	if err != nil || !u.IsAbs() || u.Host == "" {
+	// Hostname(), not Host: `https://:443/path` parses with a NON-EMPTY Host (":443") and an
+	// empty Hostname, so a Host check alone accepts a URL with no host at all. This matches the
+	// registration-URL validators the paid adapters already use
+	// (internal/platform/linkedin/client.go, internal/platform/reddit/client.go).
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
 		return ""
 	}
 	// url.Parse lower-cases the scheme (RFC 3986 3.1), so this needs no fold. Anything else --
@@ -277,7 +281,43 @@ func httpURL(raw string) string {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return ""
 	}
-	return trimmed
+	// Embedded credentials are refused rather than stripped, and the reason is specific to this
+	// caller: the value is interpolated into a PROMPT, so `https://user:password@host/reg` would
+	// be sent to the model and can be rendered verbatim into a marketing email -- a credential
+	// disclosed to every recipient and to the LLM provider. The paid adapters refuse it for the
+	// narrower reason that it is not a registration page; here it is also a leak.
+	if u.User != nil {
+		return ""
+	}
+	// A malformed percent-escape in the query is refused, matching buildAdFinalURL: url.Query()
+	// SILENTLY DROPS the offending parameter, so a value that parses here can still describe a
+	// different destination than the one the operator pasted.
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return ""
+	}
+	// Re-serialise rather than return `trimmed`. url.Parse is a STRUCTURAL parser and accepts a
+	// quote in a path or query -- `https://events.example/" onclick="alert(1)` parses cleanly and
+	// every check above passes it. This value is interpolated into an LLM prompt and the model is
+	// asked to place it in an href, so a raw quote can close the attribute in the generated HTML.
+	// u.String() percent-encodes the delimiters in the PATH and FRAGMENT, but it emits RawQuery
+	// verbatim -- so the query has to be re-encoded explicitly, which is what the Encode() below
+	// is for. Without it `?a=1"><script>` survives intact and the path fix is cosmetic.
+	//
+	// Encode() SORTS parameters, so a returned URL can differ from the operator's in parameter
+	// ORDER. That is accepted deliberately: query parameter order is not semantically meaningful
+	// to any registration destination the LF uses, and the alternative -- refusing any URL whose
+	// query needs escaping -- would reject a legitimate paste over a character the model would
+	// never have been able to misuse anyway. The value is used for LINKING, never for display.
+	//
+	// This is the SEVENTH copy of essentially this validator (googleads, linkedin, meta,
+	// microsoft, reddit, twitter, here). Each is unexported in its own platform package, which is
+	// why the email path grew a thin reimplementation instead of a call. Extracting one shared
+	// validator is the right fix and is deliberately NOT done here: it touches six adapters on a
+	// PR scoped to email copy placement. Tracked separately -- until then, a change to any of the
+	// rules above belongs in all seven.
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // resolveEventDates picks the best date string the brief actually carries.
@@ -443,12 +483,19 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// a field bounded separately would sit outside that sum and could push a valid request into
 	// the 503 branch.
 	//
-	// MEASURED, not estimated, and this bound counts ONLY what the caller supplies: the three
-	// event-detail strings. A realistic set ("KubeCon + CloudNativeCon North America 2026",
-	// "Salt Lake City, Utah", "November 10-13, 2026") is 83 runes, so 2400 leaves ~2317 of
-	// headroom across the three — far above any real event name, far below a payload worth
-	// paying input tokens for. Oversized input is rejected as 400 BadRequest, which is correct
-	// here: the caller CAN edit these fields, unlike the composed bound below.
+	// MEASURED, not estimated, and this bound counts ONLY what the caller supplies: the FOUR
+	// strings named above, registration URL included. A realistic set ("KubeCon + CloudNativeCon
+	// North America 2026", "Salt Lake City, Utah", "November 10-13, 2026",
+	// "https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/register/") is 164
+	// runes, so 2400 leaves ~2236 of headroom across the four — far above any real event name,
+	// far below a payload worth paying input tokens for. Oversized input is rejected as 400
+	// BadRequest, which is correct here: the caller CAN edit these fields, unlike the composed
+	// bound below.
+	//
+	// The URL is HALF of that realistic figure (81 of the 164) and is the one field a caller does
+	// not type, so it is the term most likely to grow: a tracking-parameter suffix costs more
+	// headroom than an event rename ever will. Re-measure with a real registration URL, never a
+	// bare origin.
 	//
 	// The fixed prompt (1751 runes of system text plus the stage template) is deliberately NOT
 	// in this figure -- it is service-owned and no caller can grow it, which is exactly why the

@@ -996,3 +996,58 @@ func mustMarshal(v any) string {
 	}
 	return string(b)
 }
+
+// TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort pins the one thing a caller cannot recover
+// from the slice alone: whether a block's INDEX means anything.
+//
+// The classic-template case is the reason the field exists. Nothing is placed there, so the order
+// is `sort.Strings` over module ids — and this fixture is built so the id that sorts FIRST is the
+// footer. A caller reading blocks[0] as "the top of the email" would write the lede into the
+// footer, and every assertion about ordering would still pass, because the ordering IS correct.
+// It is the AUTHORITY of that ordering that differs, which is what Placed carries.
+func TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort(t *testing.T) {
+	// "a_footer" sorts BEFORE "z_hero": on the classic path blocks[0] is the footer.
+	widgets := map[string]json.RawMessage{
+		"a_footer": json.RawMessage(`{"body":{"html":"<p>unsubscribe</p>"}}`),
+		"z_hero":   json.RawMessage(`{"body":{"html":"<p>lede</p>"}}`),
+	}
+	parse := func(t *testing.T, flex string) emailContent {
+		t.Helper()
+		var ec emailContent
+		raw := `{"content":{"widgets":` + mustMarshal(widgets) + `,"flexAreas":` + flex + `}}`
+		if err := json.Unmarshal([]byte(raw), &ec); err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+		return ec
+	}
+
+	t.Run("classic template places nothing", func(t *testing.T) {
+		got := parse(t, `{}`).htmlBlocks()
+		if len(got) != 2 {
+			t.Fatalf("got %d blocks, want 2", len(got))
+		}
+		if got[0].Key != "a_footer" {
+			t.Fatalf("fixture no longer exercises the trap: blocks[0] is %q, want the footer", got[0].Key)
+		}
+		for _, b := range got {
+			if b.Placed {
+				t.Errorf("block %q reports Placed with no layout to place it", b.Key)
+			}
+		}
+	})
+
+	t.Run("layout-placed blocks report Placed", func(t *testing.T) {
+		got := parse(t, `{"main":{"sections":[{"columns":[{"widgets":["z_hero"]}]}]}}`).htmlBlocks()
+		if len(got) != 2 {
+			t.Fatalf("got %d blocks, want 2", len(got))
+		}
+		// The layout names only the hero, so it leads and is authoritative; the footer trails
+		// through the key-sort path and is not.
+		if got[0].Key != "z_hero" || !got[0].Placed {
+			t.Errorf("blocks[0] = {%q, Placed=%v}, want the layout-placed hero", got[0].Key, got[0].Placed)
+		}
+		if got[1].Key != "a_footer" || got[1].Placed {
+			t.Errorf("blocks[1] = {%q, Placed=%v}, want the unplaced footer", got[1].Key, got[1].Placed)
+		}
+	})
+}

@@ -1279,6 +1279,37 @@ func TestResolveRegistrationURL(t *testing.T) {
 		{"relative path is rejected", "/register", emailCopyEventDetails{}, ""},
 		{"bare hostname is rejected", "events.lfx.dev/reg", emailCopyEventDetails{}, ""},
 		{"scheme with no host is rejected", "https://", emailCopyEventDetails{}, ""},
+		// A PORT is not a host. url.Parse gives this a non-empty Host (":443") and an empty
+		// Hostname, so a Host check alone lets a hostless URL through and it reaches an href.
+		{"a port with no host is rejected", "https://:443/register", emailCopyEventDetails{}, ""},
+		{"a port with no host does not satisfy the top-level slot", "https://:443/register",
+			emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		// Embedded credentials are refused rather than stripped: this value is interpolated into
+		// an LLM PROMPT and can be rendered verbatim into a marketing email, so accepting it
+		// discloses the credential to the model provider and to every recipient.
+		{"embedded credentials are rejected", "https://user:password@evil.example/register",
+			emailCopyEventDetails{}, ""},
+		{"a bare username is rejected too", "https://user@evil.example/register",
+			emailCopyEventDetails{}, ""},
+		// url.Parse is STRUCTURAL: it accepts a quote in a path or query, and this value is asked
+		// to appear inside an href. These three shapes each close the attribute if returned raw.
+		{"a quote in the path is escaped", `https://events.example/" onclick="alert(1)`,
+			emailCopyEventDetails{}, "https://events.example/%22%20onclick=%22alert%281%29"},
+		{"a quote in the query is escaped", `https://events.example/x?a=1"><script>alert(1)</script>`,
+			emailCopyEventDetails{}, "https://events.example/x?a=1%22%3E%3Cscript%3Ealert%281%29%3C%2Fscript%3E"},
+		{"a quote in the fragment is escaped", `https://events.example/x#frag"onclick=`,
+			emailCopyEventDetails{}, "https://events.example/x#frag%22onclick="},
+		// A malformed percent-escape is refused rather than repaired: url.Query() drops the
+		// offending parameter silently, so accepting it would change the destination.
+		{"a malformed query escape is rejected", "https://events.example/x?%zz=1",
+			emailCopyEventDetails{}, ""},
+		// The realistic case must survive untouched -- a real UTM-tagged registration URL.
+		{"a normal utm-tagged url is unchanged",
+			"https://events.linuxfoundation.org/kubecon/register/?utm_medium=email&utm_source=lfx",
+			emailCopyEventDetails{},
+			"https://events.linuxfoundation.org/kubecon/register/?utm_medium=email&utm_source=lfx"},
+		{"credentials do not satisfy the top-level slot", "https://user:password@evil.example/register",
+			emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
 		{"javascript scheme is rejected", "javascript:alert(1)", emailCopyEventDetails{}, ""},
 		{"mailto is rejected", "mailto:events@linuxfoundation.org", emailCopyEventDetails{}, ""},
 		{"the placeholder itself is rejected", "#", emailCopyEventDetails{}, ""},
