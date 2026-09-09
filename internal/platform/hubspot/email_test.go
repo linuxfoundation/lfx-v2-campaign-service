@@ -856,3 +856,198 @@ func TestSearchEmails_FilteredWalkIsNotCappedWithinTheScanBound(t *testing.T) {
 		t.Errorf("filtered walk must not stop at the UNFILTERED cap: read %d pages, want %d", requested.Load(), pages)
 	}
 }
+
+// TestWidgetWithHTML_MalformedShapes drives widgetWithHTML off literal JSON documents, which is
+// the only way to reach its decode branches: the dispatch fake builds well-formed drafts, so a
+// null body or a non-object widget never arrives through that path.
+//
+// The null cases are not hypothetical shapes invented for coverage. `"body": null` decodes into a
+// map WITHOUT error and leaves the map nil, so the len() guard passes (JSON `null` is four bytes)
+// and the error check sees nothing -- and the write that follows panics. A panic is not an error:
+// applyEmailContent's best-effort contract swallows failures, but a panic unwinds past it to the
+// orchestrator's recover and fails the whole dispatch, orphaning the very draft that contract
+// exists to protect. htmlBlocks filters null-bodied widgets out of SELECTION, but the read and the
+// write are separate requests, so an operator editing the draft in between lands one on the write.
+func TestWidgetWithHTML_MalformedShapes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw     json.RawMessage
+		wantErr bool
+	}{
+		"a null body must not panic":                {raw: json.RawMessage(`{"body":null}`)},
+		"a null widget is refused, not panicked on": {raw: json.RawMessage(`null`), wantErr: true},
+		"a non-object body is an error":             {raw: json.RawMessage(`{"body":"a string"}`), wantErr: true},
+		"an absent widget is an error":              {raw: nil, wantErr: true},
+		"an ordinary body is rewritten":             {raw: json.RawMessage(`{"body":{"html":"<p>old</p>"},"type":"rich_text"}`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// No recover(): a panic must FAIL this test loudly rather than be absorbed, since a
+			// panic reaching production is the outcome under test.
+			got, err := widgetWithHTML(tc.raw, "<p>new</p>")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got a value: %s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// Decode rather than substring-match: encoding/json HTML-escapes `<` to `\u003c` in
+			// string values, so a raw-bytes search for the literal tag fails on output that is
+			// entirely correct.
+			var decoded struct {
+				Body struct {
+					HTML string `json:"html"`
+				} `json:"body"`
+			}
+			if derr := json.Unmarshal(got, &decoded); derr != nil {
+				t.Fatalf("result is not decodable: %v (%s)", derr, got)
+			}
+			if decoded.Body.HTML != "<p>new</p>" {
+				t.Errorf("body.html = %q, want the new html", decoded.Body.HTML)
+			}
+			// Unmodelled scaffolding must survive byte-for-byte -- that is the whole reason this
+			// re-serialises the decoded map rather than building a fresh object.
+			if strings.Contains(string(tc.raw), "rich_text") && !strings.Contains(string(got), "rich_text") {
+				t.Errorf("scaffolding outside body.html was dropped: %s", got)
+			}
+		})
+	}
+}
+
+// TestHTMLBlocks_OrderingShapes covers the three layout shapes htmlBlocks has to be deterministic
+// for, only one of which the dispatch fake produces.
+//
+// The classic-template case is the gap worth closing: a template with no flexAreas has no recorded
+// reading order at all, so "the first block" falls back to sorted key order. The docstring promises
+// determinism "for every template shape", and Go randomises map iteration -- so without a test, a
+// refactor that dropped the sort would pass every existing test and pick a different block on each
+// run, which is the hardest kind of bug to see in a draft.
+//
+// The phantom and duplicate cases are the damage a partial content write leaves behind: a layout
+// naming a module id the widget map no longer carries, or naming one twice. Neither may put a
+// phantom or a repeated block in the result.
+func TestHTMLBlocks_OrderingShapes(t *testing.T) {
+	rich := func(html string) json.RawMessage {
+		return json.RawMessage(`{"body":{"html":` + mustJSON(html) + `}}`)
+	}
+	widgets := map[string]json.RawMessage{
+		"m_c": rich("<p>c</p>"),
+		"m_a": rich("<p>a</p>"),
+		"m_b": rich("<p>b</p>"),
+		"img": json.RawMessage(`{"body":{"src":"x.png"}}`), // not rich text
+	}
+
+	for name, tc := range map[string]struct {
+		flex string
+		want []string
+	}{
+		// No flexAreas at all -- a classic (non-drag-and-drop) template. Sorted key order.
+		//
+		// Revert check: deleting sort.Strings(rest) fails this case on most runs but not all --
+		// Go's map iteration order is random, so it lands sorted by luck roughly one run in five.
+		// That flakiness IS the defect (a different block would be written each dispatch), so the
+		// case is worth keeping even though a single revert run can pass. Three keys keep the odds
+		// of an accidental pass low; more would make the fixture noise rather than evidence.
+		"classic template falls back to sorted keys": {
+			flex: `{}`,
+			want: []string{"m_a", "m_b", "m_c"},
+		},
+		// The layout is authoritative and deliberately NOT sorted: c before a.
+		"the layout wins over key order": {
+			flex: `{"main":{"sections":[{"columns":[{"widgets":["m_c","m_a"]}]}]}}`,
+			want: []string{"m_c", "m_a", "m_b"}, // m_b unplaced, appended in key order
+		},
+		// A layout naming a missing id and naming one twice -- the shape a partial write leaves.
+		"a phantom id and a duplicate are both dropped": {
+			flex: `{"main":{"sections":[{"columns":[{"widgets":["m_b","gone","m_b"]}]}]}}`,
+			want: []string{"m_b", "m_a", "m_c"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var ec emailContent
+			raw := `{"content":{"widgets":` + mustMarshal(widgets) + `,"flexAreas":` + tc.flex + `}}`
+			if err := json.Unmarshal([]byte(raw), &ec); err != nil {
+				t.Fatalf("fixture: %v", err)
+			}
+			got := make([]string, 0, len(tc.want))
+			for _, b := range ec.htmlBlocks() {
+				got = append(got, b.Key)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("block order = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func mustJSON(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+func mustMarshal(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort pins the one thing a caller cannot recover
+// from the slice alone: whether a block's INDEX means anything.
+//
+// The classic-template case is the reason the field exists. Nothing is placed there, so the order
+// is `sort.Strings` over module ids — and this fixture is built so the id that sorts FIRST is the
+// footer. A caller reading blocks[0] as "the top of the email" would write the lede into the
+// footer, and every assertion about ordering would still pass, because the ordering IS correct.
+// It is the AUTHORITY of that ordering that differs, which is what Placed carries.
+func TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort(t *testing.T) {
+	// "a_footer" sorts BEFORE "z_hero": on the classic path blocks[0] is the footer.
+	widgets := map[string]json.RawMessage{
+		"a_footer": json.RawMessage(`{"body":{"html":"<p>unsubscribe</p>"}}`),
+		"z_hero":   json.RawMessage(`{"body":{"html":"<p>lede</p>"}}`),
+	}
+	parse := func(t *testing.T, flex string) emailContent {
+		t.Helper()
+		var ec emailContent
+		raw := `{"content":{"widgets":` + mustMarshal(widgets) + `,"flexAreas":` + flex + `}}`
+		if err := json.Unmarshal([]byte(raw), &ec); err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+		return ec
+	}
+
+	t.Run("classic template places nothing", func(t *testing.T) {
+		got := parse(t, `{}`).htmlBlocks()
+		if len(got) != 2 {
+			t.Fatalf("got %d blocks, want 2", len(got))
+		}
+		if got[0].Key != "a_footer" {
+			t.Fatalf("fixture no longer exercises the trap: blocks[0] is %q, want the footer", got[0].Key)
+		}
+		for _, b := range got {
+			if b.Placed {
+				t.Errorf("block %q reports Placed with no layout to place it", b.Key)
+			}
+		}
+	})
+
+	t.Run("layout-placed blocks report Placed", func(t *testing.T) {
+		got := parse(t, `{"main":{"sections":[{"columns":[{"widgets":["z_hero"]}]}]}}`).htmlBlocks()
+		if len(got) != 2 {
+			t.Fatalf("got %d blocks, want 2", len(got))
+		}
+		// The layout names only the hero, so it leads and is authoritative; the footer trails
+		// through the key-sort path and is not.
+		if got[0].Key != "z_hero" || !got[0].Placed {
+			t.Errorf("blocks[0] = {%q, Placed=%v}, want the layout-placed hero", got[0].Key, got[0].Placed)
+		}
+		if got[1].Key != "a_footer" || got[1].Placed {
+			t.Errorf("blocks[1] = {%q, Placed=%v}, want the unplaced footer", got[1].Key, got[1].Placed)
+		}
+	})
+}

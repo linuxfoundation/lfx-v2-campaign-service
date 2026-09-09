@@ -1074,14 +1074,10 @@ func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
 	const inputBound = maxPromptSize
 	const composedBound = maxComposedPromptSize
 
-	worst, worstStage := 0, ""
-	for _, name := range emailstage.Names() {
-		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
-		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
-		if floor > worst {
-			worst, worstStage = floor, name
-		}
-	}
+	// The SHARED helper, not a second copy of the arithmetic: the duplicate here kept an
+	// unconditional sentinel subtraction after withheld-URL stages made it conditional, so this
+	// test measured a floor a rune below the real one while claiming to guard it.
+	worst, worstStage := worstStageFloorNamed()
 
 	if worst+inputBound > composedBound {
 		t.Errorf("stage %q floors at %d runes; with the %d-rune input allowance the worst valid composition is %d, above the %d composed bound — valid caller input would be refused with a 503",
@@ -1239,15 +1235,406 @@ func TestConceptDocSizingArithmetic(t *testing.T) {
 	}
 }
 
+// The CTA's destination comes from the brief, and an unusable one is treated as ABSENT.
+//
+// The generated body's button used to be `<a href='#'>Register Now</a>`: nothing supplied a URL,
+// so the model invented a placeholder. That is a dead link on the campaign's PRIMARY call to
+// action, and the dispatcher's UTM tagger skipped it too (rightly -- "#" is not a destination), so
+// the one click the email is asking for carried no attribution either. Verified on a live staged
+// draft before this resolver existed.
+//
+// Precedence follows decodeBriefFields in internal/dispatch rather than inventing a second
+// convention: the brief's top-level `url` column is where the UI and the scraper put the event's
+// registration page, and a nested `registrationUrl` is the fallback for briefs carrying only that.
+//
+// Validation is not cosmetic. This value is interpolated into a prompt whose output goes straight
+// into an href, so a relative path or a `javascript:` scheme would be pasted into a marketing
+// email verbatim. Rejecting to "" is the safe outcome: the prompt's link rule then has the model
+// write the call to action as plain text, which is a working email with no button rather than an
+// email with a broken -- or hostile -- one.
+func TestResolveRegistrationURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		briefURL string
+		details  emailCopyEventDetails
+		want     string
+	}{
+		{"top-level url wins", "https://events.lfx.dev/reg", emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://events.lfx.dev/reg"},
+		{"nested is the fallback", "", emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"nothing at all", "", emailCopyEventDetails{}, ""},
+		{"whitespace is nothing", "   ", emailCopyEventDetails{}, ""},
+		{"surrounding whitespace is trimmed", "  https://events.lfx.dev/reg  ", emailCopyEventDetails{}, "https://events.lfx.dev/reg"},
+		{"http is allowed", "http://events.lfx.dev/reg", emailCopyEventDetails{}, "http://events.lfx.dev/reg"},
+		// An unusable top-level url does NOT poison the nested fallback: the loop tries each
+		// candidate, so a junk column still lets a good nested value through.
+		{"unusable top-level falls through", "/register", emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"relative path is rejected", "/register", emailCopyEventDetails{}, ""},
+		{"bare hostname is rejected", "events.lfx.dev/reg", emailCopyEventDetails{}, ""},
+		{"scheme with no host is rejected", "https://", emailCopyEventDetails{}, ""},
+		// A PORT is not a host. url.Parse gives this a non-empty Host (":443") and an empty
+		// Hostname, so a Host check alone lets a hostless URL through and it reaches an href.
+		{"a port with no host is rejected", "https://:443/register", emailCopyEventDetails{}, ""},
+		{"a port with no host does not satisfy the top-level slot", "https://:443/register",
+			emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		// Embedded credentials are refused rather than stripped: this value is interpolated into
+		// an LLM PROMPT and can be rendered verbatim into a marketing email, so accepting it
+		// discloses the credential to the model provider and to every recipient.
+		{"embedded credentials are rejected", "https://user:password@evil.example/register",
+			emailCopyEventDetails{}, ""},
+		{"a bare username is rejected too", "https://user@evil.example/register",
+			emailCopyEventDetails{}, ""},
+		// url.Parse is STRUCTURAL: it accepts a quote in a path or query, and this value is asked
+		// to appear inside an href. These three shapes each close the attribute if returned raw.
+		{"a quote in the path is escaped", `https://events.example/" onclick="alert(1)`,
+			emailCopyEventDetails{}, "https://events.example/%22%20onclick=%22alert%281%29"},
+		{"a quote in the query is escaped", `https://events.example/x?a=1"><script>alert(1)</script>`,
+			emailCopyEventDetails{}, "https://events.example/x?a=1%22%3E%3Cscript%3Ealert%281%29%3C%2Fscript%3E"},
+		{"a quote in the fragment is escaped", `https://events.example/x#frag"onclick=`,
+			emailCopyEventDetails{}, "https://events.example/x#frag%22onclick="},
+		// A malformed percent-escape is refused rather than repaired: url.Query() drops the
+		// offending parameter silently, so accepting it would change the destination.
+		{"a malformed query escape is rejected", "https://events.example/x?%zz=1",
+			emailCopyEventDetails{}, ""},
+		// The realistic case must survive untouched -- a real UTM-tagged registration URL.
+		{"a normal utm-tagged url is unchanged",
+			"https://events.linuxfoundation.org/kubecon/register/?utm_medium=email&utm_source=lfx",
+			emailCopyEventDetails{},
+			"https://events.linuxfoundation.org/kubecon/register/?utm_medium=email&utm_source=lfx"},
+		{"credentials do not satisfy the top-level slot", "https://user:password@evil.example/register",
+			emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"javascript scheme is rejected", "javascript:alert(1)", emailCopyEventDetails{}, ""},
+		{"mailto is rejected", "mailto:events@linuxfoundation.org", emailCopyEventDetails{}, ""},
+		{"the placeholder itself is rejected", "#", emailCopyEventDetails{}, ""},
+		// Raw size is gated BEFORE url.Parse: brief.url has no MaxLength and normalising an
+		// unbounded value allocates ~2x its length, which is the allocation the prompt-size guard
+		// exists to prevent. An oversized PRIMARY must still fall through to the nested candidate
+		// rather than failing the whole resolve.
+		{"an oversized url is rejected", "https://e.example/x?a=" + strings.Repeat("b", maxPromptSize),
+			emailCopyEventDetails{}, ""},
+		{"an oversized primary falls through to the nested one",
+			"https://e.example/x?a=" + strings.Repeat("b", maxPromptSize),
+			emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"a url at the bound is still accepted",
+			"https://e.example/" + strings.Repeat("b", maxPromptSize-18),
+			emailCopyEventDetails{}, "https://e.example/" + strings.Repeat("b", maxPromptSize-18)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolveRegistrationURL(tc.briefURL, tc.details); got != tc.want {
+				t.Errorf("resolveRegistrationURL(%q, %+v) = %q, want %q", tc.briefURL, tc.details, got, tc.want)
+			}
+		})
+	}
+}
+
+// A supplied URL reaches the prompt, and the prompt tells the model what to do with it.
+//
+// Two halves that fail independently: the user prompt has to carry the destination, and the system
+// prompt has to say that every href must BE that destination. Supplying the URL without the rule
+// leaves the model free to keep writing href='#' beside a URL it was given; stating the rule
+// without the URL asks it to copy something absent.
+func TestComposeEmailCopyPrompt_CarriesTheRegistrationURLAndItsRule(t *testing.T) {
+	t.Parallel()
+
+	const dest = "https://events.linuxfoundation.org/mcp-dev-summit/register"
+	sys, user := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName:       "MCP Dev Summit Toronto 2026",
+		location:        "Toronto, Canada",
+		dates:           "March 3-4, 2026",
+		registrationURL: dest,
+		stage:           emailstage.RegistrationPush,
+	})
+
+	if !strings.Contains(user, "Registration URL: "+dest) {
+		t.Errorf("the user prompt does not carry the destination:\n%s", user)
+	}
+	// The rule, on the system side where the other constraints live.
+	if !strings.Contains(sys, "Registration URL") {
+		t.Errorf("the system prompt states no link rule, so a supplied URL is only a fact the model may ignore")
+	}
+	// And it must forbid the exact shape that shipped. Naming it is the point: a general
+	// "use the URL" instruction is what the previous prompt effectively said by omission.
+	if !strings.Contains(sys, `href="#"`) {
+		t.Errorf("the link rule does not name href=\"#\" as forbidden; that is the placeholder the model actually produced")
+	}
+}
+
+// With no URL, the line is ABSENT -- not present and empty.
+//
+// The rule reads "if no Registration URL is given", so the two shapes are not equivalent to the
+// model: "Registration URL:" followed by nothing is a supplied-but-blank value, and filling a
+// blank with a plausible-looking placeholder is precisely what produced href='#'. A brief with no
+// destination should yield a call to action in plain text, so the prompt must not offer a slot.
+func TestComposeEmailCopyPrompt_AbsentRegistrationURLPrintsNoLine(t *testing.T) {
+	t.Parallel()
+
+	sys, user := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName: "MCP Dev Summit Toronto 2026",
+		location:  "Toronto, Canada",
+		dates:     "March 3-4, 2026",
+		stage:     emailstage.RegistrationPush,
+	})
+
+	if strings.Contains(user, "Registration URL") {
+		t.Errorf("the user prompt offers a Registration URL slot with nothing in it:\n%s", user)
+	}
+	// The rule still ships -- it is what tells the model to write plain text instead of inventing
+	// a link. Only the fact is missing.
+	if !strings.Contains(sys, "If no Registration URL is given") {
+		t.Errorf("the system prompt does not say what to do when no URL is supplied")
+	}
+}
+
+// The registration URL must NOT reach the frozen legacy prompt.
+//
+// LFXV2-1940's acceptance criterion is byte-identity for callers that send no stage, and it does
+// not bend for an improvement. A brief carrying a url composes the same pre-stage prompt it always
+// did; the destination reaches the STAGE-AWARE path only, which is the path the UI uses.
+//
+// TestAbsentStageProducesLegacyPrompt pins the no-URL case against the golden constant. This pins
+// the case that could plausibly have been "fixed" by mistake, since a caller with a url looks like
+// one that should benefit.
+func TestAbsentStageIgnoresTheRegistrationURL(t *testing.T) {
+	t.Parallel()
+
+	const dest = "https://events.linuxfoundation.org/mcp-dev-summit/register"
+	sys, user := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName:       "MCP Dev Summit Toronto 2026",
+		location:        "Toronto, Canada",
+		dates:           "March 3-4, 2026",
+		registrationURL: dest,
+		stage:           "",
+	})
+
+	if sys != goldenLegacySystemPrompt {
+		t.Errorf("a brief with a registration url changed the legacy system prompt; LFXV2-1940 requires byte-identity\n got %d bytes\nwant %d bytes", len(sys), len(goldenLegacySystemPrompt))
+	}
+	if strings.Contains(user, dest) {
+		t.Errorf("the destination reached the legacy user prompt:\n%s", user)
+	}
+}
+
+// End to end: the destination stored on the BRIEF is what the model is sent.
+//
+// The composer tests above take the URL as an argument, so they cannot catch the wiring -- a
+// `registrationURL` never populated in GenerateEmailCopy leaves every one of them green while the
+// endpoint keeps generating dead buttons. The url lives on the brief's own column, outside the
+// event_details blob every other prompt field is decoded from, which is exactly the field most
+// easily left unread.
+func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
+	const dest = "https://events.linuxfoundation.org/mcp-dev-summit/register"
+
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		URL:          dest,
+		EventDetails: json.RawMessage(`{"eventName":"MCP Dev Summit Toronto 2026","location":"Toronto","dates":"March 3-4, 2026"}`),
+	}
+
+	// atomic for the same reason as the sibling tests: written on the handler's goroutine.
+	var sentBody atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sentBody.Store(string(b))
+		w.Header().Set("Content-Type", "application/json")
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	stage := emailstage.RegistrationPush
+	if _, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: &stage,
+	}); err != nil {
+		t.Fatalf("GenerateEmailCopy() error = %v", err)
+	}
+
+	body, _ := sentBody.Load().(string)
+	if !strings.Contains(body, dest) {
+		t.Errorf("the prompt sent upstream does not carry the brief's url, so the generated CTA has nowhere to point")
+	}
+}
+
 // worstStageFloor is the largest composed prompt any stage produces at zero caller input. Shared
 // by the bound test and the doc-arithmetic test so neither transcribes a number the other derives.
+// Composed WITH a registrationURL, less its one sentinel rune, because that is the LARGER floor
+// and therefore the one the bound must clear. composeEmailCopyPrompt omits the whole
+// "\nRegistration URL: " line when the value is empty, so measuring without one understates the
+// floor by 19 runes and leaves the label outside every bound derived from this helper.
+//
+// Supplying a URL for EVERY stage is deliberate even though three of them now withhold it
+// (emailstage.LinksToRegistration): those stages simply drop the line, so their measured floor is
+// their real one, while the registration-linked stages measure with the line as they should. The
+// helper takes the MAX across stages, so it still returns the true worst case — and it keeps
+// working if a stage's link policy flips, which a hand-picked "the stage with the URL" would not.
 func worstStageFloor() int {
-	worst := 0
+	f, _ := worstStageFloorNamed()
+	return f
+}
+
+// worstStageFloorNamed is worstStageFloor plus the stage that produced it, for the assertion that
+// needs to name it. ONE implementation of the arithmetic: the sentinel subtraction was duplicated
+// here and in TestComposedBoundClearsEveryStageFloor, and when withheld-URL stages made the
+// subtraction conditional the copy kept the old unconditional form and understated their floor by
+// a rune. A derived figure with two sources drifts; this one has one.
+func worstStageFloorNamed() (int, string) {
+	worst, worstName := 0, ""
 	for _, name := range emailstage.Names() {
-		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
-		if floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user); floor > worst {
-			worst = floor
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, registrationURL: "x"})
+		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+		// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
+		// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
+		// nothing to its composition and subtracting one removes a rune that was never added --
+		// understating that stage's floor, and with it every figure derived from this helper.
+		// Measured: Post-Event composes identically with "x" and with "", delta 0.
+		if emailstage.Resolve(name).LinksToRegistration {
+			floor--
+		}
+		if floor > worst {
+			worst, worstName = floor, name
 		}
 	}
-	return worst
+	return worst, worstName
+}
+
+// TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt pins which fields the caller-input
+// bound actually covers, on each of the two prompt paths.
+//
+// composeEmailCopyPrompt returns the FROZEN legacy prompt for a blank stage, formatting only
+// eventName, location and dates — LFXV2-1940 requires that output byte-identical to the pre-stage
+// service. So counting registrationURL on that path would let a no-stage caller be refused with a
+// 400 for a value that never reaches their prompt and cannot change their result. The stage-aware
+// path DOES format the URL, so there it must count: it is caller-supplied input like any other.
+func TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt(t *testing.T) {
+	// The fixture has to thread a real gap, and both ends are load-bearing:
+	//   - AT MOST maxPromptSize, or httpURL's own raw-size gate drops the URL and neither branch
+	//     ever sees it -- the test would then pass for entirely the wrong reason.
+	//   - Plus the other three fields, MORE than maxPromptSize, or counting it breaches nothing
+	//     and the stage case cannot 400.
+	// Exactly maxPromptSize satisfies both, since eventName/location/dates are non-empty.
+	longURL := "https://e.example/" + repeatStr("b", maxPromptSize-len("https://e.example/"))
+	if got := utf8.RuneCountInString(longURL); got != maxPromptSize {
+		t.Fatalf("fixture URL is %d runes, want exactly maxPromptSize (%d)", got, maxPromptSize)
+	}
+
+	newSvc := func(t *testing.T) *BriefService {
+		t.Helper()
+		repo := newFakeBriefRepo()
+		repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+			ID:        "brief-456",
+			ProjectID: "proj-123",
+			URL:       longURL,
+			EventDetails: json.RawMessage(
+				`{"eventName":"KubeCon EU 2026","location":"Barcelona","startDate":"June 17","endDate":"June 20"}`),
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			content := `{"subject":"s","preheader":"p","body":"<p>Register now</p>","cta":"Register"}`
+			encoded, err := json.Marshal(content)
+			if err != nil {
+				t.Fatalf("marshal fake LLM content: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(encoded) + `},"finish_reason":"stop"}]}`))
+		}))
+		t.Cleanup(srv.Close)
+		svc := newTestBriefService(repo)
+		svc.SetLLMClient(newTestLLMClient(t, srv))
+		return svc
+	}
+
+	t.Run("no stage: the url is not counted", func(t *testing.T) {
+		result, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+		})
+		if err != nil {
+			t.Fatalf("a no-stage caller was refused for a url the legacy prompt never uses: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected a non-nil EmailCopy")
+		}
+	})
+
+	t.Run("a stage that withholds the url does not count it", func(t *testing.T) {
+		// CFP Launch never receives the URL (emailstage.LinksToRegistration=false), so counting it
+		// would refuse this caller for a value their prompt never sees — the same defect as the
+		// no-stage case above, one level down.
+		result, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+			Stage: strPtr(emailstage.CFPLaunch),
+		})
+		if err != nil {
+			t.Fatalf("a CFP Launch caller was refused for a url that stage never receives: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected a non-nil EmailCopy")
+		}
+	})
+
+	t.Run("with a stage: the url is counted", func(t *testing.T) {
+		_, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+			Stage: strPtr(emailstage.RegistrationPush),
+		})
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) {
+			t.Fatalf("error = %v, want a 400: the stage-aware prompt formats this url, so it counts", err)
+		}
+	})
+}
+
+// TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages is the end of the chain that
+// emailstage.LinksToRegistration starts: the flag only matters if the URL actually stays out of
+// the composed prompt.
+//
+// The shared rule tells the model that EVERY href in the body must be the Registration URL. For a
+// stage whose call to action is not registration, supplying that URL is how a "Submit Your
+// Proposal" button ends up pointing at a registration form, and a "Share Feedback" button at
+// registration for an event that already happened. Withholding the line reuses the path the prompt
+// already defines for a brief with no url: a plain-text call to action.
+func TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages(t *testing.T) {
+	const regURL = "https://events.linuxfoundation.org/kubecon/register/"
+
+	for _, tc := range []struct {
+		stage string
+		want  bool // is the URL expected in the prompt?
+	}{
+		{emailstage.RegistrationPush, true},
+		{emailstage.ScheduleAnnouncement, true},
+		{emailstage.DiscountOffer, true},
+		// The three whose running CTA asks for something other than registration.
+		{emailstage.CFPLaunch, false},
+		{emailstage.PostEvent, false},
+		{emailstage.FinalCountdown, false},
+	} {
+		t.Run(tc.stage, func(t *testing.T) {
+			_, userPrompt := composeEmailCopyPrompt(emailCopyPromptVars{
+				eventName:       "KubeCon EU 2026",
+				location:        "Barcelona",
+				dates:           "June 17 - June 20",
+				registrationURL: regURL,
+				stage:           tc.stage,
+			})
+			got := strings.Contains(userPrompt, regURL)
+			if got != tc.want {
+				verb := "withheld from"
+				if tc.want {
+					verb = "present in"
+				}
+				t.Errorf("registration URL in prompt = %v, want the url %s the %s prompt", got, verb, tc.stage)
+			}
+			// Whether or not the URL is supplied, the label must never appear with nothing after
+			// it: "Registration URL:" reads as supplied-but-blank, which is the shape that
+			// produced href="#" when nothing was supplied at all.
+			if strings.Contains(userPrompt, "Registration URL:") && !got {
+				t.Errorf("prompt carries an EMPTY 'Registration URL:' label; the line must be omitted entirely")
+			}
+		})
+	}
 }

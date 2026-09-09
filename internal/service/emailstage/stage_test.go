@@ -595,3 +595,93 @@ func TestCTAFallbacksSurviveTheOmitRule(t *testing.T) {
 		}
 	}
 }
+
+// TestStageLinkPolicyMatchesCTA pins LinksToRegistration against the button the stage actually
+// renders, so the two cannot drift apart silently.
+//
+// The field routes a destination: a true stage has the brief's Registration URL put in front of the
+// model with an instruction that every href must be it. That is right while the running CTA asks
+// the reader to register, and wrong the moment it asks for something else — a "Submit Your
+// Proposal" button pointing at a registration form, or a "Share Feedback" button pointing at
+// registration for an event that already happened.
+//
+// The RUNNING CTA is the one checked, not the declared one. A PrimaryCTA naming a placeholder
+// never runs — nothing supplies [PROMO_CODE], [SCHEDULE_URL] or [RECORDINGS_URL] — so Discount
+// Offer's real button is "Register Now" and Post-Event's is "Share Feedback". Checking the
+// declared text would have called Post-Event registration-linked on the strength of a
+// "Watch Recordings" branch that never executes.
+func TestStageLinkPolicyMatchesCTA(t *testing.T) {
+	t.Parallel()
+
+	// A registration CTA is recognised by its verb, not by an allow-list of exact strings: a
+	// reworded "Register Today" must stay covered without editing this test, while a proposal or
+	// feedback button must not slip in because it was added later.
+	registrationish := regexp.MustCompile(`(?i)\b(register|registration|sign up|save your (seat|spot)|get (your )?tickets?)\b`)
+
+	for name, tpl := range Templates {
+		// A CTA is gated either in its own text ("Register with Code [PROMO_CODE]") or in the
+		// ContentPrompt line that introduces it ("[ View Full Schedule ] when [SCHEDULE_URL] is
+		// supplied"). Both forms name a placeholder nothing supplies, so BOTH mean the declared
+		// button never runs and the fallback is what the reader sees. Checking only the CTA text
+		// missed the second form and called two stages registration-linked on the strength of a
+		// "View Full Schedule" branch that never executes.
+		running := strings.TrimSpace(tpl.PrimaryCTA)
+		gatedInPrompt := regexp.MustCompile(`(?i)\[\s*` + regexp.QuoteMeta(running) + `\s*\][^\n]*\bwhen\b[^\n]*\[[A-Z_]+\][^\n]*\bis supplied\b`)
+		if strings.Contains(running, "[") || gatedInPrompt.MatchString(tpl.ContentPrompt) {
+			running = strings.TrimSpace(tpl.PrimaryCTAFallback)
+		}
+		if running == "" {
+			// Covered by TestStageCTAPromptMatchesDeclaration; nothing to check here.
+			continue
+		}
+
+		looksRegistration := registrationish.MatchString(running)
+		if looksRegistration && !tpl.LinksToRegistration {
+			t.Errorf("stage %q renders %q but declares LinksToRegistration=false, so the brief's url is withheld and a registration button is left as plain text",
+				name, running)
+		}
+		if !looksRegistration && tpl.LinksToRegistration {
+			t.Errorf("stage %q renders %q — not a registration action — but declares LinksToRegistration=true, so every href in that email is pointed at the registration page",
+				name, running)
+		}
+	}
+}
+
+// TestStageLinkPolicyCoversEveryStage stops a new stage from inheriting the zero value.
+//
+// LinksToRegistration is a bool, so an author who never mentions it gets false — the SAFE default
+// (a missing link beats a wrong one), but a silent one: the stage would quietly stop linking with
+// nothing to say so. Requiring the true stages to be exactly the known set means adding a stage
+// forces a deliberate answer here rather than defaulting into silence.
+func TestStageLinkPolicyCoversEveryStage(t *testing.T) {
+	t.Parallel()
+
+	wantLinked := map[string]bool{
+		ScheduleAnnouncement: true,
+		RegistrationPush:     true,
+		DiscountOffer:        true,
+		// Final Countdown's purpose is "Confirm attendance", sent 1-2 weeks out to people who have
+		// ALREADY registered, and its running CTA is the farewell "See You There" — nothing is
+		// being asked for. Pointing that at the registration page sends confirmed attendees to
+		// register again.
+		FinalCountdown: false,
+		// CFPLaunch asks for a proposal and PostEvent asks for feedback; the brief carries no
+		// destination for either, so both withhold rather than mislead.
+		CFPLaunch: false,
+		PostEvent: false,
+	}
+	if len(wantLinked) != len(Templates) {
+		t.Fatalf("this test names %d stages but Templates has %d; a new stage must declare its link policy here",
+			len(wantLinked), len(Templates))
+	}
+	for name, tpl := range Templates {
+		want, known := wantLinked[name]
+		if !known {
+			t.Errorf("stage %q is not named in this test; declare whether its CTA links to registration", name)
+			continue
+		}
+		if tpl.LinksToRegistration != want {
+			t.Errorf("stage %q LinksToRegistration = %v, want %v", name, tpl.LinksToRegistration, want)
+		}
+	}
+}

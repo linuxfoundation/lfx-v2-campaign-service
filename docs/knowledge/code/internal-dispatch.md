@@ -1534,13 +1534,29 @@ because a subject patch 500'd would discard a staged email a human could still e
 log lines say exactly what the operator is left with — "it keeps the template's subject" / "it
 keeps the template's body" — so a draft that silently kept template copy is diagnosable.
 
-The body write is guarded on the draft having **exactly one rich-text widget**, counting empty
-blocks. A template with two blocks is refused (logged at INFO, not an error): there is no way to
-know which one the body belongs in, and rewriting the wrong one destroys content. A template with
-one EMPTY block is written — that is the most unambiguous shape there is, and the one an operator
-most expects to be filled. Counting only POPULATED widgets got this wrong in both directions: it
-reported 1 for a populated-plus-empty pair and rewrote the populated block, and it reported a
-writable count of 0 for the single-empty case and refused a write it could safely have made.
+The body write targets the **first rich-text block in the draft's LAYOUT READING ORDER**, and
+refuses when the draft has no rich-text block at all — or when it has no LAYOUT. "First" comes
+from `content.flexAreas`, the drag-and-drop layout tree — the only place a draft records the order
+its blocks appear in. Nothing else can stand in for it: the widget map is a JSON object, so Go
+randomises its iteration order, and the per-widget `order` field is absent on every drag-and-drop
+template observed.
+
+The second refusal is the one that is easy to miss, because the draft looks perfectly writable.
+A CLASSIC (non-drag-and-drop) template carries no flexAreas, so `GetEmailHTMLWidgets` places
+nothing and returns every block in sorted key order — deterministic, but unrelated to where the
+blocks appear. `blocks[0]` is then whichever opaque module id sorts first and is as likely the
+unsubscribe footer as the lede, so writing there overwrites template furniture with the operator's
+copy while logging it as "the first block". Each block carries `Placed` for exactly this
+distinction, and the write requires `blocks[0].Placed` rather than trusting the index; without a
+layout there is no top of the email to speak of, and the draft keeps its template body.
+
+This replaced a guard on the draft having **exactly one** rich-text widget, which refused any
+template with two or more (logged at INFO, not an error) on the reasoning that there was no way to
+know which block the body belonged in. The reasoning was sound and the premise was wrong: a real
+LF template carries roughly nine rich-text blocks, so the guard fired on almost every one and
+silently discarded operator-approved copy — the generated body never reached the draft, and
+nothing surfaced as an error. Reading flexAreas answers the question the guard could not, so the
+refusal is no longer needed.
 
 Widget identity is the **presence of the `body.html` key**, not a non-empty value. An image or
 divider module decodes into the same body struct with an empty HTML string, so counting

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -29,9 +30,15 @@ type emailCopyEventDetails struct {
 	// fields and are empty on an email brief, so reading only those yielded "Date TBD" for every
 	// email while the real dates sat in the brief beside them. Verified on a live brief.
 	Dates string `json:"dates"`
+	// RegistrationURL is a FALLBACK for the brief's top-level url column, read for the same
+	// reason decodeBriefFields (internal/dispatch) reads it: some briefs carry the event's
+	// destination only inside this blob. See resolveRegistrationURL for the precedence.
+	RegistrationURL string `json:"registrationUrl"`
 }
 
-// maxPromptSize bounds the CALLER's three event-detail fields, checked before composing.
+// maxPromptSize bounds the CALLER-supplied fields, checked before composing. That is eventName,
+// location and dates always, plus registrationURL on a stage that actually formats it -- see the
+// guard in GenerateEmailCopy for why the URL is counted conditionally rather than always.
 const maxPromptSize = 2400 // runes
 
 // maxComposedPromptSize bounds the WHOLE composed prompt, checked after.
@@ -46,16 +53,44 @@ const maxPromptSize = 2400 // runes
 // template text, consuming almost the entire previous margin without noticing until a reviewer
 // pointed at a stale figure three edits later.
 //
-// 9000 restores ~522 runes, which is roughly the size of the largest single section in a template
-// brief. That is the unit the margin needs to be measured in: not "some slack", but "one more
-// section can be written before the bound has to move again".
-const maxComposedPromptSize = 9000 // runes
+// The margin is measured in SECTIONS, not in "some slack": roughly 522 runes is the size of the
+// largest single section in a template brief, so a margin of about that says "one more section
+// can be written before the bound has to move again", and a margin below it says the next edit
+// to any template silently turns valid caller input into a 503.
+//
+// 9300, not 9000. The link rule added to the shared system prompt grew every stage's floor by
+// 267 runes, taking Post-Event from 6078 to 6345 and the worst valid composition from 8478 to
+// 8745 -- which left 255 runes under 9000, less than half a section. This is the fourth time
+// prompt text has eaten this margin, so the bound moves WITH the text rather than after a
+// reviewer notices: 9300 restores a section of headroom.
+//
+// The worst valid composition is now 8744, and the path there is worth keeping because it moved
+// three times. The registrationURL line adds 19 runes ("\nRegistration URL: ") when a URL is
+// present and is omitted entirely when one is not, which put the with-URL figure at 8764 while the
+// no-URL floor was 8745 -- so the bound had to clear the LARGER. It then moved again when stages
+// gained a link policy: Post-Event, the worst floor at 6344, WITHHOLDS the URL, so the line it was
+// measured with is no longer part of its composition and the worst valid composition fell to 8788,
+// leaving 512 runes of headroom.
+//
+// Post-Event leads on content-prompt length, not on that line, so dropping 19 runes did not change
+// WHICH stage is worst -- only the number. TestComposedBoundClearsEveryStageFloor and
+// TestConceptDocSizingArithmetic both COMPUTE these; the latter caught this exact figure going
+// stale the moment the link policy landed, which is why neither transcribes a constant.
+const maxComposedPromptSize = 9300 // runes
 
 // emailCopyPromptVars holds the values needed to compose the generation prompt.
 type emailCopyPromptVars struct {
 	eventName string
 	location  string
 	dates     string
+	// registrationURL is the event destination the generated call-to-action links to, already
+	// validated by resolveRegistrationURL. EMPTY means the brief has none, and the prompt then
+	// omits the Registration URL line entirely -- the link rule keys off that absence.
+	//
+	// This reaches the STAGE-AWARE prompt only. The frozen legacy prompt cannot carry it
+	// without breaking LFXV2-1940 byte-identity, so a caller that sends no stage still gets
+	// copy written without a destination.
+	registrationURL string
 	// stage selects the generation spec. TWO distinct paths, deliberately not one:
 	//
 	//   - EMPTY (or blank) means the caller did not say. `composeEmailCopyPrompt` returns the
@@ -152,6 +187,9 @@ Constraints:
 - Preheader: summary of the email, under 100 characters
 - Body: professional HTML email, inviting and focused on the event
 - CTA: action-oriented, under 50 characters (e.g. "Register Now", "Join Us")
+- Links: the event details below may carry a "Registration URL". Every href in the body must
+  be that URL, copied exactly. If no Registration URL is given, write the call to action as
+  plain text with no <a> tag -- never href="#", and never an address you invented
 - Write for a professional Linux Foundation / technology audience
 - Make it about the event and community, not promotional`
 
@@ -189,15 +227,134 @@ Call-to-action strategy: %s
 	// saying to KEEP the placeholder verbatim was added here and removed — it contradicted the
 	// first outright, and a prompt that states both policies lets the model pick either, which is
 	// worse than whichever one it replaced.
+	// The Registration URL line is OMITTED when the brief has none rather than printed empty.
+	// The link rule above keys off the line's ABSENCE to mean "write the call to action as plain
+	// text"; a "Registration URL:" with nothing after it reads as supplied-but-blank, which is
+	// the shape that produced href='#' when nothing was supplied at all.
+	//
+	// WITHHELD for a stage whose call to action is not registration. The rule above sends every
+	// href to this URL, which is right while the button says "Register Now" and wrong for the
+	// three stages whose RUNNING button says something else: "Submit Your Proposal" (CFP Launch),
+	// "Share Feedback" (Post-Event -- the branch that actually runs, since nothing supplies
+	// [RECORDINGS_URL]) and "See You There" (Final Countdown, whose purpose is to confirm
+	// attendance for people who already registered).
+	//
+	// The brief has one url column and no CFP-form or survey field, so there is no correct
+	// destination to substitute. A proposal button pointing at a registration form, a feedback
+	// button pointing at registration for an event that already happened, or a confirmed attendee
+	// sent to register again, are all worse than a button that is not a link.
+	//
+	// Omitting the line reuses the path the prompt already defines for a brief with no url: a
+	// plain-text call to action. See emailstage.Stage.LinksToRegistration.
+	registration := ""
+	if vars.registrationURL != "" && tpl.LinksToRegistration {
+		registration = "\nRegistration URL: " + vars.registrationURL
+	}
 	userPrompt = fmt.Sprintf(`Generate email copy for this event:
 Event Name: %s
 Location: %s
-Dates: %s
+Dates: %s%s
 
 %s`,
-		vars.eventName, vars.location, vars.dates, tpl.ContentPrompt)
+		vars.eventName, vars.location, vars.dates, registration, tpl.ContentPrompt)
 
 	return systemPrompt, userPrompt
+}
+
+// resolveRegistrationURL picks the destination the generated call-to-action should link to.
+//
+// The brief's TOP-LEVEL url column is the primary, matching decodeBriefFields in
+// internal/dispatch: that is where the UI and the scraper put the event's registration page, and
+// every paid platform already treats it as the landing page. A nested `registrationUrl` inside
+// event_details is the fallback for briefs that carry only that.
+//
+// The value is VALIDATED, not merely trimmed, because it is interpolated into a prompt whose
+// output goes straight into an href: a relative path, a bare hostname or a `javascript:` scheme
+// would be pasted into a marketing email verbatim. An unusable value resolves to "" -- absent --
+// and the prompt's link rule then has the model write the call to action as plain text.
+//
+// Absent used to be the ONLY case, because no URL was supplied at all: the model filled the gap
+// with href='#', so the campaign's primary CTA was a dead link the dispatcher's UTM tagger could
+// not tag either. Verified on a live staged draft.
+func resolveRegistrationURL(briefURL string, d emailCopyEventDetails) string {
+	for _, candidate := range []string{briefURL, d.RegistrationURL} {
+		if u := httpURL(candidate); u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
+// httpURL returns the trimmed value when it is an absolute http(s) URL, and "" otherwise.
+func httpURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	// RAW SIZE FIRST, before url.Parse touches it. `brief.url` carries no MaxLength in
+	// design/brief.go and is stored as PostgreSQL TEXT, so the value arriving here is unbounded --
+	// and normalising it allocates roughly TWICE its length (Parse, ParseQuery, Encode, String;
+	// measured at ~21MB for a 10MB input). Doing that before the maxPromptSize guard runs would
+	// perform the exact allocation that guard exists to prevent, using the guard's own input.
+	//
+	// The bound is maxPromptSize, not something smaller: a URL that alone exceeds the whole
+	// caller-field allowance can never be part of a valid request, so refusing it here costs no
+	// legitimate caller anything. Refusing rather than truncating also keeps the FALLBACK honest
+	// -- an oversized primary yields "" and resolveRegistrationURL moves on to the nested
+	// candidate, exactly as it does for any other unusable value.
+	if utf8.RuneCountInString(trimmed) > maxPromptSize {
+		return ""
+	}
+	u, err := url.Parse(trimmed)
+	// Hostname(), not Host: `https://:443/path` parses with a NON-EMPTY Host (":443") and an
+	// empty Hostname, so a Host check alone accepts a URL with no host at all. This matches the
+	// registration-URL validators the paid adapters already use
+	// (internal/platform/linkedin/client.go, internal/platform/reddit/client.go).
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		return ""
+	}
+	// url.Parse lower-cases the scheme (RFC 3986 3.1), so this needs no fold. Anything else --
+	// mailto:, javascript:, data: -- is not a registration page and must not reach an href.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	// Embedded credentials are refused rather than stripped, and the reason is specific to this
+	// caller: the value is interpolated into a PROMPT, so `https://user:password@host/reg` would
+	// be sent to the model and can be rendered verbatim into a marketing email -- a credential
+	// disclosed to every recipient and to the LLM provider. The paid adapters refuse it for the
+	// narrower reason that it is not a registration page; here it is also a leak.
+	if u.User != nil {
+		return ""
+	}
+	// A malformed percent-escape in the query is refused, matching buildAdFinalURL: url.Query()
+	// SILENTLY DROPS the offending parameter, so a value that parses here can still describe a
+	// different destination than the one the operator pasted.
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return ""
+	}
+	// Re-serialise rather than return `trimmed`. url.Parse is a STRUCTURAL parser and accepts a
+	// quote in a path or query -- `https://events.example/" onclick="alert(1)` parses cleanly and
+	// every check above passes it. This value is interpolated into an LLM prompt and the model is
+	// asked to place it in an href, so a raw quote can close the attribute in the generated HTML.
+	// u.String() percent-encodes the delimiters in the PATH and FRAGMENT, but it emits RawQuery
+	// verbatim -- so the query has to be re-encoded explicitly, which is what the Encode() below
+	// is for. Without it `?a=1"><script>` survives intact and the path fix is cosmetic.
+	//
+	// Encode() SORTS parameters, so a returned URL can differ from the operator's in parameter
+	// ORDER. That is accepted deliberately: query parameter order is not semantically meaningful
+	// to any registration destination the LF uses, and the alternative -- refusing any URL whose
+	// query needs escaping -- would reject a legitimate paste over a character the model would
+	// never have been able to misuse anyway. The value is used for LINKING, never for display.
+	//
+	// This is the SEVENTH copy of essentially this validator (googleads, linkedin, meta,
+	// microsoft, reddit, twitter, here). Each is unexported in its own platform package, which is
+	// why the email path grew a thin reimplementation instead of a call. Extracting one shared
+	// validator is the right fix and is deliberately NOT done here: it touches six adapters on a
+	// PR scoped to email copy placement. Tracked separately -- until then, a change to any of the
+	// rules above belongs in all seven.
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // resolveEventDates picks the best date string the brief actually carries.
@@ -344,23 +501,39 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		eventName: strings.TrimSpace(details.EventName),
 		location:  strings.TrimSpace(details.Location),
 		dates:     resolveEventDates(details),
+		// The brief's own url column, not part of the event-details blob -- see
+		// resolveRegistrationURL for why that is the primary.
+		registrationURL: resolveRegistrationURL(brief.URL, details),
 		// Absent is not an error: the design leaves `stage` optional. An absent one takes the
 		// frozen legacy prompt (byte-identical to the pre-stage behaviour, LFXV2-1940); only a
 		// non-empty unrecognised value falls through Resolve to Registration Push.
 		stage: strVal(p.Stage),
 	}
 	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
-	// allocations. Only three strings from event_details reach the prompt — eventName,
-	// location and the formatted dates — but `event_details` is declared `Any` in
-	// design/brief.go, so none of the three carries a length constraint of its own and a
-	// single one of them can be arbitrarily large.
+	// allocations. Four strings reach the prompt — eventName, location, the formatted dates
+	// and the registration URL — but `event_details` is declared `Any` in design/brief.go and
+	// `url` is the brief's own free-text column, so none of the four carries a length
+	// constraint of its own and a single one of them can be arbitrarily large.
 	//
-	// MEASURED, not estimated, and this bound counts ONLY what the caller supplies: the three
-	// event-detail strings. A realistic set ("KubeCon + CloudNativeCon North America 2026",
-	// "Salt Lake City, Utah", "November 10-13, 2026") is 83 runes, so 2400 leaves ~2317 of
-	// headroom across the three — far above any real event name, far below a payload worth
-	// paying input tokens for. Oversized input is rejected as 400 BadRequest, which is correct
-	// here: the caller CAN edit these fields, unlike the composed bound below.
+	// The URL is counted here rather than capped on its own so the contract between the two
+	// bounds stays exact: the composed bound must clear (worst stage floor + maxPromptSize), and
+	// a field bounded separately would sit outside that sum and could push a valid request into
+	// the 503 branch.
+	//
+	// MEASURED, not estimated, and this bound counts ONLY what the caller supplies: eventName,
+	// location and dates always, plus the registration URL on a stage that formats it. A realistic
+	// set ("KubeCon + CloudNativeCon North America 2026", "Salt Lake City, Utah",
+	// "November 10-13, 2026",
+	// "https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/register/") is 164
+	// runes with the URL and 83 without, so 2400 leaves at least ~2236 of headroom — far above any
+	// real event name, far below a payload worth paying input tokens for. Oversized input is
+	// rejected as 400 BadRequest, which is correct here: the caller CAN edit these fields, unlike
+	// the composed bound below.
+	//
+	// The URL is HALF of that realistic figure (81 of the 164) and is the one field a caller does
+	// not type, so it is the term most likely to grow: a tracking-parameter suffix costs more
+	// headroom than an event rename ever will. Re-measure with a real registration URL, never a
+	// bare origin.
 	//
 	// The fixed prompt (1751 runes of system text plus the stage template) is deliberately NOT
 	// in this figure -- it is service-owned and no caller can grow it, which is exactly why the
@@ -394,9 +567,14 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// 6078) and are
 	// edited by hand.
 	//
-	// MEASURED 2026-09-01: worst stage-only floor 6078 (Post-Event), so with the 2400-rune input
-	// bound the worst valid composition is 8478. The bound is 9000, leaving ~522 runes of headroom
-	// for template growth.
+	// MEASURED, and re-measured after the link policy landed: worst stage-only floor 6388
+	// (Post-Event), so with the 2400-rune input bound the worst valid composition is 8788. The
+	// bound is 9300, leaving 512 runes of headroom for template growth -- about one section.
+	//
+	// Post-Event is the worst floor even though it WITHHOLDS the registration URL: its content
+	// prompt is the longest, and dropping the 19-rune URL line does not change which stage leads.
+	// TestConceptDocSizingArithmetic computes these rather than trusting this comment; it caught
+	// the figures above being 20 runes stale the moment the link policy changed them.
 	//
 	// This comment has now been wrong THREE times, most recently by my own hand: the precedence
 	// paragraph added to the shared system prompt earlier today grew every stage by ~130 runes and
@@ -420,21 +598,47 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// composed bound for the third.
 
 	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
-	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
-	// 50MB stored eventName is copied in full before a post-hoc check could reject it — the
-	// allocation this guard exists to prevent, performed by the guard's own input. The three
-	// fields alone cannot exceed the total, so this is a sound necessary condition; it is not
-	// sufficient, because the fixed template counts too, which is what the second check is
-	// for. Rejecting here bounds the compose to O(maxPromptSize).
+	// composeEmailCopyPrompt formats these unbounded fields into a new string, so a 50MB stored
+	// eventName is copied in full before a post-hoc check could reject it — the allocation this
+	// guard exists to prevent, performed by the guard's own input. The COUNTED fields alone cannot
+	// exceed the total, so this is a sound necessary condition; it is not sufficient, because the
+	// fixed template counts too, which is what the second check is for. Rejecting here bounds the
+	// compose to O(maxPromptSize).
+	//
+	// "Counted" rather than a fixed number, because the set is conditional: three always, four when
+	// the stage formats the registration URL. Naming a count here is what made this comment
+	// contradict itself in consecutive sentences ("these four unbounded fields" above "the three
+	// fields alone"), so the invariant is stated in terms of what the code below actually sums.
 	inputSize := utf8.RuneCountInString(promptVars.eventName) +
 		utf8.RuneCountInString(promptVars.location) + utf8.RuneCountInString(promptVars.dates)
+	// The URL counts only on the STAGE-AWARE branch, because only that branch formats it into the
+	// prompt. composeEmailCopyPrompt returns the frozen legacy prompt for a blank stage using
+	// eventName/location/dates alone (LFXV2-1940 requires it byte-identical to the pre-stage
+	// output), so counting the URL there would let a no-stage caller be rejected with a 400 for a
+	// value that never reaches their prompt and cannot affect their result -- a behaviour change
+	// on the one path documented as unchanged.
+	//
+	// A no-stage call therefore RESOLVES a URL it never counts and never uses. That is bounded
+	// work, not a leak: httpURL already refused anything over maxPromptSize, so the parse and
+	// re-encode are at most ~2x of 2400 runes, and the value is then discarded. Skipping the
+	// resolve entirely for a blank stage would couple this function to the composer's branching,
+	// which is the coupling the frozen legacy prompt exists to avoid.
+	//
+	// The same reasoning now applies WITHIN the stage-aware branch. A stage whose call to action is
+	// not registration has the URL withheld from its prompt (emailstage.LinksToRegistration), so
+	// counting it for CFP Launch, Post-Event or Final Countdown would refuse a caller for a value
+	// those prompts never receive either. The predicate is therefore "does this call FORMAT the
+	// url", which is exactly the condition composeEmailCopyPrompt uses -- not "is a stage set".
+	if stage := strings.TrimSpace(promptVars.stage); stage != "" && emailstage.Resolve(stage).LinksToRegistration {
+		inputSize += utf8.RuneCountInString(promptVars.registrationURL)
+	}
 	if inputSize > maxPromptSize {
 		slog.WarnContext(ctx, "email copy generation blocked: event details exceed prompt size limit",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
 			"input_size", inputSize, "limit", maxPromptSize)
 		return nil, &briefs.BadRequestError{
 			Code:    "400",
-			Message: "brief's event details are too large; reduce the event name, location, or dates",
+			Message: "brief's event details are too large; reduce the event name, location, dates, or url",
 		}
 	}
 
@@ -443,7 +647,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
 	if totalPromptSize > maxComposedPromptSize {
 		// ERROR, not Warn, and 503 rather than 400. This branch is unreachable by caller input --
-		// the worst valid composition is 8478 against a 9000 bound -- so if it fires, a
+		// the worst valid composition is 8788 against a 9300 bound -- so if it fires, a
 		// service-owned stage template has outgrown its budget. That is a service defect, and a
 		// 400 would file it under client error on every 4xx/5xx dashboard while telling the caller
 		// to edit a brief that is not the problem. The message already said as much; the status

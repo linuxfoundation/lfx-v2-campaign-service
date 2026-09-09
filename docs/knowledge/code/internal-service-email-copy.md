@@ -30,7 +30,7 @@ The implementation follows six principles from the reference lfx-one implementat
 ## Key Types and Functions
 
 ### `emailCopyEventDetails`
-Decode target for the brief's opaque `EventDetails` blob. Contains `eventName`, `location`, `startDate`, `endDate` and `dates`. Only `eventName` is required (validated in `decodeEmailCopyEventDetails`).
+Decode target for the brief's opaque `EventDetails` blob. Contains `eventName`, `location`, `startDate`, `endDate`, `dates` and `registrationUrl`. Only `eventName` is required (validated in `decodeEmailCopyEventDetails`).
 
 `dates` is the COMBINED free-text form the scraper produces ("19-20 November 2026"), and it is what briefs written by the UI actually carry: `startDate`/`endDate` are paid-platform config fields and are empty on an email brief. Reading only the structured pair yielded "Date TBD" for every email while the real dates sat in the brief beside them.
 
@@ -38,10 +38,25 @@ Decode target for the brief's opaque `EventDetails` blob. Contains `eventName`, 
 Decodes the brief's `EventDetails` and validates that at least an event name is present. Unlike `audience_build.go` (which skips mismatched shapes), returns an error for missing or invalid event details, causing `GenerateEmailCopy` to return 400 BadRequest.
 
 ### `composeEmailCopyPrompt(vars)`
-Returns (systemPrompt, userPrompt) built from fixed blocks. The system prompt contains role instruction, constraints, and the scrape-not-recall mandate. The user prompt carries the specific event details (name, location, dates). Prompt composition is deterministic and auditable.
+Returns (systemPrompt, userPrompt) built from fixed blocks. The system prompt contains role instruction, constraints, and the scrape-not-recall mandate. The user prompt carries the specific event details (name, location, dates, and the registration URL when the brief has one). Prompt composition is deterministic and auditable.
 
 ### `resolveEventDates(details)`
 Picks the best date string the brief actually carries. The structured `startDate`/`endDate` pair wins when present — a caller that set it meant it. The combined `dates` string is the fallback rather than the primary because it is free text from a scrape. Returns "Date TBD" when neither exists: the prompt instructs the model never to invent dates, so a wrong string is worse than an absent one.
+
+### `resolveRegistrationURL(briefURL, details)`
+Picks the destination the generated call-to-action links to. The brief's TOP-LEVEL `url` column is the primary, matching `decodeBriefFields` in `internal/dispatch` rather than inventing a second convention: that is where the UI and the scraper put the event's registration page, and every paid platform already treats it as the landing page. A nested `registrationUrl` inside `event_details` is the fallback for briefs carrying only that.
+
+The value is **validated, not merely trimmed** — it must parse as an absolute `http`/`https` URL with a host, or it resolves to `""`. It is interpolated into a prompt whose output goes straight into an `href`, so a relative path, a bare hostname or a `javascript:` scheme would be pasted into a marketing email verbatim.
+
+### The generated CTA has to point somewhere, and the prompt is where that is decided
+
+Nothing used to supply a destination, so the model filled the gap: staged drafts carried `<a href='#'>Register Now</a>` — a dead link on the campaign's **primary** call to action, which the dispatcher's UTM tagger then skipped as well (correctly; `#` is not a destination), so the one click the email asks for carried no attribution either. Verified on a live staged draft.
+
+The fix is in two halves, and each is useless alone. The user prompt carries a `Registration URL:` line, and the system prompt's constraint list states the rule: every `href` in the body must be that URL copied exactly, and if no Registration URL is given the call to action is written as plain text with no `<a>` tag — never `href="#"`, never an invented address. Supplying the URL without the rule leaves the model free to keep writing a placeholder beside a URL it was handed; stating the rule without the URL asks it to copy something absent.
+
+When the brief has no usable URL the line is **omitted entirely**, not printed empty. The rule reads "if no Registration URL is given", so the two shapes are not equivalent to the model: `Registration URL:` followed by nothing is a supplied-but-blank value, and filling a blank with something plausible is exactly the behaviour that produced `href='#'`.
+
+This reaches the **stage-aware** prompt only. The frozen legacy prompt cannot carry it without breaking LFXV2-1940's byte-identity criterion, so a caller that sends no stage still receives copy written without a destination. The UI always sends a stage.
 
 ### `formatEventDates(startDate, endDate)`
 Formats the structured pair into a human-readable string. Both present and equal returns the single date; both present and different joins them with " - "; one present returns it; neither returns "Date TBD".
@@ -56,14 +71,14 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 
 ### The prompt bound is checked twice, in runes, against TWO different limits
 
-`maxPromptSize` is 2400 **runes** and bounds the three event-detail fields BEFORE
-`composeEmailCopyPrompt`; `maxComposedPromptSize` is 9000 and bounds the composed prompt after.
+`maxPromptSize` is 2400 **runes** and bounds the four caller-supplied fields BEFORE
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 9300 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
 input plus the stage template — and getting the second number wrong fails in TWO opposite
 directions, both of which this file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (6078 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
-  only **422** runes for caller fields (6500 - 6078), so anything from 423 runes upward was
+- **Too low rejects valid input.** At 6500 the Post-Event stage (6388 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
+  only **112** runes for caller fields (6500 - 6388), so anything from 113 runes upward was
   refused — 1618 runes of event details passed the 3000 pre-check and were then refused by the
   composed one, two bounds contradicting each other, with the caller told their input was too
   large immediately after the first accepted it.
@@ -80,10 +95,12 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event composes to a 6078-rune floor from a 3637-rune ContentPrompt) and hand-edited.
+— the templates are large (Post-Event composes to a 6388-rune floor from a 3637-rune ContentPrompt) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 8478 (Post-Event floors at 6078), so
-9000 clears it with ~522 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
+With the input bound at 2400 the worst valid composition is 8788 (Post-Event floors at 6388), so
+9300 clears it with 512 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
+action is "Share Feedback", not a registration ask — so the 19-rune URL line is not part of its
+composition; it still leads on ContentPrompt length, so which stage is worst did not change. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
 
 That test was a **false green** for one revision: once the input bound moved to 2400, its 2500-rune
@@ -92,18 +109,56 @@ so nothing could tell them apart — neutralising the composed guard entirely br
 messages now differ, and the test asserts the composed one specifically.
 
 Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
-`design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
-check formats a 50MB stored event name into a new string before measuring it — the allocation
-the guard exists to prevent, performed by the guard's own input. The three fields alone cannot
-exceed the total, so the pre-check is a sound necessary condition; it is not sufficient,
-because the fixed template counts too, which is what the second check is for.
+`design/brief.go` and `url` carries no `MaxLength`, so none of these fields carries a length
+constraint, and a post-hoc check formats a 50MB stored event name into a new string before
+measuring it — the allocation the guard exists to prevent, performed by the guard's own input. The
+counted fields alone cannot exceed the total, so the pre-check is a sound necessary condition; it
+is not sufficient, because the fixed template counts too, which is what the second check is for.
+
+### The link rule is scoped to registration stages
+
+The shared system prompt tells the model that every `href` in the body must be the brief's
+Registration URL. That is right while the stage's call to action asks the reader to register, and
+wrong for the three stages whose RUNNING button asks for something else: CFP Launch renders
+"Submit Your Proposal", Post-Event renders "Share Feedback" (the fallback branch — nothing supplies
+`[RECORDINGS_URL]`), and Final Countdown renders "See You There", a farewell to people who have
+already registered.
+
+The brief carries one `url` column and no CFP-form or survey field, so there is no correct
+destination to substitute. `emailstage.Stage.LinksToRegistration` therefore WITHHOLDS the URL for
+those stages, which reuses the path the prompt already defines for a brief with no url at all: a
+plain-text call to action. A reader gets a button that is not a link, rather than a proposal button
+pointing at a registration form or a feedback button pointing at registration for an event that has
+already happened.
+
+Two tests keep the declaration honest: **TestStageLinkPolicyMatchesCTA** fails if a stage's policy
+disagrees with the button it actually renders (checking the FALLBACK when the declared CTA is gated
+on a placeholder nothing supplies), and **TestStageLinkPolicyCoversEveryStage** fails when a new
+stage inherits the `false` zero value without a deliberate decision.
+
+**Which fields are counted depends on the prompt path**, and that is deliberate rather than an
+oversight. `eventName`, `location` and `dates` always count. `registrationURL` counts only when a
+stage is present, because `composeEmailCopyPrompt` returns the FROZEN legacy prompt for a blank
+stage and that prompt formats the other three alone (LFXV2-1940 requires it byte-identical to the
+pre-stage output). Counting the URL there would let a no-stage caller be refused with a 400 for a
+value that never reaches their prompt and cannot change their result — a behaviour change on the
+one path documented as unchanged. **TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt**
+pins both halves.
+
+The URL is additionally gated on RAW SIZE inside `httpURL`, before `url.Parse` touches it.
+Normalising an unbounded value allocates roughly twice its length (Parse, ParseQuery, Encode,
+String — about 21MB for a 10MB input), which would perform the very allocation the pre-check
+exists to prevent, using the pre-check's own input. A URL that alone exceeds the whole
+caller-field allowance can never be part of a valid request, so refusing it costs no legitimate
+caller anything; and refusing rather than truncating keeps the fallback honest — an oversized
+primary yields `""` and `resolveRegistrationURL` moves on to the nested candidate.
 
 Runes, not bytes, because the limit is stated to the caller and logged as a character count and
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at a 6078-rune COMPOSED floor (its ContentPrompt alone is 3637),
-and with the maximum 2400 runes of caller input it composes to 8478 against the 9000 bound.
+shared prompt or any template changes: Post-Event is the largest stage at a 6388-rune COMPOSED floor (its ContentPrompt alone is 3637),
+and with the maximum 2400 runes of caller input it composes to 8788 against the 9300 bound.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
 template grew — three times, most recently when a paragraph added to the shared system prompt grew
@@ -173,6 +228,8 @@ nothing greps for it.
 - **TestGenerateEmailCopy_BriefNotFound**: Validates 404 when brief does not exist.
 - **TestGenerateEmailCopy_InvalidEventDetails**: Validates 400 when event details lack a required name.
 - **TestGenerateEmailCopy_LLMError**: Validates 503 when the LLM platform returns an error.
+- **TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages**: Pins that the registration URL reaches only the stages whose call to action is a registration ask, and that the "Registration URL:" label is never emitted with nothing after it.
+- **TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt**: Pins which fields the caller-input bound covers on each prompt path — the registration URL counts only when a stage is present, because the frozen legacy prompt never formats it.
 - **TestGenerateEmailCopy_HappyPath**: Validates the full flow with valid brief and LLM response.
 - **TestGenerateEmailCopy_RejectsIncompleteCopy**: Validates 503 when any required field (subject/preheader/body/CTA) is blank.
 - **TestGenerateEmailCopy_RejectsOverlongBody**: Validates 503 when body HTML exceeds 8000 chars (not truncated, as truncation corrupts markup).
@@ -194,6 +251,11 @@ nothing greps for it.
 - **TestComposedBoundClearsEveryStageFloor**: Computes every stage's composed floor from the real constants and fails with the exact arithmetic when `worst floor + maxPromptSize` exceeds `maxComposedPromptSize` — the seam that stops a template edit silently making valid caller input a 503. It has already caught two regressions introduced by fixes.
 - **TestComposeEmailCopyPrompt_OmitOutranksRequired**: Pins that the OMIT rule is stated as outranking a stage brief's own REQUIRED marker, naming the conflict concretely rather than as boilerplate. Sends an explicit stage, since a caller sending none gets the frozen pre-stage prompt with no brief to outrank.
 - **TestAbsentStageProducesLegacyPrompt**: That same caller gets the pre-stage prompt byte for byte, pinned against goldens extracted from `012fa822^`; an explicit stage must NOT produce it, so the branch cannot swallow stage selection.
+- **TestResolveRegistrationURL**: Pins the CTA destination's precedence (the brief's top-level `url`, then a nested `registrationUrl`) and its validation — a relative path, a bare hostname, a schemeless or hostless value, `javascript:`, `mailto:` and the `#` placeholder itself all resolve to absent, because this value lands in an `href`.
+- **TestComposeEmailCopyPrompt_CarriesTheRegistrationURLAndItsRule**: Both halves of the fix, which fail independently: the user prompt carries the destination, and the system prompt states that every `href` must be it and names `href="#"` as forbidden.
+- **TestComposeEmailCopyPrompt_AbsentRegistrationURLPrintsNoLine**: With no usable URL the prompt offers no slot at all — a blank one reads as supplied-but-empty, which is the shape that produced the placeholder — while the rule telling the model to write plain text still ships.
+- **TestAbsentStageIgnoresTheRegistrationURL**: A brief WITH a url still composes the frozen pre-stage prompt byte for byte. LFXV2-1940 does not bend for an improvement, and this is the case most plausibly "fixed" by mistake.
+- **TestGenerateEmailCopy_BriefURLBecomesTheCTADestination**: End-to-end wiring. The composer tests take the URL as an argument, so a `registrationURL` never populated in `GenerateEmailCopy` would leave all of them green while the endpoint kept generating dead buttons — and the url lives on the brief's own column, outside the blob every other prompt field is decoded from.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 
