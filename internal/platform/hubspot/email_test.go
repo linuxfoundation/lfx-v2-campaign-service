@@ -856,3 +856,61 @@ func TestSearchEmails_FilteredWalkIsNotCappedWithinTheScanBound(t *testing.T) {
 		t.Errorf("filtered walk must not stop at the UNFILTERED cap: read %d pages, want %d", requested.Load(), pages)
 	}
 }
+
+// TestWidgetWithHTML_MalformedShapes drives widgetWithHTML off literal JSON documents, which is
+// the only way to reach its decode branches: the dispatch fake builds well-formed drafts, so a
+// null body or a non-object widget never arrives through that path.
+//
+// The null cases are not hypothetical shapes invented for coverage. `"body": null` decodes into a
+// map WITHOUT error and leaves the map nil, so the len() guard passes (JSON `null` is four bytes)
+// and the error check sees nothing -- and the write that follows panics. A panic is not an error:
+// applyEmailContent's best-effort contract swallows failures, but a panic unwinds past it to the
+// orchestrator's recover and fails the whole dispatch, orphaning the very draft that contract
+// exists to protect. htmlBlocks filters null-bodied widgets out of SELECTION, but the read and the
+// write are separate requests, so an operator editing the draft in between lands one on the write.
+func TestWidgetWithHTML_MalformedShapes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw     json.RawMessage
+		wantErr bool
+	}{
+		"a null body must not panic":                {raw: json.RawMessage(`{"body":null}`)},
+		"a null widget is refused, not panicked on": {raw: json.RawMessage(`null`), wantErr: true},
+		"a non-object body is an error":             {raw: json.RawMessage(`{"body":"a string"}`), wantErr: true},
+		"an absent widget is an error":              {raw: nil, wantErr: true},
+		"an ordinary body is rewritten":             {raw: json.RawMessage(`{"body":{"html":"<p>old</p>"},"type":"rich_text"}`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// No recover(): a panic must FAIL this test loudly rather than be absorbed, since a
+			// panic reaching production is the outcome under test.
+			got, err := widgetWithHTML(tc.raw, "<p>new</p>")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got a value: %s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// Decode rather than substring-match: encoding/json HTML-escapes `<` to `\u003c` in
+			// string values, so a raw-bytes search for the literal tag fails on output that is
+			// entirely correct.
+			var decoded struct {
+				Body struct {
+					HTML string `json:"html"`
+				} `json:"body"`
+			}
+			if derr := json.Unmarshal(got, &decoded); derr != nil {
+				t.Fatalf("result is not decodable: %v (%s)", derr, got)
+			}
+			if decoded.Body.HTML != "<p>new</p>" {
+				t.Errorf("body.html = %q, want the new html", decoded.Body.HTML)
+			}
+			// Unmodelled scaffolding must survive byte-for-byte -- that is the whole reason this
+			// re-serialises the decoded map rather than building a fresh object.
+			if strings.Contains(string(tc.raw), "rich_text") && !strings.Contains(string(got), "rich_text") {
+				t.Errorf("scaffolding outside body.html was dropped: %s", got)
+			}
+		})
+	}
+}

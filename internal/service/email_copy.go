@@ -60,7 +60,14 @@ const maxPromptSize = 2400 // runes
 // 267 runes, taking Post-Event from 6078 to 6345 and the worst valid composition from 8478 to
 // 8745 -- which left 255 runes under 9000, less than half a section. This is the fourth time
 // prompt text has eaten this margin, so the bound moves WITH the text rather than after a
-// reviewer notices: 9300 restores 555 runes, a section again.
+// reviewer notices: 9300 restores a section of headroom.
+//
+// The worst valid composition is 8764, not 8745: the registrationURL line adds a further 19
+// runes ("\nRegistration URL: ") when a URL is present, and it is omitted entirely when one is
+// not. Both figures are real -- 8745 is the no-URL floor and 8764 the with-URL one -- so the
+// bound must clear the LARGER, leaving 536 runes of headroom.
+// TestComposedBoundClearsEveryStageFloor measures the with-URL floor for exactly this reason;
+// measuring without one put the label outside the bound it is supposed to guard.
 const maxComposedPromptSize = 9300 // runes
 
 // emailCopyPromptVars holds the values needed to compose the generation prompt.

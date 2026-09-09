@@ -732,10 +732,25 @@ func widgetWithHTML(rawWidget json.RawMessage, htmlBody string) (json.RawMessage
 	if err := json.Unmarshal(rawWidget, &w); err != nil {
 		return nil, fmt.Errorf("decode widget: %w", err)
 	}
+	// A JSON `null` decodes into a map WITHOUT error and leaves it nil, so neither the
+	// len() guard above nor the error check catches it -- `"body": null` has len 4. Writing to
+	// the nil map then panics, and a panic is not an error: applyEmailContent's best-effort
+	// contract swallows failures, but the panic unwinds past it to the orchestrator's recover
+	// and fails the WHOLE dispatch, orphaning the draft this path exists to protect.
+	//
+	// Reachable despite htmlBlocks filtering null-bodied widgets out, because the read and the
+	// write are two separate requests: an operator editing the draft in HubSpot between them --
+	// exactly what a human-reviewed draft invites -- lands the null on the write path.
+	if w == nil {
+		return nil, errors.New("the draft's widget is null")
+	}
 	body := map[string]json.RawMessage{}
 	if len(w["body"]) > 0 {
 		if err := json.Unmarshal(w["body"], &body); err != nil {
 			return nil, fmt.Errorf("decode widget body: %w", err)
+		}
+		if body == nil {
+			body = map[string]json.RawMessage{}
 		}
 	}
 	encodedHTML, err := json.Marshal(htmlBody)

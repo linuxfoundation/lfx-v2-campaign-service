@@ -1076,8 +1076,10 @@ func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
 
 	worst, worstStage := 0, ""
 	for _, name := range emailstage.Names() {
-		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
-		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+		// WITH a registrationURL, less its sentinel rune -- see worstStageFloor for why the
+		// empty-URL composition measures the wrong floor.
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, registrationURL: "x"})
+		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user) - 1
 		if floor > worst {
 			worst, worstStage = floor, name
 		}
@@ -1425,11 +1427,15 @@ func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
 
 // worstStageFloor is the largest composed prompt any stage produces at zero caller input. Shared
 // by the bound test and the doc-arithmetic test so neither transcribes a number the other derives.
+// Composed WITH a registrationURL, less its one sentinel rune, because that is the LARGER floor
+// and therefore the one the bound must clear. composeEmailCopyPrompt omits the whole
+// "\nRegistration URL: " line when the value is empty, so measuring without one understates the
+// floor by 19 runes and leaves the label outside every bound derived from this helper.
 func worstStageFloor() int {
 	worst := 0
 	for _, name := range emailstage.Names() {
-		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name})
-		if floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user); floor > worst {
+		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, registrationURL: "x"})
+		if floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user) - 1; floor > worst {
 			worst = floor
 		}
 	}

@@ -77,8 +77,8 @@ They are separate constants because they measure different things — the caller
 input plus the stage template — and getting the second number wrong fails in TWO opposite
 directions, both of which this file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (6345 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
-  only **155** runes for caller fields (6500 - 6345), so anything from 156 runes upward was
+- **Too low rejects valid input.** At 6500 the Post-Event stage (6364 runes COMPOSED -- framing plus its 3637-rune ContentPrompt and the registration-URL line, at zero caller input) left
+  only **136** runes for caller fields (6500 - 6364), so anything from 137 runes upward was
   refused — 1618 runes of event details passed the 3000 pre-check and were then refused by the
   composed one, two bounds contradicting each other, with the caller told their input was too
   large immediately after the first accepted it.
@@ -97,8 +97,9 @@ of two checks after the first accepted it. The composed bound is then sized for 
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
 — the templates are large (Post-Event composes to a 6345-rune floor from a 3637-rune ContentPrompt) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 8745 (Post-Event floors at 6345), so
-9300 clears it with ~555 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
+With the input bound at 2400 the worst valid composition is 8764 (Post-Event floors at 6364 with a
+registration URL present; 6345 without, since the URL line is omitted entirely when absent), so
+9300 clears it with 536 runes of headroom. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
 
 That test was a **false green** for one revision: once the input bound moved to 2400, its 2500-rune
@@ -118,7 +119,7 @@ every other bound in this file counts runes. `len()` gave an event named in Japa
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
 shared prompt or any template changes: Post-Event is the largest stage at a 6345-rune COMPOSED floor (its ContentPrompt alone is 3637),
-and with the maximum 2400 runes of caller input it composes to 8745 against the 9300 bound.
+and with the maximum 2400 runes of caller input it composes to 8764 against the 9300 bound.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
 template grew — three times, most recently when a paragraph added to the shared system prompt grew

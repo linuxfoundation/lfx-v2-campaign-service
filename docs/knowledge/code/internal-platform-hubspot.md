@@ -16,8 +16,14 @@ timestamp: "2026-07-20T00:00:00Z"
 Package hubspot is the HubSpot API client for the EMAIL channel (LFXV2-2770). It
 drives HubSpot's email surface: marketing-email search/get/clone, draft-update
 (subject + sender) and draft rich-text CONTENT read/write (GetEmailHTMLWidgets /
-SetEmailHTMLWidgets, added with UTM link tagging in LFXV2-2775 — the write patches
-only the named widgets' body.html so untouched template configuration survives), CRM
+SetEmailHTMLWidgets, added with UTM link tagging in LFXV2-2775 — the write READS the
+draft first and PATCHes the whole `content` object back with only body.html changed,
+every other byte re-sent verbatim, because HubSpot treats submitted content as
+AUTHORITATIVE on a drag-and-drop email: a partial patch destroys the draft rather than
+merging into it. GetEmailHTMLWidgets returns []EmailHTMLBlock in the layout reading
+order flexAreas records, not an unordered map, so "the first block" is well defined —
+a Go map's iteration order is randomised and the per-widget `order` field is absent on
+every drag-and-drop template observed), CRM
 contact-list search/get/create/filter-update (no delete), and event-definition
 lookups. Credentials and account
 configuration are injected via `NewClient`; the package never reads environment
