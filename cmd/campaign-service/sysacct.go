@@ -129,8 +129,8 @@ func installableProviders() []model.Provider {
 func runSysacctBootstrap(args []string) error {
 	fs := flag.NewFlagSet(bootstrapSystemAccountCmd, flag.ContinueOnError)
 	provider := fs.String("provider", "", "provider to install (e.g. google-ads)")
-	accountID := fs.String("account-id", "", "ad account id. On a FIRST install, omitting it is the credentials-first state, allowed only for a provider with account discovery whose create path names the missing choice (its dispatcher can discover the account afterwards; every other provider is refused, since nothing could finish the row later). On a rotation it means KEEP the id already on the row — use -clear-account-id to remove one")
-	clearAccountID := fs.Bool("clear-account-id", false, "drop the account selection from an existing row, returning it to the credentials-first state; only for a provider with account discovery, and never combined with -account-id")
+	accountID := fs.String("account-id", "", "ad account id. On a FIRST install, omitting it is allowed for two different reasons: a paid-ads provider with account DISCOVERY whose create path names the missing choice can finish the row later, and the EMAIL channel has no ad account to select at all (nothing in the HubSpot adapter reads it). Every other paid-ads provider is refused, since nothing could finish the row. On a rotation it means KEEP the id already on the row — use -clear-account-id to remove one")
+	clearAccountID := fs.Bool("clear-account-id", false, "drop the account selection from an existing row, returning it to the credentials-first state; for a paid-ads provider with account discovery, or for the email channel, which never needed one — never combined with -account-id")
 	configKV := fs.String("config", "", "non-secret provider config as key=value pairs, e.g. org_id=123. Keys not mentioned keep their current value; `key=` with no value clears that column")
 	if err := fs.Parse(args); err != nil {
 		return err
