@@ -118,12 +118,21 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 	return client, err
 }
 
-// resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built
-// the client from. Dispatch needs it to record WHICH ACCOUNT served the campaign
-// (stampProvenance); the read-only callers (ReadMetrics, SearchEmails) do not and keep the
-// narrower signature. The resolved is returned even alongside an error, for the same reason
-// as the reddit adapter's variant: a defect found after the fallback was taken still came
-// from the system row.
+// resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built the
+// client from. Two different needs take it, and both are about attribution AFTER resolution
+// succeeded:
+//
+//   - Dispatch records WHICH ACCOUNT served the campaign (stampProvenance).
+//   - SearchCampaigns, SearchEmails and CreateCampaign classify a LATE 401/403 -- a token the
+//     resolution accepted and the platform then refused. systemScoped tags only what resolution
+//     itself can see, so without the resolved in hand a revoked LF credential is reported as each
+//     project's own misconfiguration.
+//
+// ReadMetrics is the one caller still on the narrow wrapper: it has no permission arm of its own,
+// so there is nothing for the origin to inform.
+//
+// The resolved is returned even alongside an error, for the same reason as the reddit adapter's
+// variant: a defect found after the fallback was taken still came from the system row.
 func (d *HubSpotDispatcher) resolveHubSpotClientWithCreds(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, res *resolved, err error) {
 	res, err = d.creds.resolve(ctx, projectID, platform)
 	if err != nil {

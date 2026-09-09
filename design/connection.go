@@ -1426,12 +1426,17 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"Other failures fall into FOUR classes, and the status tells them apart. " +
 			"**400 — nothing was created, and the request is correctable.** Either HubSpot rejected " +
 			"it on the merits (a definite non-429 4xx), or the stored connection EXISTS but is not " +
-			"usable as configured. A 401/403 says so in its own words, because retrying another " +
+			"usable as configured. A 401/403 on a connection the PROJECT owns says so in its own " +
+			"words, because retrying another name cannot fix a permission problem. The SAME " +
+			"rejection on the shared LF connection — used when the project has none of its own — " +
+			"is a 500 instead: that scope is unaddressable over HTTP, so a 400 would tell the " +
+			"caller to repair a row they cannot reach. Retrying another " +
 			"NAME cannot fix a permission problem. " +
 			"**404 — no HubSpot connection is configured for this project.** Distinct from the 400 " +
 			"above, which means one exists and is broken: the remedy is to connect HubSpot, not to " +
 			"fix a credential. " +
-			"**500 — the stored credential could not be decrypted**, or the service is otherwise " +
+			"**500 — the shared LF connection was refused on permissions, the stored credential " +
+			"could not be decrypted**, or the service is otherwise " +
 			"faulted BEFORE the request went out. Not the operator's to fix, and not retryable by " +
 			"them. 500 is reserved for that pre-send position: a fault discovered AFTER the create " +
 			"returned without error is a 503, because by then the campaign may exist and only this " +
