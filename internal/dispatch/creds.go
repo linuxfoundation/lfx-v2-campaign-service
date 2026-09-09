@@ -216,6 +216,12 @@ func systemOrigin(err error) error {
 	return fmt.Errorf("%w: %w", domain.ErrSystemConnectionOrigin, err)
 }
 
+// isFromSystem reports whether the credential came from the LF system row, nil-safe like
+// systemScoped. It exists because systemScoped only upgrades ErrConnectionNotUsable defects, so a
+// caller classifying on a DIFFERENT taxonomy (the create path's platform-rejection tags) needs to
+// ask the origin question without routing its error through a gate that will not answer it.
+func (r *resolved) isFromSystem() bool { return r != nil && r.fromSystem }
+
 func (r *resolved) systemScoped(err error) error {
 	if r == nil || !r.fromSystem || err == nil || !errors.Is(err, domain.ErrConnectionNotUsable) {
 		return err

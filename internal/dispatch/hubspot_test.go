@@ -942,3 +942,97 @@ func TestHubSpot_SearchCampaignsCrossesTheSeam(t *testing.T) {
 		}
 	}
 }
+
+// TestHubSpot_LatePermissionFailureCarriesTheCredentialOrigin pins that a 401/403 discovered on
+// the FIRST REAL CALL -- after credential resolution returned cleanly -- still says which row the
+// token came from.
+//
+// The distinction only became reachable when credsSource.systemConn stopped refusing the email
+// channel: a project with no HubSpot connection of its own now runs on the shared LF row. Defects
+// that resolution finds ITSELF are tagged by res.systemScoped inside resolveHubSpotClientWithCreds,
+// but a permission failure is invisible until the platform answers, and the narrow
+// resolveHubSpotClient wrapper discards the resolved before that can happen. Untagged, one expired
+// or under-scoped LF token is reported to every fallback foundation as THEIR configuration fault --
+// telling each to fix a connection they do not have, while the single operator who can repair it
+// hears from nobody.
+//
+// Both paths are covered because they carry the origin by DIFFERENT mechanisms, and only one of
+// them is systemScoped: SearchCampaigns emits ErrConnectionNotUsable, which systemScoped upgrades;
+// CreateCampaign emits the platform-rejection taxonomy, which systemScoped is gated against and
+// silently passes through, so it joins ErrSystemConnectionOrigin directly.
+func TestHubSpot_LatePermissionFailureCarriesTheCredentialOrigin(t *testing.T) {
+	newDispatcher := func(t *testing.T, srvURL string, systemOwned bool) *HubSpotDispatcher {
+		t.Helper()
+		owner := "cncf"
+		if systemOwned {
+			owner = model.SystemProjectID
+		}
+		return NewHubSpotDispatcher(
+			&scopedConnReader{rows: map[string]*model.Connection{owner: activeHubSpotConn(goodHubSpotCreds)}},
+			identityEncryptor{}, fakeAudienceReader{}, hubspot.WithBaseURL(srvURL))
+	}
+
+	for _, tc := range []struct {
+		name string
+		call func(*HubSpotDispatcher) error
+		// tagWhenProjectOwned is the sentinel the ordinary (project-owned) case must still carry.
+		// Asserting it in BOTH rows is what keeps the origin split additive: a change that
+		// tagged the system case by REPLACING the existing classification would pass a
+		// system-only assertion and break every consumer switching on the original tag.
+		tagWhenProjectOwned error
+	}{
+		{
+			name: "SearchCampaigns",
+			call: func(d *HubSpotDispatcher) error {
+				_, err := d.SearchCampaigns(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon")
+				return err
+			},
+			tagWhenProjectOwned: domain.ErrConnectionNotUsable,
+		},
+		{
+			name: "CreateCampaign",
+			call: func(d *HubSpotDispatcher) error {
+				_, err := d.CreateCampaign(context.Background(), "cncf", model.ProviderHubSpot, "KubeCon NA 2027")
+				return err
+			},
+			tagWhenProjectOwned: domain.ErrPlatformPermission,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"insufficient scope"}`)
+			}))
+			defer srv.Close()
+
+			t.Run("the LF row's failure is marked system-owned", func(t *testing.T) {
+				err := tc.call(newDispatcher(t, srv.URL, true))
+				if err == nil {
+					t.Fatal("a 403 was reported as success")
+				}
+				if !errors.Is(err, domain.ErrSystemConnectionOrigin) && !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+					t.Errorf("a 403 on the shared LF token is not marked system-owned, so every "+
+						"fallback project is told to fix a connection it does not have: %v", err)
+				}
+				if !errors.Is(err, tc.tagWhenProjectOwned) {
+					t.Errorf("the original classification was REPLACED rather than added to; "+
+						"consumers switching on %v now miss this error: %v", tc.tagWhenProjectOwned, err)
+				}
+			})
+
+			t.Run("a project's own failure stays the project's", func(t *testing.T) {
+				err := tc.call(newDispatcher(t, srv.URL, false))
+				if err == nil {
+					t.Fatal("a 403 was reported as success")
+				}
+				if !errors.Is(err, tc.tagWhenProjectOwned) {
+					t.Errorf("want %v, got %v", tc.tagWhenProjectOwned, err)
+				}
+				if errors.Is(err, domain.ErrSystemConnectionOrigin) || errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+					t.Errorf("a project's OWN connection defect was attributed to the LF system row, "+
+						"which sends the one person who can fix it to the wrong place: %v", err)
+				}
+			})
+		})
+	}
+}

@@ -1,14 +1,17 @@
 ---
 type: "Code Concept"
 title: "internal/bootstrap"
-description: "Installs and rotates the LF-owned system ad-account credentials that projects with no connection of their own fall back to."
+description: "Installs and rotates the LF-owned system credentials -- paid-ads accounts and the shared HubSpot portal -- that projects with no connection of their own fall back to."
 resource: "internal/bootstrap"
 ---
 
 # internal/bootstrap
 
-Installs and rotates the connection row for `model.SystemProjectID` — the LF-owned ad accounts a
-project with NO connection of its own falls back to. The package exists because that scope is
+Installs and rotates the connection row for `model.SystemProjectID` — the LF-owned credentials a
+project with NO connection of its own falls back to. That is the paid-ads accounts and, since
+`credsSource.systemConn` stopped refusing the email channel, the shared LF HubSpot portal: the
+installable set is every provider `Valid()` admits, not the paid-ads subset (`installableProviders`
+in `cmd/campaign-service/sysacct.go` derives it from `Valid()` precisely so the two stay in step). The package exists because that scope is
 deliberately unreachable over HTTP: `rejectSystemScope` refuses it on every connection route, so
 without an out-of-band installer the fallback ships permanently empty and the feature is off. It is
 driven by the `bootstrap-system-account` subcommand of the service binary (see
@@ -103,7 +106,15 @@ enforced on the system row:
 `accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
 whether the row already exists. On a FIRST install an omitted `-account-id` is the credentials-first
 state, legal only where the account can be chosen afterwards (`accountDiscoveryProviders`, Google
-Ads, Meta since LFXV2-3061 and X since LFXV2-3319). Membership is narrower than "the dispatcher can discover
+Ads, Meta since LFXV2-3061 and X since LFXV2-3319).
+
+The EMAIL channel is exempt from the requirement outright rather than admitted to that map, and the
+distinction matters: `accountDiscoveryProviders` says "the account can be chosen LATER", whereas
+HubSpot has no ad account to choose at all. `requireAccountID` asks `!provider.IsPaidAds()`, so an
+email provider never needs `-account-id` and never reaches the credentials-first lifecycle the map
+describes. Asking the classification rather than naming HubSpot keeps this in step with the rest of
+the service — a provider added later is exempt only once someone classifies it as email. The rest
+of this section is therefore about the five paid-ads adapters. Membership is narrower than "the dispatcher can discover
 accounts": the other half of a completable lifecycle is that the path needing an account id fails
 in a way that NAMES the missing choice. Meta is the one provider where the halves ever came
 apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, because its

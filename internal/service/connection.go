@@ -1362,6 +1362,18 @@ func (s *ConnectionService) CreateHubspotCampaign(ctx context.Context, p *conn.C
 			// a 401/403, so the "check the name" message would send the operator to change the
 			// one thing that was never at fault.
 			if errors.Is(cerr, domain.ErrPlatformPermission) {
+				// WHOSE token was refused decides who can fix it. A project with no HubSpot
+				// connection of its own creates against the shared LF row, and telling it to
+				// check "the connection's" token sends it to a connection it does not have --
+				// while the one operator who can repair the LF token hears nothing, from as many
+				// projects as share the row. The dispatcher joins ErrSystemConnectionOrigin when
+				// the LF row served the request precisely so this message can split.
+				if errors.Is(cerr, domain.ErrSystemConnectionOrigin) {
+					return nil, &conn.BadRequestError{
+						Code:    "400",
+						Message: "hubspot refused the campaign creation on permissions, using the shared LF HubSpot connection; nothing was created. This is an operator fault, not this project's configuration — the LF private app token needs to be valid and hold the marketing campaigns write scope",
+					}
+				}
 				return nil, &conn.BadRequestError{
 					Code:    "400",
 					Message: "hubspot refused the campaign creation on permissions; nothing was created — check that the connection's private app token is valid and has the marketing campaigns write scope",

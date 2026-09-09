@@ -766,7 +766,12 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 // connection's credential to use, not which campaigns are visible. HubSpot's campaign namespace
 // is the whole portal, so two projects sharing a portal see the same campaigns.
 func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID string, platform model.Provider, query string) (model.HubSpotCampaignPage, error) {
-	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	// WithCreds, not the narrow wrapper: the late 401/403 below must be attributable to the row
+	// the token actually came from. resolve() tags defects it finds ITSELF, but a permission
+	// failure only surfaces on the first real call -- after resolution has returned cleanly --
+	// so without the resolved here it is reported as the project's, and one expired LF token
+	// becomes a configuration fault filed against every foundation using the fallback.
+	client, res, err := d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	if err != nil {
 		return model.HubSpotCampaignPage{}, err
 	}
@@ -779,7 +784,11 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 		// to reconnect HubSpot. ErrConnectionNotUsable is what maps it to a 400 the operator can
 		// act on, the same tag the credential-resolution defects above carry.
 		if hubspot.IsPermissionRejection(err) {
-			return model.HubSpotCampaignPage{}, fmt.Errorf("%w: search hubspot campaigns: %w", domain.ErrConnectionNotUsable, err)
+			// systemScoped is a no-op on a project-owned credential, so this is the same
+			// ErrConnectionNotUsable as before for the ordinary case and additionally carries
+			// ErrSystemConnectionOrigin when the LF row served it.
+			return model.HubSpotCampaignPage{}, res.systemScoped(
+				fmt.Errorf("%w: search hubspot campaigns: %w", domain.ErrConnectionNotUsable, err))
 		}
 		return model.HubSpotCampaignPage{}, fmt.Errorf("search hubspot campaigns: %w", err)
 	}
@@ -810,7 +819,9 @@ func (d *HubSpotDispatcher) SearchCampaigns(ctx context.Context, projectID strin
 // portal_id. It performs no existence check — see the client method and the design description
 // for why that belongs with the operator.
 func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string, platform model.Provider, name string) (*model.HubSpotCampaign, error) {
-	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	// WithCreds for the same reason as SearchCampaigns: the permission arm below fires after a
+	// clean resolution, so the origin has to be carried in rather than re-derived.
+	client, res, err := d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -826,7 +837,19 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 		// treated as unconfirmed upstream, which is the safe direction for a create.
 		switch {
 		case hubspot.IsPermissionRejection(err):
-			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformPermission, domain.ErrPlatformRejected, err))
+			// ErrSystemConnectionOrigin is joined DIRECTLY rather than via res.systemScoped:
+			// systemScoped is gated on ErrConnectionNotUsable and deliberately upgrades only
+			// connection-usability defects, whereas this is the platform-rejection taxonomy the
+			// create path classifies on. Passing this error through it is a silent no-op --
+			// verified, not assumed -- so the origin would be lost and the service's remedy
+			// message would tell a fallback project to fix a connection it does not own.
+			// The origin sentinel is additive: every existing errors.Is on the two platform
+			// tags keeps its answer.
+			joined := errors.Join(domain.ErrPlatformPermission, domain.ErrPlatformRejected, err)
+			if res.isFromSystem() {
+				joined = errors.Join(domain.ErrSystemConnectionOrigin, joined)
+			}
+			return nil, fmt.Errorf("create hubspot campaign: %w", joined)
 		case hubspot.IsDefiniteRejection(err):
 			return nil, fmt.Errorf("create hubspot campaign: %w", errors.Join(domain.ErrPlatformRejected, err))
 		case hubspot.IsNeverSent(err):
