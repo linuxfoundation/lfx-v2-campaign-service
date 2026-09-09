@@ -1409,7 +1409,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"depends on the connection — they are stored per project with their own token and " +
 			"`portal_id`, and a project with none resolves the LF system connection — so for LF " +
 			"foundations, which share one portal, this IS visible to every other foundation " +
-			"working in it; projects on a different portal do not see each " +
+			"working in it; projects on a different portal do not see each other's campaigns. " +
+			"A caller MUST warn before invoking it, and must not put anything " +
 			"project-sensitive in the name. " +
 			"**It does not check for an existing campaign first, and that is deliberate.** A " +
 			"search-then-create inside one call would still race any concurrent caller and could not " +

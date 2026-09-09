@@ -19,7 +19,18 @@
 -- project TOMBSTONED its connection, so the index covers the rows that answer it rather than
 -- the whole table, and stays small while ordinary active rows cost nothing to write.
 --
--- Plain CREATE INDEX rather than CONCURRENTLY, matching 000017: the migration runner holds a
--- transaction, CONCURRENTLY cannot run inside one, and this table is small enough that the
--- brief ACCESS EXCLUSIVE lock is not worth the split-migration machinery.
+-- Plain CREATE INDEX rather than CONCURRENTLY, matching 000017 -- and the reason is a size
+-- trade-off, NOT a constraint. An earlier version of this comment said the runner holds a
+-- transaction so CONCURRENTLY could not run; that is backwards. 000013 documents the actual
+-- contract: the pgx/v5 golang-migrate driver executes each migration with a bare ExecContext
+-- and does NOT wrap it in a transaction, which is precisely why CONCURRENTLY is available to a
+-- single-statement file like this one.
+--
+-- The trade-off taken instead: a plain build takes a SHARE lock, which blocks writes to
+-- hubspot_connections for its duration but not reads. That table holds one row per project
+-- plus the system row -- single digits today -- so the build is milliseconds, and connection
+-- writes are rare operator actions rather than request-path traffic. CONCURRENTLY would avoid
+-- the write lock at the cost of a second table scan, a migration that cannot be batched with
+-- any other statement, and an INVALID index left behind on failure that needs manual cleanup.
+-- On a table this size that machinery buys nothing. Revisit if the table ever grows.
 CREATE INDEX IF NOT EXISTS idx_hubspot_connections_project_deleted ON hubspot_connections (project_id) WHERE status = 'deleted';

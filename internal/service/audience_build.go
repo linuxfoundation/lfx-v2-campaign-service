@@ -104,9 +104,15 @@ func audienceBuildErr(err error) error {
 	if errors.Is(err, domain.ErrSystemConnectionNotUsable) ||
 		errors.Is(err, domain.ErrSystemConnectionMissing) ||
 		errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		// The remedy is deliberately NOT a single command. Re-running bootstrap rewrites the
+		// CREDENTIAL, which repairs a missing or undecodable blob — but its update path never
+		// touches Status (only the create arm sets StatusActive), so an INACTIVE system row is
+		// not repaired by re-running it. Naming one command for both would send an operator to
+		// run something that changes nothing and then look elsewhere for the fault.
 		return &audiences.InternalServerError{
-			Code:    "500",
-			Message: "the shared LF HubSpot connection is not usable; an operator must reinstall it (bootstrap-system-account -provider hubspot). Nothing is wrong with this project's configuration",
+			Code: "500",
+			Message: "the shared LF HubSpot connection is not usable; this is an operator fault, not this project's configuration. " +
+				"Check the system connection's status is active, then re-run bootstrap-system-account -provider hubspot to replace the credential",
 		}
 	}
 	msg := "the audience build failed upstream"
