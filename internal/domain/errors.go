@@ -38,6 +38,29 @@ var (
 	// Maps to 409.
 	ErrAudienceBuildInFlight = errors.New("an audience build for this brief and platform is already in progress")
 
+	// ErrAudienceProvenanceImmutable indicates a PATCH tried to change the platform list ids on an
+	// audience that already records the portal they were built in.
+	//
+	// The stamp names the portal the EXISTING ids were created in, and nothing in a PATCH can
+	// re-derive it: the request carries ids, not a credential, so the service cannot ask HubSpot
+	// which portal the new ids live in. Applying the patch would leave a row whose stamp vouches
+	// for ids it never saw -- and the dispatch guard, comparing that stamp to the currently
+	// resolved portal, would PASS, approving a send against list ids no lookup ever verified.
+	// That is the exact state built_in_portal_id exists to make impossible, so the write is
+	// refused rather than allowed to produce a row the guard cannot judge.
+	//
+	// Refusing is the right half of the trade against clearing the stamp. Clearing also fails
+	// closed at dispatch, but it does so LATER and silently: the PATCH succeeds, and the operator
+	// discovers at send time that the audience must be rebuilt. Refusing says so at the write,
+	// while the caller is still holding the request that caused it. Provenance is set at build
+	// time only -- a caller who needs different lists rebuilds, which re-stamps under the
+	// credential that actually created them.
+	//
+	// Maps to 409: nothing conflicts and the request is well formed, but what it attempts is not
+	// an edit of this row -- like ErrBriefIdentityImmutable below, the remedy is to produce a new
+	// one, so the message has to name that remedy.
+	ErrAudienceProvenanceImmutable = errors.New("a built audience's platform list ids cannot be changed once its portal is recorded; rebuild the audience instead")
+
 	// ErrBriefIdentityImmutable indicates an update tried to change a brief's delivery_type or
 	// stage. Under 000030 those two columns are part of a brief's IDENTITY -- the unique key is
 	// (project_id, event_slug, delivery_type, stage) -- so changing one does not edit this brief,

@@ -1352,6 +1352,16 @@ func TestBuildAudience_PortalLookupFailureKeepsItsDiagnosis(t *testing.T) {
 			wantBadRequest: true,
 		},
 		{
+			// noOwnConnection wraps ErrNotFound ALONE, so this misses the ErrConnectionNotUsable
+			// arm above and used to land on the generic retry 500 -- telling an operator with no
+			// HubSpot anywhere to retry a condition that can never clear itself.
+			name:           "no connection anywhere says connect, not retry",
+			cause:          fmt.Errorf("no hubspot connection configured for project cncf: %w", domain.ErrNotFound),
+			wantMessage:    "connect HubSpot",
+			notMessage:     "retry once",
+			wantBadRequest: true,
+		},
+		{
 			name:        "an untagged failure keeps the portal message",
 			cause:       errors.New("dial tcp: i/o timeout"),
 			wantMessage: "portal",

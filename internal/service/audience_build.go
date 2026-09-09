@@ -166,6 +166,26 @@ func audienceBuildErr(err error) error {
 				"created -- reconnect HubSpot for this project, then build again",
 		}
 	}
+	// No HubSpot connection ANYWHERE -- not on the project, not on the LF system row. Checked
+	// before the portal arm below because it is the one cause that names a different remedy: there
+	// is nothing to retry and nothing to repair, only something to create.
+	//
+	// It needs its own arm rather than riding on ErrConnectionNotUsable, because noOwnConnection
+	// wraps ErrNotFound ALONE. Widening that sentinel to also carry ErrConnectionNotUsable would
+	// reach every other caller that distinguishes "absent" from "present but broken" -- notably
+	// classifyDiscoveryError, whose 404 "connect your project" arm is ordered above its 400 and
+	// would start answering the wrong one. Keeping the widening local costs one errors.Is here and
+	// changes nothing outside this function.
+	//
+	// 400: the caller can fix this, and the message says how rather than telling them to wait.
+	if errors.Is(err, errPortalUnconfirmed) && errors.Is(err, domain.ErrNotFound) {
+		return &audiences.BadRequestError{
+			Code: "400",
+			Message: "no HubSpot connection is configured for this project, and no shared LF connection is " +
+				"available to fall back to, so there is no portal to build the audience in. Nothing was " +
+				"created -- connect HubSpot for this project, then build again",
+		}
+	}
 	// Not an upstream failure: nothing was sent to HubSpot. Saying "failed upstream" here would
 	// send an operator to check a platform that was never contacted on this path.
 	//

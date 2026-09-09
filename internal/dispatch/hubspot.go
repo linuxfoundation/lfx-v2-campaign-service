@@ -352,7 +352,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		}
 	}
 
-	portalID, perr := assertAudiencePortal(ctx, client, audiencePortal)
+	portalID, perr := assertAudiencePortal(ctx, client, res, audiencePortal)
 	if perr != nil {
 		return nil, notCreated(perr)
 	}
@@ -930,7 +930,11 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 // process already held.
 //
 // An empty return accompanies a non-nil error only; on success it is always the confirmed portal.
-func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audiencePortal string) (string, error) {
+// res carries the credential's origin so a late 401/403 -- a token the resolution accepted and the
+// platform then rejected -- is attributed to the row it came from rather than to the caller. Same
+// class as the create/read paths: systemScoped covers construction only, and by the time the status
+// is visible the resolved is the only thing that still knows whose token it was.
+func assertAudiencePortal(ctx context.Context, client *hubspot.Client, res *resolved, audiencePortal string) (string, error) {
 	if strings.TrimSpace(audiencePortal) == "" {
 		return "", fmt.Errorf("hubspot: the brief's audience does not record which portal its lists were built in, "+
 			"so they cannot be resolved against the portal this send authenticates against — rebuild the audience: %w",
@@ -940,6 +944,15 @@ func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audienceP
 	defer cancel()
 	current, perr := client.AuthenticatedPortalID(portalCtx)
 	if perr != nil {
+		// A permission rejection is not the transient condition the retry message describes, and
+		// on the shared LF token it is an operator's to fix, not this project's. systemScoped is
+		// gated on ErrConnectionNotUsable, so the tag goes on first for it to have something to
+		// upgrade; on a project-owned credential it is a no-op and the message stays the caller's.
+		if hubspot.IsPermissionRejection(perr) {
+			return "", res.systemScoped(fmt.Errorf("%w: hubspot: the credential was refused while confirming "+
+				"which portal this send authenticates against, so the audience's send list cannot be proven "+
+				"to exist there: %w", domain.ErrConnectionNotUsable, perr))
+		}
 		return "", fmt.Errorf("hubspot: could not confirm which portal this send authenticates against, so the "+
 			"audience's send list cannot be proven to exist there — retry once portal identity is readable: %w", perr)
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
@@ -597,4 +598,106 @@ func TestMapAudienceErr_ConflictReasonsAreDistinctAndStable(t *testing.T) {
 			seen[*conflict.Reason] = tc.name
 		})
 	}
+}
+
+// TestUpdateAudience_ProvenanceMakesTheListIdsImmutable pins the hole a plain PATCH left in the
+// guarantee this feature advertises.
+//
+// built_in_portal_id names the portal the EXISTING list ids were built in, and a PATCH cannot
+// re-derive it: the request carries ids, not a credential, so nothing can ask HubSpot where the new
+// ids live. Before this refusal, applyAudiencePatch wrote PlatformMasterListID straight through and
+// left the stamp untouched -- and assertAudiencePortal compares that stamp to the CURRENTLY resolved
+// portal rather than to the ids, so it PASSED. The guard approved a send against list ids no lookup
+// had ever verified, which is the exact state the column exists to prevent.
+//
+// The scoping is asserted too, because a refusal that is too broad is its own defect: status and
+// summary stay patchable on a stamped row, a no-op re-send of the same id is not a change, and a row
+// with NO stamp is unaffected -- which matters because the pre-provenance rows were deliberately not
+// backfilled and must stay editable.
+func TestUpdateAudience_ProvenanceMakesTheListIdsImmutable(t *testing.T) {
+	stamped := func(t *testing.T) (*AudienceService, *fakeAudienceRepo, string) {
+		t.Helper()
+		repo := newFakeAudienceRepo()
+		s := NewAudienceService(repo)
+		created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Audience: &audiences.AudienceInput{Platform: "hubspot"},
+		})
+		if err != nil {
+			t.Fatalf("CreateAudience: %v", err)
+		}
+		// What a build leaves behind: ids plus the portal they were created in.
+		repo.items[created.ID].PlatformMasterListID = "30967"
+		repo.items[created.ID].BuiltInPortalID = "8112310"
+		repo.items[created.ID].Status = model.AudienceBuilt
+		return s, repo, created.ID
+	}
+
+	t.Run("changing the master list id on a stamped row is refused", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{PlatformMasterListID: strptr("99999")},
+		})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want *audiences.ConflictError: a patch cannot prove new ids "+
+				"belong to the recorded portal, so the guard would vouch for ids it never saw", err, err)
+		}
+		if !strings.Contains(conflict.Message, "Rebuild") && !strings.Contains(conflict.Message, "rebuild") {
+			t.Errorf("the message must name the remedy; \"immutable\" alone leaves the caller stuck: %q",
+				conflict.Message)
+		}
+		if got := repo.items[id].PlatformMasterListID; got != "30967" {
+			t.Errorf("the refused patch was applied anyway: master list id = %q", got)
+		}
+	})
+
+	t.Run("a status-only patch on a stamped row still works", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{Status: strptr("failed")},
+		})
+		if err != nil {
+			t.Fatalf("a patch that touches no list id must not be refused: %v", err)
+		}
+	})
+
+	t.Run("re-sending the SAME master list id is not a change", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch: strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{
+				PlatformMasterListID: strptr("30967"), Status: strptr("failed"),
+			},
+		})
+		if err != nil {
+			t.Fatalf("a caller PATCHing status on a row it read back must not be blocked by a field "+
+				"it never meant to change: %v", err)
+		}
+	})
+
+	t.Run("an UNSTAMPED row keeps its ids editable", func(t *testing.T) {
+		repo := newFakeAudienceRepo()
+		s := NewAudienceService(repo)
+		created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Audience: &audiences.AudienceInput{Platform: "hubspot"},
+		})
+		if err != nil {
+			t.Fatalf("CreateAudience: %v", err)
+		}
+		// No BuiltInPortalID: a row written before the column existed, deliberately not backfilled.
+		if _, uerr := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[created.ID].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{PlatformMasterListID: strptr("30967")},
+		}); uerr != nil {
+			t.Fatalf("a row with no recorded portal has no provenance to break: %v", uerr)
+		}
+	})
 }
