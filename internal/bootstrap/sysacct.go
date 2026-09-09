@@ -1,8 +1,10 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package bootstrap installs the LF-owned system ad-account credentials that projects without
-// a connection of their own fall back to. model.SystemProjectID is unreachable over HTTP
+// Package bootstrap installs the LF-owned system credentials that projects without a connection
+// of their own fall back to: the paid-ads accounts and, since credsSource.systemConn stopped
+// refusing the email channel, the shared LF HubSpot portal. The installable set is every provider
+// model.Provider.Valid() admits rather than the paid-ads subset -- see installableProviders. model.SystemProjectID is unreachable over HTTP
 // (rejectSystemScope), so an out-of-band installer is REQUIRED, not optional: without one the
 // feature ships turned off. It writes through the repository and encryptor, the same two ports
 // the HTTP layer uses, so its row is indistinguishable from an API-written one. Driven by the
