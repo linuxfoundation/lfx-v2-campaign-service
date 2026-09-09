@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -64,8 +66,23 @@ func builtHubSpotAudienceInPortal(masterList string, suppression []string, porta
 	}}
 }
 
-// hubspotServer fakes the HubSpot API for the clone + set-send-list flow. It records the
-// send-list payload so a test can assert the master/suppression ids reached the wire.
+// hubspotServer fakes the HubSpot API for the clone + set-send-list + content flow.
+//
+// The draft it serves is a DRAG_AND_DROP email, because that is what every template in the LF
+// portal is: a `content.flexAreas` layout tree naming module ids, beside a `content.widgets` map
+// holding the modules themselves. The fake models the two HubSpot behaviours a simpler stub hid,
+// and which together produced a staged email with nothing inside it at all:
+//
+//   - Content is AUTHORITATIVE, not merged. A content PATCH REPLACES the widget map, so a payload
+//     naming two widgets of a 33-widget draft leaves a draft holding two widgets. `Dropped()`
+//     reports what a payload discarded, and the client is expected to discard nothing.
+//   - Reading order lives in flexAreas and nowhere else. The widget map is a JSON object with no
+//     order of its own, so a fake serving widgets alone could not tell a caller that reads the
+//     layout from one that iterates the map at random.
+//
+// It is STATEFUL: a reader sees the effect of an earlier write, which is what makes write ORDER
+// observable — the whole claim of the content-vs-tagging test.
+//
 // hubspotRec captures what the fake server saw. Every field is written by the HANDLER goroutine
 // and read by the TEST goroutine, so all access is mutex-guarded: httptest.Server.Close only
 // synchronizes at the deferred Close, which runs AFTER the assertions (same guard as
@@ -82,22 +99,88 @@ type hubspotRec struct {
 	taggedHTML     string
 	subjectSet     string
 	bodyHTMLSet    string
-	draftHTML      string
-	// extraWidget makes the draft report TWO rich-text widgets, the shape applyEmailContent
-	// refuses to rewrite. Set before Dispatch; never mutated concurrently with a read.
+	bodyWidget     string
+	// widgets is content.widgets as the draft currently holds it: module id -> the whole module
+	// object, body and scaffolding included. Seeded by seed(), then REPLACED by every content
+	// PATCH, exactly as HubSpot treats it.
+	widgets map[string]map[string]any
+	// layout is the reading order content.flexAreas places the module ids in.
+	layout []string
+	// dropped names every widget a content PATCH removed from the draft. On a drag-and-drop
+	// email that is destroyed content, not a harmless omission.
+	dropped []string
+	// contentKeys is the key set of the last content PATCH's `content` object. flexAreas absent
+	// from it is the same destruction by another route — the layout tree would be gone.
+	contentKeys []string
+	// extraWidget adds a SECOND populated rich-text block below the first. The generated body
+	// belongs in the first one; this block must survive untouched.
 	extraWidget bool
-	// emptyExtraWidget adds a second rich-text widget with an EMPTY body. The client USED TO omit
-	// such widgets from the map it returned, so a guard counting only populated widgets saw 1 and
-	// rewrote the populated body — the ambiguity the single-widget guard exists to refuse. Empty
-	// rich-text widgets are now returned like any other, and this fixture pins that they count.
+	// emptyExtraWidget adds a second rich-text block with an EMPTY body. An empty block is one an
+	// operator can see and fill, so it counts as a block — and it is not the first one.
 	emptyExtraWidget bool
-	// onlyEmptyWidget makes the draft's SINGLE rich-text widget empty -- the most unambiguous
+	// onlyEmptyWidget makes the draft's SINGLE rich-text block empty -- the most unambiguous
 	// shape there is, and the one an operator most expects the generated body to fill.
 	onlyEmptyWidget bool
-	// imageWidget adds a header IMAGE module beside the rich-text block -- the ordinary template
+	// imageWidget adds a header IMAGE module above the rich-text block -- the ordinary template
 	// shape. It has a body object but no `html` key, so counting object-bodied modules reported
-	// two widgets and the body write silently no-opped.
+	// two blocks and the body write silently no-opped.
 	imageWidget bool
+	// reversedLayout places module_2 ABOVE module_1 while the map's keys sort the other way, so
+	// only a caller that reads flexAreas can name the block at the top of the email.
+	reversedLayout bool
+}
+
+// richModule is a rich-text drag-and-drop module: a body carrying `html`, plus the scaffolding
+// a placed module needs. The scaffolding is here so that a write which dropped it would be
+// visible — sending a bare `{body:{html}}` for a placed module is what made HubSpot discard the
+// two widgets the old client did name.
+func richModule(html string) map[string]any {
+	return map[string]any{
+		"path":           "@hubspot/rich_text",
+		"module_id":      1,
+		"schema_version": 2,
+		"hs_wrapper_css": map[string]any{"padding-top": "10px"},
+		"body":           map[string]any{"html": html},
+	}
+}
+
+// seed builds the draft the flags describe, once, on first access. Callers hold the lock.
+func (r *hubspotRec) seed() {
+	if r.widgets != nil {
+		return
+	}
+	body1 := `<a href="https://events.lfx.dev/reg">Register</a>`
+	if r.onlyEmptyWidget {
+		body1 = "   "
+	}
+	r.widgets = map[string]map[string]any{"module_1": richModule(body1)}
+	r.layout = []string{"module_1"}
+
+	if r.imageWidget {
+		r.widgets["module_hdr"] = map[string]any{
+			"path":      "@hubspot/email/dnd/image",
+			"module_id": 2,
+			"body":      map[string]any{"src": "https://img.example/logo.png", "alt": "logo"},
+		}
+		r.layout = append([]string{"module_hdr"}, r.layout...)
+	}
+	if r.emptyExtraWidget {
+		r.widgets["module_2"] = richModule("   ")
+		r.layout = append(r.layout, "module_2")
+	}
+	if r.extraWidget {
+		r.widgets["module_2"] = richModule("<p>second block</p>")
+		r.layout = append(r.layout, "module_2")
+	}
+	if r.reversedLayout {
+		r.widgets["module_2"] = richModule("<p>top block</p>")
+		r.layout = []string{"module_2", "module_1"}
+	}
+	// A template-level module the layout does not place, and which is not rich text at all. The
+	// real template's preview_text is exactly this, and it was the ONE widget that survived the
+	// destructive write — so a fixture without it cannot tell "everything survived" from
+	// "everything unplaced was lost".
+	r.widgets["preview_text"] = map[string]any{"body": map[string]any{"value": "See you there"}}
 }
 
 func (r *hubspotRec) markClone() {
@@ -120,41 +203,91 @@ func (r *hubspotRec) markSubject(v string) {
 	r.subjectSet = v
 }
 
-// markBody records the html written to the draft's single rich-text widget.
-func (r *hubspotRec) markBody(v string) {
+// draftPayload renders the draft as the GET .../draft response.
+func (r *hubspotRec) draftPayload() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.bodyHTMLSet = v
-	r.draftHTML = v
-}
-
-// setDraft records html written by a path that is not the content apply (the UTM tagger).
-func (r *hubspotRec) setDraft(v string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.draftHTML = v
-}
-
-// currentBody is the draft's html as it stands, seeded with the template's own body.
-func (r *hubspotRec) currentBody() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.draftHTML == "" {
-		return `<a href="https://events.lfx.dev/reg">Register</a>`
+	r.seed()
+	sections := make([]any, 0, len(r.layout))
+	for _, id := range r.layout {
+		sections = append(sections, map[string]any{
+			"id":      "section_" + id,
+			"columns": []any{map[string]any{"id": "column_" + id, "width": 12, "widgets": []string{id}}},
+		})
 	}
-	return r.draftHTML
+	payload, _ := json.Marshal(map[string]any{
+		"id":                "999",
+		"emailTemplateMode": "DRAG_AND_DROP",
+		"content": map[string]any{
+			"templatePath":  "@hubspot/email/dnd/Start_from_scratch.html",
+			"styleSettings": map[string]any{"backgroundColor": "#ffffff"},
+			"flexAreas":     map[string]any{"main": map[string]any{"boxed": true, "sections": sections}},
+			"widgets":       r.widgets,
+		},
+	})
+	return payload
 }
 
+// applyContent replays a content PATCH the way HubSpot does: the submitted content REPLACES the
+// draft's, and what it did not name is gone. It then classifies the write by what changed — a
+// tagged body carries utm_ parameters, a freshly applied one does not — since the content apply
+// and the UTM tagger PATCH the same path.
+func (r *hubspotRec) applyContent(raw string, content map[string]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seed()
+
+	keys := make([]string, 0, len(content))
+	for k := range content {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	r.contentKeys = keys
+
+	before := r.richBodies()
+	submitted, _ := content["widgets"].(map[string]any)
+	next := make(map[string]map[string]any, len(submitted))
+	for key, v := range submitted {
+		wm, _ := v.(map[string]any)
+		next[key] = wm
+	}
+	for key := range r.widgets {
+		if _, kept := next[key]; !kept {
+			r.dropped = append(r.dropped, key)
+		}
+	}
+	r.widgets = next
+
+	for key, html := range r.richBodies() {
+		if before[key] == html {
+			continue
+		}
+		if strings.Contains(html, "utm_") {
+			r.taggedHTML = raw
+			continue
+		}
+		r.bodyHTMLSet = html
+		r.bodyWidget = key
+	}
+}
+
+// richBodies is the draft's rich-text bodies keyed by module id. Callers hold the lock.
+func (r *hubspotRec) richBodies() map[string]string {
+	out := make(map[string]string, len(r.widgets))
+	for key, w := range r.widgets {
+		body, _ := w["body"].(map[string]any)
+		if html, ok := body["html"].(string); ok {
+			out[key] = html
+		}
+	}
+	return out
+}
+
+// snapshotContent is the subject and the body html the content apply wrote.
 func (r *hubspotRec) snapshotContent() (string, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.subjectSet, r.bodyHTMLSet
-}
-
-func (r *hubspotRec) markTagged(raw string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.taggedHTML = raw
 }
 
 // SawClone / SawSendList / SendListBody / TaggedHTML read the captures under the lock.
@@ -167,18 +300,35 @@ func (r *hubspotRec) SendListBody() map[string]any {
 }
 func (r *hubspotRec) TaggedHTML() string { r.mu.Lock(); defer r.mu.Unlock(); return r.taggedHTML }
 
-// extractWidgetHTML pulls the single widget's html out of a content PATCH payload.
-func extractWidgetHTML(body map[string]any) string {
-	content, _ := body["content"].(map[string]any)
-	widgets, _ := content["widgets"].(map[string]any)
-	for _, w := range widgets {
-		wm, _ := w.(map[string]any)
-		bm, _ := wm["body"].(map[string]any)
-		if h, ok := bm["html"].(string); ok {
-			return h
-		}
+// BodyWidget is the module id the content apply chose to write into.
+func (r *hubspotRec) BodyWidget() string { r.mu.Lock(); defer r.mu.Unlock(); return r.bodyWidget }
+
+// Dropped names the widgets a content PATCH removed from the draft. Any name here is content an
+// operator lost.
+func (r *hubspotRec) Dropped() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.dropped...)
+}
+
+// ContentKeys is the key set of the last content PATCH's content object.
+func (r *hubspotRec) ContentKeys() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.contentKeys...)
+}
+
+// WidgetBody is one module's current body field, and whether the draft still carries the module.
+func (r *hubspotRec) WidgetBody(key, field string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, ok := r.widgets[key]
+	if !ok {
+		return "", false
 	}
-	return ""
+	body, _ := w["body"].(map[string]any)
+	v, _ := body[field].(string)
+	return v, true
 }
 
 func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
@@ -198,49 +348,17 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
-			// STATEFUL: returns whatever was last written, so a reader sees the effect of an
-			// earlier write. A stub that always replayed the template made write ORDER
-			// unobservable — and order is the whole claim of the content-vs-tagging test.
-			html := rec.currentBody()
-			body1 := html
-			if rec.onlyEmptyWidget {
-				body1 = "   "
-			}
-			widgets := map[string]any{"module_1": map[string]any{"body": map[string]any{"html": body1}}}
-			// A template with a SECOND rich-text widget, when the test asks for one. There is no
-			// safe way to pick which of two the generated body replaces, so `applyEmailContent`
-			// must decline rather than guess -- see its `len(widgets) != 1` guard.
-			if rec.imageWidget {
-				widgets["module_hdr"] = map[string]any{"body": map[string]any{"src": "https://img.example/logo.png", "alt": "logo"}}
-			}
-			if rec.emptyExtraWidget {
-				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "   "}}
-			}
-			if rec.extraWidget {
-				widgets["module_2"] = map[string]any{"body": map[string]any{"html": "<p>second block</p>"}}
-			}
-			payload, _ := json.Marshal(map[string]any{
-				"content": map[string]any{"widgets": widgets},
-			})
-			_, _ = w.Write(payload)
+			_, _ = w.Write(rec.draftPayload())
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]any
 			_ = json.Unmarshal(raw, &body)
-			// The send-list PATCH and the UTM PATCH hit the same path; tell them apart by
-			// which key the payload carries rather than by call order.
+			// The send-list PATCH, the subject PATCH and the content PATCHes hit the same path;
+			// tell them apart by which key the payload carries rather than by call order.
 			switch {
 			case body["content"] != nil:
-				// Both the content apply (LFXV2-2775) and the UTM tagger PATCH `content`.
-				// Tell them apart by what the html contains: a tagged body carries utm_
-				// parameters, a freshly applied body does not.
-				html := extractWidgetHTML(body)
-				if strings.Contains(html, "utm_") {
-					rec.markTagged(string(raw))
-					rec.setDraft(html)
-				} else {
-					rec.markBody(html)
-				}
+				content, _ := body["content"].(map[string]any)
+				rec.applyContent(string(raw), content)
 			case body["subject"] != nil:
 				rec.markSubject(fmt.Sprint(body["subject"]))
 			default:
@@ -422,17 +540,14 @@ func TestHubSpot_HeaderImageDoesNotBlockTheBodyWrite(t *testing.T) {
 	}
 }
 
-// An EMPTY second rich-text widget is still a second widget.
+// An EMPTY second rich-text block does not stop the write; it is simply not the FIRST block.
 //
-// `GetEmailHTMLWidgets` USED TO omit widgets whose body trims to empty, so a guard counting only
-// the widgets it CAN write saw 1 for a template with one populated body and one empty block, and
-// rewrote the populated one — the exact ambiguity the single-widget guard exists to refuse. An
-// empty block is one an operator can see and fill; it is part of the template's structure, not
-// an absence, so every rich-text widget is now returned and this test pins that it counts.
-//
-// This is the case the populated-second-widget test above cannot reach: there the map itself has
-// two entries, so a count of either kind refuses.
-func TestHubSpot_EmptySecondWidgetKeepsItsBody(t *testing.T) {
+// This shape used to be refused outright: `GetEmailHTMLWidgets` counted the empty block (rightly
+// — an empty block is one an operator can see and fill), the count came to two, and the
+// single-block guard declined. Refusing was never safe by comparison, only inert: the operator
+// got a draft carrying the template's placeholder copy and no sign the generated body existed.
+// Now the body goes to the block at the top and the empty one stays empty.
+func TestHubSpot_EmptySecondBlockIsNotTheFirstBlock(t *testing.T) {
 	srv, rec := hubspotServer(t)
 	rec.emptyExtraWidget = true
 	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
@@ -445,19 +560,29 @@ func TestHubSpot_EmptySecondWidgetKeepsItsBody(t *testing.T) {
 
 	subject, body := rec.snapshotContent()
 	if subject != "Three days in Amsterdam" {
-		t.Errorf("subject = %q, want the subject applied even where the body cannot be", subject)
+		t.Errorf("subject = %q, want the generated subject", subject)
 	}
-	if body != "" {
-		t.Errorf("body = %q, want no body write when an empty second rich-text block exists", body)
+	if !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written into the first block", body)
+	}
+	if got := rec.BodyWidget(); got != "module_1" {
+		t.Errorf("wrote into %q, want the first block module_1", got)
+	}
+	if got, ok := rec.WidgetBody("module_2", "html"); !ok || got != "   " {
+		t.Errorf("second block html = %q (present=%v), want it left exactly as the template had it", got, ok)
 	}
 }
 
-// A template with TWO rich-text widgets must keep its own body. There is no safe way to choose
-// which block the generated body replaces, and writing the wrong one destroys content the
-// operator did not choose to replace -- the single destructive outcome in this path.
+// A template with SEVERAL rich-text blocks gets the generated body in the FIRST one, and keeps
+// every other block verbatim.
 //
-// The subject still applies: it is one field with one meaning, so it carries no such ambiguity.
-func TestHubSpot_MultiWidgetTemplateKeepsItsBody(t *testing.T) {
+// This is the ordinary case, not an edge one: every template in the LF portal has nine or so
+// blocks. It used to be refused on the grounds that choosing between them was a guess — so the
+// generated copy an operator reviewed and staged reached no real template at all. The first
+// block is the top of the email, which is where a lede goes; the blocks below it are programme
+// details, sponsor tiers and footers that the copy was never meant to replace, and this pins
+// that they are untouched rather than merely "probably fine".
+func TestHubSpot_WritesFirstBlockAndKeepsTheRest(t *testing.T) {
 	srv, rec := hubspotServer(t)
 	rec.extraWidget = true
 	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
@@ -470,12 +595,86 @@ func TestHubSpot_MultiWidgetTemplateKeepsItsBody(t *testing.T) {
 
 	subject, body := rec.snapshotContent()
 	if subject != "Three days in Amsterdam" {
-		t.Errorf("subject = %q, want the generated subject applied even for a multi-widget template", subject)
+		t.Errorf("subject = %q, want the generated subject", subject)
 	}
-	// The BODY is what must not be written. Asserting it is empty pins "no content PATCH was
-	// issued for the body" rather than merely "the template survived by luck".
-	if body != "" {
-		t.Errorf("body = %q, want no body write on a multi-widget template", body)
+	if !strings.Contains(body, "Join us") {
+		t.Errorf("body = %q, want the generated body written into the first block", body)
+	}
+	if got := rec.BodyWidget(); got != "module_1" {
+		t.Errorf("wrote into %q, want the first block module_1", got)
+	}
+	if got, ok := rec.WidgetBody("module_2", "html"); !ok || got != "<p>second block</p>" {
+		t.Errorf("second block html = %q (present=%v), want the template's own copy untouched", got, ok)
+	}
+}
+
+// FIRST means first in the LAYOUT, not first by map key.
+//
+// The layout here places module_2 above module_1 while the keys sort the other way, so a caller
+// sorting keys — or iterating the map, which Go randomizes — names the wrong block. Only
+// content.flexAreas says which block is at the top of the email, and this is the one test that
+// can tell the two apart.
+func TestHubSpot_FirstBlockComesFromTheLayoutNotTheKeys(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.reversedLayout = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>Join us</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if got := rec.BodyWidget(); got != "module_2" {
+		t.Errorf("wrote into %q, want module_2 — the block the layout places at the top", got)
+	}
+	if got, ok := rec.WidgetBody("module_1", "html"); !ok || !strings.Contains(got, "events.lfx.dev/reg") {
+		t.Errorf("module_1 html = %q (present=%v), want the template's own copy left below the lede", got, ok)
+	}
+}
+
+// A content write must DROP NOTHING — not one widget, not one field of the content object.
+//
+// This is the bug that produced an email with nothing inside it. HubSpot does not merge
+// `content` on a drag-and-drop email: it takes what is submitted as authoritative. The client
+// PATCHed only the widgets it had rewritten, so the draft came back holding those alone; the
+// layout tree still referenced all 32 placed modules, none of which existed any more, and the
+// operator opened 14 empty sections. Two writes happen in this flow (the body apply, then the
+// UTM tagger), and either one is enough to do it.
+//
+// The draft here carries a rich-text block, a second rich-text block, a header IMAGE and an
+// unplaced template-level module, so the assertion covers a widget that was written, one that
+// was not, one that is not rich text at all, and one the layout never places.
+func TestHubSpot_ContentWriteDropsNothing(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.extraWidget = true
+	rec.imageWidget = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p><a href=\"https://events.lfx.dev/reg\">Register</a>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if dropped := rec.Dropped(); len(dropped) != 0 {
+		t.Errorf("a content write removed %v from the draft; every widget must be sent back", dropped)
+	}
+	// The layout tree and the template's styling travel in the same content object. Omitting
+	// them is the same loss by another route: the sections would have nothing to lay out.
+	keys := rec.ContentKeys()
+	for _, want := range []string{"flexAreas", "styleSettings", "templatePath", "widgets"} {
+		if !slices.Contains(keys, want) {
+			t.Errorf("content PATCH omitted %q; sent %v", want, keys)
+		}
+	}
+	// Per-widget scaffolding matters as much as the widget's presence: HubSpot discarded the two
+	// widgets the old client DID name because they arrived as a bare {body:{html}}.
+	if got, ok := rec.WidgetBody("module_hdr", "src"); !ok || got != "https://img.example/logo.png" {
+		t.Errorf("header image src = %q (present=%v), want the image module preserved whole", got, ok)
+	}
+	if got, ok := rec.WidgetBody("preview_text", "value"); !ok || got != "See you there" {
+		t.Errorf("preview_text value = %q (present=%v), want the unplaced template module preserved", got, ok)
 	}
 }
 
