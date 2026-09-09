@@ -28,11 +28,34 @@ Both refuse BEFORE any HubSpot mutation, so the dispatch claim is released and n
 The guard sits AFTER the master/suppression pre-flight, which is pure local validation — putting a
 network call ahead of it made `TestHubSpot_MasterInSuppressionRefusedBeforeClone` fail, correctly.
 
-The stamp is best-effort by contract (`AudienceBuilder.BuiltInPortalID` returns `("", nil)` on a
-failed lookup). It runs after the lists already exist upstream, so failing a build to record a
-field would orphan real HubSpot lists. It reads the portal the token authenticates against rather
-than the operator-supplied `portal_id` config, which a credential swap leaves stale — the same
-choice the campaigns path makes.
+The stamp is REQUIRED, and resolving it first is what makes that affordable. `BuildAudience`
+calls `AudienceBuilder.BuiltInPortalID` before `createPlanLists`, and refuses the build if it
+returns empty or errors.
+
+The first cut had it the other way — best-effort, after the lists existed, on the reasoning that
+failing a build to record a field would orphan real HubSpot lists. That reasoning was right about
+the cost and wrong about the remedy. A transient token-info failure or a cancelled request then
+produced a `built` audience with empty provenance, which the dispatch guard above refuses forever:
+a retry re-reads the stored empty value, and a rebuild mints a SECOND set of real lists beside the
+first. The best-effort stamp did not avoid the orphaning, it deferred it to a path with no repair.
+
+Resolving first inverts that. Nothing upstream exists yet, so the refusal costs nothing and the
+retry is clean — the build either has provable provenance or it does not happen, which is what
+lets the dispatch guard stay strict. The refusal releases its build claim like every other
+pre-upstream exit (`releaseUnstartedClaim`); leaking it would wedge the brief against the very
+retry the refusal promises. It carries its own `errPortalUnconfirmed` sentinel so `audienceBuildErr`
+does not label it "failed upstream" — nothing was sent to HubSpot, and that message would send an
+operator to check a platform this path never contacted.
+
+It reads the portal the token authenticates against rather than the operator-supplied `portal_id`
+config, which a credential swap leaves stale — the same choice the campaigns path makes.
+
+The public POST/PATCH still accept `status=built` without a portal, and that is deliberate: the
+API has no `built_in_portal_id` field for a caller to supply, so enforcing it in
+`CampaignAudience.Validate()` would reject every API-created built audience with no way to comply —
+removing a documented capability (`TestAudienceService_Create_PreservesExplicitStatus`) rather than
+tightening one. Such a row is refused at dispatch by the no-portal arm above, which is the
+fail-closed answer; giving the API a way to record verified provenance is a separate change.
 
 `built_in_portal_id` is appended LAST in `audienceCols` rather than placed beside
 `platform_master_list_id` where it belongs by meaning: `scanAudience` reads positionally, so a

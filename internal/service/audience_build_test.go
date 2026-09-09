@@ -37,12 +37,21 @@ type fakeBuilder struct {
 	// Only the first arrival is held, deliberately: a second one getting this far means the
 	// lease was NOT taken first, and it has to be allowed to run on so the test fails on the
 	// duplicate lists it creates rather than on the harness.
-	// portalID is stamped onto the built audience row as its provenance. Empty models a
-	// best-effort lookup that could not answer.
-	portalID  string
 	entered   chan struct{}
 	release   chan struct{}
 	enterOnce sync.Once
+
+	// portalID is the portal BuiltInPortalID reports. It is resolved BEFORE any list is
+	// created and it is required: a build cannot succeed without one, because a built row
+	// that cannot say which portal its list ids belong to is refused at every dispatch and
+	// cannot be repaired. newBuildService defaults it to a real value; a test sets it empty
+	// to drive the refusal by ALSO setting noPortal, because newBuildService fills an empty
+	// portalID in for the many tests that predate this field and do not care about it.
+	portalID string
+	// noPortal makes BuiltInPortalID report "" even after newBuildService's default. A bare
+	// empty portalID cannot express this: the default would silently fill it, and the refusal
+	// case would pass while testing the happy path.
+	noPortal bool
 
 	created   []string          // list names, in creation order
 	filters   map[string][]byte // name -> filter, so a test can assert the master's union
@@ -112,8 +121,9 @@ func (f *fakeBuilder) filterFor(name string) []byte {
 // does not do.
 func (f *fakeBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
 
-// portalID is what BuiltInPortalID reports; the zero value models a lookup that could not answer,
-// which the contract says stores "" rather than failing the build.
+// BuiltInPortalID reports f.portalID. Empty models a lookup that could not answer, which the
+// contract REFUSES the build on -- see TestBuildAudience_StampsTheBuildingPortal. Set noPortal
+// to get it, not a bare empty portalID: newBuildService fills that in.
 func (f *fakeBuilder) BuiltInPortalID(context.Context, string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -129,6 +139,12 @@ func (f *fakeBuilder) names() []string {
 // newBuildService wires an AudienceService with all three dependencies plus a brief.
 func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceService, *fakeAudienceRepo, *fakeBriefRepo) {
 	t.Helper()
+	// A build REQUIRES a resolvable portal, so the default has to be one -- otherwise every
+	// caller of this helper exercises the refusal instead of the path it was written for. A test
+	// that wants the refusal sets noPortal, which survives this default.
+	if b.portalID == "" && !b.noPortal {
+		b.portalID = "8112310"
+	}
 	arepo := newFakeAudienceRepo()
 	brepo := newFakeBriefRepo()
 
@@ -1199,42 +1215,75 @@ func TestAudienceBuildErrNamesTheSystemRowsOwner(t *testing.T) {
 		"a project's own defect must NOT be attributed to the LF system row")
 }
 
-// TestBuildAudience_StampsTheBuildingPortal pins that a successful build records WHICH portal its
-// list ids belong to — the field the dispatch guard refuses on.
+// TestBuildAudience_StampsTheBuildingPortal pins that a build records WHICH portal its list ids
+// belong to — the field the dispatch guard refuses on — and that it REFUSES TO START when it
+// cannot.
 //
-// Both directions matter. A recorded portal is what lets a later dispatch prove the send list
-// exists where it is about to send; an unavailable lookup must store "" rather than fail a build
-// whose HubSpot lists already exist, because failing there would orphan them to record a field.
-// Empty then reads as "cannot prove" at dispatch, which is the fail-closed answer.
+// The refusal is the half worth pinning, because the obvious alternative is wrong in a way that
+// only shows up later. Storing "" on an unavailable lookup keeps the build succeeding, but the
+// row it writes is refused by every subsequent dispatch and cannot be repaired: a retry re-reads
+// the stored empty value, and a rebuild mints a SECOND set of real HubSpot lists beside the first.
+// Resolving the portal BEFORE createPlanLists is what makes failing safe — nothing upstream has
+// been created yet, so the error orphans no lists and a retry starts clean. That ordering is the
+// invariant; a later refactor that moves the lookup after list creation re-introduces exactly the
+// orphaning hazard this ordering removes, so assert on both the error and the absence of state.
 func TestBuildAudience_StampsTheBuildingPortal(t *testing.T) {
-	cases := map[string]struct {
-		portal string
-		want   string
-	}{
-		"records the portal the credential authenticated against": {"8112310", "8112310"},
-		"an unavailable lookup stores empty rather than failing":  {"", ""},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, portalID: tc.portal}
-			s, arepo, _ := newBuildService(t, b,
-				`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+	t.Run("records the portal the credential authenticated against", func(t *testing.T) {
+		b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, portalID: "8112310"}
+		s, arepo, _ := newBuildService(t, b,
+			`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
 
-			res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
-				ProjectID: "cncf", BriefID: "brief-1",
-			})
-			require.NoError(t, err,
-				"the lists already exist upstream; an unavailable provenance lookup must not fail the build")
-			require.NotNil(t, res)
-			require.Equal(t, string(model.AudienceBuilt), res.Status)
-
-			var stored *model.CampaignAudience
-			for _, a := range arepo.items {
-				stored = a
-			}
-			require.NotNil(t, stored, "the build must persist the audience row")
-			require.Equal(t, tc.want, stored.BuiltInPortalID,
-				"the row's portal decides whether a later dispatch can prove its send list belongs there")
+		res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+			ProjectID: "cncf", BriefID: "brief-1",
 		})
-	}
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.Equal(t, string(model.AudienceBuilt), res.Status)
+
+		var stored *model.CampaignAudience
+		for _, a := range arepo.items {
+			stored = a
+		}
+		require.NotNil(t, stored, "the build must persist the audience row")
+		require.Equal(t, "8112310", stored.BuiltInPortalID,
+			"the row's portal decides whether a later dispatch can prove its send list belongs there")
+	})
+
+	t.Run("an unresolvable portal refuses the build before creating anything", func(t *testing.T) {
+		b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, noPortal: true}
+		s, arepo, _ := newBuildService(t, b,
+			`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+		_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+			ProjectID: "cncf", BriefID: "brief-1",
+		})
+		require.Error(t, err,
+			"a build that cannot record its portal writes a row every dispatch refuses; refuse instead")
+		// Assert on Message, not Error(): the Goa error type's Error() does not render it, so a
+		// test that reads Error() passes on an empty message and the operator gets nothing.
+		var ise *audiences.InternalServerError
+		require.ErrorAs(t, err, &ise)
+		require.Contains(t, ise.Message, "portal",
+			"the message must name what could not be confirmed, so the operator knows what to restore")
+		require.NotContains(t, ise.Message, "upstream",
+			"nothing was sent to HubSpot; calling this an upstream failure sends the operator to the wrong system")
+
+		// The point of resolving the portal FIRST: the failure costs nothing upstream. If this
+		// ever regresses to a post-createPlanLists lookup, real HubSpot lists exist at this point
+		// and a retry duplicates them.
+		require.Empty(t, b.created,
+			"the refusal must happen before any platform list is created, so a retry is clean")
+		// The claim row itself is not deleted -- releaseUnstartedClaim marks it failed, which is
+		// how every other pre-upstream exit ends. What matters is that it does not stay
+		// `building`: a leaked lease refuses the next build for this brief as already in
+		// progress, by a build that never started and never will, making the retry this refusal
+		// promises impossible.
+		require.Len(t, arepo.items, 1, "the claim row stays, marked failed -- it is not deleted")
+		for _, row := range arepo.items {
+			require.Equal(t, model.AudienceFailed, row.Status,
+				"a refused build must release its claim, or the brief is wedged against every retry")
+			require.Empty(t, row.BuiltInPortalID,
+				"a refused build records no portal")
+		}
+	})
 }
