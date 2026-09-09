@@ -325,10 +325,23 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 	// Resolve the brief's BUILT audience: the send list is the audience's HubSpot master list.
 	// All of this is pre-create (no HubSpot mutation yet), so any failure releases the claim.
-	masterListID, suppressionIDs, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
+	masterListID, suppressionIDs, audiencePortal, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
 	if aerr != nil {
 		return nil, notCreated(aerr)
 	}
+	// The audience's list ids belong to ONE portal, and this dispatch resolved its credentials
+	// independently — preferring a project connection added since the build. So the send list
+	// and the email being cloned can come from different portals, and SetSendList would be
+	// handed ids the authenticated portal cannot see: a partial send, or a hard failure whose
+	// cause is invisible from either row.
+	//
+	// Reachable because the reserved-scope fallback now serves the email channel: a project with
+	// no connection builds against the LF portal, then connects its own and dispatches. Both
+	// steps are legitimate; the combination is not.
+	//
+	// Refused BEFORE any HubSpot mutation, so this releases the dispatch claim and creates
+	// nothing. Rebuild is the remedy rather than reconnect: the lists in the old portal cannot
+	// be moved, and the brief's audience must be rebuilt where the send will run.
 	// Pre-flight the master/suppression conflict BEFORE cloning: SetSendList rejects when the
 	// master list also appears in the suppression set (it would exclude the whole audience), but
 	// discovering that only after CloneEmail would orphan a draft. This is pure validation (no
@@ -339,32 +352,21 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		}
 	}
 
-	// Resolve the portal this token authenticates against BEFORE anything is created, so the
-	// row can record where its email id means something. Deliberately BEST-EFFORT: it is one
-	// more network round trip before a send that is otherwise ready, and a provenance lookup
-	// is not worth failing a campaign over. The cost of an empty value lands entirely on
-	// ReadMetrics, which refuses rather than guessing — a campaign that sends and cannot be
-	// measured beats one that does not send.
-	//
-	// "Best-effort" here does NOT mean the lookup is expected to fail. It reads the
-	// private-apps token-info endpoint, which a private-app token can always call; an earlier
-	// version read /account-info/v3/details, which requires the `oauth` scope no private app
-	// can hold, so it failed in EVERY account and this warning would have been the steady
-	// state rather than the exception. If this warning is common in the logs, that is a real
-	// problem to investigate, not background noise.
-	//
-	// Bounded with its OWN short deadline, separate from providerCallTimeout: the client's
-	// retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained throttling,
-	// which exceeds the whole 2-minute provider-call budget and would hand CloneEmail a
-	// context that is already cancelled. A best-effort lookup is not worth spending the
-	// mutating calls' budget on.
-	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
-	portalID, perr := client.AuthenticatedPortalID(portalCtx)
-	cancelPortal()
+	portalID, perr := assertAudiencePortal(ctx, client, audiencePortal)
 	if perr != nil {
-		slog.WarnContext(ctx, "could not resolve the hubspot portal for this token; the campaign will be created without one and its metrics will not be readable",
-			"project_id", brief.ProjectID, "error", perr)
+		return nil, notCreated(perr)
 	}
+
+	// The portal is already known: assertAudiencePortal above confirmed the audience's lists live
+	// in the portal this token authenticates against, and returns the value it verified. The
+	// campaign's provenance stamp is exactly that value, so there is no second lookup here.
+	//
+	// This used to be an independent best-effort call to the same endpoint, warning and carrying
+	// on when it failed. That was correct while nothing upstream had verified the portal, but the
+	// guard makes it both redundant and worse than redundant: two retrying round trips per
+	// dispatch to learn one fact, and a window where the guard proved the portal while the stamp
+	// failed to read it, creating a campaign with no provenance that ReadMetrics then refuses.
+	// A verified portal cannot fail to be recorded, because recording it is no longer a request.
 
 	// STEP 1 (mutating): clone the template email. From here a failure MAY have created the
 	// clone upstream, so classify by whether the outcome is confirmable.
@@ -536,10 +538,10 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 // master list id + suppression list ids. It fails (a pre-create error) when no audience exists
 // or the newest one is not yet built — activating an email against a missing/incomplete audience
 // would send to the wrong (or no) recipients, so this refuses rather than send blindly.
-func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID, briefID string) (masterListID string, suppressionIDs []string, err error) {
+func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID, briefID string) (masterListID string, suppressionIDs []string, builtInPortalID string, err error) {
 	auds, lerr := d.audiences.ListAudiences(ctx, projectID, briefID)
 	if lerr != nil {
-		return "", nil, fmt.Errorf("hubspot: could not load the brief's audience: %w", lerr)
+		return "", nil, "", fmt.Errorf("hubspot: could not load the brief's audience: %w", lerr)
 	}
 	// ListAudiences returns newest-first; take the newest HubSpot audience that is BUILT.
 	for _, a := range auds {
@@ -549,18 +551,18 @@ func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID,
 		if a.Status != model.AudienceBuilt {
 			// The newest hubspot audience isn't built yet (still building / failed) — refuse; a
 			// retry after it builds will succeed. A stale older audience must NOT be substituted.
-			return "", nil, fmt.Errorf("hubspot: the brief's audience is %s, not built — build the audience before staging the email", a.Status)
+			return "", nil, "", fmt.Errorf("hubspot: the brief's audience is %s, not built — build the audience before staging the email", a.Status)
 		}
 		if strings.TrimSpace(a.PlatformMasterListID) == "" {
-			return "", nil, fmt.Errorf("hubspot: the built audience has no master list id")
+			return "", nil, "", fmt.Errorf("hubspot: the built audience has no master list id")
 		}
 		ids, derr := decodeSuppressionIDs(a.SuppressionListIDs)
 		if derr != nil {
-			return "", nil, derr
+			return "", nil, "", derr
 		}
-		return strings.TrimSpace(a.PlatformMasterListID), ids, nil
+		return strings.TrimSpace(a.PlatformMasterListID), ids, strings.TrimSpace(a.BuiltInPortalID), nil
 	}
-	return "", nil, fmt.Errorf("hubspot: no audience found for this brief — build one before staging the email")
+	return "", nil, "", fmt.Errorf("hubspot: no audience found for this brief — build one before staging the email")
 }
 
 // decodeSuppressionIDs parses the audience's SuppressionListIDs JSON (a string array) into a
@@ -891,4 +893,60 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 		UTM:       created.UTM,
 		StartDate: created.StartDate,
 	}, nil
+}
+
+// assertAudiencePortal refuses a dispatch whose send list was built in a different HubSpot portal
+// than the one this dispatch will actually mutate through.
+//
+// It takes the CLIENT Dispatch already resolved rather than resolving its own. Resolving a second
+// one would compare a portal that is not necessarily the portal CloneEmail and SetSendList run
+// against: a connection changing between the two resolutions would let the guard validate portal
+// A while the mutations use portal B, recreating the exact cross-portal send this exists to stop.
+// One client, one identity, one comparison.
+//
+// Two refusals, deliberately distinct, mirroring the campaign-side split between
+// ErrCampaignAccountMismatch and ErrCampaignProvenanceUnknown:
+//
+//   - An audience recording NO portal cannot be proven to belong here. Every audience built
+//     before built_in_portal_id existed is in this state, and the column is deliberately not
+//     backfilled — inventing a value would assert provenance nobody verified. The remedy is a
+//     rebuild, not a reconnect: there is no portal to reconnect to.
+//   - A recorded portal that DIFFERS is the live mismatch, and its message names both so an
+//     operator can see which way the connection moved.
+//
+// FAILS CLOSED when the current portal cannot be read. An earlier version permitted the dispatch
+// on a token-info failure, reasoning that a metadata outage should not block a ready send. That
+// was wrong in the one case that matters: a token for the WRONG portal plus a transient lookup
+// failure would clone the email there and hand it list ids from the audience's portal — the
+// unsafe partial send this guard exists to prevent, reached by the guard's own fallback. An
+// unreadable identity is not a match; it is an unknown, and this refuses before any mutation so
+// the caller can retry once token-info answers.
+// It RETURNS the portal it verified. That value is exactly what the campaign's provenance stamp
+// needs, and returning it removes a second call to the same endpoint twenty lines below: every
+// dispatch was paying for two retrying network round trips to learn the same fact. Worse than the
+// cost, the two could disagree in one direction that matters -- the guard succeeding and the stamp
+// failing left a campaign created with NO provenance even though the portal had just been proven,
+// and ReadMetrics refuses an unprovenanced campaign, so the send was unmeasurable for a fact the
+// process already held.
+//
+// An empty return accompanies a non-nil error only; on success it is always the confirmed portal.
+func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audiencePortal string) (string, error) {
+	if strings.TrimSpace(audiencePortal) == "" {
+		return "", fmt.Errorf("hubspot: the brief's audience does not record which portal its lists were built in, "+
+			"so they cannot be resolved against the portal this send authenticates against — rebuild the audience: %w",
+			errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	}
+	portalCtx, cancel := context.WithTimeout(ctx, portalLookupTimeout)
+	defer cancel()
+	current, perr := client.AuthenticatedPortalID(portalCtx)
+	if perr != nil {
+		return "", fmt.Errorf("hubspot: could not confirm which portal this send authenticates against, so the "+
+			"audience's send list cannot be proven to exist there — retry once portal identity is readable: %w", perr)
+	}
+	if strings.TrimSpace(current) != strings.TrimSpace(audiencePortal) {
+		return "", fmt.Errorf("hubspot: the brief's audience was built in portal %s but this send authenticates "+
+			"against portal %s, so its send list does not exist there — rebuild the audience against the "+
+			"current connection: %w", audiencePortal, current, domain.ErrCampaignAccountMismatch)
+	}
+	return strings.TrimSpace(current), nil
 }

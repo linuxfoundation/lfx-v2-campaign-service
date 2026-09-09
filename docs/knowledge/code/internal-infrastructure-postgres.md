@@ -928,7 +928,16 @@ EVERY connection table is indexed. 000017 covered the six paid-ads tables only, 
 `hubspot_connections` would have been write cost for a query never issued — and it said so
 alongside the trigger for revisiting: "if that gate ever widens, this migration widens with it".
 It widened, so **migration 000031** adds the mirror-image partial index on
-`hubspot_connections`. A foundation with no HubSpot connection of its own now reaches the probe
+`hubspot_connections`.
+
+**Migration 000032** adds `built_in_portal_id` to `campaign_audiences`: the HubSpot portal the
+row's list ids were created in. A list id is a bare numeric with no meaning outside its portal,
+so without it the row cannot say what its own ids refer to — the same property that made
+`campaigns` record its creating account. NULLABLE and deliberately not backfilled: a row written
+before the column existed records nothing, and the dispatch guard reads that absence as
+"cannot prove" and refuses rather than assuming. It is appended LAST in `audienceCols` because
+`scanAudience` reads positionally, and a mid-list insert would shift every later column into the
+wrong destination. A foundation with no HubSpot connection of its own now reaches the probe
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
 

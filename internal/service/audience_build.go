@@ -47,6 +47,26 @@ type AudienceBuilder interface {
 	// Scoping to the build (rather than caching on the implementation) is deliberate: a
 	// long-lived cache would pin a credential that has since been rotated or revoked.
 	BeginBuild(ctx context.Context) context.Context
+	// BuiltInPortalID reports the HubSpot portal the credential resolved for projectID
+	// authenticates against — read from the TOKEN, not from the operator-supplied portal_id
+	// config, which a credential swap leaves untouched.
+	//
+	// Recorded on the audience row so a later dispatch can prove its list ids belong to the
+	// portal it is about to send from.
+	//
+	// REQUIRED, and called BEFORE any list is created. BuildAudience refuses the build on an
+	// error AND on an empty id, so an implementation must RETURN its failures rather than
+	// reporting ("", nil): the empty answer is reserved for "the lookup succeeded and names no
+	// portal", and collapsing a credential defect into it costs the caller the diagnosis --
+	// audienceBuildErr has arms that name the LF system row and the project's own connection,
+	// and both are unreachable through a swallowed error.
+	//
+	// This was best-effort while the stamp ran AFTER the lists existed, where failing a build to
+	// record a field would have orphaned real HubSpot lists. Resolving first removes that cost:
+	// nothing is created when it refuses, so a retry is clean, and an audience is never persisted
+	// with provenance dispatch will refuse forever. An implementation that keeps the old contract
+	// silently produces permanently undispatchable audiences.
+	BuiltInPortalID(ctx context.Context, projectID string) (string, error)
 }
 
 // audiencePersistTimeout bounds the post-create writes, which run on a context detached from
@@ -84,6 +104,13 @@ func audienceUnavailableErr() error {
 // and decryption sources are logged server-side via slog and never exposed in the public API
 // response. Reconciliation IDs and the UNCONFIRMED marker (if present) are preserved as they
 // are safe and necessary for operators to reconcile orphaned state.
+// errPortalUnconfirmed marks the one build refusal that is NOT an upstream failure: the portal
+// lookup could not say which HubSpot tenant this build authenticates against, so the build stops
+// before creating anything. It is a sentinel rather than a bare errors.New at the call site
+// because audienceBuildErr must be able to TELL IT APART -- the generic arm prefixes "failed
+// upstream", which would send an operator to check HubSpot for a refusal HubSpot never saw.
+var errPortalUnconfirmed = errors.New("hubspot portal identity could not be confirmed")
+
 func audienceBuildErr(err error) error {
 	// WHOSE connection failed decides who can repair it, and until the reserved-scope fallback
 	// began serving the email channel this distinction could not arise here: HubSpot never
@@ -113,6 +140,44 @@ func audienceBuildErr(err error) error {
 			Code: "500",
 			Message: "the shared LF HubSpot connection is not usable; this is an operator fault, not this project's configuration. " +
 				"Check the system connection's status is active, then re-run bootstrap-system-account -provider hubspot to replace the credential",
+		}
+	}
+	// The PROJECT's own connection, checked before the portal arm below and for the same reason
+	// the system arm sits above it: errPortalUnconfirmed wraps whatever BuiltInPortalID returned,
+	// and cachedClient returns the ordinary credential defects too -- an inactive row, an
+	// undecodable blob, incomplete credentials. Left to the portal arm those all read as "retry
+	// once portal identity is readable", which is a transient-outage message for a fault that
+	// cannot resolve itself: nobody retries their way out of a connection they disabled.
+	//
+	// A 400, not a 500, and that is the whole difference from the system arm. This caller CAN fix
+	// it -- the connection is theirs, addressable over HTTP -- so the status has to say so, and
+	// unusableConnectionReason names which defect it is rather than making them guess.
+	//
+	// Gated on BOTH sentinels deliberately. ErrConnectionNotUsable alone also reaches this
+	// function from createPlanLists, where lists MAY already exist upstream and the caller must be
+	// told to reconcile rather than to reconnect and rebuild -- TestAudienceBuildErrNamesTheSystem
+	// RowsOwner pins that path keeping the upstream wording. The conjunction narrows this arm to
+	// the pre-create portal lookup, which is the only place that can promise nothing was created.
+	if errors.Is(err, errPortalUnconfirmed) && errors.Is(err, domain.ErrConnectionNotUsable) {
+		return &audiences.BadRequestError{
+			Code: "400",
+			Message: "this project's HubSpot connection is not usable (" + unusableConnectionReason(err) +
+				"), so the portal its audience lists would belong to could not be confirmed. Nothing was " +
+				"created -- reconnect HubSpot for this project, then build again",
+		}
+	}
+	// Not an upstream failure: nothing was sent to HubSpot. Saying "failed upstream" here would
+	// send an operator to check a platform that was never contacted on this path.
+	//
+	// Reached only when the cause is NEITHER a system-row defect nor this project's own -- a
+	// timeout, a transport failure, a lookup that answered with no portal. Those genuinely are
+	// worth retrying, which is what makes the message honest here and wrong in the two arms above.
+	if errors.Is(err, errPortalUnconfirmed) {
+		return &audiences.InternalServerError{
+			Code: "500",
+			Message: "could not confirm which HubSpot portal this build authenticates against, so its lists " +
+				"could not be proven to belong there at send time. Nothing was created -- retry once the " +
+				"HubSpot connection's portal identity is readable",
 		}
 	}
 	msg := "the audience build failed upstream"
@@ -336,6 +401,56 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, audienceValidationErr(perr)
 	}
 
+	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
+	// build's lists must land in one portal, but a credential rotated between builds must be
+	// picked up by the next one.
+	// Held rather than passed inline: the portal stamp below MUST resolve through the same
+	// build-scoped client cache that created these lists. Reading it from the request context
+	// would resolve a fresh credential, so a connection rotated mid-build would stamp the NEW
+	// portal onto lists that live in the old one -- and the dispatch guard would then compare
+	// against a portal the ids were never in, which is worse than not stamping at all.
+	buildCtx := builder.BeginBuild(ctx)
+
+	// Resolve the portal BEFORE any list exists, and REQUIRE it.
+	//
+	// This was best-effort after the lists were created, on the reasoning that failing a build to
+	// record a field would orphan real HubSpot lists. That reasoning was right about the cost and
+	// wrong about the remedy: a transient token-info failure then produced a `built` audience with
+	// empty provenance, which the dispatch guard refuses PERMANENTLY. Retrying cannot repair a
+	// stored empty value, and rebuilding creates a second set of real lists -- so the "cheap"
+	// failure was the unrecoverable one.
+	//
+	// Resolving first inverts that. Nothing has been created yet, so an unavailable lookup fails
+	// with zero upstream state and the retry is clean. The build either has provable provenance or
+	// it does not happen, which is what lets the dispatch guard stay strict.
+	// Both arms release the claim, like every other pre-upstream exit above. This refusal happens
+	// AFTER the build lease is taken, so returning without releasing would leave a `building` row
+	// holding the lease -- and the next build for this brief is refused as already in progress by
+	// a build that never started and will never finish. The refusal is meant to make a retry
+	// clean; leaking the claim would make it impossible.
+	portalID, perr := builder.BuiltInPortalID(buildCtx, p.ProjectID)
+	if perr != nil {
+		wrapped := fmt.Errorf("%w: %w", errPortalUnconfirmed, perr)
+		releaseUnstartedClaim(ctx, repo, created, wrapped)
+		return nil, audienceBuildErr(wrapped)
+	}
+	if strings.TrimSpace(portalID) == "" {
+		releaseUnstartedClaim(ctx, repo, created, errPortalUnconfirmed)
+		return nil, audienceBuildErr(errPortalUnconfirmed)
+	}
+
+	// Set on the in-memory row HERE, the moment it is known and before the first list exists,
+	// rather than only on the success path below. Every later write of this row -- the success
+	// update AND the partial-failure update -- then carries it.
+	//
+	// The partial path is the one that needs it. It deliberately RECORDS the ids of lists that
+	// were created before the failure, because they are the only handles to real HubSpot lists
+	// and discarding them makes the row unreconcilable. A list id is a bare numeric with no
+	// meaning outside its portal, so recording ids while leaving the portal NULL hands an
+	// operator exactly the half that cannot be acted on -- and the connection may be repointed
+	// before anyone investigates, at which point nothing can say where those lists live.
+	created.BuiltInPortalID = portalID
+
 	// LAST thing before the first upstream call: confirm the brief is STILL approved at the
 	// version the claim locked. The claim's own gate proves the brief was approved when the
 	// lease was taken, which is now BEFORE the warehouse round-trip rather than after it — so
@@ -343,15 +458,19 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// ReplaceBrief landing during that round-trip would otherwise build real HubSpot lists from
 	// an approval the operator has since withdrawn, which is the case the gate exists for. The
 	// two guards are not redundant: the claim's gate serializes builds, this one dates the approval.
+	//
+	// It sits AFTER the portal resolution above, and the order is load-bearing rather than
+	// incidental. BuiltInPortalID is a network call bounded by portalLookupTimeout (10s), so
+	// confirming first and resolving second re-opens exactly the window this check closes: a
+	// ReplaceBrief landing during the lookup, and lists then built from a withdrawn approval.
+	// "Last before the first upstream call" is the invariant; anything inserted between this
+	// line and createPlanLists breaks it, which is what an earlier revision of this change did.
 	if serr := confirmStillApproved(ctx, briefs, p.ProjectID, p.BriefID, approvedVersion); serr != nil {
 		releaseUnstartedClaim(ctx, repo, created, serr)
 		return nil, mapAudienceErr(serr)
 	}
 
-	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
-	// build's lists must land in one portal, but a credential rotated between builds must be
-	// picked up by the next one.
-	master, ids, buildErr := createPlanLists(builder.BeginBuild(ctx), builder, p.ProjectID, plan)
+	master, ids, buildErr := createPlanLists(buildCtx, builder, p.ProjectID, plan)
 	summary := plan.InclusionSummary()
 
 	if buildErr != nil {
@@ -413,6 +532,11 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	created.SuppressionListIDs = nil
 	created.InclusionSummary = summary
 	created.Status = model.AudienceBuilt
+	// Resolved above, before any list existed. A HubSpot list id is a bare numeric with no meaning
+	// outside its portal, so this is what lets a later dispatch prove the send list belongs to the
+	// portal it is about to send from.
+	// BuiltInPortalID was set above, as soon as the lookup answered, so the partial-failure
+	// path carries it too. Deliberately not re-assigned here.
 	if verr := created.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}
