@@ -101,6 +101,23 @@ enforced on the system row:
 - **Required non-secret config** (`requiredConfigKeys`) is checked against the map about to be
   WRITTEN, not the flags as typed, so a key already on the row satisfies a rotation.
 
+## Installing the HubSpot row crosses an accepted trust boundary
+
+Recorded here because this package is where an operator stands when it happens: running
+`bootstrap-system-account -provider hubspot` is the step that makes the email fallback live, and
+with it, contact lists built for a foundation with NO HubSpot connection of its own are created in
+the shared LF portal, visible to everyone operating there under the one org-wide token.
+
+That was accepted deliberately (LFXV2-3040, 2026-09-09) after being raised in review — it is a
+product and privacy decision, not one the code can settle. List naming (`Plan.listName`) is
+collision avoidance and must never be cited as an access boundary.
+
+Two things bound it: a foundation with its own connection resolves there and never touches this row,
+and the cross-portal dispatch guard refuses a send whose audience was built elsewhere. Merging the
+code does not create the exposure; THIS command does, which is why the decision gated the command
+rather than the merge. Full context in
+`docs/knowledge/log/2026-09-09-LFXV2-3040-trust-boundary-accepted.md`.
+
 ## Preserve, set, remove — an omission means different things at different times
 
 `accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
