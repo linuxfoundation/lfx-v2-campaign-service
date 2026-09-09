@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -408,7 +407,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 }
 
 // applyEmailContent writes generated copy onto a cloned draft: the subject via
-// PatchEmailSettings, the body by replacing the draft's single rich-text widget.
+// PatchEmailSettings, the body into the draft's FIRST rich-text block.
 //
 // BEST-EFFORT, like tagEmailLinks and for the same reason: by the time this runs the email is
 // cloned and pointed at the right audience, so it is already a working campaign. A failure here
@@ -416,12 +415,20 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 // LFXV2-2775 — so turning it into a dispatch failure would trade a recoverable cosmetic gap for
 // a failed send and an orphaned draft. Every failure is logged and swallowed.
 //
-// The body is applied ONLY when the draft has exactly one rich-text widget. HubSpot templates can
-// carry several (a header blurb, a body, a footer note) and the API exposes no marker saying
-// which is "the" body — a heuristic like "the longest" would silently overwrite a footer on some
-// templates and the body on others. Writing nothing is recoverable by hand; writing the wrong
-// widget destroys template content the operator did not choose to replace. The subject is applied
-// regardless, since it has exactly one home.
+// FIRST BLOCK, in the layout's reading order — the block at the top of the email. It used to be
+// "the only block, or nothing": templates carry several rich-text widgets (an intro, keynote
+// copy, a footer note) and the API exposes no marker saying which is "the" body, so writing
+// nothing looked like the safe answer to that ambiguity. It was not. Every real template in the
+// portal has nine or so blocks, so the guard fired on all of them and the generated copy — the
+// copy an operator reviewed in the UI and pressed Stage on — reached the draft for no template
+// at all, with only an info log to say why.
+//
+// The first block is not a heuristic guess at which block "means" body; it is a stated contract
+// the operator can see. The generated copy is a lede written against the brief, the top of the
+// email is where a lede goes, and the other blocks — programme details, sponsor tiers, the
+// unsubscribe footer — are template furniture that the copy was never meant to replace. Picking
+// "the longest" or "the one that looks like prose" WOULD be a guess, and would move between
+// templates; the top block is the same block every time.
 //
 // Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
 // hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
@@ -438,35 +445,28 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 		return
 	}
 
-	widgets, totalWidgets, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	blocks, err := client.GetEmailHTMLWidgets(ctx, emailID)
 	if err != nil {
 		slog.WarnContext(ctx, "could not read the email draft to set its body; it keeps the template's body",
 			"email_id", emailID, "error", err)
 		return
 	}
-
-	// One rich-text widget, empty or not. A template with one populated body and one EMPTY second
-	// block is not the unambiguous single-body shape this guard is asking about -- the empty block
-	// is still one an operator can see and fill -- so both are counted and such a template is
-	// refused.
-	//
-	// `GetEmailHTMLWidgets` returns every rich-text widget rather than only the populated ones, so
-	// these two counts are the same number today. The pair is kept because they answer different
-	// questions -- "how many blocks does the draft have" vs "how many can be written" -- and a
-	// future change to either should not silently re-couple them.
-	if totalWidgets != 1 || len(widgets) != 1 {
-		// Not an error: a template this shape is simply one this cannot safely rewrite.
-		slog.InfoContext(ctx, "email draft does not have exactly one rich-text widget; leaving its body as the template wrote it",
-			"email_id", emailID, "widget_count", totalWidgets, "writable_widget_count", len(widgets))
+	if len(blocks) == 0 {
+		// An image-only or module-only template. Not an error: there is no rich-text block to
+		// write into, and inventing one would put copy somewhere the layout never placed.
+		slog.InfoContext(ctx, "email draft has no rich-text block to write the generated body into; it keeps the template's content",
+			"email_id", emailID)
 		return
 	}
 
-	for key := range widgets {
-		if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{key: bodyHTML}); perr != nil {
-			slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
-				"email_id", emailID, "error", perr)
-		}
+	target := blocks[0]
+	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{target.Key: bodyHTML}); perr != nil {
+		slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
+			"email_id", emailID, "widget", target.Key, "error", perr)
+		return
 	}
+	slog.InfoContext(ctx, "wrote the generated body into the email draft's first rich-text block",
+		"email_id", emailID, "widget", target.Key, "block_count", len(blocks))
 }
 
 // tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by
@@ -478,40 +478,33 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailName, campaignUTM string) {
 	res := utm.Resolve(campaignUTM, emailName)
 
-	// The count is discarded here, deliberately: tagging rewrites the widgets it CAN write, and
-	// an empty block has no links to tag. Only the body-write guard cares how many blocks exist.
-	widgets, _, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	blocks, err := client.GetEmailHTMLWidgets(ctx, emailID)
 	if err != nil {
 		slog.WarnContext(ctx, "could not read the email draft to tag its links; the email will send untagged",
 			"email_id", emailID, "error", err)
 		return
 	}
 
-	// Iterate widgets in a STABLE order and carry the link count across them. Go map order is
-	// randomized, so without sorting the same email would number its links differently on each
-	// run; without carrying the count, every widget would restart at "body-link-1" and a
-	// multi-widget email would emit duplicate utm_content values that no report can tell apart.
-	keys := make([]string, 0, len(widgets))
-	for k := range widgets {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	tagged := make(map[string]string, len(widgets))
+	// Blocks arrive in the layout's READING ORDER, and the link count is carried across them, so
+	// utm_content numbers the links the way a reader meets them: the first link in the email is
+	// body-link-1. Both halves matter. Without a defined order the same email would number its
+	// links differently on each run (the draft's widget map is a JSON object, so Go randomizes
+	// it); without carrying the count, every block would restart at body-link-1 and a
+	// multi-block email would emit duplicate utm_content values no report can tell apart.
+	tagged := make(map[string]string, len(blocks))
 	tagCount := 0
-	for _, key := range keys {
-		body := widgets[key]
-		out, n, terr := utm.TagHTMLLinksFrom(body, res.Params, "", tagCount)
+	for _, block := range blocks {
+		out, n, terr := utm.TagHTMLLinksFrom(block.HTML, res.Params, "", tagCount)
 		if terr != nil {
 			// TagHTMLLinks returns the ORIGINAL body alongside its error, so skipping this
 			// widget leaves it exactly as it was rather than writing back something mangled.
 			slog.WarnContext(ctx, "could not tag a widget's links; leaving it untagged",
-				"email_id", emailID, "widget", key, "error", terr)
+				"email_id", emailID, "widget", block.Key, "error", terr)
 			continue
 		}
 		tagCount += n
-		if out != body {
-			tagged[key] = out
+		if out != block.HTML {
+			tagged[block.Key] = out
 		}
 	}
 	if len(tagged) == 0 {

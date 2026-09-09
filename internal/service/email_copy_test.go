@@ -1239,6 +1239,190 @@ func TestConceptDocSizingArithmetic(t *testing.T) {
 	}
 }
 
+// The CTA's destination comes from the brief, and an unusable one is treated as ABSENT.
+//
+// The generated body's button used to be `<a href='#'>Register Now</a>`: nothing supplied a URL,
+// so the model invented a placeholder. That is a dead link on the campaign's PRIMARY call to
+// action, and the dispatcher's UTM tagger skipped it too (rightly -- "#" is not a destination), so
+// the one click the email is asking for carried no attribution either. Verified on a live staged
+// draft before this resolver existed.
+//
+// Precedence follows decodeBriefFields in internal/dispatch rather than inventing a second
+// convention: the brief's top-level `url` column is where the UI and the scraper put the event's
+// registration page, and a nested `registrationUrl` is the fallback for briefs carrying only that.
+//
+// Validation is not cosmetic. This value is interpolated into a prompt whose output goes straight
+// into an href, so a relative path or a `javascript:` scheme would be pasted into a marketing
+// email verbatim. Rejecting to "" is the safe outcome: the prompt's link rule then has the model
+// write the call to action as plain text, which is a working email with no button rather than an
+// email with a broken -- or hostile -- one.
+func TestResolveRegistrationURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		briefURL string
+		details  emailCopyEventDetails
+		want     string
+	}{
+		{"top-level url wins", "https://events.lfx.dev/reg", emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://events.lfx.dev/reg"},
+		{"nested is the fallback", "", emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"nothing at all", "", emailCopyEventDetails{}, ""},
+		{"whitespace is nothing", "   ", emailCopyEventDetails{}, ""},
+		{"surrounding whitespace is trimmed", "  https://events.lfx.dev/reg  ", emailCopyEventDetails{}, "https://events.lfx.dev/reg"},
+		{"http is allowed", "http://events.lfx.dev/reg", emailCopyEventDetails{}, "http://events.lfx.dev/reg"},
+		// An unusable top-level url does NOT poison the nested fallback: the loop tries each
+		// candidate, so a junk column still lets a good nested value through.
+		{"unusable top-level falls through", "/register", emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"relative path is rejected", "/register", emailCopyEventDetails{}, ""},
+		{"bare hostname is rejected", "events.lfx.dev/reg", emailCopyEventDetails{}, ""},
+		{"scheme with no host is rejected", "https://", emailCopyEventDetails{}, ""},
+		{"javascript scheme is rejected", "javascript:alert(1)", emailCopyEventDetails{}, ""},
+		{"mailto is rejected", "mailto:events@linuxfoundation.org", emailCopyEventDetails{}, ""},
+		{"the placeholder itself is rejected", "#", emailCopyEventDetails{}, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolveRegistrationURL(tc.briefURL, tc.details); got != tc.want {
+				t.Errorf("resolveRegistrationURL(%q, %+v) = %q, want %q", tc.briefURL, tc.details, got, tc.want)
+			}
+		})
+	}
+}
+
+// A supplied URL reaches the prompt, and the prompt tells the model what to do with it.
+//
+// Two halves that fail independently: the user prompt has to carry the destination, and the system
+// prompt has to say that every href must BE that destination. Supplying the URL without the rule
+// leaves the model free to keep writing href='#' beside a URL it was given; stating the rule
+// without the URL asks it to copy something absent.
+func TestComposeEmailCopyPrompt_CarriesTheRegistrationURLAndItsRule(t *testing.T) {
+	t.Parallel()
+
+	const dest = "https://events.linuxfoundation.org/mcp-dev-summit/register"
+	sys, user := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName:       "MCP Dev Summit Toronto 2026",
+		location:        "Toronto, Canada",
+		dates:           "March 3-4, 2026",
+		registrationURL: dest,
+		stage:           emailstage.RegistrationPush,
+	})
+
+	if !strings.Contains(user, "Registration URL: "+dest) {
+		t.Errorf("the user prompt does not carry the destination:\n%s", user)
+	}
+	// The rule, on the system side where the other constraints live.
+	if !strings.Contains(sys, "Registration URL") {
+		t.Errorf("the system prompt states no link rule, so a supplied URL is only a fact the model may ignore")
+	}
+	// And it must forbid the exact shape that shipped. Naming it is the point: a general
+	// "use the URL" instruction is what the previous prompt effectively said by omission.
+	if !strings.Contains(sys, `href="#"`) {
+		t.Errorf("the link rule does not name href=\"#\" as forbidden; that is the placeholder the model actually produced")
+	}
+}
+
+// With no URL, the line is ABSENT -- not present and empty.
+//
+// The rule reads "if no Registration URL is given", so the two shapes are not equivalent to the
+// model: "Registration URL:" followed by nothing is a supplied-but-blank value, and filling a
+// blank with a plausible-looking placeholder is precisely what produced href='#'. A brief with no
+// destination should yield a call to action in plain text, so the prompt must not offer a slot.
+func TestComposeEmailCopyPrompt_AbsentRegistrationURLPrintsNoLine(t *testing.T) {
+	t.Parallel()
+
+	sys, user := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName: "MCP Dev Summit Toronto 2026",
+		location:  "Toronto, Canada",
+		dates:     "March 3-4, 2026",
+		stage:     emailstage.RegistrationPush,
+	})
+
+	if strings.Contains(user, "Registration URL") {
+		t.Errorf("the user prompt offers a Registration URL slot with nothing in it:\n%s", user)
+	}
+	// The rule still ships -- it is what tells the model to write plain text instead of inventing
+	// a link. Only the fact is missing.
+	if !strings.Contains(sys, "If no Registration URL is given") {
+		t.Errorf("the system prompt does not say what to do when no URL is supplied")
+	}
+}
+
+// The registration URL must NOT reach the frozen legacy prompt.
+//
+// LFXV2-1940's acceptance criterion is byte-identity for callers that send no stage, and it does
+// not bend for an improvement. A brief carrying a url composes the same pre-stage prompt it always
+// did; the destination reaches the STAGE-AWARE path only, which is the path the UI uses.
+//
+// TestAbsentStageProducesLegacyPrompt pins the no-URL case against the golden constant. This pins
+// the case that could plausibly have been "fixed" by mistake, since a caller with a url looks like
+// one that should benefit.
+func TestAbsentStageIgnoresTheRegistrationURL(t *testing.T) {
+	t.Parallel()
+
+	const dest = "https://events.linuxfoundation.org/mcp-dev-summit/register"
+	sys, user := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName:       "MCP Dev Summit Toronto 2026",
+		location:        "Toronto, Canada",
+		dates:           "March 3-4, 2026",
+		registrationURL: dest,
+		stage:           "",
+	})
+
+	if sys != goldenLegacySystemPrompt {
+		t.Errorf("a brief with a registration url changed the legacy system prompt; LFXV2-1940 requires byte-identity\n got %d bytes\nwant %d bytes", len(sys), len(goldenLegacySystemPrompt))
+	}
+	if strings.Contains(user, dest) {
+		t.Errorf("the destination reached the legacy user prompt:\n%s", user)
+	}
+}
+
+// End to end: the destination stored on the BRIEF is what the model is sent.
+//
+// The composer tests above take the URL as an argument, so they cannot catch the wiring -- a
+// `registrationURL` never populated in GenerateEmailCopy leaves every one of them green while the
+// endpoint keeps generating dead buttons. The url lives on the brief's own column, outside the
+// event_details blob every other prompt field is decoded from, which is exactly the field most
+// easily left unread.
+func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
+	const dest = "https://events.linuxfoundation.org/mcp-dev-summit/register"
+
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		URL:          dest,
+		EventDetails: json.RawMessage(`{"eventName":"MCP Dev Summit Toronto 2026","location":"Toronto","dates":"March 3-4, 2026"}`),
+	}
+
+	// atomic for the same reason as the sibling tests: written on the handler's goroutine.
+	var sentBody atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sentBody.Store(string(b))
+		w.Header().Set("Content-Type", "application/json")
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	stage := emailstage.RegistrationPush
+	if _, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"), Stage: &stage,
+	}); err != nil {
+		t.Fatalf("GenerateEmailCopy() error = %v", err)
+	}
+
+	body, _ := sentBody.Load().(string)
+	if !strings.Contains(body, dest) {
+		t.Errorf("the prompt sent upstream does not carry the brief's url, so the generated CTA has nowhere to point")
+	}
+}
+
 // worstStageFloor is the largest composed prompt any stage produces at zero caller input. Shared
 // by the bound test and the doc-arithmetic test so neither transcribes a number the other derives.
 func worstStageFloor() int {
