@@ -268,6 +268,20 @@ func httpURL(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
+	// RAW SIZE FIRST, before url.Parse touches it. `brief.url` carries no MaxLength in
+	// design/brief.go and is stored as PostgreSQL TEXT, so the value arriving here is unbounded --
+	// and normalising it allocates roughly TWICE its length (Parse, ParseQuery, Encode, String;
+	// measured at ~21MB for a 10MB input). Doing that before the maxPromptSize guard runs would
+	// perform the exact allocation that guard exists to prevent, using the guard's own input.
+	//
+	// The bound is maxPromptSize, not something smaller: a URL that alone exceeds the whole
+	// caller-field allowance can never be part of a valid request, so refusing it here costs no
+	// legitimate caller anything. Refusing rather than truncating also keeps the FALLBACK honest
+	// -- an oversized primary yields "" and resolveRegistrationURL moves on to the nested
+	// candidate, exactly as it does for any other unusable value.
+	if utf8.RuneCountInString(trimmed) > maxPromptSize {
+		return ""
+	}
 	u, err := url.Parse(trimmed)
 	// Hostname(), not Host: `https://:443/path` parses with a NON-EMPTY Host (":443") and an
 	// empty Hostname, so a Host check alone accepts a URL with no host at all. This matches the
@@ -562,8 +576,16 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// sufficient, because the fixed template counts too, which is what the second check is
 	// for. Rejecting here bounds the compose to O(maxPromptSize).
 	inputSize := utf8.RuneCountInString(promptVars.eventName) +
-		utf8.RuneCountInString(promptVars.location) + utf8.RuneCountInString(promptVars.dates) +
-		utf8.RuneCountInString(promptVars.registrationURL)
+		utf8.RuneCountInString(promptVars.location) + utf8.RuneCountInString(promptVars.dates)
+	// The URL counts only on the STAGE-AWARE branch, because only that branch formats it into the
+	// prompt. composeEmailCopyPrompt returns the frozen legacy prompt for a blank stage using
+	// eventName/location/dates alone (LFXV2-1940 requires it byte-identical to the pre-stage
+	// output), so counting the URL there would let a no-stage caller be rejected with a 400 for a
+	// value that never reaches their prompt and cannot affect their result -- a behaviour change
+	// on the one path documented as unchanged.
+	if strings.TrimSpace(promptVars.stage) != "" {
+		inputSize += utf8.RuneCountInString(promptVars.registrationURL)
+	}
 	if inputSize > maxPromptSize {
 		slog.WarnContext(ctx, "email copy generation blocked: event details exceed prompt size limit",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,

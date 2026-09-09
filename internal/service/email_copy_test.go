@@ -1313,6 +1313,18 @@ func TestResolveRegistrationURL(t *testing.T) {
 		{"javascript scheme is rejected", "javascript:alert(1)", emailCopyEventDetails{}, ""},
 		{"mailto is rejected", "mailto:events@linuxfoundation.org", emailCopyEventDetails{}, ""},
 		{"the placeholder itself is rejected", "#", emailCopyEventDetails{}, ""},
+		// Raw size is gated BEFORE url.Parse: brief.url has no MaxLength and normalising an
+		// unbounded value allocates ~2x its length, which is the allocation the prompt-size guard
+		// exists to prevent. An oversized PRIMARY must still fall through to the nested candidate
+		// rather than failing the whole resolve.
+		{"an oversized url is rejected", "https://e.example/x?a=" + strings.Repeat("b", maxPromptSize),
+			emailCopyEventDetails{}, ""},
+		{"an oversized primary falls through to the nested one",
+			"https://e.example/x?a=" + strings.Repeat("b", maxPromptSize),
+			emailCopyEventDetails{RegistrationURL: "https://nested.example/x"}, "https://nested.example/x"},
+		{"a url at the bound is still accepted",
+			"https://e.example/" + strings.Repeat("b", maxPromptSize-18),
+			emailCopyEventDetails{}, "https://e.example/" + strings.Repeat("b", maxPromptSize-18)},
 	}
 
 	for _, tc := range cases {
@@ -1471,4 +1483,73 @@ func worstStageFloor() int {
 		}
 	}
 	return worst
+}
+
+// TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt pins which fields the caller-input
+// bound actually covers, on each of the two prompt paths.
+//
+// composeEmailCopyPrompt returns the FROZEN legacy prompt for a blank stage, formatting only
+// eventName, location and dates — LFXV2-1940 requires that output byte-identical to the pre-stage
+// service. So counting registrationURL on that path would let a no-stage caller be refused with a
+// 400 for a value that never reaches their prompt and cannot change their result. The stage-aware
+// path DOES format the URL, so there it must count: it is caller-supplied input like any other.
+func TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt(t *testing.T) {
+	// The fixture has to thread a real gap, and both ends are load-bearing:
+	//   - AT MOST maxPromptSize, or httpURL's own raw-size gate drops the URL and neither branch
+	//     ever sees it -- the test would then pass for entirely the wrong reason.
+	//   - Plus the other three fields, MORE than maxPromptSize, or counting it breaches nothing
+	//     and the stage case cannot 400.
+	// Exactly maxPromptSize satisfies both, since eventName/location/dates are non-empty.
+	longURL := "https://e.example/" + repeatStr("b", maxPromptSize-len("https://e.example/"))
+	if got := utf8.RuneCountInString(longURL); got != maxPromptSize {
+		t.Fatalf("fixture URL is %d runes, want exactly maxPromptSize (%d)", got, maxPromptSize)
+	}
+
+	newSvc := func(t *testing.T) *BriefService {
+		t.Helper()
+		repo := newFakeBriefRepo()
+		repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+			ID:        "brief-456",
+			ProjectID: "proj-123",
+			URL:       longURL,
+			EventDetails: json.RawMessage(
+				`{"eventName":"KubeCon EU 2026","location":"Barcelona","startDate":"June 17","endDate":"June 20"}`),
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			content := `{"subject":"s","preheader":"p","body":"<p>Register now</p>","cta":"Register"}`
+			encoded, err := json.Marshal(content)
+			if err != nil {
+				t.Fatalf("marshal fake LLM content: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(encoded) + `},"finish_reason":"stop"}]}`))
+		}))
+		t.Cleanup(srv.Close)
+		svc := newTestBriefService(repo)
+		svc.SetLLMClient(newTestLLMClient(t, srv))
+		return svc
+	}
+
+	t.Run("no stage: the url is not counted", func(t *testing.T) {
+		result, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+		})
+		if err != nil {
+			t.Fatalf("a no-stage caller was refused for a url the legacy prompt never uses: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected a non-nil EmailCopy")
+		}
+	})
+
+	t.Run("with a stage: the url is counted", func(t *testing.T) {
+		_, err := newSvc(t).GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+			ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+			Stage: strPtr(emailstage.RegistrationPush),
+		})
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) {
+			t.Fatalf("error = %v, want a 400: the stage-aware prompt formats this url, so it counts", err)
+		}
+	})
 }

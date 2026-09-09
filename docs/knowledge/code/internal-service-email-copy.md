@@ -108,11 +108,28 @@ so nothing could tell them apart — neutralising the composed guard entirely br
 messages now differ, and the test asserts the composed one specifically.
 
 Neither check is redundant. The pre-check is what makes the bound real: `event_details` is declared `Any` in
-`design/brief.go`, so none of the three fields carries a length constraint, and a post-hoc
-check formats a 50MB stored event name into a new string before measuring it — the allocation
-the guard exists to prevent, performed by the guard's own input. The three fields alone cannot
-exceed the total, so the pre-check is a sound necessary condition; it is not sufficient,
-because the fixed template counts too, which is what the second check is for.
+`design/brief.go` and `url` carries no `MaxLength`, so none of these fields carries a length
+constraint, and a post-hoc check formats a 50MB stored event name into a new string before
+measuring it — the allocation the guard exists to prevent, performed by the guard's own input. The
+counted fields alone cannot exceed the total, so the pre-check is a sound necessary condition; it
+is not sufficient, because the fixed template counts too, which is what the second check is for.
+
+**Which fields are counted depends on the prompt path**, and that is deliberate rather than an
+oversight. `eventName`, `location` and `dates` always count. `registrationURL` counts only when a
+stage is present, because `composeEmailCopyPrompt` returns the FROZEN legacy prompt for a blank
+stage and that prompt formats the other three alone (LFXV2-1940 requires it byte-identical to the
+pre-stage output). Counting the URL there would let a no-stage caller be refused with a 400 for a
+value that never reaches their prompt and cannot change their result — a behaviour change on the
+one path documented as unchanged. **TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt**
+pins both halves.
+
+The URL is additionally gated on RAW SIZE inside `httpURL`, before `url.Parse` touches it.
+Normalising an unbounded value allocates roughly twice its length (Parse, ParseQuery, Encode,
+String — about 21MB for a 10MB input), which would perform the very allocation the pre-check
+exists to prevent, using the pre-check's own input. A URL that alone exceeds the whole
+caller-field allowance can never be part of a valid request, so refusing it costs no legitimate
+caller anything; and refusing rather than truncating keeps the fallback honest — an oversized
+primary yields `""` and `resolveRegistrationURL` moves on to the nested candidate.
 
 Runes, not bytes, because the limit is stated to the caller and logged as a character count and
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
@@ -189,6 +206,7 @@ nothing greps for it.
 - **TestGenerateEmailCopy_BriefNotFound**: Validates 404 when brief does not exist.
 - **TestGenerateEmailCopy_InvalidEventDetails**: Validates 400 when event details lack a required name.
 - **TestGenerateEmailCopy_LLMError**: Validates 503 when the LLM platform returns an error.
+- **TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt**: Pins which fields the caller-input bound covers on each prompt path — the registration URL counts only when a stage is present, because the frozen legacy prompt never formats it.
 - **TestGenerateEmailCopy_HappyPath**: Validates the full flow with valid brief and LLM response.
 - **TestGenerateEmailCopy_RejectsIncompleteCopy**: Validates 503 when any required field (subject/preheader/body/CTA) is blank.
 - **TestGenerateEmailCopy_RejectsOverlongBody**: Validates 503 when body HTML exceeds 8000 chars (not truncated, as truncation corrupts markup).
