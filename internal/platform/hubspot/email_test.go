@@ -914,3 +914,85 @@ func TestWidgetWithHTML_MalformedShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestHTMLBlocks_OrderingShapes covers the three layout shapes htmlBlocks has to be deterministic
+// for, only one of which the dispatch fake produces.
+//
+// The classic-template case is the gap worth closing: a template with no flexAreas has no recorded
+// reading order at all, so "the first block" falls back to sorted key order. The docstring promises
+// determinism "for every template shape", and Go randomises map iteration -- so without a test, a
+// refactor that dropped the sort would pass every existing test and pick a different block on each
+// run, which is the hardest kind of bug to see in a draft.
+//
+// The phantom and duplicate cases are the damage a partial content write leaves behind: a layout
+// naming a module id the widget map no longer carries, or naming one twice. Neither may put a
+// phantom or a repeated block in the result.
+func TestHTMLBlocks_OrderingShapes(t *testing.T) {
+	rich := func(html string) json.RawMessage {
+		return json.RawMessage(`{"body":{"html":` + mustJSON(html) + `}}`)
+	}
+	widgets := map[string]json.RawMessage{
+		"m_c": rich("<p>c</p>"),
+		"m_a": rich("<p>a</p>"),
+		"m_b": rich("<p>b</p>"),
+		"img": json.RawMessage(`{"body":{"src":"x.png"}}`), // not rich text
+	}
+
+	for name, tc := range map[string]struct {
+		flex string
+		want []string
+	}{
+		// No flexAreas at all -- a classic (non-drag-and-drop) template. Sorted key order.
+		//
+		// Revert check: deleting sort.Strings(rest) fails this case on most runs but not all --
+		// Go's map iteration order is random, so it lands sorted by luck roughly one run in five.
+		// That flakiness IS the defect (a different block would be written each dispatch), so the
+		// case is worth keeping even though a single revert run can pass. Three keys keep the odds
+		// of an accidental pass low; more would make the fixture noise rather than evidence.
+		"classic template falls back to sorted keys": {
+			flex: `{}`,
+			want: []string{"m_a", "m_b", "m_c"},
+		},
+		// The layout is authoritative and deliberately NOT sorted: c before a.
+		"the layout wins over key order": {
+			flex: `{"main":{"sections":[{"columns":[{"widgets":["m_c","m_a"]}]}]}}`,
+			want: []string{"m_c", "m_a", "m_b"}, // m_b unplaced, appended in key order
+		},
+		// A layout naming a missing id and naming one twice -- the shape a partial write leaves.
+		"a phantom id and a duplicate are both dropped": {
+			flex: `{"main":{"sections":[{"columns":[{"widgets":["m_b","gone","m_b"]}]}]}}`,
+			want: []string{"m_b", "m_a", "m_c"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var ec emailContent
+			raw := `{"content":{"widgets":` + mustMarshal(widgets) + `,"flexAreas":` + tc.flex + `}}`
+			if err := json.Unmarshal([]byte(raw), &ec); err != nil {
+				t.Fatalf("fixture: %v", err)
+			}
+			got := make([]string, 0, len(tc.want))
+			for _, b := range ec.htmlBlocks() {
+				got = append(got, b.Key)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("block order = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func mustJSON(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+func mustMarshal(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
