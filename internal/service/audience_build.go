@@ -361,7 +361,13 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
 	// build's lists must land in one portal, but a credential rotated between builds must be
 	// picked up by the next one.
-	master, ids, buildErr := createPlanLists(builder.BeginBuild(ctx), builder, p.ProjectID, plan)
+	// Held rather than passed inline: the portal stamp below MUST resolve through the same
+	// build-scoped client cache that created these lists. Reading it from the request context
+	// would resolve a fresh credential, so a connection rotated mid-build would stamp the NEW
+	// portal onto lists that live in the old one -- and the dispatch guard would then compare
+	// against a portal the ids were never in, which is worse than not stamping at all.
+	buildCtx := builder.BeginBuild(ctx)
+	master, ids, buildErr := createPlanLists(buildCtx, builder, p.ProjectID, plan)
 	summary := plan.InclusionSummary()
 
 	if buildErr != nil {
@@ -431,7 +437,7 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// Best-effort by contract (see AudienceBuilder.BuiltInPortalID): the lists already exist
 	// upstream, so an unavailable lookup stores "" rather than failing a build and orphaning
 	// them. Empty means "not recorded", and the dispatch guard refuses on it.
-	if portal, perr := s.builder.BuiltInPortalID(ctx, p.ProjectID); perr == nil {
+	if portal, perr := builder.BuiltInPortalID(buildCtx, p.ProjectID); perr == nil {
 		created.BuiltInPortalID = portal
 	}
 	if verr := created.Validate(); verr != nil {

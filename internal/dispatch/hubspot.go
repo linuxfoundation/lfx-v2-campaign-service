@@ -352,7 +352,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		}
 	}
 
-	if perr := d.assertAudiencePortal(ctx, brief.ProjectID, audiencePortal); perr != nil {
+	if perr := assertAudiencePortal(ctx, client, audiencePortal); perr != nil {
 		return nil, notCreated(perr)
 	}
 
@@ -911,41 +911,43 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 }
 
 // assertAudiencePortal refuses a dispatch whose send list was built in a different HubSpot portal
-// than the one this dispatch authenticates against.
+// than the one this dispatch will actually mutate through.
+//
+// It takes the CLIENT Dispatch already resolved rather than resolving its own. Resolving a second
+// one would compare a portal that is not necessarily the portal CloneEmail and SetSendList run
+// against: a connection changing between the two resolutions would let the guard validate portal
+// A while the mutations use portal B, recreating the exact cross-portal send this exists to stop.
+// One client, one identity, one comparison.
 //
 // Two refusals, deliberately distinct, mirroring the campaign-side split between
 // ErrCampaignAccountMismatch and ErrCampaignProvenanceUnknown:
 //
 //   - An audience recording NO portal cannot be proven to belong here. Every audience built
 //     before built_in_portal_id existed is in this state, and the column is deliberately not
-//     backfilled — inventing a value would assert provenance nobody verified. Fail closed: an
-//     unprovable tenant plus a send to real contacts is not a risk worth taking, and the remedy
-//     is a rebuild, not a reconnect.
+//     backfilled — inventing a value would assert provenance nobody verified. The remedy is a
+//     rebuild, not a reconnect: there is no portal to reconnect to.
 //   - A recorded portal that DIFFERS is the live mismatch, and its message names both so an
 //     operator can see which way the connection moved.
 //
-// The portal lookup is best-effort in one direction only: if the CURRENT portal cannot be read,
-// this permits the dispatch rather than blocking a send on an unavailable metadata call. The
-// audience's own recorded value is the half that must be present, because that is the half that
-// cannot be re-derived later.
-func (d *HubSpotDispatcher) assertAudiencePortal(ctx context.Context, projectID, audiencePortal string) error {
+// FAILS CLOSED when the current portal cannot be read. An earlier version permitted the dispatch
+// on a token-info failure, reasoning that a metadata outage should not block a ready send. That
+// was wrong in the one case that matters: a token for the WRONG portal plus a transient lookup
+// failure would clone the email there and hand it list ids from the audience's portal — the
+// unsafe partial send this guard exists to prevent, reached by the guard's own fallback. An
+// unreadable identity is not a match; it is an unknown, and this refuses before any mutation so
+// the caller can retry once token-info answers.
+func assertAudiencePortal(ctx context.Context, client *hubspot.Client, audiencePortal string) error {
 	if strings.TrimSpace(audiencePortal) == "" {
 		return fmt.Errorf("hubspot: the brief's audience does not record which portal its lists were built in, "+
 			"so they cannot be resolved against the portal this send authenticates against — rebuild the audience: %w",
 			errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
-	client, _, cerr := d.resolveHubSpotClientWithCreds(ctx, projectID, model.ProviderHubSpot)
-	if cerr != nil {
-		return cerr
-	}
 	portalCtx, cancel := context.WithTimeout(ctx, portalLookupTimeout)
 	defer cancel()
 	current, perr := client.AuthenticatedPortalID(portalCtx)
 	if perr != nil {
-		// Unreadable CURRENT portal is not a mismatch. Blocking a send on an unavailable
-		// metadata call would convert a transient outage into a failed dispatch, and the
-		// audience's own stamp — the half that cannot be recovered later — is present.
-		return nil
+		return fmt.Errorf("hubspot: could not confirm which portal this send authenticates against, so the "+
+			"audience's send list cannot be proven to exist there — retry once portal identity is readable: %w", perr)
 	}
 	if strings.TrimSpace(current) != strings.TrimSpace(audiencePortal) {
 		return fmt.Errorf("hubspot: the brief's audience was built in portal %s but this send authenticates "+

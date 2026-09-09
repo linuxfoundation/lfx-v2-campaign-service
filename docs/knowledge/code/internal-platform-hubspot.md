@@ -423,7 +423,15 @@ caller-specified template (`hubspotConfig.sourceEmailId`) and points the clone's
 at the brief's BUILT audience — resolved from the `campaign_audiences` resource
 (LFXV2-2773) via an injected `audienceReader`, taking the newest hubspot audience and
 refusing if it is not yet `built` (`PlatformMasterListID` → the send list,
-`SuppressionListIDs` → exclusions). The cloned email's HubSpot id is the campaign's
+`SuppressionListIDs` → exclusions). The audience must also record the PORTAL its lists were
+built in (`BuiltInPortalID`, migration `000032`), and dispatch refuses when that does not match
+the portal its own client authenticates against: it resolves credentials afresh and prefers a
+project connection added since the build, so an audience built on the LF portal can otherwise be
+handed to a client authenticated elsewhere and `SetSendList` receives ids that portal cannot see.
+An audience recording NO portal is refused too, with the narrower `ErrCampaignProvenanceUnknown`
+— there is nothing to reconnect to, so the remedy is a rebuild. Both refuse BEFORE `CloneEmail`,
+so nothing is created, and both compare against the client Dispatch already holds rather than
+resolving a second one. The cloned email's HubSpot id is the campaign's
 `PlatformCampaignID`; the clone is a DRAFT (a human sends it). AI body content
 (LFXV2-2775) and audience building (LFXV2-2774) are separate steps. Claim contract: an
 UNCONFIRMED clone (2xx-no-id / transport) retains the claim with a name-only partial; a

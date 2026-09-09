@@ -538,6 +538,13 @@ func TestHubSpot_MasterInSuppressionRefusedBeforeClone(t *testing.T) {
 func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// Answer token-info with the audience's portal, so the cross-portal guard passes and
+		// this test reaches the clone it is about of. A canned body for every path would fail
+		// the guard first and never exercise the UNCONFIRMED arm.
+		if r.URL.Path == hubSpotTokenInfoPath {
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"name":"clone but no id"}`) // 2xx, no id → UNCONFIRMED
 	}))
 	defer srv.Close()
@@ -577,6 +584,12 @@ func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 func TestHubSpot_SendListFailureIsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// token-info must answer, or the cross-portal guard refuses before the clone and this
+		// never reaches the set-send-list failure it is written for.
+		if r.URL.Path == hubSpotTokenInfoPath {
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+			return
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone" {
 			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
 			return
@@ -1073,17 +1086,18 @@ func TestHubSpot_DispatchRefusesAnAudienceFromAnotherPortal(t *testing.T) {
 	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)
 
 	t.Run("built in a different portal", func(t *testing.T) {
-		srv, _ := hubspotServer(t)
+		srv, rec := hubspotServer(t)
 		d := NewHubSpotDispatcher(
 			fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`)},
 			identityEncryptor{},
 			fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "99999999")},
 			hubspot.WithBaseURL(srv.URL))
 
-		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+		camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
 		if err == nil {
 			t.Fatal("dispatch succeeded with an audience built in another portal; its send list does not exist there")
 		}
+		assertRefusedBeforeCreate(t, camp, err, rec)
 		if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
 			t.Errorf("err = %v, want ErrCampaignAccountMismatch: the caller must be told to rebuild, not to retry", err)
 		}
@@ -1094,17 +1108,18 @@ func TestHubSpot_DispatchRefusesAnAudienceFromAnotherPortal(t *testing.T) {
 	})
 
 	t.Run("no portal recorded", func(t *testing.T) {
-		srv, _ := hubspotServer(t)
+		srv, rec := hubspotServer(t)
 		d := NewHubSpotDispatcher(
 			fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`)},
 			identityEncryptor{},
 			fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "")},
 			hubspot.WithBaseURL(srv.URL))
 
-		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+		camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
 		if err == nil {
 			t.Fatal("dispatch succeeded with an audience recording no portal; an unprovable tenant must fail closed")
 		}
+		assertRefusedBeforeCreate(t, camp, err, rec)
 		// The NARROWER sentinel: there is no portal to reconnect to, so the remedy is a rebuild.
 		// Every audience built before built_in_portal_id existed is in this state, and the column
 		// is deliberately not backfilled.
@@ -1115,4 +1130,80 @@ func TestHubSpot_DispatchRefusesAnAudienceFromAnotherPortal(t *testing.T) {
 			t.Errorf("err = %v, want it to say rebuild — there is no portal to reconnect to", err)
 		}
 	})
+}
+
+// assertRefusedBeforeCreate pins that a refusal happened with NOTHING created upstream.
+//
+// The sentinel alone does not prove that. Moving the guard below CloneEmail would keep every
+// errors.Is assertion green while orphaning a draft in HubSpot — a refusal that leaves real state
+// behind is a different, worse outcome than one that does not, and only the recorder can tell
+// them apart. NoUpstreamCreate is what the orchestrator reads to release the dispatch claim.
+func assertRefusedBeforeCreate(t *testing.T, camp *model.Campaign, err error, rec *hubspotRec) {
+	t.Helper()
+	if camp != nil {
+		t.Errorf("campaign = %+v, want nil: a pre-create refusal must return no campaign", camp)
+	}
+	if rec.SawClone() {
+		t.Error("CloneEmail was called before the refusal — a draft is now orphaned in the portal")
+	}
+	if rec.SawSendList() {
+		t.Error("SetSendList was called before the refusal")
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("err = %v, want NoUpstreamCreate() true so the orchestrator releases the claim", err)
+	}
+}
+
+// TestHubSpot_DispatchRefusesWhenPortalIdentityIsUnreadable pins the FAIL-CLOSED half of the
+// cross-portal guard, which nothing else covers.
+//
+// An earlier version permitted the dispatch when token-info failed, reasoning that a metadata
+// outage should not block a send that is otherwise ready. That is wrong in exactly the case the
+// guard exists for: a token authenticated against the WRONG portal, plus a transient lookup
+// failure, clones the email there and hands it list ids from the audience's portal — the unsafe
+// partial send, reached through the guard's own fallback.
+//
+// An unreadable identity is not a match; it is an unknown. Refusing before any mutation lets the
+// caller retry once token-info answers, which costs a delay rather than an orphaned draft.
+func TestHubSpot_DispatchRefusesWhenPortalIdentityIsUnreadable(t *testing.T) {
+	rec := &hubspotRec{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Everything works EXCEPT portal identity.
+		if r.URL.Path == hubSpotTokenInfoPath {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone" {
+			rec.mu.Lock()
+			rec.sawClone = true
+			rec.mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)},
+		identityEncryptor{},
+		fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "8112310")},
+		hubspot.WithBaseURL(srv.URL))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil {
+		t.Fatal("dispatch succeeded while portal identity was unreadable; the send list could not be proven to exist there")
+	}
+	if rec.SawClone() {
+		t.Error("CloneEmail ran despite an unprovable portal — a draft is orphaned, which is what failing closed prevents")
+	}
+	if camp != nil {
+		t.Errorf("campaign = %+v, want nil", camp)
+	}
+	if !strings.Contains(err.Error(), "retry") {
+		t.Errorf("err = %v, want it to say retry: the identity may be readable later, unlike a real mismatch", err)
+	}
 }
