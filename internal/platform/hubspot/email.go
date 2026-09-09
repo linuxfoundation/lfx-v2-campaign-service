@@ -597,7 +597,9 @@ type EmailHTMLBlock struct {
 // GetEmailHTMLWidgets returns the draft's rich-text blocks in READING ORDER.
 //
 // IDEMPOTENT (a GET). Every rich-text widget is returned, empty ones included, so len() is the
-// number of blocks the draft has and blocks[0] is the one at the top of the email.
+// number of blocks the draft has. blocks[0] is the one at the top of the email ONLY when
+// blocks[0].Placed — see that field. Without a layout there is no top block to name, and the
+// index is a sort of opaque module ids that can put the unsubscribe footer first.
 //
 // Order comes from the drag-and-drop layout tree (content.flexAreas), never from the widget
 // map, whose Go iteration order is randomized. Blocks the layout does not place — a classic

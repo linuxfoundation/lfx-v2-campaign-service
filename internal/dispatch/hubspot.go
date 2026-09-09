@@ -57,9 +57,17 @@ type hubspotConfig struct {
 	// caller that generated copy (GenerateEmailCopy) and wants it applied rather than pasted in
 	// by hand.
 	Subject string `json:"subject"`
-	// BodyHTML optionally replaces the cloned draft's rich-text body. OPTIONAL, and applied only
-	// when the draft has exactly ONE rich-text widget to replace — see applyEmailContent for why
-	// a multi-widget template is left alone rather than guessed at.
+	// BodyHTML optionally replaces the cloned draft's rich-text body. OPTIONAL, and written into
+	// the FIRST rich-text block of the draft's layout reading order — see applyEmailContent for
+	// why the top block is a stated contract rather than a guess at which block "means" body.
+	//
+	// Two shapes leave the draft's content alone: one with no rich-text block at all, and one with
+	// no LAYOUT (a classic, non-drag-and-drop template), where block order is only a sort of
+	// opaque module ids and "first" would as likely be the unsubscribe footer as the lede.
+	//
+	// This previously said "applied only when the draft has exactly ONE rich-text widget". That
+	// guard was removed because it fired on every real template in the portal — nine or so blocks
+	// each — so generated copy reached no draft at all.
 	BodyHTML string `json:"bodyHtml"`
 }
 
@@ -426,7 +434,8 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 // LFXV2-2775 — so turning it into a dispatch failure would trade a recoverable cosmetic gap for
 // a failed send and an orphaned draft. Every failure is logged and swallowed.
 //
-// FIRST BLOCK, in the layout's reading order — the block at the top of the email. It used to be
+// FIRST LAYOUT-PLACED BLOCK, in the layout's reading order — the block at the top of the email.
+// (A draft with no layout has no such block; see the classic-template paragraph below.) It used to be
 // "the only block, or nothing": templates carry several rich-text widgets (an intro, keynote
 // copy, a footer note) and the API exposes no marker saying which is "the" body, so writing
 // nothing looked like the safe answer to that ambiguity. It was not. Every real template in the
