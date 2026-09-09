@@ -136,17 +136,33 @@ func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, lo
 // replaced or deactivated mid-build — scatter the lists across DIFFERENT portals, leaving a
 // master list pointing at ids that do not all exist in one place.
 func (b *AudienceBuilder) CreateList(ctx context.Context, projectID, name string, filter json.RawMessage) (string, error) {
-	// The origin is not needed here: CreateList's failures are classified by createPlanLists,
-	// which already distinguishes a partial build from a definite one.
-	client, _, err := b.cachedClient(ctx, projectID)
+	client, fromSystem, err := b.cachedClient(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
 	l, cerr := client.CreateList(ctx, name, filter)
 	if cerr != nil {
-		// Pass the error through unwrapped so an UNCONFIRMED create (a 2xx with no parseable
-		// list id) keeps its "verify before retrying" classification instead of being
-		// flattened into a generic failure.
+		// A PERMISSION rejection is tagged with its origin, the same as the portal lookup. This
+		// used to pass through untagged on the reasoning that createPlanLists already classifies
+		// the failure -- but that classification is a DIFFERENT axis: partial-vs-definite, which
+		// says whether lists exist upstream, not whose credential was refused. A token-info call
+		// that succeeds and a list-create that then 401s is a real sequence (token valid, scope
+		// missing), and untagged it reported a revoked LF credential as a generic per-build
+		// upstream failure -- every unconnected foundation blaming its own config while nothing
+		// pages the operator.
+		//
+		// Only this arm is wrapped. Everything else passes through UNWRAPPED so an UNCONFIRMED
+		// create (a 2xx with no parseable list id) keeps its "verify before retrying"
+		// classification -- hubspot.IsUnconfirmed reads the concrete error, and flattening it
+		// would turn "a list may exist, go look" into "it failed", which is how a duplicate
+		// gets made. A permission rejection is never unconfirmed: 401/403 creates nothing.
+		if hubspot.IsPermissionRejection(cerr) {
+			tagged := fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, cerr)
+			if fromSystem {
+				return "", fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, tagged)
+			}
+			return "", tagged
+		}
 		return "", cerr
 	}
 	if l == nil {

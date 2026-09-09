@@ -51,6 +51,15 @@ var AudienceInput = Type("audience-input", func() {
 // the clear is unambiguous end-to-end: set clear_suppression_lists=true to empty the list
 // (it takes precedence over a supplied suppression_list_ids), or send a non-empty
 // suppression_list_ids to replace.
+// CONDITIONAL IMMUTABILITY, which the attribute types below cannot express: once an audience
+// records the portal its lists were built in, platform_master_list_id and suppression_list_ids are
+// FROZEN, and a patch that would change either is refused 409. A patch carries ids, not a
+// credential, so the service cannot verify which portal new ids belong to -- and dispatch compares
+// the recorded portal against the connection it resolves, not against the ids, so an unverified
+// change would be silently APPROVED at send time. The remedy is to rebuild the audience, which
+// re-stamps under the credential that actually created the lists. Re-sending unchanged values is
+// never a change; status and inclusion_summary stay patchable. Rows predating provenance record no
+// portal, are not backfilled, and stay editable.
 var AudienceUpdateInput = Type("audience-update-input", func() {
 	Reference(AudienceInput)
 	Attribute("platform_master_list_id")

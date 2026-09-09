@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -251,15 +252,28 @@ func refuseProvenanceBreakingPatch(cur *model.CampaignAudience, in *audiences.Au
 	if in.PlatformMasterListID != nil && *in.PlatformMasterListID != cur.PlatformMasterListID {
 		return domain.ErrAudienceProvenanceImmutable
 	}
+	// Suppression ids are compared as DECODED VALUES, never as raw bytes. The column is JSONB and
+	// Postgres re-renders it on the way out -- `["a","b"]` marshalled by this service comes back as
+	// `["a", "b"]` -- so a byte comparison reports a change for a list that is identical, refusing
+	// the very read-back-and-resend the master-list branch above explicitly allows. Verified
+	// against a live database, not inferred: `SELECT '["a","b"]' = ('["a","b"]'::jsonb)::text` is
+	// false.
+	//
+	// Order IS significant here, deliberately. These are suppression lists whose ids are applied as
+	// a set, so reordering changes nothing semantically -- but treating a reorder as "no change"
+	// means comparing sorted copies, and that would let a caller who genuinely swapped one id for
+	// another slip through if the swap happened to preserve the sorted sequence. Refusing a
+	// reordered resend is the safe error: the caller rebuilds, which is the documented remedy
+	// anyway. A false refusal costs a rebuild; a false accept costs the guarantee.
 	if in.ClearSuppressionLists != nil && *in.ClearSuppressionLists {
 		// Only a clear that actually removes something is a change.
-		if len(cur.SuppressionListIDs) > 0 && string(cur.SuppressionListIDs) != "[]" {
+		if len(unmarshalStrings(cur.SuppressionListIDs)) > 0 {
 			return domain.ErrAudienceProvenanceImmutable
 		}
 		return nil
 	}
 	if len(in.SuppressionListIds) > 0 &&
-		string(marshalStrings(in.SuppressionListIds)) != string(cur.SuppressionListIDs) {
+		!slices.Equal(in.SuppressionListIds, unmarshalStrings(cur.SuppressionListIDs)) {
 		return domain.ErrAudienceProvenanceImmutable
 	}
 	return nil

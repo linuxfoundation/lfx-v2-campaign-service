@@ -54,4 +54,27 @@ Two diagnostic fixes alongside it:
 All four mutation-verified in both directions, including the false-positive one where everything is
 marked system-owned.
 
+## Rollout is NOT inert for audiences built before migration 000032
+
+An earlier note on this stack said merging changes nothing until the HubSpot system row is
+bootstrapped. That is true of the FALLBACK and false of the guard, and the distinction matters
+because `LFX_CUTOVER_CAMPAIGN_SERVICE_CREATE` and `..._JOBS` are already `"true"` in the chart
+defaults, so the email dispatch path is live today.
+
+Every `built` audience predating `000032` records NULL provenance, and `assertAudiencePortal`
+refuses exactly that with `ErrCampaignProvenanceUnknown`. Those sends stop working on deploy, not on
+bootstrap, and the remedy for each is a rebuild.
+
+Backfilling is refused rather than merely unimplemented: the column records which portal a set of
+list ids was verified in, and there is no way to derive that after the fact. Writing today's
+resolved portal onto an old row asserts a verification nobody performed — and because the guard
+compares the stamp to the currently resolved connection rather than to the ids, a fabricated stamp
+would MATCH and approve the send. That is the failure the column exists to prevent, so a backfill
+would defeat the feature while appearing to complete the rollout.
+
+The rollout step is therefore operational, not a migration: enumerate `built` HubSpot audiences with
+`built_in_portal_id IS NULL` and rebuild them, which re-stamps under the credential that actually
+created the lists. Fail-closed is the right default here — the alternative is a send into a portal
+nothing verified — but it has to be planned for rather than discovered at send time.
+
 Follows [[2026-09-09-LFXV2-3040-audience-portal-provenance]].

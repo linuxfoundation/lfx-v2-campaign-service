@@ -681,6 +681,69 @@ func TestUpdateAudience_ProvenanceMakesTheListIdsImmutable(t *testing.T) {
 		}
 	})
 
+	// The suppression branches, which the master-list subtests above do not reach. They enforce the
+	// same invariant -- ids the stamp cannot vouch for -- and the resend case is where the first
+	// version of this guard was WRONG: it compared raw bytes against a JSONB column, and Postgres
+	// re-renders `["a","b"]` as `["a", "b"]` on the way out, so an identical resend was refused
+	// while the master-list branch allowed exactly that. Verified against a live database.
+	t.Run("replacing the suppression ids is refused", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		repo.items[id].SuppressionListIDs = marshalStrings([]string{"s-1", "s-2"})
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{SuppressionListIds: []string{"s-1", "s-99"}},
+		})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want ConflictError: swapped suppression ids are ids the "+
+				"stamp never saw, exactly like a swapped master list", err, err)
+		}
+	})
+
+	t.Run("re-sending the SAME suppression ids is not a change", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		// Stored the way PostgreSQL hands it back -- spaces after the commas. A byte comparison
+		// against the service's own compact marshalling fails here; a value comparison does not.
+		repo.items[id].SuppressionListIDs = []byte(`["s-1", "s-2"]`)
+		if _, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{SuppressionListIds: []string{"s-1", "s-2"}},
+		}); err != nil {
+			t.Fatalf("an unchanged suppression list read back from the database must not be "+
+				"refused -- JSONB re-renders the bytes, and only the VALUES are the change: %v", err)
+		}
+	})
+
+	t.Run("clearing a non-empty suppression set is refused", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		repo.items[id].SuppressionListIDs = marshalStrings([]string{"s-1"})
+		clear := true
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{ClearSuppressionLists: &clear},
+		})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want ConflictError: dropping suppressions widens who the "+
+				"send reaches, against a stamp that vouched for the narrower set", err, err)
+		}
+	})
+
+	t.Run("clearing an ALREADY-empty suppression set is a no-op, not a refusal", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		clear := true
+		if _, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{ClearSuppressionLists: &clear},
+		}); err != nil {
+			t.Fatalf("a clear that removes nothing changes no id the stamp vouches for: %v", err)
+		}
+	})
+
 	t.Run("an UNSTAMPED row keeps its ids editable", func(t *testing.T) {
 		repo := newFakeAudienceRepo()
 		s := NewAudienceService(repo)

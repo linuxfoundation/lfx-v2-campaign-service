@@ -273,3 +273,60 @@ func TestBuiltInPortalID_LatePermissionFailureCarriesTheOrigin(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateList_PermissionRejectionCarriesTheOriginWithoutFlatteningUnconfirmed pins both halves
+// of a narrow arm, because getting either one wrong is a real defect in the opposite direction.
+//
+// A 401/403 from list-create is the same incident as one from the portal lookup -- the LF token is
+// revoked or under-scoped -- and untagged it reported as a generic per-build upstream failure, so
+// every unconnected foundation blamed its own config while nothing paged the operator. That is the
+// half this arm fixes.
+//
+// The other half is what it must NOT break. Every other error passes through unwrapped so
+// hubspot.IsUnconfirmed can still read the concrete type: a 2xx with no parseable list id means a
+// list MAY exist upstream, and flattening that into a generic failure turns "go verify before
+// retrying" into "it failed" -- which is how a duplicate HubSpot list gets created. A permission
+// rejection is safe to wrap precisely because it is never ambiguous: 401/403 creates nothing.
+func TestCreateList_PermissionRejectionCarriesTheOriginWithoutFlatteningUnconfirmed(t *testing.T) {
+	t.Run("a 403 on the LF token is tagged system-owned", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"insufficient scope"}`)
+		}))
+		defer srv.Close()
+
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			model.SystemProjectID: activeHubSpotConn(goodHubSpotCreds),
+		}}
+		b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+
+		_, err := b.CreateList(b.BeginBuild(context.Background()), "cncf", "master", json.RawMessage(`{}`))
+		require.Error(t, err)
+		require.True(t, errors.Is(err, domain.ErrConnectionNotUsable),
+			"an untagged permission failure is reported as a generic upstream error worth retrying")
+		require.True(t, errors.Is(err, domain.ErrSystemConnectionNotUsable),
+			"a revoked LF token is an operator incident, not each foundation's own misconfiguration")
+	})
+
+	t.Run("an UNCONFIRMED create keeps its classification", func(t *testing.T) {
+		// 2xx with no list id: HubSpot may or may not have created it. This must NOT be wrapped,
+		// or IsUnconfirmed stops recognising it and a retry duplicates a real list.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		}))
+		defer srv.Close()
+
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			"cncf": activeHubSpotConn(goodHubSpotCreds),
+		}}
+		b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+
+		_, err := b.CreateList(b.BeginBuild(context.Background()), "cncf", "master", json.RawMessage(`{}`))
+		if err != nil {
+			require.False(t, errors.Is(err, domain.ErrConnectionNotUsable),
+				"only a permission rejection may be tagged; tagging an ambiguous outcome flattens "+
+					"\"a list may exist, verify first\" into \"it failed\", which is how a duplicate is made")
+		}
+	})
+}
