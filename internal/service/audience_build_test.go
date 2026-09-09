@@ -1504,3 +1504,38 @@ func TestBuildAudience_SystemRowFailureLogsAtError(t *testing.T) {
 		})
 	}
 }
+
+// TestAudienceBuildErr_SystemArmKeepsTheReconciliationIds pins that naming WHOSE fault it is does
+// not cost the operator the list ids they need to clean up.
+//
+// The system arm can be reached AFTER real HubSpot lists exist: a later create fails on the shared
+// credential, the partial-build persist then fails too, and unrecordedListsErr attaches the only
+// surviving handles to those lists. The arm returned its generic wording and dropped them -- and
+// because the row was never written, nothing else records what exists upstream. The operator was
+// told to fix a credential while the lists it had already created were unfindable.
+//
+// Order is asserted, not just presence: the attribution has to LEAD, because whose fault it is
+// decides who acts on it. The ids follow as detail.
+func TestAudienceBuildErr_SystemArmKeepsTheReconciliationIds(t *testing.T) {
+	systemFault := fmt.Errorf("resolve: %w", domain.ErrSystemConnectionNotUsable)
+	withIDs := unrecordedListsErr(systemFault, "aud-1", []string{"30967", "30968"}, false)
+
+	got, ok := audienceBuildErr(withIDs).(*audiences.InternalServerError)
+	require.True(t, ok, "a system-row fault is an operator page, not a caller error")
+
+	require.Contains(t, got.Message, "shared LF HubSpot connection",
+		"the attribution must survive: this is not the caller's configuration to fix")
+	for _, id := range []string{"30967", "30968"} {
+		require.Contains(t, got.Message, id,
+			"the list ids are the ONLY handles to lists that exist in HubSpot; the row was never "+
+				"written, so dropping them here makes them unfindable")
+	}
+	require.Less(t, strings.Index(got.Message, "shared LF HubSpot connection"), strings.Index(got.Message, "30967"),
+		"whose fault it is decides who acts, so the attribution leads and the ids follow as detail")
+
+	// The ordinary case must not grow a stray separator when there is nothing to reconcile.
+	plain, ok := audienceBuildErr(systemFault).(*audiences.InternalServerError)
+	require.True(t, ok)
+	require.NotContains(t, plain.Message, "reconcile",
+		"a system fault with no created lists must not name a reconciliation that does not exist")
+}

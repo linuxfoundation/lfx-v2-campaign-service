@@ -136,11 +136,22 @@ func audienceBuildErr(err error) error {
 		// touches Status (only the create arm sets StatusActive), so an INACTIVE system row is
 		// not repaired by re-running it. Naming one command for both would send an operator to
 		// run something that changes nothing and then look elsewhere for the fault.
-		return &audiences.InternalServerError{
-			Code: "500",
-			Message: "the shared LF HubSpot connection is not usable; this is an operator fault, not this project's configuration. " +
-				"Check the system connection's status is active, then re-run bootstrap-system-account -provider hubspot to replace the credential",
+		msg := "the shared LF HubSpot connection is not usable; this is an operator fault, not this project's configuration. " +
+			"Check the system connection's status is active, then re-run bootstrap-system-account -provider hubspot to replace the credential"
+		// Append the reconciliation detail when there is one, and the reason is orphaned state
+		// rather than completeness. This arm can be reached AFTER lists were created: a later
+		// create fails on the shared credential, the partial-build persist then fails too, and
+		// unrecordedListsErr attaches the only surviving handles to those HubSpot lists. Returning
+		// the generic system wording alone discards them -- the row was never written, so nothing
+		// else records what exists upstream, and an operator is told to fix a credential while the
+		// lists it already created are unfindable.
+		//
+		// The system attribution stays FIRST: whose fault it is decides who acts, and that has to
+		// lead. The ids follow as detail rather than replacing it.
+		if detail := reconciliationText(err); detail != "" {
+			msg += ". " + detail
 		}
+		return &audiences.InternalServerError{Code: "500", Message: msg}
 	}
 	// The PROJECT's own connection, checked before the portal arm below and for the same reason
 	// the system arm sits above it: errPortalUnconfirmed wraps whatever BuiltInPortalID returned,

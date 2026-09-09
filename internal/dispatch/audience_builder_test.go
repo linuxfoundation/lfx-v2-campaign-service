@@ -323,10 +323,15 @@ func TestCreateList_PermissionRejectionCarriesTheOriginWithoutFlatteningUnconfir
 		b := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 
 		_, err := b.CreateList(b.BeginBuild(context.Background()), "cncf", "master", json.RawMessage(`{}`))
-		if err != nil {
-			require.False(t, errors.Is(err, domain.ErrConnectionNotUsable),
-				"only a permission rejection may be tagged; tagging an ambiguous outcome flattens "+
-					"\"a list may exist, verify first\" into \"it failed\", which is how a duplicate is made")
-		}
+		// Required, not conditional. Guarding the assertions behind `if err != nil` made this
+		// subtest pass on a nil error -- and on any error that had LOST the unconfirmed marker,
+		// which is the regression it exists to catch. A test that cannot fail is worse than none.
+		require.Error(t, err, "a 2xx with no list id is not a success: the caller must not record a list id it never received")
+		require.True(t, hubspot.IsUnconfirmed(err),
+			"the ambiguous outcome must survive to the caller: createPlanLists keeps the row BUILDING "+
+				"on this, and a flattened error would mark it failed and invite a retry that duplicates a real list")
+		require.False(t, errors.Is(err, domain.ErrConnectionNotUsable),
+			"only a permission rejection may be tagged; tagging an ambiguous outcome flattens "+
+				"\"a list may exist, verify first\" into \"it failed\"")
 	})
 }
