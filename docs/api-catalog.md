@@ -628,6 +628,12 @@ bodyHtml: string                — OPTIONAL. Replaces the content of the cloned
                                   preheader field: Marketing Emails v3 exposes no preheader
                                   property, so accepting one would report success while HubSpot
                                   ignored it.
+                                  An operator edit made to the draft between staging and dispatch
+                                  may be REVERTED: the write re-sends the whole content object from
+                                  a snapshot read moments earlier, and HubSpot exposes no ETag or
+                                  revision on the draft endpoints to condition the write on. The
+                                  window is one PATCH after one GET, but it covers the ENTIRE draft
+                                  rather than only the block being written.
 utmCampaign: string             — OPTIONAL. Overrides the utm_campaign applied to every ELIGIBLE
                                   link in the staged email — that is, every untagged web link.
                                   Links that already carry a non-empty utm_campaign keep it (an

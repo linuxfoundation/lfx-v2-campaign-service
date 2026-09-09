@@ -690,6 +690,26 @@ func (ec emailContent) htmlBlocks() []EmailHTMLBlock {
 // The widgets must already exist on the draft: this writes into a block, it does not create one.
 // A name the draft does not carry is an error rather than a silent no-op, since both callers name
 // keys they just read from the same draft, so a miss means a real bug.
+//
+// LOST-UPDATE WINDOW, stated rather than hidden. The read and the write are two requests, so an
+// operator editing this draft in HubSpot between them has their edit overwritten by the snapshot
+// this call took: the whole `content` object is re-sent, so the overwrite covers the entire draft,
+// not just the block being written.
+//
+// It is not closed here, and neither half of that is an oversight:
+//   - The read cannot be dropped. A partial `content` PATCH destroys the draft outright (above),
+//     so the alternative to a narrow race is a guaranteed loss.
+//   - A conditional write has nothing to condition ON. Marketing Emails v3 documents no ETag, no
+//     If-Match and no revision field on the draft endpoints, and the API returns no precondition
+//     this client could carry. `Email.UpdatedAt` exists on the email resource, but whether the
+//     DRAFT GET returns it is unverified — building a concurrency guard on an assumed field would
+//     look like protection without being any.
+//
+// The window is small (one PATCH after one GET) and the callers are dispatch-time, not interactive.
+// The consequence an operator sees is that an edit made between staging and dispatch may be
+// reverted; that is documented in the api-catalog `bodyHtml` entry so it is discoverable from the
+// API contract rather than only from this comment. Closing it properly needs a live-API answer
+// about draft versioning, which belongs in its own change.
 func (c *Client) SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*Email, error) {
 	if id = strings.TrimSpace(id); id == "" {
 		return nil, fmt.Errorf("hubspot: SetEmailHTMLWidgets requires a non-empty id")
