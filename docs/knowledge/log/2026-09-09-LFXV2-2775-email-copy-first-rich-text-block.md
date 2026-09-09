@@ -12,6 +12,12 @@ drag-and-drop template observed. `content.flexAreas` is the one place a draft re
 order of its blocks, so reading it answers the question the guard could not, and the refusal is no
 longer needed: the body goes to the first rich-text block in layout order.
 
+That last sentence is REFINED, on the same branch, by
+`2026-09-09-LFXV2-2775-the-first-block-needs-a-layout.md`: it holds only where a layout exists. A
+classic (non-drag-and-drop) template has no `flexAreas` at all, so its blocks come back in sorted
+key order and the "first" is as likely the unsubscribe footer as the lede — the write now requires
+a layout-PLACED first block, and a draft without one keeps its template body.
+
 `SetEmailHTMLWidgets` also changed shape, and this half is the one that would have destroyed data
 rather than dropped it. It now READS the draft and PATCHes the whole `content` object back with
 only `body.html` changed, every other byte re-sent verbatim. HubSpot treats submitted content as
@@ -20,12 +26,23 @@ not update the draft in place — it replaced it. Verified against a live LF por
 fix the draft is 91.2KB with its banner and all blocks intact, and on the previous code the same
 dispatch left a 21.8KB draft with an empty body.
 
+That read is also what opens a LOST-UPDATE window, since the read and the write are two requests —
+see `2026-09-09-LFXV2-2775-the-draft-write-has-a-lost-update-window.md` for why it is documented
+rather than closed (the read cannot be dropped without destroying the draft, and Marketing Emails
+v3 exposes no precondition to condition the write on).
+
 A validated `registrationUrl` now reaches the email-copy prompt, sourced from the brief's `url`
 column with a nested `event_details.registrationUrl` fallback. It is VALIDATED rather than trimmed
 because it is interpolated into a prompt whose output goes straight into an `href`: a relative
 path, a bare hostname or a `javascript:` scheme would be pasted into a marketing email verbatim.
 An unusable value resolves to absent, and the prompt's link rule then has the model write the call
 to action as plain text — a working email with no button, rather than one with a hostile link.
+
+The validation described here was later found INCOMPLETE and is extended by
+`2026-09-09-LFXV2-2775-registration-url-is-an-href.md`: `url.Parse` is structural, so it also
+admitted a hostless `https://:443/path`, embedded `user:password@` credentials, and raw quotes in
+the path, query or fragment. The value is now normalised rather than passed through, refused for
+embedded credentials or a malformed query escape, and gated on raw size before parsing.
 Previously absent was the only case, and the model filled the gap with `href='#'`, so the primary
 CTA was a dead link the UTM tagger could not tag either.
 
