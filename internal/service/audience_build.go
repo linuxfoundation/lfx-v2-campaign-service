@@ -47,6 +47,16 @@ type AudienceBuilder interface {
 	// Scoping to the build (rather than caching on the implementation) is deliberate: a
 	// long-lived cache would pin a credential that has since been rotated or revoked.
 	BeginBuild(ctx context.Context) context.Context
+	// BuiltInPortalID reports the HubSpot portal the credential resolved for projectID
+	// authenticates against — read from the TOKEN, not from the operator-supplied portal_id
+	// config, which a credential swap leaves untouched.
+	//
+	// Recorded on the audience row so a later dispatch can prove its list ids belong to the
+	// portal it is about to send from. Best-effort by contract: it returns ("", nil) when the
+	// lookup is unavailable, and the caller stores the empty value rather than failing a build
+	// whose lists already exist. Absence then reads as "cannot prove" at dispatch, which is the
+	// fail-closed answer.
+	BuiltInPortalID(ctx context.Context, projectID string) (string, error)
 }
 
 // audiencePersistTimeout bounds the post-create writes, which run on a context detached from
@@ -413,6 +423,17 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	created.SuppressionListIDs = nil
 	created.InclusionSummary = summary
 	created.Status = model.AudienceBuilt
+	// Stamp the portal these list ids belong to, while the build's client is still cached and
+	// therefore still the credential that made them. A HubSpot list id is a bare numeric with no
+	// meaning outside its portal, so without this the row cannot say what its own ids refer to —
+	// and dispatch resolves credentials afresh, preferring a project connection added since.
+	//
+	// Best-effort by contract (see AudienceBuilder.BuiltInPortalID): the lists already exist
+	// upstream, so an unavailable lookup stores "" rather than failing a build and orphaning
+	// them. Empty means "not recorded", and the dispatch guard refuses on it.
+	if portal, perr := s.builder.BuiltInPortalID(ctx, p.ProjectID); perr == nil {
+		created.BuiltInPortalID = portal
+	}
 	if verr := created.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}

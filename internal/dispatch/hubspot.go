@@ -325,10 +325,23 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 	// Resolve the brief's BUILT audience: the send list is the audience's HubSpot master list.
 	// All of this is pre-create (no HubSpot mutation yet), so any failure releases the claim.
-	masterListID, suppressionIDs, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
+	masterListID, suppressionIDs, audiencePortal, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
 	if aerr != nil {
 		return nil, notCreated(aerr)
 	}
+	// The audience's list ids belong to ONE portal, and this dispatch resolved its credentials
+	// independently — preferring a project connection added since the build. So the send list
+	// and the email being cloned can come from different portals, and SetSendList would be
+	// handed ids the authenticated portal cannot see: a partial send, or a hard failure whose
+	// cause is invisible from either row.
+	//
+	// Reachable because the reserved-scope fallback now serves the email channel: a project with
+	// no connection builds against the LF portal, then connects its own and dispatches. Both
+	// steps are legitimate; the combination is not.
+	//
+	// Refused BEFORE any HubSpot mutation, so this releases the dispatch claim and creates
+	// nothing. Rebuild is the remedy rather than reconnect: the lists in the old portal cannot
+	// be moved, and the brief's audience must be rebuilt where the send will run.
 	// Pre-flight the master/suppression conflict BEFORE cloning: SetSendList rejects when the
 	// master list also appears in the suppression set (it would exclude the whole audience), but
 	// discovering that only after CloneEmail would orphan a draft. This is pure validation (no
@@ -337,6 +350,10 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		if s == masterListID {
 			return nil, notCreated(fmt.Errorf("hubspot: the audience master list %q is also in its suppression set — the send list would exclude the entire audience", masterListID))
 		}
+	}
+
+	if perr := d.assertAudiencePortal(ctx, brief.ProjectID, audiencePortal); perr != nil {
+		return nil, notCreated(perr)
 	}
 
 	// Resolve the portal this token authenticates against BEFORE anything is created, so the
@@ -536,10 +553,10 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 // master list id + suppression list ids. It fails (a pre-create error) when no audience exists
 // or the newest one is not yet built — activating an email against a missing/incomplete audience
 // would send to the wrong (or no) recipients, so this refuses rather than send blindly.
-func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID, briefID string) (masterListID string, suppressionIDs []string, err error) {
+func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID, briefID string) (masterListID string, suppressionIDs []string, builtInPortalID string, err error) {
 	auds, lerr := d.audiences.ListAudiences(ctx, projectID, briefID)
 	if lerr != nil {
-		return "", nil, fmt.Errorf("hubspot: could not load the brief's audience: %w", lerr)
+		return "", nil, "", fmt.Errorf("hubspot: could not load the brief's audience: %w", lerr)
 	}
 	// ListAudiences returns newest-first; take the newest HubSpot audience that is BUILT.
 	for _, a := range auds {
@@ -549,18 +566,18 @@ func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID,
 		if a.Status != model.AudienceBuilt {
 			// The newest hubspot audience isn't built yet (still building / failed) — refuse; a
 			// retry after it builds will succeed. A stale older audience must NOT be substituted.
-			return "", nil, fmt.Errorf("hubspot: the brief's audience is %s, not built — build the audience before staging the email", a.Status)
+			return "", nil, "", fmt.Errorf("hubspot: the brief's audience is %s, not built — build the audience before staging the email", a.Status)
 		}
 		if strings.TrimSpace(a.PlatformMasterListID) == "" {
-			return "", nil, fmt.Errorf("hubspot: the built audience has no master list id")
+			return "", nil, "", fmt.Errorf("hubspot: the built audience has no master list id")
 		}
 		ids, derr := decodeSuppressionIDs(a.SuppressionListIDs)
 		if derr != nil {
-			return "", nil, derr
+			return "", nil, "", derr
 		}
-		return strings.TrimSpace(a.PlatformMasterListID), ids, nil
+		return strings.TrimSpace(a.PlatformMasterListID), ids, strings.TrimSpace(a.BuiltInPortalID), nil
 	}
-	return "", nil, fmt.Errorf("hubspot: no audience found for this brief — build one before staging the email")
+	return "", nil, "", fmt.Errorf("hubspot: no audience found for this brief — build one before staging the email")
 }
 
 // decodeSuppressionIDs parses the audience's SuppressionListIDs JSON (a string array) into a
@@ -891,4 +908,49 @@ func (d *HubSpotDispatcher) CreateCampaign(ctx context.Context, projectID string
 		UTM:       created.UTM,
 		StartDate: created.StartDate,
 	}, nil
+}
+
+// assertAudiencePortal refuses a dispatch whose send list was built in a different HubSpot portal
+// than the one this dispatch authenticates against.
+//
+// Two refusals, deliberately distinct, mirroring the campaign-side split between
+// ErrCampaignAccountMismatch and ErrCampaignProvenanceUnknown:
+//
+//   - An audience recording NO portal cannot be proven to belong here. Every audience built
+//     before built_in_portal_id existed is in this state, and the column is deliberately not
+//     backfilled — inventing a value would assert provenance nobody verified. Fail closed: an
+//     unprovable tenant plus a send to real contacts is not a risk worth taking, and the remedy
+//     is a rebuild, not a reconnect.
+//   - A recorded portal that DIFFERS is the live mismatch, and its message names both so an
+//     operator can see which way the connection moved.
+//
+// The portal lookup is best-effort in one direction only: if the CURRENT portal cannot be read,
+// this permits the dispatch rather than blocking a send on an unavailable metadata call. The
+// audience's own recorded value is the half that must be present, because that is the half that
+// cannot be re-derived later.
+func (d *HubSpotDispatcher) assertAudiencePortal(ctx context.Context, projectID, audiencePortal string) error {
+	if strings.TrimSpace(audiencePortal) == "" {
+		return fmt.Errorf("hubspot: the brief's audience does not record which portal its lists were built in, "+
+			"so they cannot be resolved against the portal this send authenticates against — rebuild the audience: %w",
+			errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	}
+	client, _, cerr := d.resolveHubSpotClientWithCreds(ctx, projectID, model.ProviderHubSpot)
+	if cerr != nil {
+		return cerr
+	}
+	portalCtx, cancel := context.WithTimeout(ctx, portalLookupTimeout)
+	defer cancel()
+	current, perr := client.AuthenticatedPortalID(portalCtx)
+	if perr != nil {
+		// Unreadable CURRENT portal is not a mismatch. Blocking a send on an unavailable
+		// metadata call would convert a transient outage into a failed dispatch, and the
+		// audience's own stamp — the half that cannot be recovered later — is present.
+		return nil
+	}
+	if strings.TrimSpace(current) != strings.TrimSpace(audiencePortal) {
+		return fmt.Errorf("hubspot: the brief's audience was built in portal %s but this send authenticates "+
+			"against portal %s, so its send list does not exist there — rebuild the audience against the "+
+			"current connection: %w", audiencePortal, current, domain.ErrCampaignAccountMismatch)
+	}
+	return nil
 }

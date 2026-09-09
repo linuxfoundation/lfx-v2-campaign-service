@@ -274,3 +274,33 @@ func isSupportedYear(s string) bool {
 	}
 	return s[2] >= '0' && s[2] <= '9' && s[3] >= '0' && s[3] <= '9'
 }
+
+// BuiltInPortalID reports the portal the resolved credential authenticates against, for the
+// audience row's provenance. See service.AudienceBuilder for the contract.
+//
+// It reuses the BUILD-SCOPED client, so the portal reported is the one the same credential the
+// lists were created with authenticates against — resolving a fresh client here could read a
+// different portal if the connection changed mid-build, which is precisely the confusion the
+// column exists to prevent.
+//
+// Read from the token rather than from providerConfig["portal_id"]: that config value is
+// operator-supplied and a credential swap leaves it untouched, so it can name a portal the
+// current token cannot reach. The campaigns path made the same choice for the same reason.
+//
+// BEST-EFFORT by contract. A failure returns ("", nil), not an error: this is called after the
+// lists already exist upstream, and failing the build over unavailable provenance would orphan
+// real HubSpot lists to record a field. An empty value is honest — the dispatch guard treats it
+// as unprovable and refuses, rather than assuming.
+func (b *AudienceBuilder) BuiltInPortalID(ctx context.Context, projectID string) (string, error) {
+	client, err := b.cachedClient(ctx, projectID)
+	if err != nil {
+		return "", nil
+	}
+	portalCtx, cancel := context.WithTimeout(ctx, portalLookupTimeout)
+	defer cancel()
+	id, perr := client.AuthenticatedPortalID(portalCtx)
+	if perr != nil {
+		return "", nil
+	}
+	return strings.TrimSpace(id), nil
+}

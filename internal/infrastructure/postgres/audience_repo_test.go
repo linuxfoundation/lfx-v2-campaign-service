@@ -28,7 +28,7 @@ import (
 var audienceColumnOrder = []string{
 	"id", "project_id", "brief_id", "platform", "platform_master_list_id",
 	"suppression_list_ids", "inclusion_summary", "status", "version",
-	"created_by", "updated_by", "created_at", "updated_at",
+	"created_by", "updated_by", "created_at", "updated_at", "built_in_portal_id",
 }
 
 // fakeAudienceRow drives scanAudience with a fixed, positionally ordered result set.
@@ -75,7 +75,7 @@ func TestScanAudience_MapsEachActorColumnToItsField(t *testing.T) {
 	got, err := scanAudience(fakeAudienceRow{vals: []any{
 		"aud-1", "cncf", "b1", "hubspot", strPtrPG("12345"),
 		[]byte(`["s1"]`), strPtrPG("past attendees"), "built", int64(3),
-		[]byte(createdBy), []byte(updatedBy), createdAt, updatedAt,
+		[]byte(createdBy), []byte(updatedBy), createdAt, updatedAt, strPtrPG("8112310"),
 	}})
 	require.NoError(t, err)
 
@@ -92,7 +92,7 @@ func TestScanAudience_MapsEachActorColumnToItsField(t *testing.T) {
 func TestScanAudience_NullUpdatedByIsNotRecorded(t *testing.T) {
 	got, err := scanAudience(fakeAudienceRow{vals: []any{
 		"aud-1", "cncf", "b1", "hubspot", nil, nil, nil, "building", int64(1),
-		nil, nil, time.Time{}, time.Time{},
+		nil, nil, time.Time{}, time.Time{}, nil,
 	}})
 	require.NoError(t, err)
 	require.Nil(t, got.UpdatedBy, "a SQL NULL updated_by must scan to nil, not to a JSON null")
@@ -190,4 +190,31 @@ func TestMigration000019_AddsAudienceUpdatedBy(t *testing.T) {
 		normalizeWS(string(down)),
 		"down migration leaves updated_by behind, so a down-then-up cycle hits an already-"+
 			"present column")
+}
+
+// TestScanAudience_PortalNullIsNotRecorded pins that a row written before built_in_portal_id
+// existed reads back as EMPTY rather than as some portal.
+//
+// The distinction is the whole point of not backfilling the column: the dispatch guard treats
+// "" as "cannot prove which portal these list ids belong to" and refuses, while any non-empty
+// value is a claim it will compare against. A NULL scanned into a plain string would be ""
+// either way — this pins that the pointer indirection stays, so a future change to a non-nullable
+// destination fails here instead of silently converting unprovable rows into provable ones.
+func TestScanAudience_PortalNullIsNotRecorded(t *testing.T) {
+	null, err := scanAudience(fakeAudienceRow{vals: []any{
+		"aud-1", "cncf", "b1", "hubspot", nil, nil, nil, "building", int64(1),
+		nil, nil, time.Time{}, time.Time{}, nil,
+	}})
+	require.NoError(t, err)
+	require.Empty(t, null.BuiltInPortalID,
+		"a NULL built_in_portal_id must read as empty: absence is what the dispatch guard refuses on")
+
+	set, err := scanAudience(fakeAudienceRow{vals: []any{
+		"aud-1", "cncf", "b1", "hubspot", strPtrPG("12345"),
+		nil, nil, "built", int64(1),
+		nil, nil, time.Time{}, time.Time{}, strPtrPG("8112310"),
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "8112310", set.BuiltInPortalID,
+		"a recorded portal must land on BuiltInPortalID — it is what dispatch compares against")
 }

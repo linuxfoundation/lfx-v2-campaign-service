@@ -37,6 +37,9 @@ type fakeBuilder struct {
 	// Only the first arrival is held, deliberately: a second one getting this far means the
 	// lease was NOT taken first, and it has to be allowed to run on so the test fails on the
 	// duplicate lists it creates rather than on the harness.
+	// portalID is stamped onto the built audience row as its provenance. Empty models a
+	// best-effort lookup that could not answer.
+	portalID  string
 	entered   chan struct{}
 	release   chan struct{}
 	enterOnce sync.Once
@@ -108,6 +111,14 @@ func (f *fakeBuilder) filterFor(name string) []byte {
 // BeginBuild is a no-op in the fake: the scope only affects client caching, which the fake
 // does not do.
 func (f *fakeBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
+
+// portalID is what BuiltInPortalID reports; the zero value models a lookup that could not answer,
+// which the contract says stores "" rather than failing the build.
+func (f *fakeBuilder) BuiltInPortalID(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.portalID, nil
+}
 
 func (f *fakeBuilder) names() []string {
 	f.mu.Lock()
@@ -670,6 +681,10 @@ func (r *recordingBuilder) CreateList(_ context.Context, _, name string, _ json.
 
 func (r *recordingBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
 
+func (r *recordingBuilder) BuiltInPortalID(context.Context, string) (string, error) {
+	return "8112310", nil
+}
+
 // TestBuildAudience_StaleApprovalIsRejected pins the TOCTOU guard where it actually has to
 // hold: INSIDE the warehouse round-trip. The claim now runs before that round-trip, so the
 // claim's own approval gate only dates the approval to the moment the lease was taken — a
@@ -1182,4 +1197,44 @@ func TestAudienceBuildErrNamesTheSystemRowsOwner(t *testing.T) {
 		"a project's own connection defect must keep the original message")
 	assert.NotContains(t, own.Message, "shared LF HubSpot connection",
 		"a project's own defect must NOT be attributed to the LF system row")
+}
+
+// TestBuildAudience_StampsTheBuildingPortal pins that a successful build records WHICH portal its
+// list ids belong to — the field the dispatch guard refuses on.
+//
+// Both directions matter. A recorded portal is what lets a later dispatch prove the send list
+// exists where it is about to send; an unavailable lookup must store "" rather than fail a build
+// whose HubSpot lists already exist, because failing there would orphan them to record a field.
+// Empty then reads as "cannot prove" at dispatch, which is the fail-closed answer.
+func TestBuildAudience_StampsTheBuildingPortal(t *testing.T) {
+	cases := map[string]struct {
+		portal string
+		want   string
+	}{
+		"records the portal the credential authenticated against": {"8112310", "8112310"},
+		"an unavailable lookup stores empty rather than failing":  {"", ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}, portalID: tc.portal}
+			s, arepo, _ := newBuildService(t, b,
+				`{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+			res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+				ProjectID: "cncf", BriefID: "brief-1",
+			})
+			require.NoError(t, err,
+				"the lists already exist upstream; an unavailable provenance lookup must not fail the build")
+			require.NotNil(t, res)
+			require.Equal(t, string(model.AudienceBuilt), res.Status)
+
+			var stored *model.CampaignAudience
+			for _, a := range arepo.items {
+				stored = a
+			}
+			require.NotNil(t, stored, "the build must persist the audience row")
+			require.Equal(t, tc.want, stored.BuiltInPortalID,
+				"the row's portal decides whether a later dispatch can prove its send list belongs there")
+		})
+	}
 }

@@ -44,11 +44,23 @@ func (f fakeAudienceReader) ListAudiences(context.Context, string, string) ([]*m
 }
 
 // builtHubSpotAudience returns a newest-first list with one BUILT HubSpot audience.
+// builtHubSpotAudience stamps BuiltInPortalID with the portal the fake server reports
+// (`{"hubId":8112310}`), because Dispatch now refuses a send whose audience cannot be proven to
+// belong to the portal it authenticates against. Leaving it empty would make every dispatch test
+// exercise the provenance refusal instead of the path it was written for — see
+// builtHubSpotAudienceInPortal for the tests that want a different portal on purpose.
 func builtHubSpotAudience(masterList string, suppression []string) []*model.CampaignAudience {
+	return builtHubSpotAudienceInPortal(masterList, suppression, "8112310")
+}
+
+// builtHubSpotAudienceInPortal is the explicit form: an audience built in a NAMED portal, or in
+// none at all when portalID is empty.
+func builtHubSpotAudienceInPortal(masterList string, suppression []string, portalID string) []*model.CampaignAudience {
 	raw, _ := json.Marshal(suppression)
 	return []*model.CampaignAudience{{
 		ID: "aud-1", Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
 		PlatformMasterListID: masterList, SuppressionListIDs: raw,
+		BuiltInPortalID: portalID,
 	}}
 }
 
@@ -1043,4 +1055,64 @@ func TestHubSpot_LatePermissionFailureCarriesTheCredentialOrigin(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestHubSpot_DispatchRefusesAnAudienceFromAnotherPortal pins the cross-portal guard, in both
+// forms, and pins that each refuses BEFORE anything is created.
+//
+// The hazard only became reachable when the reserved-scope fallback began serving the email
+// channel: a project with no HubSpot connection builds its audience against the LF portal, then
+// connects its own portal, and Dispatch resolves credentials afresh — preferring that new
+// connection. The email is cloned in the project's portal while SetSendList is handed list ids
+// that exist only in the LF portal. HubSpot answers about ids it cannot see, so the send is a
+// partial or a hard failure, and neither row explains why.
+//
+// Both arms assert notCreated: a refusal after CloneEmail would orphan a draft, which is the
+// same reason the master/suppression pre-flight runs before the clone.
+func TestHubSpot_DispatchRefusesAnAudienceFromAnotherPortal(t *testing.T) {
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)
+
+	t.Run("built in a different portal", func(t *testing.T) {
+		srv, _ := hubspotServer(t)
+		d := NewHubSpotDispatcher(
+			fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`)},
+			identityEncryptor{},
+			fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "99999999")},
+			hubspot.WithBaseURL(srv.URL))
+
+		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+		if err == nil {
+			t.Fatal("dispatch succeeded with an audience built in another portal; its send list does not exist there")
+		}
+		if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+			t.Errorf("err = %v, want ErrCampaignAccountMismatch: the caller must be told to rebuild, not to retry", err)
+		}
+		// Both portals named, so an operator can see which way the connection moved.
+		if !strings.Contains(err.Error(), "99999999") || !strings.Contains(err.Error(), "8112310") {
+			t.Errorf("err = %v, want it to name BOTH the audience's portal and the send's", err)
+		}
+	})
+
+	t.Run("no portal recorded", func(t *testing.T) {
+		srv, _ := hubspotServer(t)
+		d := NewHubSpotDispatcher(
+			fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"pat-good"}`)},
+			identityEncryptor{},
+			fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "")},
+			hubspot.WithBaseURL(srv.URL))
+
+		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+		if err == nil {
+			t.Fatal("dispatch succeeded with an audience recording no portal; an unprovable tenant must fail closed")
+		}
+		// The NARROWER sentinel: there is no portal to reconnect to, so the remedy is a rebuild.
+		// Every audience built before built_in_portal_id existed is in this state, and the column
+		// is deliberately not backfilled.
+		if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+			t.Errorf("err = %v, want ErrCampaignProvenanceUnknown for an unrecorded portal", err)
+		}
+		if !strings.Contains(err.Error(), "rebuild") {
+			t.Errorf("err = %v, want it to say rebuild — there is no portal to reconnect to", err)
+		}
+	})
 }
