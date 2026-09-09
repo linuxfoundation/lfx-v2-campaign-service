@@ -1074,16 +1074,10 @@ func TestComposedBoundClearsEveryStageFloor(t *testing.T) {
 	const inputBound = maxPromptSize
 	const composedBound = maxComposedPromptSize
 
-	worst, worstStage := 0, ""
-	for _, name := range emailstage.Names() {
-		// WITH a registrationURL, less its sentinel rune -- see worstStageFloor for why the
-		// empty-URL composition measures the wrong floor.
-		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, registrationURL: "x"})
-		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user) - 1
-		if floor > worst {
-			worst, worstStage = floor, name
-		}
-	}
+	// The SHARED helper, not a second copy of the arithmetic: the duplicate here kept an
+	// unconditional sentinel subtraction after withheld-URL stages made it conditional, so this
+	// test measured a floor a rune below the real one while claiming to guard it.
+	worst, worstStage := worstStageFloorNamed()
 
 	if worst+inputBound > composedBound {
 		t.Errorf("stage %q floors at %d runes; with the %d-rune input allowance the worst valid composition is %d, above the %d composed bound — valid caller input would be refused with a 503",
@@ -1481,14 +1475,33 @@ func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
 // helper takes the MAX across stages, so it still returns the true worst case — and it keeps
 // working if a stage's link policy flips, which a hand-picked "the stage with the URL" would not.
 func worstStageFloor() int {
-	worst := 0
+	f, _ := worstStageFloorNamed()
+	return f
+}
+
+// worstStageFloorNamed is worstStageFloor plus the stage that produced it, for the assertion that
+// needs to name it. ONE implementation of the arithmetic: the sentinel subtraction was duplicated
+// here and in TestComposedBoundClearsEveryStageFloor, and when withheld-URL stages made the
+// subtraction conditional the copy kept the old unconditional form and understated their floor by
+// a rune. A derived figure with two sources drifts; this one has one.
+func worstStageFloorNamed() (int, string) {
+	worst, worstName := 0, ""
 	for _, name := range emailstage.Names() {
 		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, registrationURL: "x"})
-		if floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user) - 1; floor > worst {
-			worst = floor
+		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+		// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
+		// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
+		// nothing to its composition and subtracting one removes a rune that was never added --
+		// understating that stage's floor, and with it every figure derived from this helper.
+		// Measured: Post-Event composes identically with "x" and with "", delta 0.
+		if emailstage.Resolve(name).LinksToRegistration {
+			floor--
+		}
+		if floor > worst {
+			worst, worstName = floor, name
 		}
 	}
-	return worst
+	return worst, worstName
 }
 
 // TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt pins which fields the caller-input

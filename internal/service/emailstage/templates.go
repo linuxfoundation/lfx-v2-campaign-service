@@ -122,14 +122,14 @@ IF ANY RULE FAILS: Revise the email before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: Submit Your Proposal (link to CFP form)",
+			"Primary: Submit Your Proposal (no CFP-form link is supplied, so render it as plain text)",
 		},
 		// No mentorship claim: nothing in the pipeline supplies one, and unlike a price it carries
 		// no placeholder for the OMIT rule to act on -- so it read as fact on every CFP email.
 		FooterNote:          "Questions? Reply to this email.",
 		PrimaryCTA:          "Submit Your Proposal",
-		LinksToRegistration: false,
 		PrimaryCTAFallback:  "",
+		LinksToRegistration: false,
 		SecondaryCTA:        "",
 	},
 
@@ -247,8 +247,8 @@ WORD COUNT TARGET: 200-280 words`,
 		},
 		FooterNote:          "Early registration helps us plan better. See you soon.",
 		PrimaryCTA:          "View Full Schedule",
-		LinksToRegistration: true,
 		PrimaryCTAFallback:  "Register Now",
+		LinksToRegistration: true,
 		SecondaryCTA:        "Register to Attend",
 	},
 
@@ -378,8 +378,8 @@ WORD COUNT TARGET: 180-250 words`,
 		// the pipeline supplies neither a standard price nor a registration deadline.
 		FooterNote:          "Early bird pricing ends [DEADLINE]. [REGULAR_PRICE] applies after that date.",
 		PrimaryCTA:          "Register Now",
-		LinksToRegistration: true,
 		PrimaryCTAFallback:  "",
+		LinksToRegistration: true,
 		SecondaryCTA:        "View All Options",
 	},
 
@@ -512,8 +512,8 @@ WORD COUNT TARGET: 180-240 words`,
 		},
 		FooterNote:          "Questions? Reply to this email. We'd love to hear from you.",
 		PrimaryCTA:          "Register with Code [PROMO_CODE]",
-		LinksToRegistration: true,
 		PrimaryCTAFallback:  "Register Now",
+		LinksToRegistration: true,
 		SecondaryCTA:        "Learn More",
 	},
 
@@ -639,12 +639,12 @@ IF ANY RULE FAILS: Revise before returning.
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
 			"Primary: View Full Schedule when the schedule link is supplied. Without it: See You There. Never empty.",
-			"Secondary: Download Event App (mobile app link)",
+			"Secondary: Download Event App (no app link is supplied, so render it as plain text)",
 		},
 		FooterNote:          "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
 		PrimaryCTA:          "View Full Schedule",
-		LinksToRegistration: false,
 		PrimaryCTAFallback:  "See You There",
+		LinksToRegistration: false,
 		SecondaryCTA:        "Download Event App",
 	},
 
@@ -780,12 +780,12 @@ IF ANY RULE FAILS: Revise before returning.
 WORD COUNT TARGET: 180-240 words`,
 		CTAStrategy: []string{
 			"Primary: a link the brief actually supplies -- do NOT offer recordings unless [RECORDINGS_URL] is given",
-			"Secondary: Share Your Feedback (survey link)",
+			"Secondary: Share Your Feedback (no survey link is supplied, so render it as plain text)",
 		},
 		FooterNote:          "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
 		PrimaryCTA:          "Watch Recordings",
-		LinksToRegistration: false,
 		PrimaryCTAFallback:  "Share Feedback",
+		LinksToRegistration: false,
 		SecondaryCTA:        "Share Your Feedback",
 	},
 }

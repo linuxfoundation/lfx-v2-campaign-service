@@ -69,8 +69,8 @@ const maxPromptSize = 2400 // runes
 // present and is omitted entirely when one is not, which put the with-URL figure at 8764 while the
 // no-URL floor was 8745 -- so the bound had to clear the LARGER. It then moved again when stages
 // gained a link policy: Post-Event, the worst floor at 6344, WITHHOLDS the URL, so the line it was
-// measured with is no longer part of its composition and the worst valid composition fell to 8744,
-// leaving 556 runes of headroom.
+// measured with is no longer part of its composition and the worst valid composition fell to 8788,
+// leaving 512 runes of headroom.
 //
 // Post-Event leads on content-prompt length, not on that line, so dropping 19 runes did not change
 // WHICH stage is worst -- only the number. TestComposedBoundClearsEveryStageFloor and
@@ -567,9 +567,9 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// 6078) and are
 	// edited by hand.
 	//
-	// MEASURED, and re-measured after the link policy landed: worst stage-only floor 6344
-	// (Post-Event), so with the 2400-rune input bound the worst valid composition is 8744. The
-	// bound is 9300, leaving 556 runes of headroom for template growth -- about one section.
+	// MEASURED, and re-measured after the link policy landed: worst stage-only floor 6388
+	// (Post-Event), so with the 2400-rune input bound the worst valid composition is 8788. The
+	// bound is 9300, leaving 512 runes of headroom for template growth -- about one section.
 	//
 	// Post-Event is the worst floor even though it WITHHOLDS the registration URL: its content
 	// prompt is the longest, and dropping the 19-rune URL line does not change which stage leads.
@@ -647,7 +647,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
 	if totalPromptSize > maxComposedPromptSize {
 		// ERROR, not Warn, and 503 rather than 400. This branch is unreachable by caller input --
-		// the worst valid composition is 8744 against a 9300 bound -- so if it fires, a
+		// the worst valid composition is 8788 against a 9300 bound -- so if it fires, a
 		// service-owned stage template has outgrown its budget. That is a service defect, and a
 		// 400 would file it under client error on every 4xx/5xx dashboard while telling the caller
 		// to edit a brief that is not the problem. The message already said as much; the status
