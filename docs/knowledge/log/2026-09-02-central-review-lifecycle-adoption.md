@@ -22,15 +22,15 @@ generic `local-code-review` and `local-learnings-review` symlinks in
 reviewer subagents. These deletions are made against the target contract in
 [lfx-skills#73](https://github.com/linuxfoundation/lfx-skills/pull/73), under
 which the lifecycle derives its only permitted fallback from the declared
-reviewer names and this repo adds nothing for it. The lifecycle published at the time of this entry — identifiable by its
-behaviour, not by a version label, since the plugin does not version-bump: it
-still probes the two alias paths and prefers a repo-owned
-`local-review-fallback/SKILL.md` when present, and it does not read
-`## Review lifecycle configuration` — is therefore incompatible with this repo
-until that central change merges and publishes (the coordinated release's
-documented merge gate). Until then this repo is intentionally not independently
-runnable against the published lifecycle; no restoration or override bridge is
-added, by design.
+reviewer names and this repo adds nothing for it. The lifecycle published at
+the time of this entry — identifiable by its behaviour, not by a version label,
+since the plugin does not version-bump: it still probes the two alias paths and
+prefers a repo-owned `local-review-fallback/SKILL.md` when present, and it does
+not read `## Review lifecycle configuration` — is therefore incompatible with
+this repo until that central change merges and publishes (the coordinated
+release's documented merge gate). Until then this repo is intentionally not
+independently runnable against the published lifecycle; no restoration or
+override bridge is added, by design.
 
 Retained: the two repo-owned reviewer skills
 `.claude/skills/campaign-service-code-reviewer` and
