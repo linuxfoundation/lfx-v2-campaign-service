@@ -655,35 +655,78 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 	}
 }
 
-// TestInstallRefusesProvidersTheFallbackCannotServe pins the gate that keeps the installable
-// set and the USABLE set the same. model.Provider.Valid() admits HubSpot, but the reserved-scope
-// fallback (credsSource.systemConn) is classification-gated to paid ads, so a HubSpot system row
-// would be written, reported as installed, and then resolved by nothing. An operator has no way
-// to see that from the outside — the row is present and looks healthy — which is exactly why the
-// refusal has to happen at install time.
+// TestInstallKeepsTheInstallableAndUsableSetsTheSame pins the invariant this gate has always been
+// about: a row bootstrap reports as installed must be a row the fallback can actually resolve.
 //
-// The paid-ads half of the assertion is what keeps this from being a HubSpot blocklist: the gate
-// is a classification, so a provider added later is admitted only once it is classified.
-func TestInstallRefusesProvidersTheFallbackCannotServe(t *testing.T) {
-	hubspotCreds := []byte(`{"private_app_token":"tok"}`)
+// It previously enforced that by REFUSING HubSpot, because credsSource.systemConn was
+// classification-gated to paid ads — so a HubSpot row would have been written, reported as
+// installed, and then resolved by nothing. That gate is gone: every LF foundation shares the one
+// LF HubSpot portal, so the email channel resolves the system row exactly as the ad channels do.
+// The two sets are the same again, from the other direction — and the email channel now has the
+// credential without which audience builds and dispatch cannot run at all.
+//
+// Asserting EVERY provider (rather than adding a HubSpot case) is what keeps this honest: if
+// someone re-narrows the fallback without re-narrowing bootstrap, the sets diverge and this fails.
+func TestInstallKeepsTheInstallableAndUsableSetsTheSame(t *testing.T) {
+	// account_id is held to a per-provider shape (valueShapes): Google Ads is digits-only, while
+	// HubSpot's is a marketing list id with no such constraint. Supply each provider's own.
+	cases := []struct {
+		provider  model.Provider
+		accountID string
+		creds     []byte
+	}{
+		{model.ProviderHubSpot, "acct-1", []byte(`{"private_app_token":"tok"}`)},
+		{model.ProviderGoogleAds, "8666746580", []byte(goodCreds)},
+	}
+	for _, tc := range cases {
+		p, c := tc.provider, tc.creds
+		t.Run(string(p), func(t *testing.T) {
+			repo := &stubRepo{}
+			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				p, tc.accountID, false, nil, c); err != nil {
+				t.Fatalf("installing a %s system row = %v, want it installed: the fallback serves it", p, err)
+			}
+			if repo.created == nil {
+				t.Fatalf("%s install wrote nothing; calls = %v", p, repo.calls)
+			}
+			if repo.created.ProjectID != model.SystemProjectID {
+				t.Errorf("%s installed at %q, want the reserved system scope", p, repo.created.ProjectID)
+			}
+		})
+	}
 
+	// The EMAIL channel installs with NO -account-id, which is the operator's actual situation
+	// and the case the account-id table above cannot reach. requireAccountID exists because the
+	// paid-ads dispatchers refuse a connection without an account id; HubSpot reads none, so
+	// demanding one here would put the CLI's own usage error at odds with what it accepts —
+	// naming hubspot as installable while refusing the plainest way to install it.
+	repoNoAcct := &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repoNoAcct, fakeEnc{},
+		model.ProviderHubSpot, "", false, nil, []byte(`{"private_app_token":"tok"}`)); err != nil {
+		t.Fatalf("installing hubspot without -account-id = %v, want it installed: an email "+
+			"connection has no ad account to select", err)
+	}
+	if repoNoAcct.created == nil {
+		t.Fatalf("hubspot install without -account-id wrote nothing; calls = %v", repoNoAcct.calls)
+	}
+
+	// A PAID-ADS provider without discovery still requires it — the exemption must be the email
+	// channel only, or the guard stops protecting the adapters it was written for.
+	repoPaid := &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repoPaid, fakeEnc{},
+		model.ProviderRedditAds, "", false, nil, []byte(`{"client_id":"c","client_secret":"s","refresh_token":"r","user_agent":"u"}`)); err == nil {
+		t.Error("installing reddit without -account-id succeeded; a paid-ads adapter refuses a connection without one")
+	}
+
+	// An UNCLASSIFIED provider is still refused — Valid() rejects it before anything is written,
+	// so a provider added later cannot inherit a credential nobody has reasoned about.
 	repo := &stubRepo{}
-	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderHubSpot, "acct", false, nil, hubspotCreds)
-	if err == nil || !strings.Contains(err.Error(), "not a paid-ads provider") {
-		t.Fatalf("installing a hubspot system row = %v, want a refusal naming the classification", err)
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.Provider("not-a-provider"), "acct", false, nil, []byte(`{}`)); err == nil {
+		t.Fatalf("installing an unsupported provider succeeded; want a refusal")
 	}
 	if repo.created != nil || repo.updated != nil || repo.setCT != nil {
 		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
-	}
-
-	repo = &stubRepo{}
-	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "123", false, nil, []byte(goodCreds)); err != nil {
-		t.Fatalf("a paid-ads provider must still install: %v", err)
-	}
-	if repo.created == nil {
-		t.Fatalf("paid-ads install wrote nothing; calls = %v", repo.calls)
 	}
 }
 

@@ -333,12 +333,16 @@ func TestDisconnectedProbeIsIndexed(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 
+	// EVERY provider, with no IsPaidAds skip. This used to `continue` past HubSpot, because
+	// credsSource gated the probe behind IsPaidAds and an index there would have been write cost
+	// for a query never issued. The reserved-scope fallback now serves the email channel, so
+	// HubSpot reaches Disconnected() on every audience build and email dispatch by a foundation
+	// with no connection of its own — the ordinary case. 000031 adds the index; this covers it.
+	//
+	// Walking AllProviders() rather than adding a HubSpot case is what keeps the two in step: a
+	// provider whose table gains a probe without an index fails here rather than degrading to a
+	// sequential scan nobody measures.
 	for _, p := range model.AllProviders() {
-		if !p.IsPaidAds() {
-			// HubSpot is deliberately not indexed: credsSource gates the probe behind
-			// IsPaidAds, so an index there would be write cost for a query never issued.
-			continue
-		}
 		t.Run(string(p), func(t *testing.T) {
 			// The EXPLAIN runs inside an explicit transaction because SET LOCAL is
 			// TRANSACTION-scoped, not session-scoped: issued outside a transaction block

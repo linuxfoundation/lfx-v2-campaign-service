@@ -16,8 +16,19 @@ timestamp: "2026-07-20T00:00:00Z"
 Package hubspot is the HubSpot API client for the EMAIL channel (LFXV2-2770). It
 drives HubSpot's email surface: marketing-email search/get/clone, draft-update
 (subject + sender) and draft rich-text CONTENT read/write (GetEmailHTMLWidgets /
-SetEmailHTMLWidgets, added with UTM link tagging in LFXV2-2775 — the write patches
-only the named widgets' body.html so untouched template configuration survives), CRM
+SetEmailHTMLWidgets, added with UTM link tagging in LFXV2-2775 — the write READS the
+draft first and PATCHes the whole `content` object back with only body.html changed,
+every other byte re-sent verbatim, because HubSpot treats submitted content as
+AUTHORITATIVE on a drag-and-drop email: a partial patch destroys the draft rather than
+merging into it. GetEmailHTMLWidgets returns []EmailHTMLBlock in the layout reading
+order flexAreas records, not an unordered map — a Go map's iteration order is randomised
+and the per-widget `order` field is absent on every drag-and-drop template observed.
+"The first block" is well defined ONLY where the layout places one: a CLASSIC template
+has no flexAreas, so every block falls through to sorted key order and blocks[0] is
+whichever opaque module id sorts first — as likely the footer as the opening paragraph.
+Each block therefore carries `Placed`, reporting whether its position came from the
+layout or only from that sort, and a caller that means "the top of the email" must
+require it rather than trust the index), CRM
 contact-list search/get/create/filter-update (no delete), and event-definition
 lookups. Credentials and account
 configuration are injected via `NewClient`; the package never reads environment
@@ -373,9 +384,10 @@ closing it needs an association read, not another search endpoint.
 scoped to a project or a sub-account, so every campaign in a portal is visible to any caller
 holding that portal's token. `projectID` selects which connection's credential to use — and
 therefore WHICH portal is visible, not merely whether the caller is allowed to look. Connections
-are stored per project with their own token and `portal_id`, and `credsSource` refuses the LF
-system fallback for HubSpot, so two projects see the same campaigns only when configured against
-the same portal. Common under the LF umbrella; not guaranteed. That is HubSpot's data
+are stored per project with their own token and `portal_id`, and a project with none resolves the
+LF system connection via `credsSource`, so two projects see the same campaigns when configured
+against the same portal. That is the ordinary case under the LF umbrella, whose foundations share
+one portal. That is HubSpot's data
 model rather than a gap in this service's scoping, which is why the create path is documented as
 requiring an operator warning rather than being narrowed here.
 
@@ -422,7 +434,15 @@ caller-specified template (`hubspotConfig.sourceEmailId`) and points the clone's
 at the brief's BUILT audience — resolved from the `campaign_audiences` resource
 (LFXV2-2773) via an injected `audienceReader`, taking the newest hubspot audience and
 refusing if it is not yet `built` (`PlatformMasterListID` → the send list,
-`SuppressionListIDs` → exclusions). The cloned email's HubSpot id is the campaign's
+`SuppressionListIDs` → exclusions). The audience must also record the PORTAL its lists were
+built in (`BuiltInPortalID`, migration `000032`), and dispatch refuses when that does not match
+the portal its own client authenticates against: it resolves credentials afresh and prefers a
+project connection added since the build, so an audience built on the LF portal can otherwise be
+handed to a client authenticated elsewhere and `SetSendList` receives ids that portal cannot see.
+An audience recording NO portal is refused too, with the narrower `ErrCampaignProvenanceUnknown`
+— there is nothing to reconnect to, so the remedy is a rebuild. Both refuse BEFORE `CloneEmail`,
+so nothing is created, and both compare against the client Dispatch already holds rather than
+resolving a second one. The cloned email's HubSpot id is the campaign's
 `PlatformCampaignID`; the clone is a DRAFT (a human sends it). AI body content
 (LFXV2-2775) and audience building (LFXV2-2774) are separate steps. Claim contract: an
 UNCONFIRMED clone (2xx-no-id / transport) retains the claim with a name-only partial; a

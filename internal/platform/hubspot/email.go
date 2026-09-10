@@ -484,23 +484,41 @@ func cleanIDs(ids []string) []string {
 	return out
 }
 
-// emailContent is the subset of an email's draft content this client reads and writes. The
-// HubSpot draft body lives under content.widgets.<key>.body.html, keyed by module id, so the
-// widget map is decoded generically — the keys vary per template and are not ours to name.
+// emailContent is the subset of an email's draft content this client READS. The HubSpot draft
+// body lives under content.widgets.<key>.body.html, keyed by module id, so the widget map is
+// decoded generically — the keys vary per template and are not ours to name.
+//
+// flexAreas is the DRAG_AND_DROP layout tree, and it is the only place a draft records the
+// READING ORDER of its blocks. Nothing else can stand in for it: the widget map is a JSON
+// object, so Go randomizes its iteration order, and the per-widget `order` field is absent on
+// every drag-and-drop template observed. Without flexAreas the phrase "the first text block"
+// has no meaning, and a caller asking for it would be picking a block at random.
 type emailContent struct {
 	Content struct {
-		Widgets map[string]json.RawMessage `json:"widgets"`
+		Widgets   map[string]json.RawMessage `json:"widgets"`
+		FlexAreas map[string]flexArea        `json:"flexAreas"`
 	} `json:"content"`
 }
 
-// widgetBody is one draft widget's body. Only html is touched; every other field is preserved
-// by patching the widget map rather than replacing it.
+// flexArea is one drop zone of a drag-and-drop email, decoded down to the only thing this
+// client asks of it: which module ids sit in which order. Every other field (styles, widths,
+// box indices) is layout configuration that is read and written back verbatim as raw JSON —
+// see SetEmailHTMLWidgets — never through this struct.
+type flexArea struct {
+	Sections []struct {
+		Columns []struct {
+			Widgets []string `json:"widgets"`
+		} `json:"columns"`
+	} `json:"sections"`
+}
+
+// widgetBody is one draft widget's body, decoded far enough to answer "is this a rich-text
+// block, and what does it say".
 //
 // `Body` is a raw map rather than a struct with an `html` field, because the PRESENCE of the key
 // is what identifies a rich-text widget. A struct cannot express that: an image module decodes
 // into `struct{ HTML string }` perfectly happily, leaving HTML empty, so it is indistinguishable
-// from a rich-text block whose body is blank. The two must not be conflated -- see the count in
-// GetEmailHTMLWidgets.
+// from a rich-text block whose body is blank. The two must not be conflated.
 type widgetBody struct {
 	Body map[string]json.RawMessage `json:"body"`
 }
@@ -523,73 +541,177 @@ func (w widgetBody) html() (string, bool) {
 	return out, true
 }
 
-// GetEmailHTMLWidgets returns the draft's rich-text widget bodies keyed by widget id, and the
-// TOTAL number of rich-text widgets the draft carries.
+// layoutOrder returns the module ids the drag-and-drop layout places, in reading order: area,
+// then section top-to-bottom, then column left-to-right, then widget within the column.
 //
-// IDEMPOTENT (a GET). EVERY rich-text widget is returned, empty ones included, and the count is
-// the map's size. The pair is still returned separately because callers ask two different
-// questions of it, and both have been got wrong here:
+// Areas are walked with `main` first and the rest in name order. HubSpot has only ever returned
+// a single `main` area here, but a map has no order of its own, so the tie has to be broken by
+// something stable — otherwise two runs against the same draft could disagree about which block
+// is first.
+func (ec emailContent) layoutOrder() []string {
+	areas := make([]string, 0, len(ec.Content.FlexAreas))
+	for name := range ec.Content.FlexAreas {
+		if name != "main" {
+			areas = append(areas, name)
+		}
+	}
+	sort.Strings(areas)
+	if _, ok := ec.Content.FlexAreas["main"]; ok {
+		areas = append([]string{"main"}, areas...)
+	}
+
+	out := make([]string, 0, len(ec.Content.Widgets))
+	for _, name := range areas {
+		for _, section := range ec.Content.FlexAreas[name].Sections {
+			for _, column := range section.Columns {
+				out = append(out, column.Widgets...)
+			}
+		}
+	}
+	return out
+}
+
+// EmailHTMLBlock is one rich-text block of an email draft.
+type EmailHTMLBlock struct {
+	// Key is the widget (module) id. It is what SetEmailHTMLWidgets addresses.
+	Key string
+	// HTML is the block's body as the draft currently holds it. Empty is a real value, not a
+	// missing one: an empty block is one an operator can see and fill.
+	HTML string
+	// Placed reports whether the LAYOUT put this block at this position, or whether the position
+	// is only the fallback key sort.
+	//
+	// It exists because the two carry different authority and a caller cannot tell them apart from
+	// the slice alone. A placed block's index is the reading order an operator arranged in the
+	// drag-and-drop editor, so blocks[0] is genuinely the top of the email. An UNPLACED block's
+	// index is `sort.Strings` over opaque module ids -- deterministic, but with no relationship to
+	// where the block appears: on a classic template NOTHING is placed, so blocks[0] is simply
+	// whichever id sorts first and is as likely to be the footer as the opening paragraph.
+	//
+	// So a caller that means "the top of the email" must require Placed, and one that writes into
+	// an unplaced block is choosing arbitrarily and should say so to the operator rather than
+	// silently treating position 0 as the lede.
+	Placed bool
+}
+
+// GetEmailHTMLWidgets returns the draft's rich-text blocks in READING ORDER.
 //
-//   - Omitting empty bodies UNDERCOUNTED: a template with one populated block and one empty block
-//     looked like a single-block template, so a caller rewrote the populated one — the ambiguity
-//     the single-widget guard exists to refuse.
+// IDEMPOTENT (a GET). Every rich-text widget is returned, empty ones included, so len() is the
+// number of blocks the draft has. blocks[0] is the one at the top of the email ONLY when
+// blocks[0].Placed — see that field. Without a layout there is no top block to name, and the
+// index is a sort of opaque module ids that can put the unsubscribe footer first.
+//
+// Order comes from the drag-and-drop layout tree (content.flexAreas), never from the widget
+// map, whose Go iteration order is randomized. Blocks the layout does not place — a classic
+// non-drag-and-drop template places none at all — follow the placed ones in key order, so the
+// result is deterministic for every template shape.
+//
+// A rich-text widget is identified by the PRESENCE of the `html` key, never by its value. Both
+// alternatives have been wrong here:
+//
+//   - Omitting empty bodies UNDERCOUNTED: a template with one populated block and one empty
+//     block looked like a single-block template, and it made the ONE unambiguous case
+//     unaddressable — a template whose only rich-text block is empty had nothing to write into.
 //   - Counting every object-bodied module OVERCOUNTED: an image decodes into the same shape with
 //     an empty html field, so the ordinary template (rich text + header image) looked like two
-//     blocks and the body write was silently skipped.
-//   - Omitting empties again made the ONE unambiguous case unaddressable: a template whose only
-//     rich-text block is empty had a count of 1 and an empty map, so nothing could be written.
-//
-// A rich-text widget is identified by the PRESENCE of the `html` key, never by its value.
-func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string]string, int, error) {
+//     blocks.
+func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) ([]EmailHTMLBlock, error) {
 	if id = strings.TrimSpace(id); id == "" {
-		return nil, 0, fmt.Errorf("hubspot: GetEmailHTMLWidgets requires a non-empty id")
+		return nil, fmt.Errorf("hubspot: GetEmailHTMLWidgets requires a non-empty id")
 	}
 	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(id)+"/draft", nil, true)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	var ec emailContent
 	if uerr := json.Unmarshal(raw, &ec); uerr != nil {
-		return nil, 0, fmt.Errorf("hubspot: decode email %s draft content: %w", id, uerr)
+		return nil, fmt.Errorf("hubspot: decode email %s draft content: %w", id, uerr)
 	}
-	out := make(map[string]string, len(ec.Content.Widgets))
-	total := 0
+	return ec.htmlBlocks(), nil
+}
+
+// htmlBlocks selects the rich-text widgets and puts them in the layout's reading order.
+func (ec emailContent) htmlBlocks() []EmailHTMLBlock {
+	rich := make(map[string]string, len(ec.Content.Widgets))
 	for key, rawWidget := range ec.Content.Widgets {
 		var w widgetBody
 		if json.Unmarshal(rawWidget, &w) != nil {
 			continue // not a body-shaped widget at all
 		}
-		// RICH-TEXT ONLY, identified by the `html` KEY. Decoding into a struct counted every
-		// object-bodied module -- an image or divider decodes into `struct{ HTML string }` with
-		// HTML empty, indistinguishable from a blank rich-text block -- so the ordinary template
-		// (one rich-text block plus a header image) reported 2 and the caller's single-widget
-		// guard silently declined to write the body. That overcount replaced an earlier
-		// UNDERCOUNT which omitted empty blocks; the key check is what separates the two
-		// questions the count has to answer.
-		body, isRichText := w.html()
-		if !isRichText {
+		if body, isRichText := w.html(); isRichText {
+			rich[key] = body
+		}
+	}
+
+	out := make([]EmailHTMLBlock, 0, len(rich))
+	placed := make(map[string]bool, len(rich))
+	for _, key := range ec.layoutOrder() {
+		body, isRichText := rich[key]
+		// A layout can reference a module id the widget map does not carry — that is exactly the
+		// damage a partial content write does — and a malformed tree could name one twice.
+		// Neither may put a phantom or a duplicate block in the result.
+		if !isRichText || placed[key] {
 			continue
 		}
-		// EVERY rich-text widget goes in the map, empty ones included, and the count is simply its
-		// size. Omitting the empties made a template with exactly ONE empty rich-text block --
-		// the most unambiguous shape there is, and the one an operator most expects to be filled
-		// -- unaddressable: total was 1, the map was empty, and the caller's guard refused a write
-		// it could have made safely.
-		//
-		// The caller decides what to do with an empty body; this reports what the draft HAS.
-		total++
-		out[key] = body
+		placed[key] = true
+		out = append(out, EmailHTMLBlock{Key: key, HTML: body, Placed: true})
 	}
-	return out, total, nil
+
+	// Widgets the layout does not place: every block of a classic template, and template-level
+	// modules on a drag-and-drop one. Key order is arbitrary but STABLE, which is all that is
+	// available once the layout has nothing to say.
+	rest := make([]string, 0, len(rich)-len(out))
+	for key := range rich {
+		if !placed[key] {
+			rest = append(rest, key)
+		}
+	}
+	sort.Strings(rest)
+	for _, key := range rest {
+		out = append(out, EmailHTMLBlock{Key: key, HTML: rich[key], Placed: false})
+	}
+	return out
 }
 
 // SetEmailHTMLWidgets replaces the html body of the given widgets on an email's DRAFT.
 // MUTATING.
 //
-// It patches ONLY the named widgets' body.html: HubSpot merges the widget map, so untouched
-// widgets and every other field of a touched widget (styles, module metadata) are preserved.
-// Replacing the whole content object would silently drop template configuration this client
-// never modelled.
+// It READS the draft first and PATCHes the whole `content` object back with only body.html
+// changed, every other byte of it re-sent verbatim as raw JSON.
+//
+// That round-trip is not defensive over-engineering; a partial write DESTROYS the draft. HubSpot
+// does NOT merge `content` on a DRAG_AND_DROP email — the modern default, and every template
+// observed in the LF portal. It treats the submitted content as authoritative: PATCHing two
+// widgets of a 33-widget email left a draft holding those two widgets and nothing else, and even
+// they were discarded, because they arrived without the drag-and-drop scaffolding (`path`,
+// `module_id`, `schema_version`, `hs_wrapper_css`) a placed module needs. The layout tree still
+// referenced all 32 placed modules, so the operator got 14 empty sections: an email with no
+// content in it at all. Sending `content` back complete — flexAreas, styleSettings and
+// templatePath included — is what makes "authoritative" harmless.
+//
+// The widgets must already exist on the draft: this writes into a block, it does not create one.
+// A name the draft does not carry is an error rather than a silent no-op, since both callers name
+// keys they just read from the same draft, so a miss means a real bug.
+//
+// LOST-UPDATE WINDOW, stated rather than hidden. The read and the write are two requests, so an
+// operator editing this draft in HubSpot between them has their edit overwritten by the snapshot
+// this call took: the whole `content` object is re-sent, so the overwrite covers the entire draft,
+// not just the block being written.
+//
+// It is not closed here, and neither half of that is an oversight:
+//   - The read cannot be dropped. A partial `content` PATCH destroys the draft outright (above),
+//     so the alternative to a narrow race is a guaranteed loss.
+//   - A conditional write has nothing to condition ON. Marketing Emails v3 documents no ETag, no
+//     If-Match and no revision field on the draft endpoints, and the API returns no precondition
+//     this client could carry. `Email.UpdatedAt` exists on the email resource, but whether the
+//     DRAFT GET returns it is unverified — building a concurrency guard on an assumed field would
+//     look like protection without being any.
+//
+// The window is small (one PATCH after one GET) and the callers are dispatch-time, not interactive.
+// The consequence an operator sees is that an edit made between staging and dispatch may be
+// reverted; that is documented in the api-catalog `bodyHtml` entry so it is discoverable from the
+// API contract rather than only from this comment. Closing it properly needs a live-API answer
+// about draft versioning, which belongs in its own change.
 func (c *Client) SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*Email, error) {
 	if id = strings.TrimSpace(id); id == "" {
 		return nil, fmt.Errorf("hubspot: SetEmailHTMLWidgets requires a non-empty id")
@@ -597,9 +719,85 @@ func (c *Client) SetEmailHTMLWidgets(ctx context.Context, id string, widgets map
 	if len(widgets) == 0 {
 		return nil, fmt.Errorf("hubspot: SetEmailHTMLWidgets requires at least one widget")
 	}
-	w := make(map[string]any, len(widgets))
-	for key, htmlBody := range widgets {
-		w[key] = map[string]any{"body": map[string]any{"html": htmlBody}}
+
+	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(id)+"/draft", nil, true)
+	if err != nil {
+		return nil, fmt.Errorf("hubspot: read email %s draft before writing its body: %w", id, err)
 	}
-	return c.patchEmail(ctx, id, map[string]any{"content": map[string]any{"widgets": w}})
+	// Every level is decoded one map deep into json.RawMessage, so each field this does not touch
+	// is re-marshalled byte-for-byte rather than through a struct that would drop whatever it
+	// never modelled.
+	var doc struct {
+		Content map[string]json.RawMessage `json:"content"`
+	}
+	if uerr := json.Unmarshal(raw, &doc); uerr != nil {
+		return nil, fmt.Errorf("hubspot: decode email %s draft content: %w", id, uerr)
+	}
+	if len(doc.Content["widgets"]) == 0 {
+		return nil, fmt.Errorf("hubspot: email %s draft carries no widgets to write into", id)
+	}
+	var wmap map[string]json.RawMessage
+	if uerr := json.Unmarshal(doc.Content["widgets"], &wmap); uerr != nil {
+		return nil, fmt.Errorf("hubspot: decode email %s draft widgets: %w", id, uerr)
+	}
+
+	for key, htmlBody := range widgets {
+		merged, merr := widgetWithHTML(wmap[key], htmlBody)
+		if merr != nil {
+			return nil, fmt.Errorf("hubspot: email %s widget %s: %w", id, key, merr)
+		}
+		wmap[key] = merged
+	}
+	encoded, merr := json.Marshal(wmap)
+	if merr != nil {
+		return nil, fmt.Errorf("hubspot: encode email %s draft widgets: %w", id, merr)
+	}
+	doc.Content["widgets"] = encoded
+
+	return c.patchEmail(ctx, id, map[string]any{"content": doc.Content})
+}
+
+// widgetWithHTML returns one widget's raw JSON with body.html replaced and everything else — the
+// module metadata, styles and drag-and-drop scaffolding this client never models — left
+// byte-identical.
+func widgetWithHTML(rawWidget json.RawMessage, htmlBody string) (json.RawMessage, error) {
+	if len(rawWidget) == 0 {
+		return nil, errors.New("the draft has no widget by that name")
+	}
+	var w map[string]json.RawMessage
+	if err := json.Unmarshal(rawWidget, &w); err != nil {
+		return nil, fmt.Errorf("decode widget: %w", err)
+	}
+	// A JSON `null` decodes into a map WITHOUT error and leaves it nil, so neither the
+	// len() guard above nor the error check catches it -- `"body": null` has len 4. Writing to
+	// the nil map then panics, and a panic is not an error: applyEmailContent's best-effort
+	// contract swallows failures, but the panic unwinds past it to the orchestrator's recover
+	// and fails the WHOLE dispatch, orphaning the draft this path exists to protect.
+	//
+	// Reachable despite htmlBlocks filtering null-bodied widgets out, because the read and the
+	// write are two separate requests: an operator editing the draft in HubSpot between them --
+	// exactly what a human-reviewed draft invites -- lands the null on the write path.
+	if w == nil {
+		return nil, errors.New("the draft's widget is null")
+	}
+	body := map[string]json.RawMessage{}
+	if len(w["body"]) > 0 {
+		if err := json.Unmarshal(w["body"], &body); err != nil {
+			return nil, fmt.Errorf("decode widget body: %w", err)
+		}
+		if body == nil {
+			body = map[string]json.RawMessage{}
+		}
+	}
+	encodedHTML, err := json.Marshal(htmlBody)
+	if err != nil {
+		return nil, fmt.Errorf("encode widget html: %w", err)
+	}
+	body["html"] = encodedHTML
+	encodedBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode widget body: %w", err)
+	}
+	w["body"] = encodedBody
+	return json.Marshal(w)
 }

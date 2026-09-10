@@ -58,6 +58,30 @@ type Template struct {
 	PrimaryCTA         string
 	PrimaryCTAFallback string
 
+	// LinksToRegistration reports whether this stage's CTA actually points at the registration
+	// page, and it exists because the shared prompt's link rule is otherwise applied to stages
+	// whose button means something else entirely.
+	//
+	// The rule says every href in the body must be the brief's Registration URL. That is right for
+	// the stages whose running CTA IS "Register Now", and wrong for the two whose running CTA is
+	// not: CFP Launch asks the reader to "Submit Your Proposal", and Post-Event asks them to
+	// "Share Feedback" -- and because nothing ever supplies [RECORDINGS_URL], "Share Feedback" is
+	// the branch that actually runs, not the gated "Watch Recordings". Sending either to the
+	// registration page points a proposal button at a form for a deadline that is not the CFP, and
+	// a feedback button at a registration form for an event that has already happened.
+	//
+	// The brief carries ONE url column and no CFP-form or survey field, so there is no correct
+	// destination to substitute. The honest answer is therefore to withhold the destination rather
+	// than supply a wrong one: a false stage suppresses the Registration URL line and instructs a
+	// PLAIN-TEXT call to action, which is the same shape the prompt already uses for a brief with
+	// no url at all. A reader gets a working email whose button is not a link, instead of one that
+	// takes them somewhere actively misleading.
+	//
+	// It is declared per stage rather than inferred from the CTA text because the CTA is prose the
+	// model may reword, while this is a routing decision. TestStageLinkPolicyMatchesCTA pins the
+	// two together so a stage cannot claim registration while naming a non-registration button.
+	LinksToRegistration bool
+
 	// SecondaryCTA is the optional second button, or "" when the stage allows none. Declared for
 	// the same reason as the primary: Schedule Announcement called one button "Register to
 	// Attend" in the hierarchy and "Register" in the checklist, and Registration Push called one

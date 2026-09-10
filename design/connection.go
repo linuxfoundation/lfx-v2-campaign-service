@@ -171,8 +171,12 @@ var NotFoundError = Type("not-found-error", func() {
 // It is deliberately NOT Required, because ConflictError is shared by every endpoint in
 // the API and the slugs are being introduced group by group rather than all at once.
 // Today only the audiences group populates it: `mapAudienceErr` sets a reason on all
-// three of its 409s, which is where the need was sharpest — those three carry OPPOSITE
-// remedies. The briefs group also distinguishes many conflicts, but does so in message
+// FOUR of its 409s, which is where the need was sharpest — they carry OPPOSITE remedies.
+// `audience_provenance_immutable` is the fourth (LFXV2-3040): the audience records the
+// portal its lists were built in, so its platform list ids can no longer be patched and
+// the remedy is a REBUILD — the opposite of `stale_approval`'s refresh-and-retry and of
+// `audience_build_in_flight`'s wait-and-poll. Leaving it unset would have made a client
+// parse prose for exactly the distinction this field exists to carry. The briefs group also distinguishes many conflicts, but does so in message
 // prose only and sets no reason yet; that is a gap to close, not the intended end state.
 // Until it is closed a client must treat an absent reason as "unspecified conflict" and
 // fall back to the message, which is what the message already says. Making the field
@@ -196,7 +200,7 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable")
 		Example("already_exists")
 	})
 })
@@ -1323,10 +1327,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"returns every campaign in the portal the connection authenticates against, regardless " +
 			"of which project scopes the path. " +
 			"`project_id` gates permission AND selects WHICH portal is visible: a HubSpot connection " +
-			"is stored per project with its own token and `portal_id`, and the LF system fallback is " +
-			"refused for HubSpot — so two projects see the same campaigns only when they are " +
-			"configured against the same portal, which is common under the LF umbrella but is not " +
-			"guaranteed. The portal-wide part is a property of HubSpot's data model rather than a " +
+			"is stored per project with its own token and `portal_id`, and a project with none " +
+			"resolves the LF system connection — so two projects see the same campaigns when they " +
+			"are configured against the same portal, which is the ordinary case under the LF " +
+			"umbrella, whose foundations share one portal. The portal-wide part is a property of HubSpot's data model rather than a " +
 			"gap in the scoping here, and it is why the create route below needs a warning. " +
 			"The match is HubSpot's own `query` search over its default searchable properties: NOT an " +
 			"exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance " +
@@ -1407,9 +1411,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"portal this project's connection authenticates against, so a campaign created here " +
 			"appears for everyone working in that portal however this path is scoped. WHICH portal " +
 			"depends on the connection — they are stored per project with their own token and " +
-			"`portal_id`, and the LF system fallback is refused for HubSpot — so this is not " +
-			"necessarily every foundation, and projects on different portals do not see each " +
-			"other's campaigns. A caller MUST warn before invoking it, and must not put anything " +
+			"`portal_id`, and a project with none resolves the LF system connection — so for LF " +
+			"foundations, which share one portal, this IS visible to every other foundation " +
+			"working in it; projects on a different portal do not see each other's campaigns. " +
+			"A caller MUST warn before invoking it, and must not put anything " +
 			"project-sensitive in the name. " +
 			"**It does not check for an existing campaign first, and that is deliberate.** A " +
 			"search-then-create inside one call would still race any concurrent caller and could not " +
@@ -1425,12 +1430,17 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"Other failures fall into FOUR classes, and the status tells them apart. " +
 			"**400 — nothing was created, and the request is correctable.** Either HubSpot rejected " +
 			"it on the merits (a definite non-429 4xx), or the stored connection EXISTS but is not " +
-			"usable as configured. A 401/403 says so in its own words, because retrying another " +
+			"usable as configured. A 401/403 on a connection the PROJECT owns says so in its own " +
+			"words, because retrying another name cannot fix a permission problem. The SAME " +
+			"rejection on the shared LF connection — used when the project has none of its own — " +
+			"is a 500 instead: that scope is unaddressable over HTTP, so a 400 would tell the " +
+			"caller to repair a row they cannot reach. Retrying another " +
 			"NAME cannot fix a permission problem. " +
 			"**404 — no HubSpot connection is configured for this project.** Distinct from the 400 " +
 			"above, which means one exists and is broken: the remedy is to connect HubSpot, not to " +
 			"fix a credential. " +
-			"**500 — the stored credential could not be decrypted**, or the service is otherwise " +
+			"**500 — the shared LF connection was refused on permissions, the stored credential " +
+			"could not be decrypted**, or the service is otherwise " +
 			"faulted BEFORE the request went out. Not the operator's to fix, and not retryable by " +
 			"them. 500 is reserved for that pre-send position: a fault discovered AFTER the create " +
 			"returned without error is a 503, because by then the campaign may exist and only this " +

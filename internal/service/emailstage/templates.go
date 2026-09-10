@@ -122,14 +122,15 @@ IF ANY RULE FAILS: Revise the email before returning.
 
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
-			"Primary: Submit Your Proposal (link to CFP form)",
+			"Primary: Submit Your Proposal (no CFP-form link is supplied, so render it as plain text)",
 		},
 		// No mentorship claim: nothing in the pipeline supplies one, and unlike a price it carries
 		// no placeholder for the OMIT rule to act on -- so it read as fact on every CFP email.
-		FooterNote:         "Questions? Reply to this email.",
-		PrimaryCTA:         "Submit Your Proposal",
-		PrimaryCTAFallback: "",
-		SecondaryCTA:       "",
+		FooterNote:          "Questions? Reply to this email.",
+		PrimaryCTA:          "Submit Your Proposal",
+		PrimaryCTAFallback:  "",
+		LinksToRegistration: false,
+		SecondaryCTA:        "",
 	},
 
 	"Schedule Announcement": {
@@ -244,10 +245,11 @@ WORD COUNT TARGET: 200-280 words`,
 			"Primary: View Full Schedule when a schedule link is supplied. Without one: Register Now.",
 			"Secondary: Register to Attend (registration page)",
 		},
-		FooterNote:         "Early registration helps us plan better. See you soon.",
-		PrimaryCTA:         "View Full Schedule",
-		PrimaryCTAFallback: "Register Now",
-		SecondaryCTA:       "Register to Attend",
+		FooterNote:          "Early registration helps us plan better. See you soon.",
+		PrimaryCTA:          "View Full Schedule",
+		PrimaryCTAFallback:  "Register Now",
+		LinksToRegistration: true,
+		SecondaryCTA:        "Register to Attend",
 	},
 
 	"Registration Push": {
@@ -374,10 +376,11 @@ WORD COUNT TARGET: 180-250 words`,
 		// Both sentences placeholdered. The second asserted a standard-pricing schedule with no
 		// placeholder, so the OMIT rule could not reach it even when the first was dropped -- and
 		// the pipeline supplies neither a standard price nor a registration deadline.
-		FooterNote:         "Early bird pricing ends [DEADLINE]. [REGULAR_PRICE] applies after that date.",
-		PrimaryCTA:         "Register Now",
-		PrimaryCTAFallback: "",
-		SecondaryCTA:       "View All Options",
+		FooterNote:          "Early bird pricing ends [DEADLINE]. [REGULAR_PRICE] applies after that date.",
+		PrimaryCTA:          "Register Now",
+		PrimaryCTAFallback:  "",
+		LinksToRegistration: true,
+		SecondaryCTA:        "View All Options",
 	},
 
 	// NOTE: this stage's prompt asks for a `{{ contact.firstname }}` merge token in the greeting.
@@ -507,10 +510,11 @@ WORD COUNT TARGET: 180-240 words`,
 		CTAStrategy: []string{
 			"Primary: Register with Code [PROMO_CODE] (registration with pre-filled code)",
 		},
-		FooterNote:         "Questions? Reply to this email. We'd love to hear from you.",
-		PrimaryCTA:         "Register with Code [PROMO_CODE]",
-		PrimaryCTAFallback: "Register Now",
-		SecondaryCTA:       "Learn More",
+		FooterNote:          "Questions? Reply to this email. We'd love to hear from you.",
+		PrimaryCTA:          "Register with Code [PROMO_CODE]",
+		PrimaryCTAFallback:  "Register Now",
+		LinksToRegistration: true,
+		SecondaryCTA:        "Learn More",
 	},
 
 	"Final Countdown": {
@@ -635,12 +639,13 @@ IF ANY RULE FAILS: Revise before returning.
 WORD COUNT TARGET: 200-280 words`,
 		CTAStrategy: []string{
 			"Primary: View Full Schedule when the schedule link is supplied. Without it: See You There. Never empty.",
-			"Secondary: Download Event App (mobile app link)",
+			"Secondary: Download Event App (no app link is supplied, so render it as plain text)",
 		},
-		FooterNote:         "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
-		PrimaryCTA:         "View Full Schedule",
-		PrimaryCTAFallback: "See You There",
-		SecondaryCTA:       "Download Event App",
+		FooterNote:          "Can't wait to see you there. Questions? Email [SUPPORT_EMAIL]",
+		PrimaryCTA:          "View Full Schedule",
+		PrimaryCTAFallback:  "See You There",
+		LinksToRegistration: false,
+		SecondaryCTA:        "Download Event App",
 	},
 
 	"Post-Event": {
@@ -775,11 +780,12 @@ IF ANY RULE FAILS: Revise before returning.
 WORD COUNT TARGET: 180-240 words`,
 		CTAStrategy: []string{
 			"Primary: a link the brief actually supplies -- do NOT offer recordings unless [RECORDINGS_URL] is given",
-			"Secondary: Share Your Feedback (survey link)",
+			"Secondary: Share Your Feedback (no survey link is supplied, so render it as plain text)",
 		},
-		FooterNote:         "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
-		PrimaryCTA:         "Watch Recordings",
-		PrimaryCTAFallback: "Share Feedback",
-		SecondaryCTA:       "Share Your Feedback",
+		FooterNote:          "Recordings available [DATE]. Session slides available [SLIDES_DATE]. Thanks for being part of our community!",
+		PrimaryCTA:          "Watch Recordings",
+		PrimaryCTAFallback:  "Share Feedback",
+		LinksToRegistration: false,
+		SecondaryCTA:        "Share Your Feedback",
 	},
 }

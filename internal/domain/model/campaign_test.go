@@ -42,6 +42,26 @@ func TestJobStatus_Terminal(t *testing.T) {
 	}
 }
 
+// TestDeliveryType_Valid mirrors TestProgramType_Valid for the surface a brief was authored for.
+//
+// Worth pinning even though nothing in production branches on Valid() today: under 000030 the
+// delivery type is part of a brief's unique key, so an accepted-but-wrong value does not merely
+// mislabel a row -- it decides WHICH brief that row is. The empty string is explicitly invalid: it
+// is the zero value a caller reaches by forgetting the field, and CreateBrief maps that to
+// paid-marketing before the write rather than treating it as a surface in its own right.
+func TestDeliveryType_Valid(t *testing.T) {
+	for _, d := range []DeliveryType{DeliveryPaidMarketing, DeliveryEmail} {
+		if !d.Valid() {
+			t.Errorf("%s.Valid() = false, want true", d)
+		}
+	}
+	for _, bad := range []DeliveryType{"", "e-mail", "Email", "paid", "paid_marketing"} {
+		if bad.Valid() {
+			t.Errorf("DeliveryType(%q).Valid() = true, want false", bad)
+		}
+	}
+}
+
 func TestProgramType_Valid(t *testing.T) {
 	for _, p := range []ProgramType{ProgramEvents, ProgramEducation, ProgramMembership} {
 		if !p.Valid() {

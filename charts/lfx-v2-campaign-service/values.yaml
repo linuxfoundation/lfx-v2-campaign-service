@@ -278,8 +278,9 @@ app:
     # unusable system connection is a not-created error rather than a silent
     # fall-through to the project connection the flag exists to ignore.
     #
-    # HubSpot is never forced — it is not a paid-ads provider, and forcing it would
-    # write a project's contacts into the LF portal.
+    # HubSpot is never forced — forcing redirects ad-ACCOUNT selection, which the email
+    # channel has no equivalent of. It reaches the LF portal by the ordinary fallback
+    # instead (credsSource.systemConn), never by this flag.
     LFX_FORCE_SYSTEM_ADS_ACCOUNT:
       value: "false"
 

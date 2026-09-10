@@ -1,0 +1,24 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Record WHICH HubSpot portal an audience's lists were created in.
+--
+-- campaign_audiences stores platform_master_list_id and suppression_list_ids, and a HubSpot list
+-- id is a bare numeric that means nothing outside the portal that minted it -- the same property
+-- that made campaigns record its creating portal (see hubSpotCreationPortalID and the mismatch
+-- guard in internal/dispatch/hubspot.go). Audiences never recorded theirs, so the row could not
+-- say what its own ids referred to.
+--
+-- That gap was unreachable while the reserved-scope fallback refused the email channel: an
+-- audience and the dispatch that consumed it always resolved the same project connection. Now a
+-- project with no HubSpot connection builds against the LF portal, and if it connects its OWN
+-- portal before dispatch, Dispatch re-resolves and clones the email THERE while SetSendList is
+-- handed list ids from the LF portal. HubSpot answers about ids it cannot see, and the send is a
+-- partial or a hard failure -- with nothing in the row to explain why.
+--
+-- NULLABLE, and deliberately not backfilled. A row written before this column existed records no
+-- portal, and inventing one would assert provenance nobody verified. The dispatch guard reads
+-- absence as "cannot prove" and refuses with a rebuild instruction rather than proceeding -- the
+-- same fail-closed choice ErrCampaignProvenanceUnknown makes for campaigns, and for the same
+-- reason: an unprovable tenant plus a send to real contacts is not a risk worth taking.
+ALTER TABLE campaign_audiences ADD COLUMN IF NOT EXISTS built_in_portal_id TEXT;

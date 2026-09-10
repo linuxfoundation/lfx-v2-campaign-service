@@ -279,6 +279,8 @@ func EncodeFindBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(*h
 		}
 		values := req.URL.Query()
 		values.Add("event_slug", p.EventSlug)
+		values.Add("delivery_type", p.DeliveryType)
+		values.Add("stage", p.Stage)
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -4436,6 +4438,8 @@ func marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody(v *lfxv2
 	res := &BriefInputRequestBody{
 		ProgramType:  v.ProgramType,
 		EventSlug:    v.EventSlug,
+		DeliveryType: v.DeliveryType,
+		Stage:        v.Stage,
 		URL:          v.URL,
 		EventDetails: v.EventDetails,
 		Copy:         v.Copy,
@@ -4459,6 +4463,8 @@ func marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(v *Brief
 	res := &lfxv2campaignservicebriefs.BriefInput{
 		ProgramType:  v.ProgramType,
 		EventSlug:    v.EventSlug,
+		DeliveryType: v.DeliveryType,
+		Stage:        v.Stage,
 		URL:          v.URL,
 		EventDetails: v.EventDetails,
 		Copy:         v.Copy,

@@ -42,6 +42,21 @@ type CampaignAudience struct {
 	// PlatformMasterListID is the pointer to the real audience in the platform (a
 	// HubSpot master list id). Empty until the build succeeds.
 	PlatformMasterListID string
+	// BuiltInPortalID is the HubSpot portal the lists above were created in — the portal the
+	// TOKEN authenticated against at build time, not the operator-supplied portal_id config,
+	// which a credential swap leaves untouched.
+	//
+	// It exists for the same reason campaigns records its creating account: a HubSpot list id is
+	// a bare numeric that means nothing outside its portal, so without this the row cannot say
+	// what its own ids refer to. Dispatch resolves credentials AFRESH and prefers a project
+	// connection added since the build, so an audience built on the LF portal can meet a client
+	// authenticated against a different one — and SetSendList would be handed ids that portal
+	// cannot see.
+	//
+	// EMPTY means "not recorded", never "the LF portal". Rows written before this column existed
+	// carry none and are deliberately not backfilled; the dispatch guard reads absence as
+	// unprovable and refuses, rather than assuming the portal that happens to resolve today.
+	BuiltInPortalID string
 	// SuppressionListIDs are the platform suppression list ids applied to the master.
 	SuppressionListIDs json.RawMessage
 	// InclusionSummary is human-readable provenance: how the audience was built

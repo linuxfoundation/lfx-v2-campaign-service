@@ -6,7 +6,9 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
@@ -597,4 +599,196 @@ func TestMapAudienceErr_ConflictReasonsAreDistinctAndStable(t *testing.T) {
 			seen[*conflict.Reason] = tc.name
 		})
 	}
+}
+
+// TestUpdateAudience_ProvenanceMakesTheListIdsImmutable pins the hole a plain PATCH left in the
+// guarantee this feature advertises.
+//
+// built_in_portal_id names the portal the EXISTING list ids were built in, and a PATCH cannot
+// re-derive it: the request carries ids, not a credential, so nothing can ask HubSpot where the new
+// ids live. Before this refusal, applyAudiencePatch wrote PlatformMasterListID straight through and
+// left the stamp untouched -- and assertAudiencePortal compares that stamp to the CURRENTLY resolved
+// portal rather than to the ids, so it PASSED. The guard approved a send against list ids no lookup
+// had ever verified, which is the exact state the column exists to prevent.
+//
+// The scoping is asserted too, because a refusal that is too broad is its own defect: status and
+// summary stay patchable on a stamped row, a no-op re-send of the same id is not a change, and a row
+// with NO stamp is unaffected -- which matters because the pre-provenance rows were deliberately not
+// backfilled and must stay editable.
+func TestUpdateAudience_ProvenanceMakesTheListIdsImmutable(t *testing.T) {
+	stamped := func(t *testing.T) (*AudienceService, *fakeAudienceRepo, string) {
+		t.Helper()
+		repo := newFakeAudienceRepo()
+		s := NewAudienceService(repo)
+		created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Audience: &audiences.AudienceInput{Platform: "hubspot"},
+		})
+		if err != nil {
+			t.Fatalf("CreateAudience: %v", err)
+		}
+		// What a build leaves behind: ids plus the portal they were created in.
+		repo.items[created.ID].PlatformMasterListID = "30967"
+		repo.items[created.ID].BuiltInPortalID = "8112310"
+		repo.items[created.ID].Status = model.AudienceBuilt
+		return s, repo, created.ID
+	}
+
+	t.Run("changing the master list id on a stamped row is refused", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{PlatformMasterListID: strptr("99999")},
+		})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want *audiences.ConflictError: a patch cannot prove new ids "+
+				"belong to the recorded portal, so the guard would vouch for ids it never saw", err, err)
+		}
+		if !strings.Contains(conflict.Message, "Rebuild") && !strings.Contains(conflict.Message, "rebuild") {
+			t.Errorf("the message must name the remedy; \"immutable\" alone leaves the caller stuck: %q",
+				conflict.Message)
+		}
+		// The DISCRIMINATOR, not just the prose. Every audience 409 sets one precisely so a client
+		// never pattern-matches English this repo rewords freely for operator clarity, and this
+		// remedy is the most distinct of the four: rebuild, where stale_approval says
+		// refresh-and-retry and audience_build_in_flight says wait-and-poll.
+		if conflict.Reason == nil || *conflict.Reason != "audience_provenance_immutable" {
+			t.Errorf("reason = %v, want audience_provenance_immutable: an unreasoned 409 in this "+
+				"group forces clients back onto the message text", conflict.Reason)
+		}
+		if got := repo.items[id].PlatformMasterListID; got != "30967" {
+			t.Errorf("the refused patch was applied anyway: master list id = %q", got)
+		}
+	})
+
+	t.Run("a status-only patch on a stamped row still works", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{Status: strptr("failed")},
+		})
+		if err != nil {
+			t.Fatalf("a patch that touches no list id must not be refused: %v", err)
+		}
+	})
+
+	t.Run("re-sending the SAME master list id is not a change", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch: strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{
+				PlatformMasterListID: strptr("30967"), Status: strptr("failed"),
+			},
+		})
+		if err != nil {
+			t.Fatalf("a caller PATCHing status on a row it read back must not be blocked by a field "+
+				"it never meant to change: %v", err)
+		}
+	})
+
+	// The suppression branches, which the master-list subtests above do not reach. They enforce the
+	// same invariant -- ids the stamp cannot vouch for -- and the resend case is where the first
+	// version of this guard was WRONG: it compared raw bytes against a JSONB column, and Postgres
+	// re-renders `["a","b"]` as `["a", "b"]` on the way out, so an identical resend was refused
+	// while the master-list branch allowed exactly that. Verified against a live database.
+	t.Run("replacing the suppression ids is refused", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		repo.items[id].SuppressionListIDs = marshalStrings([]string{"s-1", "s-2"})
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{SuppressionListIds: []string{"s-1", "s-99"}},
+		})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want ConflictError: swapped suppression ids are ids the "+
+				"stamp never saw, exactly like a swapped master list", err, err)
+		}
+	})
+
+	t.Run("re-sending the SAME suppression ids is not a change", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		// Stored the way PostgreSQL hands it back -- spaces after the commas. A byte comparison
+		// against the service's own compact marshalling fails here; a value comparison does not.
+		repo.items[id].SuppressionListIDs = []byte(`["s-1", "s-2"]`)
+		if _, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{SuppressionListIds: []string{"s-1", "s-2"}},
+		}); err != nil {
+			t.Fatalf("an unchanged suppression list read back from the database must not be "+
+				"refused -- JSONB re-renders the bytes, and only the VALUES are the change: %v", err)
+		}
+	})
+
+	t.Run("REORDERED suppression ids are the same set, not a change", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		repo.items[id].SuppressionListIDs = marshalStrings([]string{"s-1", "s-2", "s-3"})
+		payload := []string{"s-3", "s-1", "s-2"}
+		if _, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{SuppressionListIds: payload},
+		}); err != nil {
+			t.Fatalf("suppression ids are applied as a SET, so a permutation reaches the same "+
+				"contacts and must not force a rebuild: %v", err)
+		}
+		// slices.Sort mutates, so the comparison works on clones. A caller's payload being
+		// reordered as a side effect of being inspected would be a silent, surprising write.
+		if !slices.Equal(payload, []string{"s-3", "s-1", "s-2"}) {
+			t.Errorf("the caller's slice was reordered in place: %v", payload)
+		}
+	})
+
+	t.Run("clearing a non-empty suppression set is refused", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		repo.items[id].SuppressionListIDs = marshalStrings([]string{"s-1"})
+		clear := true
+		_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{ClearSuppressionLists: &clear},
+		})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want ConflictError: dropping suppressions widens who the "+
+				"send reaches, against a stamp that vouched for the narrower set", err, err)
+		}
+	})
+
+	t.Run("clearing an ALREADY-empty suppression set is a no-op, not a refusal", func(t *testing.T) {
+		s, repo, id := stamped(t)
+		clear := true
+		if _, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{ClearSuppressionLists: &clear},
+		}); err != nil {
+			t.Fatalf("a clear that removes nothing changes no id the stamp vouches for: %v", err)
+		}
+	})
+
+	t.Run("an UNSTAMPED row keeps its ids editable", func(t *testing.T) {
+		repo := newFakeAudienceRepo()
+		s := NewAudienceService(repo)
+		created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Audience: &audiences.AudienceInput{Platform: "hubspot"},
+		})
+		if err != nil {
+			t.Fatalf("CreateAudience: %v", err)
+		}
+		// No BuiltInPortalID: a row written before the column existed, deliberately not backfilled.
+		if _, uerr := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[created.ID].Version, 10)),
+			Audience: &audiences.AudienceUpdateInput{PlatformMasterListID: strptr("30967")},
+		}); uerr != nil {
+			t.Fatalf("a row with no recorded portal has no provenance to break: %v", uerr)
+		}
+	})
 }

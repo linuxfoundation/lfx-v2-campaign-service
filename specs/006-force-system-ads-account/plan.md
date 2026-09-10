@@ -42,7 +42,8 @@ Reporting the wrong one sends the wrong operator to repair a healthy row.
 `resolveForcedSystem` loads the system row directly (`Get(SystemProjectID,
 provider)` → `resolveConn`), stamps `fromSystem = true`, and wraps failures in
 `systemOrigin`. It deliberately does **not** call `systemConn` (the fallback's
-`Disconnected`/`IsPaidAds` guards are fallback semantics; forcing is
+`Disconnected` guard is fallback semantics (the `IsPaidAds` gate there was removed in
+LFXV2-3040, so the fallback now serves every provider); forcing is
 unconditional). A missing/unusable system row fails closed as a `notCreated`
 system-origin error — never a fall-through to the project connection.
 

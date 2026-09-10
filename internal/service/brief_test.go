@@ -71,9 +71,19 @@ func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bo
 
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
-func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
+// Matches on the FULL key, exactly as uq_campaign_briefs_project_event_delivery_stage does. A fake
+// that matched on (project, slug) alone would return an arbitrary member of an event's brief set --
+// which is the precise defect the widened key exists to prevent, so the fake would hide it.
+func (r *fakeBriefRepo) FindBriefByEventSlug(
+	_ context.Context,
+	projectID, eventSlug string,
+	deliveryType model.DeliveryType,
+	stage string,
+) (*model.CampaignBrief, error) {
 	for _, b := range r.briefs {
-		if b.ProjectID == projectID && b.EventSlug == eventSlug && b.Status != model.BriefArchived {
+		if b.ProjectID == projectID && b.EventSlug == eventSlug &&
+			b.DeliveryType == deliveryType && b.Stage == stage &&
+			b.Status != model.BriefArchived {
 			cp := *b
 			return &cp, nil
 		}
@@ -140,8 +150,23 @@ func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, 
 	// its original author. The caller builds a fresh model with CreatedBy unset, so a fake
 	// that simply overwrote the map entry would DROP the author — and an assertion that the
 	// edit did not rewrite authorship would then pass against a repository that erased it.
-	if prev, ok := r.briefs[briefKey(b.ProjectID, b.ID)]; ok {
+	prev, ok := r.briefs[briefKey(b.ProjectID, b.ID)]
+	if ok {
 		b.CreatedBy = prev.CreatedBy
+		// The identity guard, modelled as the real repository enforces it: an ASSERTION that
+		// disagrees with the stored row is refused, and an absent one is not a change request.
+		// Without this the fake would accept an identity change the database rejects, and a
+		// service test could not tell whether UpdateBrief forwards the assertions at all.
+		if b.AssertDeliveryType != nil && *b.AssertDeliveryType != prev.DeliveryType {
+			return nil, domain.ErrBriefIdentityImmutable
+		}
+		if b.AssertStage != nil && *b.AssertStage != prev.Stage {
+			return nil, domain.ErrBriefIdentityImmutable
+		}
+		// delivery_type and stage are NOT in replaceBriefQuery's SET list, so the stored row keeps
+		// its own -- the same reason created_by is carried over above.
+		b.DeliveryType = prev.DeliveryType
+		b.Stage = prev.Stage
 	}
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
 	return b, r.enqueue(b, indexPayload)
@@ -362,6 +387,89 @@ func TestBriefService_CreateCampaigns_RejectsUnapprovedBrief(t *testing.T) {
 	if _, ok := err.(*briefs.BadRequestError); !ok {
 		t.Fatalf("expected *briefs.BadRequestError for unapproved brief, got %T (%v)", err, err)
 	}
+}
+
+// TestBriefService_CreateCampaigns_MatchesTheChannelToTheSurface pins the delivery discriminator
+// at DISPATCH, which is where it was missing.
+//
+// `delivery_type` became part of a brief's identity in 000030, but nothing compared it to the
+// channel a caller asked to launch on. So an EMAIL brief could start paid ads and a PAID brief
+// could stage a HubSpot send -- each dispatching content the platform has no field for (RSA
+// headlines and keywords on one side, a subject and preheader on the other) and each recording a
+// campaign row against a brief that never meant it.
+//
+// Both directions are asserted, and so is the MATCHING case: a guard that refused everything would
+// pass a test that only checked refusals.
+func TestBriefService_CreateCampaigns_MatchesTheChannelToTheSurface(t *testing.T) {
+	newService := func(delivery model.DeliveryType, stage string) *BriefService {
+		repo := newFakeBriefRepo()
+		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+			ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: delivery, Stage: stage,
+			Status: model.BriefApproved, Version: 1,
+		}
+		return newTestBriefService(repo)
+	}
+	create := func(s *BriefService, platform string) error {
+		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Input: &briefs.CampaignCreateInput{Platforms: []string{platform}},
+		})
+		return err
+	}
+
+	t.Run("an email brief cannot launch paid ads", func(t *testing.T) {
+		var bad *briefs.BadRequestError
+		if err := create(newService(model.DeliveryEmail, "CFP Launch"), "google-ads"); !errors.As(err, &bad) {
+			t.Fatalf("CreateCampaigns(email brief, google-ads): err = %v, want *briefs.BadRequestError", err)
+		}
+	})
+
+	t.Run("a paid brief cannot stage an email", func(t *testing.T) {
+		var bad *briefs.BadRequestError
+		if err := create(newService(model.DeliveryPaidMarketing, ""), "hubspot"); !errors.As(err, &bad) {
+			t.Fatalf("CreateCampaigns(paid brief, hubspot): err = %v, want *briefs.BadRequestError", err)
+		}
+	})
+
+	// ADOPTION is the other way a campaign binds to a brief, and it had the same gap. Enforcing on
+	// one path and not the other is the more dangerous shape: whoever reads the CreateCampaigns
+	// check would reasonably assume the invariant holds everywhere.
+	adopt := func(s *BriefService, platform string) error {
+		_, err := s.AdoptCampaign(context.Background(), &briefs.AdoptCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", Platform: platform, PlatformCampaignID: "123456",
+		})
+		return err
+	}
+
+	t.Run("an email brief cannot adopt a paid campaign", func(t *testing.T) {
+		err := adopt(newService(model.DeliveryEmail, "CFP Launch"), "google-ads")
+
+		// The MESSAGE, not merely the type. `AdoptCampaign` returns a BadRequestError from several
+		// earlier guards -- including `ready()`, which this harness does not satisfy -- so an
+		// `errors.As` check alone passed even with the surface guard removed. Asserting the text
+		// is what makes this test bind to the guard it is named for.
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) {
+			t.Fatalf("AdoptCampaign(email brief, google-ads): err = %v, want *briefs.BadRequestError", err)
+		}
+		if !strings.Contains(bad.Message, "authored for") {
+			t.Errorf("AdoptCampaign rejected for the wrong reason: %q -- want the surface mismatch", bad.Message)
+		}
+	})
+
+	// The matching cases must still work, or the guard is just an outage.
+	t.Run("a paid brief launches paid ads", func(t *testing.T) {
+		if err := create(newService(model.DeliveryPaidMarketing, ""), "google-ads"); err != nil {
+			t.Fatalf("CreateCampaigns(paid brief, google-ads): %v", err)
+		}
+	})
+
+	t.Run("an email brief stages an email", func(t *testing.T) {
+		if err := create(newService(model.DeliveryEmail, "CFP Launch"), "hubspot"); err != nil {
+			t.Fatalf("CreateCampaigns(email brief, hubspot): %v", err)
+		}
+	})
 }
 
 // CreateCampaigns must reject an empty platform set (400) rather than creating a
@@ -1789,6 +1897,50 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 	}
 }
 
+// TestIndexedBriefDocCarriesTheWholeIdentity pins delivery_type and stage into the indexed
+// document, and pins that the paid brief's EMPTY stage is still emitted.
+//
+// Brief lists and revision history are served from the Query Service, which sees only this
+// document. Without these two fields an event's paid brief and every stage of its email series
+// index as the same thing -- same project_id, same event_slug, nothing to tell them apart -- so a
+// consumer cannot say which send a document describes, and 000030's whole point is invisible
+// downstream.
+//
+// The empty-stage case is the one worth a test rather than a comment. `omitempty` would be the
+// obvious tag and is wrong here: "" is the paid brief's REAL stage, so omitting it publishes a
+// document where a missing field means both "this is the paid brief" and "this producer predates
+// stages". A consumer cannot distinguish those, and the failure is silent at index time.
+func TestIndexedBriefDocCarriesTheWholeIdentity(t *testing.T) {
+	// Plain strings, not pointers: both are Required() on the Brief response, since they come from
+	// NOT NULL columns that briefResult always supplies.
+	raw, err := json.Marshal(briefDoc(&briefs.Brief{
+		ID: "b1", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon-eu-2026",
+		DeliveryType: "email", Stage: "Registration Push", Status: "approved", Version: 1,
+	}))
+	if err != nil {
+		t.Fatalf("marshal brief doc: %v", err)
+	}
+	for _, want := range []string{`"delivery_type":"email"`, `"stage":"Registration Push"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("indexed brief doc missing %s: a consumer cannot tell this document from "+
+				"another stage of the same event\ngot: %s", want, raw)
+		}
+	}
+
+	// The paid brief. Its stage is "" and that is a VALUE, so it must appear on the wire.
+	raw, err = json.Marshal(briefDoc(&briefs.Brief{
+		ID: "b2", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon-eu-2026",
+		DeliveryType: "paid-marketing", Stage: "", Status: "approved", Version: 1,
+	}))
+	if err != nil {
+		t.Fatalf("marshal paid brief doc: %v", err)
+	}
+	if !strings.Contains(string(raw), `"stage":""`) {
+		t.Errorf(`paid brief doc omits "stage":"" -- with omitempty a consumer cannot tell the `+
+			"paid brief from a producer that predates stages"+"\ngot: %s", raw)
+	}
+}
+
 // TestIndexedDocsUseSnakeCase pins the INDEXED wire shape.
 //
 // The generated goa types carry no json tags, so publishing them directly emitted Go field
@@ -1890,13 +2042,70 @@ func newBriefServiceWithRepo(t *testing.T, repo *fakeBriefRepo) *BriefService {
 // TestFindBrief_ReturnsSavedBriefForEventSlug covers the re-paste path: a brief was already
 // generated and saved for this event, so the lookup returns it (with its AI-generated
 // copy/keywords/targeting and any later edits) instead of the caller regenerating.
+// TestFindBrief_ParallelChannelsAndEmailSeries pins the model 000030 exists for: paid and email
+// are PARALLEL channels on one event, and an email campaign is a SERIES rather than a document.
+// Before the widened key this state was unrepresentable -- the second channel to save either
+// overwrote the first or was refused, and an event could hold only one email brief.
+//
+// Asserts on the ID returned rather than merely on "no error", because the defect this prevents is
+// returning the WRONG member of the set, which a nil-error check cannot see.
+func TestFindBrief_ParallelChannelsAndEmailSeries(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	seed := func(id, delivery, stage string) {
+		repo.briefs[briefKey("cncf", id)] = &model.CampaignBrief{
+			ID: id, ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: model.DeliveryType(delivery), Stage: stage,
+			Status: model.BriefDraft,
+		}
+	}
+	// One event, five live briefs: one paid plan and a four-stage email series.
+	seed("paid", "paid-marketing", "")
+	seed("cfp", "email", "CFP Launch")
+	seed("reg", "email", "Registration Push")
+	seed("discount", "email", "Discount Offer")
+	seed("final", "email", "Final Countdown")
+	s := newBriefServiceWithRepo(t, repo)
+
+	for _, tc := range []struct{ delivery, stage, wantID string }{
+		{"paid-marketing", "", "paid"},
+		{"email", "CFP Launch", "cfp"},
+		{"email", "Registration Push", "reg"},
+		{"email", "Discount Offer", "discount"},
+		{"email", "Final Countdown", "final"},
+	} {
+		got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{
+			ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: tc.delivery, Stage: tc.stage,
+		})
+		if err != nil {
+			t.Fatalf("FindBrief(%s, %q): %v", tc.delivery, tc.stage, err)
+		}
+		if got.ID != tc.wantID {
+			t.Errorf("FindBrief(%s, %q) = %q, want %q", tc.delivery, tc.stage, got.ID, tc.wantID)
+		}
+	}
+
+	// A stage nobody has written is absent, not "some other stage of the series".
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{
+		ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: "email", Stage: "Post-Event",
+	}); err == nil {
+		t.Error("FindBrief for an unwritten stage returned a brief; want NotFound")
+	}
+}
+
 func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()
+	// An EXPLICIT paid-marketing, as 000030 backfills every pre-existing row. Seeding the zero
+	// value instead made this pass against a lookup that queried the raw `""` -- see
+	// TestFindBrief_ZeroDeliveryTypeQueriesPaid, which exists because that masking hid a real bug.
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
 		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
-		Status: model.BriefDraft,
-		Copy:   json.RawMessage(`{"headlines":["Join KubeCon EU 2026"]}`),
+		DeliveryType: model.DeliveryPaidMarketing,
+		Status:       model.BriefDraft,
+		Copy:         json.RawMessage(`{"headlines":["Join KubeCon EU 2026"]}`),
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
@@ -1906,6 +2115,175 @@ func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
 	}
 	if got.ID != "b1" {
 		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
+// TestUpdateBrief_ForwardsTheIdentityAssertions pins the SERVICE-layer wiring that the live tests
+// cannot reach: they construct `AssertDeliveryType`/`AssertStage` themselves, so deleting the two
+// assignments in `UpdateBrief` leaves them green while an HTTP update silently ignores an identity
+// change again -- the exact behaviour those fields were added to stop.
+//
+// Three cases, because the contract has three states and only one of them is "reject":
+//   - OMITTED: the payload says nothing about identity, and an ordinary content edit must succeed.
+//   - RESTATED: the payload names the identity it already has, which is not a change.
+//   - CHANGED: the payload names a different identity, which is refused as 409.
+//
+// The explicit-empty stage is the case a value comparison cannot see: `""` is the PAID brief's real
+// stage, so `{"stage": ""}` on an email brief is a genuine request to move it, not an omission.
+func TestUpdateBrief_ForwardsTheIdentityAssertions(t *testing.T) {
+	seed := func() *fakeBriefRepo {
+		r := newFakeBriefRepo()
+		r.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+			ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+			DeliveryType: model.DeliveryEmail, Stage: "Registration Push",
+			Status: model.BriefDraft, Version: 1,
+		}
+		return r
+	}
+	ifMatch := "1"
+	payload := func(delivery, stage *string) *briefs.UpdateBriefPayload {
+		return &briefs.UpdateBriefPayload{
+			ProjectID: "cncf", BriefID: "b1", IfMatch: &ifMatch,
+			Brief: &briefs.BriefInput{
+				ProgramType: "events", EventSlug: "kubecon-eu-2026",
+				DeliveryType: delivery, Stage: stage,
+			},
+		}
+	}
+	str := func(v string) *string { return &v }
+
+	t.Run("an omitted identity is not a change", func(t *testing.T) {
+		got, err := newBriefServiceWithRepo(t, seed()).UpdateBrief(context.Background(), payload(nil, nil))
+		if err != nil {
+			t.Fatalf("UpdateBrief without restating the identity: %v", err)
+		}
+		// It must also SURVIVE: the columns are not in the UPDATE's SET list.
+		if got.DeliveryType != "email" || got.Stage != "Registration Push" {
+			t.Errorf("identity after a content edit = (%q, %q), want (email, Registration Push)", got.DeliveryType, got.Stage)
+		}
+	})
+
+	t.Run("a restated identity is not a change", func(t *testing.T) {
+		_, err := newBriefServiceWithRepo(t, seed()).UpdateBrief(context.Background(),
+			payload(str("email"), str("Registration Push")))
+		if err != nil {
+			t.Fatalf("UpdateBrief restating the identity it already has: %v", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name     string
+		delivery *string
+		stage    *string
+	}{
+		{"a different delivery type", str("paid-marketing"), nil},
+		{"a different stage", nil, str("Final Countdown")},
+		{"an explicitly empty stage", nil, str("")},
+	} {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			_, err := newBriefServiceWithRepo(t, seed()).UpdateBrief(context.Background(), payload(tc.delivery, tc.stage))
+
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("UpdateBrief with %s: err = %v, want *briefs.ConflictError", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestBriefIdentityPairsRejectedAt400 pins the ERROR MAPPING for an impossible identity pair, at
+// both call sites, which the database tests cannot reach.
+//
+// The live tests prove the CHECK refuses such a write. They say nothing about what a CALLER sees:
+// a constraint violation is SQLSTATE 23514, which no repository path classifies, so without the
+// service-layer guard it surfaces as a 500 on create and as a misleading 404 on find. Those are
+// the outcomes this guard exists to replace, and only a service test can observe them.
+//
+// Asserting the repository is never touched is the other half. A guard that ran AFTER the write
+// would still return 400 while leaving the row's fate to the CHECK, which is a different contract
+// -- and on find it would mean the useless 404 is merely relabelled rather than avoided.
+func TestBriefIdentityPairsRejectedAt400(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		delivery string
+		stage    string
+	}{
+		{"paid with an email stage", "paid-marketing", "Registration Push"},
+		{"email with no stage", "email", ""},
+		{"email with an unknown stage", "email", "Nonsense Stage"},
+	} {
+		t.Run("create rejects "+tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			s := newBriefServiceWithRepo(t, repo)
+
+			_, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
+				ProjectID: "cncf",
+				Brief: &briefs.BriefInput{
+					ProgramType: "events", EventSlug: "kubecon-eu-2026",
+					DeliveryType: &tc.delivery, Stage: &tc.stage,
+				},
+			})
+
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("CreateBrief(%q, %q): err = %v, want *briefs.BadRequestError", tc.delivery, tc.stage, err)
+			}
+			if len(repo.briefs) != 0 {
+				t.Errorf("CreateBrief wrote a row for an impossible pair; the guard must run BEFORE the repository")
+			}
+		})
+
+		t.Run("find rejects "+tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			s := newBriefServiceWithRepo(t, repo)
+
+			_, err := s.FindBrief(context.Background(), &briefs.FindBriefPayload{
+				ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+				DeliveryType: tc.delivery, Stage: tc.stage,
+			})
+
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("FindBrief(%q, %q): err = %v, want *briefs.BadRequestError (a 404 would send "+
+					"the caller looking for a row that could never exist)", tc.delivery, tc.stage, err)
+			}
+		})
+	}
+}
+
+// TestFindBrief_ZeroDeliveryTypeQueriesPaid pins that FindBrief normalizes ONCE — that the value
+// it validates is the value it queries.
+//
+// A direct Go caller leaves DeliveryType at the zero string; Goa applies the design default only
+// for HTTP. An earlier revision normalized for the pair validation and then passed the RAW value
+// to the repository, so the query asked for `delivery_type = ”` while every row 000030 migrated
+// stores `paid-marketing`, and the caller got a 404 for a brief sitting right there.
+//
+// The seeded row carries an EXPLICIT paid-marketing, which is what makes this able to fail: the
+// fake matches DeliveryType exactly, so a raw-value query finds nothing. A row seeded with the
+// zero value would match the broken query and pass vacuously.
+func TestFindBrief_ZeroDeliveryTypeQueriesPaid(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryPaidMarketing,
+		Status:       model.BriefDraft,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"})
+	if err != nil {
+		t.Fatalf("FindBrief with a zero delivery type must address the paid brief: %v", err)
+	}
+	if got.ID != "b1" {
+		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+	// The RESPONSE carries the identity too, not merely the right row. Both fields are Required()
+	// on the wire, so a briefResult that stopped populating either would publish a document whose
+	// own identity is missing -- and asserting only the id cannot see that.
+	if got.DeliveryType != "paid-marketing" || got.Stage != "" {
+		t.Errorf("response identity = (%q, %q), want (paid-marketing, \"\")", got.DeliveryType, got.Stage)
 	}
 }
 
@@ -1933,7 +2311,12 @@ func TestFindBrief_ArchivedBriefDoesNotMatch(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefArchived,
+		// DeliveryType is set so the lookup MATCHES on identity and this test reaches the thing it
+		// names. Since FindBrief normalizes an omitted delivery type to paid-marketing, a fixture
+		// left at the zero value 404s on an identity mismatch instead -- so the test passed even
+		// with a DRAFT row, proving nothing about archiving. Verified before this line was added.
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryPaidMarketing, Status: model.BriefArchived,
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
@@ -1953,7 +2336,9 @@ func TestFindBrief_HandlesLongSlugs(t *testing.T) {
 	longSlug := strings.Repeat("a", 512)
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-		ID: "b1", ProjectID: "cncf", EventSlug: longSlug, Status: model.BriefDraft,
+		ID: "b1", ProjectID: "cncf", EventSlug: longSlug,
+		DeliveryType: model.DeliveryPaidMarketing,
+		Status:       model.BriefDraft,
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
@@ -1973,7 +2358,8 @@ func TestFindBrief_HandlesLongSlugs(t *testing.T) {
 // lookup: BriefInput.event_slug is uncapped and the column is unbounded TEXT, so a cap
 // here would make a brief the CREATE contract accepted permanently unrecallable — the caller
 // would get a validation error instead of its saved brief, then collide on re-create against
-// the UNIQUE(project_id, event_slug) index. The service-level test above cannot catch that,
+// the brief unique index (all four identity columns since 000030). The service-level test
+// above cannot catch that,
 // because a cap lives in design/brief.go and is generated into DecodeFindBriefRequest, not
 // into the service method. Verified binding: adding MaxLength(64) to design/brief.go and
 // regenerating fails this test.
@@ -2034,7 +2420,10 @@ func TestFindBrief_IsScopedToProject(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefDraft,
+		// Same reason as the archived fixture above: without an explicit delivery type the lookup
+		// misses on identity, and this test would pass without ever exercising project scoping.
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryPaidMarketing, Status: model.BriefDraft,
 	}
 	s := newBriefServiceWithRepo(t, repo)
 
@@ -2048,7 +2437,8 @@ func TestFindBrief_IsScopedToProject(t *testing.T) {
 //
 // They originally did not. goa's Required() checks only that the JSON key is PRESENT, so an
 // explicit "" satisfied it, and the TEXT NOT NULL column accepts it — meaning a brief with an
-// empty slug was creatable, occupied the UNIQUE(project_id, event_slug) index, and could never
+// empty slug was creatable, occupied a slot in the brief unique index -- then
+// (project_id, event_slug), now all four identity columns -- and could never
 // be recalled through find-brief (whose own MinLength(1) rejects the request with a 400
 // instead of the documented 404/200).
 //
@@ -2096,9 +2486,15 @@ func TestBriefResponse_StillDecodesLegacyEmptySlug(t *testing.T) {
 	status := "approved"
 	var version int64 = 1
 
+	// `delivery_type` and `stage` ARE supplied, because they are Required() on the response and a
+	// real one always carries them: 000030 declares both NOT NULL with defaults and backfills every
+	// pre-existing row, and `briefResult` sets both unconditionally. A legacy row is legacy in its
+	// SLUG, not in these — so omitting them here would test a body the service cannot produce.
+	deliveryType := "paid-marketing"
 	if err := briefsclient.ValidateGetBriefResponseBody(&briefsclient.GetBriefResponseBody{
 		ID: &id, ProjectID: &projectID, ProgramType: &programType,
-		EventSlug: &empty, Status: &status, Version: &version,
+		EventSlug: &empty, DeliveryType: &deliveryType, Stage: &empty,
+		Status: &status, Version: &version,
 	}); err != nil {
 		t.Fatalf("a legacy empty-slug row must still be readable, got: %v", err)
 	}

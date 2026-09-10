@@ -1225,6 +1225,22 @@ func (c *Container) newLLMClient() *llm.Client {
 		return nil
 	}
 	if c.Config.AIProxyURL == "" || c.Config.AIAPIKey == "" {
+		// ANNOUNCED, not silent. The warning below only fires when NewClient ERRORS; a missing
+		// URL or key took this branch and returned nil without a word, so the only evidence that
+		// email copy generation was disabled was a 503 in someone's browser. Observed in
+		// production on 2026-09-02: three replicas, no LLM line in any startup log, and no way to
+		// tell a configured deployment from an unconfigured one without reading the secret.
+		//
+		// Every other optional dependency here announces itself the same way -- Snowflake above,
+		// the index relay in `indexer.Relay.warnNoToken` -- each naming the variable to set and
+		// what degrades without it. Matching them is what makes the next occurrence
+		// self-diagnosing.
+		//
+		// Which one is missing is deliberately NOT logged: it would narrow the fix, but the
+		// values are a URL and a credential, and naming the present one tells a log reader
+		// something about a secret. The chart provisions them together anyway.
+		slog.Warn("AI proxy not configured (set AI_PROXY_URL and AI_API_KEY); " +
+			"email copy generation will return 503 until both are set")
 		return nil
 	}
 	cfg := llm.Config{

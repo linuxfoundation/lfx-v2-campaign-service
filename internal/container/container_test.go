@@ -1660,3 +1660,56 @@ func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
 			"with the aggregate pixel-memory bound unenforced", rec.calls)
 	}
 }
+
+// An unconfigured AI proxy must ANNOUNCE itself at startup.
+//
+// `newLLMClient` returned nil silently when AI_PROXY_URL or AI_API_KEY was absent — the existing
+// warning fires only when llm.NewClient ERRORS, which a missing value never reaches. Observed in
+// production on 2026-09-02: three replicas, no LLM line in any startup log, and no way to
+// distinguish a configured deployment from an unconfigured one without reading the secret. The
+// only evidence was a 503 in a browser.
+//
+// Asserted on the emitted LOG, not on the nil return, because the nil return was never the defect
+// — the silence was. Every other optional dependency here announces itself the same way.
+func TestNewLLMClientWarnsWhenUnconfigured(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	for _, tc := range []struct {
+		name string
+		cfg  *config.Config
+	}{
+		{"both missing", &config.Config{}},
+		{"key missing", &config.Config{AIProxyURL: "https://proxy.example"}},
+		{"url missing", &config.Config{AIAPIKey: "k"}},
+	} {
+		buf.Reset()
+		c := &Container{Config: tc.cfg}
+		require.Nil(t, c.newLLMClient(), tc.name+": an unconfigured proxy must yield no client")
+
+		out := buf.String()
+		require.Contains(t, out, "AI_PROXY_URL", tc.name+": the warning must name the variable to set")
+		require.Contains(t, out, "AI_API_KEY", tc.name+": the warning must name the variable to set")
+		require.Contains(t, out, "503", tc.name+": the warning must state what degrades")
+	}
+}
+
+// The warning must NOT fire when the proxy is configured — a startup line claiming email copy is
+// unavailable on a healthy deployment is worse than no line, because it trains readers to ignore
+// the one that matters.
+func TestNewLLMClientSilentWhenConfigured(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+
+	c := &Container{Config: &config.Config{AIProxyURL: srv.URL, AIAPIKey: "test-key"}}
+	require.NotNil(t, c.newLLMClient())
+	require.NotContains(t, buf.String(), "AI proxy not configured",
+		"a configured proxy must not warn; a false alarm here devalues the real one")
+}
