@@ -32,3 +32,16 @@ floor cannot compensate, because the floor only ever suppresses candidates. The
 remedy — reading the union of the base and target pattern sets — was deferred as
 out of scope for the rollout that introduced this subsystem and remains unsolved.
 It is a recorded follow-up.
+
+## Interim state until the central lifecycle publishes
+
+The `## Review lifecycle configuration` section of `CLAUDE.md` is read by the
+target lifecycle in
+[lfx-skills#73](https://github.com/linuxfoundation/lfx-skills/pull/73). The
+lifecycle published before that change probes retired alias paths and prefers a
+repo-owned fallback launcher, both of which this repo has removed on purpose, so
+local review is intentionally inoperative here until #73 merges and publishes.
+This is the coordinated release's documented merge gate, not a defect to work
+around; do not restore the retired paths or add an override. The adoption log
+entry `docs/knowledge/log/2026-09-02-central-review-lifecycle-adoption.md`
+records the decision.
