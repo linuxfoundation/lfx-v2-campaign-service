@@ -92,6 +92,19 @@ const (
 	// MembershipPageSize * this == UnionExactCap records.
 	MembershipMaxPages = 100
 
+	// PreviewMaxLists bounds how many lists one preview-count may union. The sweep
+	// is TWO sequential HubSpot round-trips per id -- GetList for the estimate, then
+	// paginated ListMembershipIDs -- so cost grows linearly with the selection and
+	// nothing else stops it: the design's list_ids carried MinLength(1) and no upper
+	// bound, and the handler had no deadline, so a large array simply ran until the
+	// gateway gave up and returned a 504 with no diagnosis.
+	//
+	// 50 is well clear of any real selection (discovery surfaces at most
+	// DiscoveryMaxInspections candidates across 4 signals, and an operator ticks a
+	// handful) while keeping the worst case bounded at 50 GetList calls plus, below
+	// the cap, at most UnionExactCap membership records.
+	PreviewMaxLists = 50
+
 	// DiscoveryMaxInspections is how many candidate lists discovery will fetch in
 	// full before it stops inspecting. Every inspection is a
 	// GET /crm/v3/lists/{id}?includeFilters=true; a broad event name can return

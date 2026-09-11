@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,7 +81,38 @@ type AudienceExplorer struct {
 // nil: a deployment without them still serves every endpoint that does not read an
 // event page, and Discover reports what it could not do rather than failing.
 func NewAudienceExplorer(builder *AudienceBuilder, fetcher eventPageReader, parser eventPageParser, llm completer) *AudienceExplorer {
+	// A nil *llm.Client (what the container returns when AI_PROXY_URL/AI_API_KEY are
+	// unset) arrives here as a non-nil interface holding a nil pointer, so the
+	// `x.llm == nil` guards downstream read false and call through to a nil receiver.
+	// Normalising at the single construction site is what makes "llm may be nil" in
+	// the doc comment above actually true for every guard, rather than each guard
+	// having to re-derive it. Same for the other two optional dependencies, which
+	// reach their guards by the identical path.
+	if isNilIface(llm) {
+		llm = nil
+	}
+	if isNilIface(fetcher) {
+		fetcher = nil
+	}
+	if isNilIface(parser) {
+		parser = nil
+	}
 	return &AudienceExplorer{builder: builder, fetcher: fetcher, parser: parser, llm: llm, now: time.Now}
+}
+
+// isNilIface reports whether v is either an untyped nil interface or an interface
+// holding a nil pointer. reflect is the only way to see the second case.
+//
+// Only llm reaches this with a typed nil today (the container's eventFetcher and
+// NewParser never return nil), but all three arrive by the same route and are
+// guarded by the same `== nil` test, so normalising one and not the others would
+// leave the next nil-returning constructor to rediscover this panic.
+func isNilIface(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +678,15 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 // Preview count
 // ---------------------------------------------------------------------------
 
+// previewCountTimeout bounds the whole preview sweep: up to PreviewMaxLists GetList
+// calls plus, below the cap, paginated membership reads. It must be shorter than the
+// gateway's patience -- the failure this replaces was a 504 with nothing in this
+// service's log -- yet long enough that a legitimate selection completes. It is also
+// deliberately far below the HubSpot client's own retryMax*maxRetryWait (180s): under
+// sustained throttling the retry policy alone would outlast any request budget, and a
+// preview must degrade to a stated over-count rather than hang.
+const previewCountTimeout = 25 * time.Second
+
 // PreviewCount answers "how many people would this reach" for a selection of lists.
 //
 // Three answers, and which one is given matters as much as the number:
@@ -661,11 +702,24 @@ func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, l
 	if len(ids) == 0 {
 		return audience.EmptyPreviewCount(), nil
 	}
+	// Defence in depth behind the design's MaxLength: that bound guards the HTTP
+	// edge, this one guards every caller of the method (a future internal one
+	// included) and is what the budget comment on PreviewMaxLists actually promises.
+	if len(ids) > audience.PreviewMaxLists {
+		return audience.PreviewCount{}, audience.ErrTooManyPreviewLists
+	}
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return audience.PreviewCount{}, err
 	}
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
+
+	// The sweep below is up to 2*PreviewMaxLists sequential round-trips. Without a
+	// deadline the request runs until the gateway kills it, which surfaces to the
+	// operator as a bare 504 and leaves no line in this service's log saying why.
+	// Bounding it here turns that into a degraded-but-honest answer.
+	ctx, cancel := context.WithTimeout(ctx, previewCountTimeout)
+	defer cancel()
 
 	estimate := 0
 	for _, id := range ids {

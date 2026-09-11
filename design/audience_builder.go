@@ -496,8 +496,13 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
+			// MaxLength bounds a fan-out, not a form field: the sweep is two
+			// sequential HubSpot round-trips per id, so an unbounded array is a
+			// slow-request lever. Mirrors audience.PreviewMaxLists; rejecting here
+			// costs one 400 instead of a gateway timeout with nothing in the log.
 			Attribute("list_ids", ArrayOf(String), "Lists to union", func() {
 				MinLength(1)
+				MaxLength(50)
 			})
 			Required("project_id", "list_ids")
 		})

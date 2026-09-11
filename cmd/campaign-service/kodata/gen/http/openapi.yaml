@@ -11700,6 +11700,7 @@ definitions:
                     - Minus nihil aliquam quos ea cumque enim.
                     - Et rerum assumenda nam aut quis facere.
                 minItems: 1
+                maxItems: 50
         example:
             list_ids:
                 - Aut ducimus nisi.

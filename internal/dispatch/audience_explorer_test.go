@@ -6,11 +6,13 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -265,4 +267,70 @@ func TestComposePartialError_CarriesTheOrphanForward(t *testing.T) {
 	require.ErrorAs(t, err, &partial)
 	assert.Equal(t, "555", partial.Suppression.ListID,
 		"the orphan's id is what lets the UI link an operator straight to it in HubSpot")
+}
+
+// A nil *llm.Client -- exactly what container.newLLMClient() returns when
+// AI_PROXY_URL/AI_API_KEY are unset -- must read as "absent" at the guards inside
+// Discover. Assigned straight into the completer parameter it becomes a non-nil
+// interface holding a nil pointer, the `x.llm == nil` guard reads false, and
+// Discover panics with a nil-receiver dereference inside llm.Client.Complete.
+// Observed locally on 2026-09-11: every Discover call 500'd with
+// "Audience discovery failed" on a service with no AI proxy configured.
+func TestNewAudienceExplorerNormalisesTypedNilDependencies(t *testing.T) {
+	var client *llm.Client
+	var fetcher *eventurl.Fetcher
+	var parser *eventurl.Parser
+
+	x := explorerWithNoPortal(fetcher, parser, client)
+
+	if x.llm != nil {
+		t.Errorf("llm: want nil interface for a nil *llm.Client, got %T", x.llm)
+	}
+	if x.fetcher != nil {
+		t.Errorf("fetcher: want nil interface for a nil *eventurl.Fetcher, got %T", x.fetcher)
+	}
+	if x.parser != nil {
+		t.Errorf("parser: want nil interface for a nil *eventurl.Parser, got %T", x.parser)
+	}
+}
+
+// Deliberately asserted at the constructor rather than through Discover: every
+// fixture in this file is a project with no HubSpot connection, so Discover
+// refuses at the credential seam and returns before reaching enrichIdentity. A
+// Discover-level test of this panic passes with the fix reverted -- it proves
+// nothing. The constructor is the narrowest place the defect is observable.
+
+// The design's MaxLength on list_ids is a DSL literal and cannot reference
+// audience.PreviewMaxLists, so the two can drift silently -- raising the Go budget
+// without the design would leave the edge rejecting valid requests, and lowering it
+// without the design would let the edge admit a sweep the method then refuses. This
+// pins them together; if you change one, this test tells you to change the other.
+func TestPreviewMaxListsMatchesTheGeneratedEdgeValidation(t *testing.T) {
+	const designMaxLength = 50 // design/audience_builder.go -> list_ids MaxLength
+
+	if audience.PreviewMaxLists != designMaxLength {
+		t.Fatalf("audience.PreviewMaxLists = %d but design/audience_builder.go declares MaxLength(%d); update both and re-run `make apigen`",
+			audience.PreviewMaxLists, designMaxLength)
+	}
+}
+
+// Over-budget selections must be refused before any HubSpot call, and as an invalid
+// request rather than a transient one -- the remedy is to select fewer lists, so a
+// retry of the same payload can never succeed.
+func TestPreviewCountRefusesMoreListsThanTheBudget(t *testing.T) {
+	x := explorerWithNoPortal(nil, nil, nil)
+
+	ids := make([]string, audience.PreviewMaxLists+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("list-%d", i)
+	}
+
+	_, err := x.PreviewCount(context.Background(), "tlf", ids)
+	if !errors.Is(err, audience.ErrTooManyPreviewLists) {
+		t.Fatalf("want ErrTooManyPreviewLists for %d lists, got %v", len(ids), err)
+	}
+	// Wrapping ErrInvalidRequest is what maps this to a 400 rather than a retryable 5xx.
+	if !errors.Is(err, audience.ErrInvalidRequest) {
+		t.Errorf("ErrTooManyPreviewLists must wrap ErrInvalidRequest so the handler maps it to 400; got %v", err)
+	}
 }
