@@ -713,6 +713,9 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		return nil, audience.ErrNoInclusionLists
 	}
 	exclude := audience.ExclusionIDs(in.ExcludeListIDs, include)
+	if err := audience.ValidateInclusionIDs(include); err != nil {
+		return nil, err
+	}
 
 	// One resolved client for the whole composition. Both lists must land in the SAME
 	// portal, or the master references a suppression id that does not exist beside it.
@@ -747,6 +750,9 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		filter, err = audience.MasterListFilter(include)
 	}
 	if err != nil {
+		if suppression != nil {
+			return nil, &audience.ComposePartialError{Suppression: *suppression, Err: err}
+		}
 		return nil, err
 	}
 
@@ -838,6 +844,9 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 
 	list, filters, gerr := x.listWithFilters(ctx, client, listID)
 	if gerr != nil {
+		if hubspot.IsNotFound(gerr) {
+			return nil, fmt.Errorf("%w: %q", audience.ErrListNotFound, listID)
+		}
 		return nil, gerr
 	}
 

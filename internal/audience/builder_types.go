@@ -98,10 +98,6 @@ const (
 	// hundreds of candidates across two searches plus one-hop rollup resolution.
 	// Candidates past the budget are still listed and classified from their names.
 	DiscoveryMaxInspections = 40
-
-	// LastSentEmailSearchLimit is how many marketing emails to pull per search
-	// before filtering to published ones.
-	LastSentEmailSearchLimit = 30
 )
 
 // SuppressionTerm is one portfolio-wide hygiene suppression list, resolved by

@@ -13,6 +13,7 @@ import (
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 
 	"goa.design/goa/v3/security"
 )
@@ -386,7 +387,8 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 	switch {
 	case errors.Is(err, audience.ErrListNotFound):
 		return &explore.NotFoundError{Code: "404", Message: "no list in this project's HubSpot portal matches that reference"}
-	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved):
+	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved),
+		errors.Is(err, eventurl.ErrEventURLInvalid), errors.Is(err, eventurl.ErrEventURLForbidden):
 		// 400, not 500: nothing is wrong with the service, and the fix is a different
 		// request — a resolvable list reference, or an event URL whose page declares a
 		// name. Reported as a server fault, an operator would wait for it to clear.
@@ -427,7 +429,7 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 		slog.ErrorContext(ctx, "audience compose left an orphaned suppression list",
 			"project_id", projectID, "suppression_list_id", partial.Suppression.ListID, "error", err)
 		return &explore.AudienceComposePartialError{
-			Code:        "409",
+			Code:        "500",
 			Message:     "the combined suppression list was created but the master list was not — reconcile the suppression list in HubSpot before composing again; do not simply retry",
 			Suppression: composedListResult(&partial.Suppression),
 		}

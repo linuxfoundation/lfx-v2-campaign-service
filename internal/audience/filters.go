@@ -244,16 +244,29 @@ func RegionEventRegistrantsFilter(countries, eventNames []string) (json.RawMessa
 // Each list therefore gets its OWN AND branch. Putting all the membership filters as siblings
 // inside ONE AND branch would mean "in list A AND in list B" — an INTERSECTION, typically empty
 // and exactly backwards from the intent.
-func MasterListFilter(listIDs []string) (json.RawMessage, error) {
+// ValidateInclusionIDs checks the deterministic shape a master list's inclusion ids
+// must have, independent of any HubSpot call. Callers that create a mutating resource
+// before building the master filter (a combined suppression list, for one) must run
+// this FIRST, so a malformed request is rejected before anything is written.
+func ValidateInclusionIDs(listIDs []string) error {
 	if len(listIDs) == 0 {
-		return nil, fmt.Errorf("audience: a master list requires at least one inclusion list")
+		return fmt.Errorf("audience: a master list requires at least one inclusion list")
 	}
-	branches := make([]filterBranch, 0, len(listIDs))
 	for _, id := range listIDs {
 		if strings.TrimSpace(id) == "" {
 			// A blank id would silently drop one group from the union.
-			return nil, fmt.Errorf("audience: a master list cannot be built from a blank list id")
+			return fmt.Errorf("audience: a master list cannot be built from a blank list id")
 		}
+	}
+	return nil
+}
+
+func MasterListFilter(listIDs []string) (json.RawMessage, error) {
+	if err := ValidateInclusionIDs(listIDs); err != nil {
+		return nil, err
+	}
+	branches := make([]filterBranch, 0, len(listIDs))
+	for _, id := range listIDs {
 		branches = append(branches, filterBranch{
 			FilterBranchType: "AND",
 			FilterBranches:   []filterBranch{},

@@ -138,7 +138,11 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 	switch {
 	case len(matches) == 0:
 		return nil, nil
-	case len(matches) > 1 && len(exact) == 0:
+	case len(matches) > 1:
+		// Ambiguous even when every match is exact: HubSpot does not enforce unique
+		// list names, so two lists can share the typed name verbatim. Picking the
+		// first would run QA on a list the operator never meant and report the
+		// verdict under the name they typed.
 		return nil, matches
 	default:
 		best := matches[0]
@@ -256,7 +260,8 @@ type SuppressionCheck struct {
 
 // CheckSuppression asks whether the consent suppressions are actually applied,
 // given the names of everything this list excludes (including one hop into a
-// Combined-Suppression wrapper — see ExclusionHopIDs).
+// Combined-Suppression wrapper — see (*AudienceExplorer).exclusionNames in
+// internal/dispatch).
 //
 // Severity tracks legal exposure. Sending to EU contacts with no GDPR suppression
 // is the one CRITICAL in this service and the only condition that can produce a

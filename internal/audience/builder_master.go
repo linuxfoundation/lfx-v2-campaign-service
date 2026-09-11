@@ -162,18 +162,14 @@ func NewerFirst(a, b ListCandidate) bool {
 //     then ignores the filter, so the list is created, looks correct in the API
 //     response, and mails the people it was supposed to exclude.
 func MasterListWithSuppressionFilter(includeIDs []string, suppressionListID string) (json.RawMessage, error) {
-	if len(includeIDs) == 0 {
-		return nil, fmt.Errorf("audience: a master list requires at least one inclusion list")
+	if err := ValidateInclusionIDs(includeIDs); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(suppressionListID) == "" {
 		return nil, fmt.Errorf("audience: a suppressed master list requires the suppression list id")
 	}
 	branches := make([]filterBranch, 0, len(includeIDs))
 	for _, id := range includeIDs {
-		if strings.TrimSpace(id) == "" {
-			// A blank id would silently drop one group from the union.
-			return nil, fmt.Errorf("audience: a master list cannot be built from a blank list id")
-		}
 		branches = append(branches, filterBranch{
 			FilterBranchType: "AND",
 			FilterBranches:   []filterBranch{},

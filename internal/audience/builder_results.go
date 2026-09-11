@@ -87,7 +87,7 @@ type SuppressionRow struct {
 const (
 	SuppressionCategoryStandard = "standard"
 	SuppressionCategoryBrand    = "brand"
-	SuppressionCategoryEvent    = "event"
+	SuppressionCategoryEvent    = "event_specific"
 )
 
 // ListBrief names a list referenced from somewhere else — a prior send's include or

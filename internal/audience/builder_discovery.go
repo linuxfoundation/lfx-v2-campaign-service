@@ -33,14 +33,6 @@ const lfNewsletterValueHint = "linux foundation newsletter"
 // Names and property values that mark all-time registration for an event.
 var registrationHints = []string{"registrant", "registration", "registered", "attendee", "attended"}
 
-// behaviouralFilterTypes describe a contact's own behaviour, as opposed to list
-// membership. Only these are carried up from a one-hop child: a child's own
-// IN_LIST filters would keep the hop going forever.
-var behaviouralFilterTypes = map[string]struct{}{
-	"PROPERTY": {}, "UNIFIED_EVENTS": {}, "PAGE_VIEW": {}, "CUSTOM_EVENT": {},
-	"EVENT": {}, "WEB_ANALYTICS": {}, "FORM_SUBMISSION": {},
-}
-
 // speakerScopeSuffix is one suffix the current speaker-list naming convention
 // uses to state its own scope.
 type speakerScopeSuffix struct {
@@ -182,18 +174,6 @@ func RollupChildIDs(filters []ListFilter) []string {
 		}
 		seen[id] = struct{}{}
 		out = append(out, id)
-	}
-	return out
-}
-
-// KeepBehavioural filters a one-hop child's filters down to the ones that explain
-// what it selects.
-func KeepBehavioural(filters []ListFilter) []ListFilter {
-	out := make([]ListFilter, 0, len(filters))
-	for _, f := range filters {
-		if _, ok := behaviouralFilterTypes[strings.ToUpper(strings.TrimSpace(f.FilterType))]; ok {
-			out = append(out, f)
-		}
 	}
 	return out
 }
