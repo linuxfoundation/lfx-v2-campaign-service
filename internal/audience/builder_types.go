@@ -109,12 +109,10 @@ const (
 	// full before it stops inspecting. Every inspection is a
 	// GET /crm/v3/lists/{id}?includeFilters=true; a broad event name can return
 	// hundreds of candidates across two searches plus one-hop rollup resolution.
-	// Candidates past the budget are still listed and classified from their names.
+	// Candidates past the budget are NOT listed at all: the loop breaks, so `Inspected`
+	// is the caller's only signal that the result is partial. (An earlier version of this
+	// comment claimed a name-only classification pass that was never implemented.)
 	DiscoveryMaxInspections = 40
-
-	// LastSentEmailSearchLimit is how many marketing emails to pull per search
-	// before filtering to published ones.
-	LastSentEmailSearchLimit = 30
 )
 
 // SuppressionTerm is one portfolio-wide hygiene suppression list, resolved by
