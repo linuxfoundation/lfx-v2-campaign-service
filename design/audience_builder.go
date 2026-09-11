@@ -498,7 +498,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("preview-audience-count", func() {
-		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, and as a floor when it is not. Creates nothing.")
+		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, as an UPPER-bound estimate (the sum of list sizes, which double-counts overlap) when it is not, and as no number at all when any selected list did not report a size. Creates nothing.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
