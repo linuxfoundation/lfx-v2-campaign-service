@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"log/slog"
 	"strings"
@@ -392,6 +393,17 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 		// request — a resolvable list reference, or an event URL whose page declares a
 		// name. Reported as a server fault, an operator would wait for it to clear.
 		return &explore.BadRequestError{Code: "400", Message: "the request could not be satisfied as given: check the event URL or list reference"}
+	case errors.Is(err, eventurl.ErrEventURLInvalid), errors.Is(err, eventurl.ErrEventURLForbidden):
+		// 400: the caller gave a URL this service will not fetch — malformed, or resolving
+		// to an address SSRF protection refuses. Reported as a 500 these read as "the
+		// service is broken", so an operator retries a URL that can never work.
+		// `mapEventURLErr` classifies the same sentinels for /fetch-event-url; it returns
+		// briefs.* types, so the arms are mirrored here rather than reused.
+		return &explore.BadRequestError{Code: "400", Message: "event URL is invalid, or resolves to an address this service will not connect to"}
+	case errors.Is(err, eventurl.ErrEventURLFetchFailed):
+		// 503, not 400: the URL is fine and the origin did not answer. Retrying may work,
+		// which is the opposite of the advice a 400 gives.
+		return &explore.ConnServiceUnavailableError{Code: "503", Message: "the event page could not be fetched"}
 	case errors.Is(err, audience.ErrEventPageUnavailable):
 		return &explore.ConnServiceUnavailableError{Code: "503", Message: "this deployment cannot read event pages, so discovery is unavailable"}
 	case errors.Is(err, domain.ErrSystemConnectionMissing), errors.Is(err, domain.ErrSystemConnectionNotUsable):
