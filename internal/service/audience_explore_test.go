@@ -16,6 +16,7 @@ import (
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
@@ -79,6 +80,30 @@ func TestAudienceExploreErrClassification(t *testing.T) {
 			wantType:        &explore.BadRequestError{},
 			wantMsgContains: "could not be satisfied as given",
 			why:             "the fix is a different event URL, not waiting for the service",
+		},
+		{
+			name:            "an invalid event URL is a 400, not a server fault",
+			err:             fmt.Errorf("fetch: %w", eventurl.ErrEventURLInvalid),
+			wantCode:        "400",
+			wantType:        &explore.BadRequestError{},
+			wantMsgContains: "event URL is invalid",
+			why:             "the caller must change the URL; a 500 tells them to wait for a fix that will never come",
+		},
+		{
+			name:            "an SSRF-refused event URL is a 400",
+			err:             fmt.Errorf("fetch: %w", eventurl.ErrEventURLForbidden),
+			wantCode:        "400",
+			wantType:        &explore.BadRequestError{},
+			wantMsgContains: "will not connect to",
+			why:             "same arm; the URL resolves somewhere this service refuses to fetch",
+		},
+		{
+			name:            "an unreachable event origin is a 503, not a 400",
+			err:             fmt.Errorf("fetch: %w", eventurl.ErrEventURLFetchFailed),
+			wantCode:        "503",
+			wantType:        &explore.ConnServiceUnavailableError{},
+			wantMsgContains: "could not be fetched",
+			why:             "the URL is fine and retrying may work — the opposite of what a 400 advises",
 		},
 		{
 			name:            "an unconfigured event-page reader is a 503",

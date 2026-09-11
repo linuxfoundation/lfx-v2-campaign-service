@@ -153,7 +153,16 @@ func IsRollup(filters []ListFilter) bool {
 		return false
 	}
 	for _, f := range filters {
-		if f.FilterType != "IN_LIST" && f.Operator != "IN_LIST" && f.Operator != "NOT_IN_LIST" {
+		// The FILTER TYPE is what makes a filter a list-membership filter. Accepting a
+		// matching OPERATOR alone misreads a PROPERTY filter that legitimately uses
+		// IN_LIST -- `{FilterType:"PROPERTY", Property:"country", Operator:"IN_LIST"}`
+		// is a real shape (builder_qa_test.go models it). Such a list was then treated
+		// as a rollup, RollupChildIDs found no list ids in it, and discovery DROPPED the
+		// candidate entirely rather than classifying it.
+		if f.FilterType != "IN_LIST" {
+			return false
+		}
+		if f.Operator != "IN_LIST" && f.Operator != "NOT_IN_LIST" {
 			return false
 		}
 	}

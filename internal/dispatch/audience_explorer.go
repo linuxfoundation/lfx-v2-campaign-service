@@ -189,7 +189,10 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	}
 
 	keywords := audience.EventKeywords(identity.Name)
-	candidates := x.searchCandidates(ctx, client, identity, keywords)
+	candidates, serr := x.searchCandidates(ctx, client, identity, keywords)
+	if serr != nil {
+		return nil, serr
+	}
 
 	// Newest quarter first, so the inspection budget is spent on the lists most
 	// likely to be the current edition's rather than on whatever the search returned
@@ -278,12 +281,23 @@ func (x *AudienceExplorer) classifyInto(
 
 // searchCandidates runs discovery's searches and returns the plausible hits,
 // de-duplicated by list id.
-func (x *AudienceExplorer) searchCandidates(ctx context.Context, client *hubspot.Client, identity audience.EventIdentity, keywords map[string]struct{}) []audience.ListCandidate {
+//
+// Returns an error ONLY for a credential rejection. Every other per-query failure is
+// absorbed, because one bad query must not lose the hits the others returned — but a
+// revoked token fails every query alike, and absorbing those would turn a broken
+// connection into a confident "this portal has no lists".
+func (x *AudienceExplorer) searchCandidates(ctx context.Context, client *hubspot.Client, identity audience.EventIdentity, keywords map[string]struct{}) ([]audience.ListCandidate, error) {
 	seen := map[string]struct{}{}
 	out := make([]audience.ListCandidate, 0, 32)
 	for _, query := range audience.DiscoveryQueries(identity) {
 		hits, err := client.SearchLists(ctx, query)
 		if err != nil {
+			// A revoked token fails EVERY query, so continuing past them all reports an
+			// empty portal for what is really a credential problem — and bypasses the
+			// deferred systemScopedHubSpot classifier that would make it a typed 503.
+			if hubspot.IsPermissionRejection(err) {
+				return nil, err
+			}
 			// A failed search narrows the candidate set; it does not invalidate the
 			// hits the other queries returned. Discovery reports what it found.
 			slog.WarnContext(ctx, "audience discovery search failed", "query_len", len(query), "error", err)
@@ -301,7 +315,7 @@ func (x *AudienceExplorer) searchCandidates(ctx context.Context, client *hubspot
 			out = append(out, listCandidate(hit))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // eventIdentity resolves the event's name, brand token and dates from its page.
@@ -494,6 +508,11 @@ func (x *AudienceExplorer) ExistingMasterLists(ctx context.Context, projectID, e
 	for _, probe := range audience.ExistingMasterProbes(brandShort, eventName) {
 		hits, serr := client.SearchLists(ctx, probe)
 		if serr != nil {
+			// A credential rejection fails every probe alike; swallowing them all would
+			// report "no master lists exist" for a broken connection.
+			if hubspot.IsPermissionRejection(serr) {
+				return nil, serr
+			}
 			slog.WarnContext(ctx, "existing-master search failed", "project_id", projectID, "error", serr)
 			continue
 		}
@@ -654,6 +673,13 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 	for _, probe := range probes {
 		hits, err := client.SearchLists(ctx, probe)
 		if err != nil {
+			// NOTE: a credential rejection is NOT propagated here, unlike the discovery
+			// and existing-master search loops above. bestMatch returns only *hubspot.List
+			// and has three inline `if hit := ...` callers, so threading an error through
+			// is a wider change than this fix should make silently. The consequence is
+			// bounded: suppression probes feed the OPTIONAL suppression panel, and the
+			// caller's own credential resolution already failed loudly before reaching
+			// here for a wholly revoked token. Tracked rather than half-done.
 			slog.WarnContext(ctx, "suppression list search failed", "error", err)
 			continue
 		}

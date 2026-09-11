@@ -244,3 +244,37 @@ func TestMissingSignals_ReportsOnlyClassifiedOnes(t *testing.T) {
 		SignalPageView:            {},
 	}))
 }
+
+// A PROPERTY filter that happens to use the IN_LIST operator is NOT a rollup.
+//
+// The guard previously accepted a matching operator alone, so a country-in-list filter
+// (a real shape — see builder_qa_test.go) classified as a rollup. Discovery then called
+// RollupChildIDs, found no list ids in it, and dropped the candidate entirely rather
+// than classifying it — a list the operator could legitimately have mailed, silently
+// absent from the results.
+func TestIsRollupRequiresTheFilterTypeNotJustTheOperator(t *testing.T) {
+	propertyInList := []ListFilter{
+		{FilterType: "PROPERTY", Property: "country", Operator: "IN_LIST"},
+	}
+	if IsRollup(propertyInList) {
+		t.Error("a PROPERTY filter using the IN_LIST operator was classified as a rollup; discovery drops such candidates")
+	}
+
+	// A genuine rollup must still be recognised, or discovery stops resolving children.
+	realRollup := []ListFilter{
+		{FilterType: "IN_LIST", Operator: "IN_LIST"},
+		{FilterType: "IN_LIST", Operator: "NOT_IN_LIST"},
+	}
+	if !IsRollup(realRollup) {
+		t.Error("a list whose filters are all IN_LIST filters must still be a rollup")
+	}
+
+	// Mixed: one real list filter plus a property filter is not a rollup either.
+	mixed := []ListFilter{
+		{FilterType: "IN_LIST", Operator: "IN_LIST"},
+		{FilterType: "PROPERTY", Property: "country", Operator: "IN_LIST"},
+	}
+	if IsRollup(mixed) {
+		t.Error("a rollup must be ALL list-membership filters; one property filter disqualifies it")
+	}
+}
