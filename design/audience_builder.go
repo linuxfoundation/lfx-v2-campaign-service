@@ -214,14 +214,20 @@ var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
 // AudiencePreviewCount is the size of the union of the selected lists.
 //
 // exact is what makes this type honest. Computing a true union means paging every list's
-// membership, which is bounded — above the bound the union is reported as a floor with
-// exact=false and the UI renders "25,000+". The one thing this must never do is return a
-// fabricated precise number for a union it did not finish counting, so count is
-// meaningful only when exact is true and estimate carries the floor otherwise.
+// membership, which is bounded — above the bound the count is abandoned and exact=false.
+// The one thing this must never do is return a fabricated precise number for a union it
+// did not finish counting, so count is meaningful only when exact is true.
+//
+// When exact is false, estimate is the SUM of the selected lists' sizes, which is an UPPER
+// bound on the union: every contact in more than one list is counted once per list, so the
+// real union can only be smaller. It is not a floor. An earlier version of this comment and
+// the estimate attribute below both said "lower bound", which inverts the guarantee — a
+// client trusting that would read "25,000+" as "at least 25,000 people" when the true reach
+// may be far less, and size a send around it.
 var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("exact", Boolean, "True when the union was counted in full")
 	Attribute("count", Int64, "Exact union size; meaningful only when exact is true")
-	Attribute("estimate", Int64, "Lower bound on the union size when exact is false")
+	Attribute("estimate", Int64, "Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists")
 	Attribute("reason", String, "Why the count is exact or bounded")
 	Required("exact", "count", "estimate", "reason")
 })

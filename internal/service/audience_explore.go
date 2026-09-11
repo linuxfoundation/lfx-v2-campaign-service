@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"log/slog"
 	"strings"
 	"sync"
@@ -404,6 +405,18 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 		// a rotated encryption key failing every project at once, and only an operator
 		// can tell those apart or fix either.
 		return &explore.InternalServerError{Code: "500", Message: "this project's stored HubSpot credentials could not be decrypted — an operator must investigate"}
+	case hubspot.IsUnconfirmed(err):
+		// An AMBIGUOUS upstream outcome -- a mutating 429/5xx/transport failure, or a
+		// 2xx with no id. Both CreateList calls behind compose are non-idempotent, so a
+		// list may ALREADY exist. Falling through to the generic 500 below gives text
+		// that reads like an ordinary transient error and invites exactly the blind
+		// retry that creates a duplicate in a production portal. `unconfirmedNote` in
+		// audience_build.go exists because this same defect was fixed once already on
+		// the build path; this is the explore path's equivalent.
+		return &explore.InternalServerError{
+			Code:    "500",
+			Message: "HubSpot did not confirm whether this change was applied — check the portal before retrying, as a retry may create a duplicate",
+		}
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrConnectionNotUsable):
 		// 503 rather than 404: the LIST or email asked about may well exist. What is
 		// unavailable is the connection needed to look, which is what /capabilities
@@ -427,7 +440,15 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 		slog.ErrorContext(ctx, "audience compose left an orphaned suppression list",
 			"project_id", projectID, "suppression_list_id", partial.Suppression.ListID, "error", err)
 		return &explore.AudienceComposePartialError{
-			Code:        "409",
+			// 500, matching `Response("ComposePartial", StatusInternalServerError)` in the
+			// design. The body's `code` is documented as the HTTP status, so "409" here left
+			// a client reading the status and a client reading the body disagreeing about the
+			// same response -- on the one response that must never be blindly retried.
+			// 409 is not available to switch the mapping TO: commonBriefErrors already binds
+			// StatusConflict to the generic Conflict error, and Goa cannot map two errors to
+			// one status. The do-not-retry instruction is carried by the message and by the
+			// distinct error type, which is what the UI branches on.
+			Code:        "500",
 			Message:     "the combined suppression list was created but the master list was not — reconcile the suppression list in HubSpot before composing again; do not simply retry",
 			Suppression: composedListResult(&partial.Suppression),
 		}

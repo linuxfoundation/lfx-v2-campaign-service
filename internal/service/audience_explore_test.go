@@ -5,14 +5,18 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
 // audienceExploreErr is a switch whose ARM ORDER is load-bearing, and two of its arms
@@ -184,8 +188,12 @@ func TestComposeErrPreservesThePartialStateAndItsOrphanID(t *testing.T) {
 	if !ok {
 		t.Fatalf("a partial compose was flattened to %T; the orphaned list id is then lost and the operator is invited to retry", got)
 	}
-	if res.Code != "409" {
-		t.Errorf("want 409 (conflict needing reconciliation), got %s", res.Code)
+	// The body's `code` is documented as the HTTP status, and the design maps this error to
+	// StatusInternalServerError. They must agree: a client reading the status and one reading
+	// the body must not disagree about the same response, least of all this one.
+	if res.Code != "500" {
+		t.Errorf("body code %s disagrees with the design's Response(\"ComposePartial\", StatusInternalServerError); "+
+			"change both or neither", res.Code)
 	}
 	if res.Suppression == nil || res.Suppression.ListID != "998877" {
 		t.Fatalf("the orphaned suppression list id must survive into the response; got %+v", res.Suppression)
@@ -205,5 +213,44 @@ func TestComposeErrDelegatesNonPartialFailures(t *testing.T) {
 	}
 	if _, ok := got.(*explore.BadRequestError); !ok {
 		t.Fatalf("want the classifier's 400 arm for ErrNoInclusionLists, got %T", got)
+	}
+}
+
+// An AMBIGUOUS upstream outcome must say so. Both CreateList calls behind compose are
+// non-idempotent, so "HubSpot did not confirm" and "HubSpot failed" need different
+// messages: the first means a list may already exist and a retry duplicates it. The
+// build path learned this once already (unconfirmedNote in audience_build.go); this
+// pins the explore path against the same regression.
+func TestAudienceExploreErrTellsTheCallerAnOutcomeWasUnconfirmed(t *testing.T) {
+	// A REAL mutating 429 through the real client, mirroring audience_build_test.go: a
+	// hand-rolled sentinel would prove only that the arm matches something I invented.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	hc := hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	_, upstreamErr := hc.CreateList(context.Background(), "probe", json.RawMessage(`{"filterBranches":[]}`))
+	if upstreamErr == nil {
+		t.Fatal("fixture precondition: CreateList must fail against a 429")
+	}
+	if !hubspot.IsUnconfirmed(upstreamErr) {
+		t.Fatalf("fixture precondition: a mutating 429 must classify as ambiguous, else this test proves nothing; got %v", upstreamErr)
+	}
+
+	got := audienceExploreErr(context.Background(), "compose", "tlf", fmt.Errorf("compose: %w", upstreamErr))
+
+	res, ok := got.(*explore.InternalServerError)
+	if !ok {
+		t.Fatalf("want InternalServerError, got %T", got)
+	}
+	if !strings.Contains(res.Message, "did not confirm") {
+		t.Errorf("an unconfirmed outcome was reported as an ordinary failure, which invites the retry that duplicates a list;\ngot: %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "before retrying") {
+		t.Errorf("the message must tell the operator to check the portal before retrying; got: %q", res.Message)
 	}
 }

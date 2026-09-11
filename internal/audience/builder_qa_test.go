@@ -274,3 +274,42 @@ func messages(findings []Finding) []string {
 	}
 	return out
 }
+
+// Two lists sharing an exact name must disambiguate, not silently pick one. Before this,
+// `len(exact) > 0` suppressed the ambiguity branch, so `matches[0]` resolved to whichever
+// order HubSpot happened to return -- QA would then audit an arbitrary list and report a
+// verdict under the name the operator typed. Duplicate names are reachable in a real
+// portal, especially after an ambiguous create leaves a second list behind.
+func TestPickNameMatchesDisambiguatesDuplicateExactNames(t *testing.T) {
+	hits := []ListCandidate{
+		{ListID: "1", Name: "KubeCon NA 2026 - Registrants"},
+		{ListID: "2", Name: "KubeCon NA 2026 - Registrants"},
+	}
+
+	chosen, ambiguous := PickNameMatches("KubeCon NA 2026 - Registrants", hits)
+
+	if chosen != nil {
+		t.Errorf("two lists share this exact name, so QA picked an arbitrary one (%s) instead of asking", chosen.ListID)
+	}
+	if len(ambiguous) != 2 {
+		t.Fatalf("want both candidates offered for disambiguation, got %d", len(ambiguous))
+	}
+}
+
+// The single-exact-match case must still resolve, or the fix above would make every
+// lookup ambiguous and the QA panel unusable.
+func TestPickNameMatchesStillResolvesASingleExactMatch(t *testing.T) {
+	hits := []ListCandidate{
+		{ListID: "1", Name: "KubeCon NA 2026 - Registrants"},
+		{ListID: "2", Name: "KubeCon NA 2026 - Speakers"},
+	}
+
+	chosen, ambiguous := PickNameMatches("KubeCon NA 2026 - Registrants", hits)
+
+	if chosen == nil || chosen.ListID != "1" {
+		t.Fatalf("a single exact match must resolve; got %v", chosen)
+	}
+	if len(ambiguous) != 0 {
+		t.Errorf("a single exact match must not be ambiguous; got %d candidates", len(ambiguous))
+	}
+}

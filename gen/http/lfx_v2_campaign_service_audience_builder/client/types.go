@@ -112,7 +112,8 @@ type PreviewAudienceCountResponseBody struct {
 	Exact *bool `form:"exact,omitempty" json:"exact,omitempty" xml:"exact,omitempty"`
 	// Exact union size; meaningful only when exact is true
 	Count *int64 `form:"count,omitempty" json:"count,omitempty" xml:"count,omitempty"`
-	// Lower bound on the union size when exact is false
+	// Upper bound on the union size (the sum of list sizes) when exact is false; 0
+	// when no reliable total exists
 	Estimate *int64 `form:"estimate,omitempty" json:"estimate,omitempty" xml:"estimate,omitempty"`
 	// Why the count is exact or bounded
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
