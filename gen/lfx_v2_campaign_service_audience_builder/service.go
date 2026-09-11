@@ -33,7 +33,9 @@ type Service interface {
 	// first.
 	GetExistingAudienceMasterLists(context.Context, *GetExistingAudienceMasterListsPayload) (res *GetExistingAudienceMasterListsResult, err error)
 	// Count the union of the selected lists' memberships — exactly when that is
-	// within bounds, and as a floor when it is not. Creates nothing.
+	// within bounds, as an UPPER-bound estimate (the sum of list sizes, which
+	// double-counts overlap) when it is not, and as no number at all when any
+	// selected list did not report a size. Creates nothing.
 	PreviewAudienceCount(context.Context, *PreviewAudienceCountPayload) (res *AudiencePreviewCount, err error)
 	// Create the combined suppression list and then the master list in the
 	// project's HubSpot portal. NOT idempotent.
