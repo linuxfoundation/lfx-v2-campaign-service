@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"testing"
 
+	genserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audience_builder/server"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
@@ -303,14 +304,36 @@ func TestNewAudienceExplorerNormalisesTypedNilDependencies(t *testing.T) {
 // The design's MaxLength on list_ids is a DSL literal and cannot reference
 // audience.PreviewMaxLists, so the two can drift silently -- raising the Go budget
 // without the design would leave the edge rejecting valid requests, and lowering it
-// without the design would let the edge admit a sweep the method then refuses. This
-// pins them together; if you change one, this test tells you to change the other.
+// without the design would let the edge admit a sweep the method then refuses.
+//
+// This drives the GENERATED validator rather than comparing against a hardcoded copy
+// of the number. A literal here would be a third copy of 50 and would keep passing
+// with the design set to anything at all -- it would pin nothing. Running the real
+// decoder means `make apigen` output is what is under test, which is what actually
+// rejects the request in production.
 func TestPreviewMaxListsMatchesTheGeneratedEdgeValidation(t *testing.T) {
-	const designMaxLength = 50 // design/audience_builder.go -> list_ids MaxLength
+	ids := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("list-%d", i)
+		}
+		return out
+	}
 
-	if audience.PreviewMaxLists != designMaxLength {
-		t.Fatalf("audience.PreviewMaxLists = %d but design/audience_builder.go declares MaxLength(%d); update both and re-run `make apigen`",
-			audience.PreviewMaxLists, designMaxLength)
+	// Exactly the budget must be ACCEPTED by the edge...
+	atBudget := &genserver.PreviewAudienceCountRequestBody{ListIds: ids(audience.PreviewMaxLists)}
+	if err := genserver.ValidatePreviewAudienceCountRequestBody(atBudget); err != nil {
+		t.Errorf("the generated edge rejects %d ids but audience.PreviewMaxLists allows it: %v\n"+
+			"the design's MaxLength is BELOW PreviewMaxLists; update design/audience_builder.go and re-run `make apigen`",
+			audience.PreviewMaxLists, err)
+	}
+
+	// ...and one past it must be REFUSED there, not left to the method.
+	overBudget := &genserver.PreviewAudienceCountRequestBody{ListIds: ids(audience.PreviewMaxLists + 1)}
+	if err := genserver.ValidatePreviewAudienceCountRequestBody(overBudget); err == nil {
+		t.Errorf("the generated edge accepts %d ids but audience.PreviewMaxLists is %d\n"+
+			"the design's MaxLength is ABOVE PreviewMaxLists; update design/audience_builder.go and re-run `make apigen`",
+			audience.PreviewMaxLists+1, audience.PreviewMaxLists)
 	}
 }
 
