@@ -32,6 +32,10 @@ func TestNoServiceIsConstructedOutsideItsVerifierInjectingHelper(t *testing.T) {
 		"NewBriefService":      "newBriefService",
 		"NewConnectionService": "newConnectionService",
 		"NewAudienceService":   "newAudienceService",
+		// The explore service's helper injects the same verifier, so the same reasoning
+		// applies verbatim: a direct construction serves all nine audience-builder routes
+		// and rejects every request as unauthenticated.
+		"NewAudienceExploreService": "newAudienceExploreService",
 	}
 
 	fset := token.NewFileSet()
