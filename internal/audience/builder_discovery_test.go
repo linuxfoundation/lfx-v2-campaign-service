@@ -244,3 +244,19 @@ func TestMissingSignals_ReportsOnlyClassifiedOnes(t *testing.T) {
 		SignalPageView:            {},
 	}))
 }
+
+// TestIsRollup_ExclusionOnly pins that a rollup built purely from NOT_IN_LIST
+// filters is still a rollup (its shape is one hop away, same as an
+// inclusion-only one) even though RollupChildIDs -- which deliberately skips
+// exclusion references -- returns none of its children. A caller that treats
+// "IsRollup true, RollupChildIDs empty" as "no children to inspect, therefore
+// nothing to do" silently drops the list instead of classifying it directly.
+func TestIsRollup_ExclusionOnly(t *testing.T) {
+	filters := []ListFilter{
+		{FilterType: "IN_LIST", Operator: "NOT_IN_LIST", ListID: json.Number("111")},
+		{FilterType: "IN_LIST", Operator: "NOT_IN_LIST", ListID: json.Number("222")},
+	}
+
+	assert.True(t, IsRollup(filters), "an exclusion-only filter set is still a rollup")
+	assert.Empty(t, RollupChildIDs(filters), "exclusion references are never INCLUDED children")
+}

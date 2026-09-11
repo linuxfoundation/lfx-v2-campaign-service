@@ -313,7 +313,8 @@ func IncompleteSizePreviewCount(estimate int) PreviewCount {
 
 // ExceedsExactCap reports whether a summed estimate is too large to count
 // exactly. STRICTLY greater: an estimate of exactly UnionExactCap is countable,
-// because MembershipPageSize * MembershipMaxPages is exactly that many records.
+// because membershipPageSize * membershipMaxPages (internal/platform/hubspot)
+// is exactly that many records.
 func ExceedsExactCap(estimate int) bool {
 	return estimate > UnionExactCap
 }

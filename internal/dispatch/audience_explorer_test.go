@@ -418,3 +418,55 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	assert.NotEmpty(t, outcome.Checks.Suppression.Findings,
 		"the excluded GDPR list only appears if the real filterBranch (not an empty cached one) was read")
 }
+
+// TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported pins that bestMatch
+// ranks a hit HubSpot reported a size for (even a genuinely empty "0") above one it
+// reported no size for at all. Both hits satisfy the accept predicate, so ranking is
+// the only thing that decides which one is returned. Comparing the two hits' raw
+// (pre-sizeOf) Size fields would have both read as 0 -- the same value an unparsed
+// or absent hs_list_size and a genuinely empty list both normalize to -- and the
+// first one found in HubSpot's response order would win regardless of which is
+// which. bestMatch resolves suppression lists, where under-applying an exclusion
+// reaches a contact who opted out, so silently keeping an unranked hit over a known
+// one is the unsafe direction.
+func TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+			// Hit A has no hs_list_size at all -- HubSpot reported no size. Hit B
+			// reports a genuine, known zero. Listed in this order so a naive
+			// "first found, only replaced by strictly greater" comparison keeps A.
+			_, _ = io.WriteString(w, `{"lists":[`+
+				`{"listId":"111","name":"CNCF Global Opt-Outs (unsized)","objectTypeId":"0-1"},`+
+				`{"listId":"222","name":"CNCF Global Opt-Outs (empty)","objectTypeId":"0-1",`+
+				`"additionalProperties":{"hs_list_size":"0"}}`+
+				`],"hasMore":false,"offset":0}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.SuppressionLists(context.Background(), "proj-1", "CNCF", "")
+	require.NoError(t, err)
+
+	var brandRow *audience.SuppressionRow
+	for i := range rows {
+		if rows[i].Key == "brand_global_opt_outs" {
+			brandRow = &rows[i]
+		}
+	}
+	require.NotNil(t, brandRow, "the brand opt-out probe must have matched one of the two hits")
+	assert.Equal(t, "222", brandRow.ListID,
+		"the hit HubSpot reported a size for must outrank the one it reported none for")
+}

@@ -187,8 +187,15 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 		// would yield `uncertain` while discarding the children that carry the real
 		// evidence. Its children are inspected instead — and they count against the
 		// budget, because each one is a HubSpot round-trip.
-		if audience.IsRollup(filters) {
-			for _, childID := range audience.RollupChildIDs(filters) {
+		//
+		// An exclusion-only rollup (every filter is NOT_IN_LIST) has no INCLUDED
+		// children at all: RollupChildIDs skips exclusion references by design, so
+		// childIDs comes back empty here even though IsRollup is true. That must not
+		// silently drop the list from the outcome -- classify the list itself instead
+		// of falling through to the loop's `continue`, which would leave it neither
+		// classified nor reported.
+		if childIDs := audience.RollupChildIDs(filters); audience.IsRollup(filters) && len(childIDs) > 0 {
+			for _, childID := range childIDs {
 				if out.Inspected >= audience.DiscoveryMaxInspections {
 					break
 				}
@@ -627,13 +634,22 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 			continue
 		}
 		var best *hubspot.List
+		var bestSize *int64
 		for i := range hits {
 			hit := &hits[i]
 			if !accept(hit.Name) {
 				continue
 			}
-			if best == nil || hit.Size > best.Size {
-				best = hit
+			size := sizeOf(hit)
+			switch {
+			case best == nil:
+				best, bestSize = hit, size
+			case size != nil && (bestSize == nil || *size > *bestSize):
+				// A hit with a known size always outranks one HubSpot reported no
+				// size for, and reported "no size" must never be read as zero (see
+				// sizeOf) — an unranked hit would otherwise always lose, in the
+				// unsafe direction, to any hit HubSpot simply didn't size.
+				best, bestSize = hit, size
 			}
 		}
 		if best != nil {
@@ -649,13 +665,15 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 
 // PreviewCount answers "how many people would this reach" for a selection of lists.
 //
-// Three answers, and which one is given matters as much as the number:
-//   - an EXACT union, when the selection is small enough to enumerate;
-//   - the SUM as a stated over-count, when it is not (the union can only be smaller);
-//   - the SUM as a stated over-count, when the live sweep failed or was truncated.
+// Four answers, and which one is given matters as much as the number: an EXACT
+// union, when the selection is small enough to enumerate; the SUM as a stated
+// OVER-count, when it is not (the union can only be smaller) or when the live
+// sweep failed or was truncated; and the SUM as a stated UNDER-count, when one
+// or more lists did not report a size at all (that sum omits them entirely).
+// See audience.PreviewCount's doc for which caveat direction each case carries.
 //
-// The last case is why a truncated membership is never folded into an exact answer:
-// a partial union UNDER-counts, and telling an operator an email reaches fewer people
+// A truncated membership sweep is never folded into an exact answer: a partial
+// union under-counts, and telling an operator an email reaches fewer people
 // than it does is the one error direction with no recovery after the send.
 func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, listIDs []string) (count audience.PreviewCount, err error) {
 	ids := audience.UniqueIDs(listIDs)
@@ -784,7 +802,7 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 			return nil, partial
 		}
 		if suppression != nil {
-			return nil, &audience.ComposePartialError{Suppression: *suppression, Err: cerr}
+			return nil, &audience.ComposePartialError{Suppression: *suppression, Err: wrapped}
 		}
 		return nil, wrapped
 	}
