@@ -167,13 +167,14 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	out := &audience.DiscoveryOutcome{Event: identity, Lists: []audience.DiscoveredList{}}
 	found := map[audience.Signal]struct{}{}
 	seenClassified := map[string]struct{}{}
+	cache := map[string]*hubspot.List{}
 
 	for _, candidate := range candidates {
 		if out.Inspected >= audience.DiscoveryMaxInspections {
 			break
 		}
 		out.Inspected++
-		list, filters, gerr := x.listWithFilters(ctx, client, candidate.ListID)
+		list, filters, gerr := x.listWithFilters(ctx, client, cache, candidate.ListID)
 		if gerr != nil {
 			// One unreadable list must not lose the other thirty-nine. The list simply
 			// does not appear, which is the same outcome as it not matching.
@@ -192,7 +193,7 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 					break
 				}
 				out.Inspected++
-				child, childFilters, cerr := x.listWithFilters(ctx, client, childID)
+				child, childFilters, cerr := x.listWithFilters(ctx, client, cache, childID)
 				if cerr != nil {
 					slog.WarnContext(ctx, "audience discovery could not read a rollup child list",
 						"project_id", projectID, "list_id", childID, "error", cerr)
@@ -668,12 +669,21 @@ func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, l
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
 	estimate := 0
+	incompleteSize := false
 	for _, id := range ids {
 		list, gerr := client.GetList(ctx, id)
 		if gerr != nil {
 			return audience.PreviewCount{}, fmt.Errorf("audience preview: read list %s: %w", id, gerr)
 		}
-		estimate += list.Size
+		size := sizeOf(list)
+		if size == nil {
+			incompleteSize = true
+			continue
+		}
+		estimate += int(*size)
+	}
+	if incompleteSize {
+		return audience.IncompleteSizePreviewCount(estimate), nil
 	}
 	if audience.ExceedsExactCap(estimate) {
 		return audience.OverCapPreviewCount(estimate), nil
@@ -742,6 +752,12 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		suppressionName := audience.CombinedSuppressionName(in.Name, identity, x.now())
 		created, cerr := x.createList(ctx, projectID, suppressionName, suppressionFilter)
 		if cerr != nil {
+			if hubspot.IsUnconfirmed(cerr) {
+				return nil, &audience.ComposePartialError{
+					Suppression: audience.ComposedList{ListRow: audience.ListRow{Name: suppressionName}},
+					Err:         fmt.Errorf("audience compose: create combined suppression list: %w", cerr),
+				}
+			}
 			return nil, fmt.Errorf("audience compose: create combined suppression list: %w", cerr)
 		}
 		suppression = created
@@ -810,6 +826,8 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 	}
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
+	cache := map[string]*hubspot.List{}
+
 	listID, isName := audience.ParseListRef(listRef)
 	if isName {
 		hits, serr := client.SearchLists(ctx, listRef)
@@ -821,6 +839,10 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 		for i := range hits {
 			candidates = append(candidates, listCandidate(&hits[i]))
 			rows[hits[i].ListID] = &hits[i]
+			// Seed the cache from the search results already in hand: the chosen
+			// candidate's own list is fetched again below otherwise, for data this
+			// same request already has.
+			cache[hits[i].ListID] = &hits[i]
 		}
 		chosen, ambiguous := audience.PickNameMatches(listRef, candidates)
 		switch {
@@ -842,7 +864,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 		return nil, fmt.Errorf("%w: a list id or name is required", audience.ErrInvalidRequest)
 	}
 
-	list, filters, gerr := x.listWithFilters(ctx, client, listID)
+	list, filters, gerr := x.listWithFilters(ctx, client, cache, listID)
 	if gerr != nil {
 		if hubspot.IsNotFound(gerr) {
 			return nil, fmt.Errorf("%w: %q", audience.ErrListNotFound, listID)
@@ -859,11 +881,11 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 			if _, done := nameByID[id]; done {
 				continue
 			}
-			nameByID[id] = x.listName(ctx, client, id)
+			nameByID[id] = x.listName(ctx, client, cache, id)
 		}
 	}
 
-	exclusionNames := x.exclusionNames(ctx, client, filters, nameByID)
+	exclusionNames := x.exclusionNames(ctx, client, cache, filters, nameByID)
 
 	signalMapping := audience.CheckSignalMapping(filters, nameByID)
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
@@ -900,20 +922,28 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 // Exactly one hop. Suppression lists reference each other, and an unbounded walk
 // across a portal's exclusion graph would spend the request's deadline reading lists
 // whose bearing on this audience is already indirect.
-func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, filters []audience.ListFilter, nameByID map[string]string) []string {
+func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, filters []audience.ListFilter, nameByID map[string]string) []string {
 	out := make([]string, 0, 8)
 	for _, id := range audience.ReferencedListIDs(filters, "NOT_IN_LIST") {
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		}
-		_, childFilters, err := x.listWithFilters(ctx, client, id)
+		_, childFilters, err := x.listWithFilters(ctx, client, cache, id)
 		if err != nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
 			// whole audit would withhold the two checks that did complete.
 			continue
 		}
 		for _, childID := range audience.ReferencedListIDs(childFilters, "IN_LIST") {
-			if name := x.listName(ctx, client, childID); name != "" {
+			if name, done := nameByID[childID]; done {
+				if name != "" {
+					out = append(out, name)
+				}
+				continue
+			}
+			name := x.listName(ctx, client, cache, childID)
+			nameByID[childID] = name
+			if name != "" {
 				out = append(out, name)
 			}
 		}
@@ -921,27 +951,42 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 	return out
 }
 
-// listName resolves a list id to a name, falling back to the legacy API.
+// listName resolves a list id to a name via the cache, falling back to the legacy
+// API when the id is not a current v3 list at all.
 //
 // A referenced list can predate the v3 Lists API while still being referenced by a
 // current list's filters — and for QA a name that cannot be read is a suppression
 // that cannot be credited. "" means genuinely unresolvable.
-func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client, listID string) string {
+func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, listID string) string {
+	if list, ok := cache[listID]; ok && list != nil {
+		return list.Name
+	}
 	if list, err := client.GetList(ctx, listID); err == nil && list != nil {
+		cache[listID] = list
 		return list.Name
 	}
 	return client.LegacyListName(ctx, listID)
 }
 
-// listWithFilters fetches a list with its filters and flattens them.
+// listWithFilters fetches a list with its filters and flattens them, consulting
+// cache first — RunQA and exclusionNames both resolve names and filters for
+// overlapping list ids, and a cache miss here is a HubSpot round-trip a prior
+// lookup in the same request may have already paid for.
 //
 // A list with NO filterBranch is not an error: a manual/static list selects by
 // membership rather than by condition, and the checks have specific things to say
 // about that.
-func (x *AudienceExplorer) listWithFilters(ctx context.Context, client *hubspot.Client, listID string) (*hubspot.List, []audience.ListFilter, error) {
-	list, err := client.GetList(ctx, listID)
-	if err != nil {
-		return nil, nil, err
+func (x *AudienceExplorer) listWithFilters(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, listID string) (*hubspot.List, []audience.ListFilter, error) {
+	list, ok := cache[listID]
+	if !ok {
+		fetched, err := client.GetList(ctx, listID)
+		if err != nil {
+			return nil, nil, err
+		}
+		list = fetched
+		if list != nil {
+			cache[listID] = list
+		}
 	}
 	if list == nil {
 		return nil, nil, fmt.Errorf("hubspot: list %s returned no list", listID)

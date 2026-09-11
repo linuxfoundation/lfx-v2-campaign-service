@@ -1983,7 +1983,12 @@ fans out the probes and collects what came back.
 `PreviewCount` unions MEMBERSHIPS rather than summing list sizes, because registrant/speaker
 overlap is the normal case, not the exception, and a sum over-counts the people an email would
 actually reach. Above the exact-count cap it reports the cap as a floor — `25,000+` — and never
-an exact number it cannot stand behind.
+an exact number it cannot stand behind. The initial per-list size read (used only to decide
+whether the union sweep is worth running) treats a list HubSpot reports no size for as distinct
+from a genuinely empty one — `sizeOf` returns `nil`, not `0`, and any `nil` in the selection
+short-circuits to `IncompleteSizePreviewCount`: an under-counted sum over the lists that DID
+report a size, which is a different, less trustworthy caveat than `DegradedPreviewCount`'s ("we
+know the sum, the live sweep just failed") — here even the sum is known to be short.
 
 `ComposeMaster` creates the combined suppression list FIRST and the master second, because that
 ordering is what makes a partial failure describable: the suppression list exists and the master
@@ -1993,5 +1998,9 @@ created list instead of inviting a blind retry that would duplicate it.
 `RunQA` reads a list's own filter branch plus the NAMES of the lists it references — including
 names only the legacy v1 endpoint can still resolve — and hands both to the pure rules in
 `builder_qa.go`. A name it cannot read is a suppression it cannot credit, which is why the legacy
-lookup is not optional decoration.
+lookup is not optional decoration. A single request-scoped `map[string]*hubspot.List` cache
+(seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
+`listName` resolve ids) is threaded through the whole call so a list referenced from more than one
+place — the searched-for candidate itself, or a list excluded by more than one other list — is
+fetched from HubSpot once per `RunQA` call, not once per reference.
 

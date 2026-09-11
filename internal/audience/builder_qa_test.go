@@ -66,6 +66,14 @@ func TestPickNameMatches_AmbiguityResolvesToNothing(t *testing.T) {
 	chosen, ambiguous = PickNameMatches("nothing like this", nil)
 	assert.Nil(t, chosen)
 	assert.Empty(t, ambiguous, "no hits is 'not found', which is a different answer from 'ambiguous'")
+
+	twoExact := []ListCandidate{
+		{ListID: "3", Name: "26Q1 - CNCF - KubeCon Europe - Master"},
+		{ListID: "4", Name: "26Q1 - CNCF - KubeCon Europe - Master"},
+	}
+	chosen, ambiguous = PickNameMatches("26Q1 - CNCF - KubeCon Europe - Master", twoExact)
+	assert.Nil(t, chosen, "HubSpot does not enforce unique list names, so two exact matches must not resolve to either one")
+	assert.Len(t, ambiguous, 2, "both exact matches must be handed back for the operator to disambiguate")
 }
 
 // TestReferencedListIDs_ReadsTheOperatorNotTheType pins the whole reason this

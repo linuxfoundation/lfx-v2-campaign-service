@@ -229,21 +229,6 @@ func RegionEventRegistrantsFilter(countries, eventNames []string) (json.RawMessa
 	})
 }
 
-// MasterListFilter builds the UNION of the inclusion lists: a contact qualifies for the master
-// if they are in ANY of them.
-//
-// This is what the email dispatcher actually sends to — it reads only
-// `platform_master_list_id`. Without a union, whichever single list was recorded becomes the
-// entire send audience and every other group is created in the portal and never emailed, which
-// looks like a successful build that silently reaches a fraction of the intended people.
-//
-// Shape rules this must obey (documented on the client, `internal/platform/hubspot/lists.go`):
-// the root is an OR, its children are ANDs, there are NO nested ORs, and membership filters use
-// `IN_LIST` — NOT `LIST_MEMBERSHIP`, which HubSpot rejects.
-//
-// Each list therefore gets its OWN AND branch. Putting all the membership filters as siblings
-// inside ONE AND branch would mean "in list A AND in list B" — an INTERSECTION, typically empty
-// and exactly backwards from the intent.
 // ValidateInclusionIDs checks the deterministic shape a master list's inclusion ids
 // must have, independent of any HubSpot call. Callers that create a mutating resource
 // before building the master filter (a combined suppression list, for one) must run
@@ -261,6 +246,21 @@ func ValidateInclusionIDs(listIDs []string) error {
 	return nil
 }
 
+// MasterListFilter builds the UNION of the inclusion lists: a contact qualifies for the master
+// if they are in ANY of them.
+//
+// This is what the email dispatcher actually sends to — it reads only
+// `platform_master_list_id`. Without a union, whichever single list was recorded becomes the
+// entire send audience and every other group is created in the portal and never emailed, which
+// looks like a successful build that silently reaches a fraction of the intended people.
+//
+// Shape rules this must obey (documented on the client, `internal/platform/hubspot/lists.go`):
+// the root is an OR, its children are ANDs, there are NO nested ORs, and membership filters use
+// `IN_LIST` — NOT `LIST_MEMBERSHIP`, which HubSpot rejects.
+//
+// Each list therefore gets its OWN AND branch. Putting all the membership filters as siblings
+// inside ONE AND branch would mean "in list A AND in list B" — an INTERSECTION, typically empty
+// and exactly backwards from the intent.
 func MasterListFilter(listIDs []string) (json.RawMessage, error) {
 	if err := ValidateInclusionIDs(listIDs); err != nil {
 		return nil, err

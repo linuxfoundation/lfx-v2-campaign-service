@@ -294,6 +294,20 @@ func ExactPreviewCount(unionSize, estimate int) PreviewCount {
 	return PreviewCount{Exact: true, Count: unionSize, Estimate: estimate, Reason: ""}
 }
 
+// IncompleteSizePreviewCount is the fallback when at least one selected list's size
+// was not reported by HubSpot at all. estimate is the sum over the lists that DID
+// report a size — it therefore UNDER-counts by an unknown amount, which is a
+// different, less trustworthy caveat than DegradedPreviewCount's ("we know the sum,
+// the live sweep just failed"): here even the sum is known to be short.
+func IncompleteSizePreviewCount(estimate int) PreviewCount {
+	return PreviewCount{
+		Exact:    false,
+		Count:    estimate,
+		Estimate: estimate,
+		Reason:   "one or more lists did not report a size; showing a partial sum estimate",
+	}
+}
+
 // ExceedsExactCap reports whether a summed estimate is too large to count
 // exactly. STRICTLY greater: an estimate of exactly UnionExactCap is countable,
 // because MembershipPageSize * MembershipMaxPages is exactly that many records.

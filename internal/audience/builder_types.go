@@ -13,7 +13,7 @@ import (
 // Audience Builder — shared vocabulary (LFXV2-2770)
 //
 // This file and its siblings (builder_discovery.go, builder_master.go,
-// builder_qa.go, builder_lastsent.go) hold the EXPLORATORY half of the audience
+// builder_qa.go) hold the EXPLORATORY half of the audience
 // feature: the deterministic rules an operator uses to find, judge, and combine
 // HubSpot lists BEFORE a brief's audience record exists. The RECORD half — the
 // planned build that materializes an audience against a brief — lives in
@@ -82,15 +82,13 @@ const (
 	// count is refused. HubSpot exposes no way to count an arbitrary OR-of-lists,
 	// so the only exact answer comes from paginating every selected list's
 	// membership and unioning ids in memory. The cap bounds that sweep.
+	//
+	// This must track the actual pagination bound the sweep runs under —
+	// internal/platform/hubspot/list_memberships.go's unexported
+	// membershipPageSize * membershipMaxPages — since a cap looser than what the
+	// sweep can actually walk lets ExceedsExactCap wave a request through that
+	// then comes back truncated instead of exact.
 	UnionExactCap = 25000
-
-	// MembershipPageSize is HubSpot's maximum page size for
-	// GET /crm/v3/lists/{id}/memberships.
-	MembershipPageSize = 250
-
-	// MembershipMaxPages is the hard stop on membership pagination.
-	// MembershipPageSize * this == UnionExactCap records.
-	MembershipMaxPages = 100
 
 	// DiscoveryMaxInspections is how many candidate lists discovery will fetch in
 	// full before it stops inspecting. Every inspection is a

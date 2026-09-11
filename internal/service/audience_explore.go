@@ -209,7 +209,7 @@ func (s *AudienceExploreService) GetAudienceSuppressionLists(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	rows, serr := explorer.SuppressionLists(ctx, p.ProjectID, deref(p.BrandShort), deref(p.EventName))
+	rows, serr := explorer.SuppressionLists(ctx, p.ProjectID, derefStr(p.BrandShort), derefStr(p.EventName))
 	if serr != nil {
 		return nil, audienceExploreErr(ctx, "resolve suppression lists", p.ProjectID, serr)
 	}
@@ -233,7 +233,7 @@ func (s *AudienceExploreService) GetAudienceLastSent(ctx context.Context, p *exp
 	if err != nil {
 		return nil, err
 	}
-	emails, lerr := explorer.LastSent(ctx, p.ProjectID, p.EventName, deref(p.BrandShort), p.Limit)
+	emails, lerr := explorer.LastSent(ctx, p.ProjectID, p.EventName, derefStr(p.BrandShort), p.Limit)
 	if lerr != nil {
 		return nil, audienceExploreErr(ctx, "read last-sent emails", p.ProjectID, lerr)
 	}
@@ -261,7 +261,7 @@ func (s *AudienceExploreService) GetExistingAudienceMasterLists(ctx context.Cont
 	if err != nil {
 		return nil, err
 	}
-	rows, merr := explorer.ExistingMasterLists(ctx, p.ProjectID, p.EventName, deref(p.BrandShort))
+	rows, merr := explorer.ExistingMasterLists(ctx, p.ProjectID, p.EventName, derefStr(p.BrandShort))
 	if merr != nil {
 		return nil, audienceExploreErr(ctx, "read existing master lists", p.ProjectID, merr)
 	}
@@ -306,9 +306,9 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 	in := audience.ComposeInput{
 		ListIDs:        p.Compose.ListIds,
 		ExcludeListIDs: p.Compose.ExcludeListIds,
-		Name:           deref(p.Compose.Name),
-		BrandShort:     deref(p.Compose.BrandShort),
-		EventName:      deref(p.Compose.EventName),
+		Name:           derefStr(p.Compose.Name),
+		BrandShort:     derefStr(p.Compose.BrandShort),
+		EventName:      derefStr(p.Compose.EventName),
 		EventDates:     p.Compose.EventDates,
 	}
 	outcome, cerr := explorer.ComposeMaster(ctx, p.ProjectID, in)
@@ -498,14 +498,6 @@ func signalStrings(signals []audience.Signal) []string {
 		out = append(out, string(s))
 	}
 	return out
-}
-
-// deref reads an optional string payload field.
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 // derefBool reads an optional boolean payload field, defaulting to false.

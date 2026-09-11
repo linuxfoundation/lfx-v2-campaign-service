@@ -119,10 +119,12 @@ func ParseListRef(listRef string) (listID string, isName bool) {
 
 // PickNameMatches decides which search hits a typed name resolves to.
 //
-// An EXACT case-insensitive name match is unambiguous even when other lists merely
-// contain the string, so it wins outright. Otherwise several matches resolve to
-// NOTHING and the caller must ask: picking the first match would run QA on a list
-// the operator never meant and report a verdict under the name they typed.
+// A SINGLE exact case-insensitive name match is unambiguous even when other lists
+// merely contain the string, so it wins outright over those looser hits. Two or
+// more matches — exact or not — resolve to NOTHING and the caller must ask:
+// HubSpot does not enforce unique list names, so picking the first would run QA
+// on a list the operator never meant and report a verdict under the name they
+// typed.
 func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, ambiguous []ListCandidate) {
 	needle := strings.ToLower(strings.TrimSpace(ref))
 	exact := make([]ListCandidate, 0, 1)
@@ -224,7 +226,8 @@ func CheckSignalMapping(filters []ListFilter, nameByID map[string]string) Check 
 
 	// A signature can be EMPTY when a filter carries none of the fields we read;
 	// those count as firmographic-or-unknown rather than as engagement, so an
-	// all-empty set does not PASS.
+	// all-empty set does not PASS — it FAILs, same as an explicit firmographic-only
+	// set, because neither one carries any evidence of an engagement signal.
 	onlyFirmographic := true
 	for _, signature := range signatures {
 		if strings.TrimSpace(signature) == "" {

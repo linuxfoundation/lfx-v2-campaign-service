@@ -6,11 +6,16 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -265,4 +270,49 @@ func TestComposePartialError_CarriesTheOrphanForward(t *testing.T) {
 	require.ErrorAs(t, err, &partial)
 	assert.Equal(t, "555", partial.Suppression.ListID,
 		"the orphan's id is what lets the UI link an operator straight to it in HubSpot")
+}
+
+// TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly drives
+// the hubspot.IsUnconfirmed branch ComposeMaster takes on the suppression create,
+// through a real HTTP round trip rather than the ComposePartialError type alone
+// (TestComposePartialError_CarriesTheOrphanForward covers that in isolation). A
+// 2xx response with no listId is HubSpot's own signature for "may have created it,
+// verify before retrying" -- CreateList surfaces that as unconfirmed, and this
+// pins that ComposeMaster reports the orphan by NAME only: an unconfirmed create
+// has no id to give the operator, and inventing one (or a "555" left over from a
+// prior test) would send them to a list that may not exist.
+func TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		default:
+			// 2xx with no listId: HubSpot may have created the list, but CreateList
+			// cannot confirm it, so this is the unconfirmed case under test.
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	_, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs:        []string{"111"},
+		ExcludeListIDs: []string{"222"},
+		Name:           "KubeCon NA 2026 — master",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, audience.ErrComposePartial)
+
+	var partial *audience.ComposePartialError
+	require.ErrorAs(t, err, &partial)
+	assert.Empty(t, partial.Suppression.ListID,
+		"an unconfirmed create has no id to report; the deterministic name is the only reconcile key")
+	assert.NotEmpty(t, partial.Suppression.Name,
+		"the name is what lets an operator search HubSpot for a list that may already exist")
 }

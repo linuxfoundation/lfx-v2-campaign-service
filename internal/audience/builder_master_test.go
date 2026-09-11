@@ -213,15 +213,13 @@ func TestExclusionIDs_InclusionWins(t *testing.T) {
 }
 
 // TestExceedsExactCap_IsStrictlyGreater pins the boundary the comment argues for:
-// MembershipPageSize * MembershipMaxPages is EXACTLY UnionExactCap records, so an
-// estimate of exactly the cap is countable. Testing it off by one in either
+// the paging budget (see UnionExactCap's doc) is EXACTLY UnionExactCap records, so
+// an estimate of exactly the cap is countable. Testing it off by one in either
 // direction either refuses a countable union or attempts one page too many.
 func TestExceedsExactCap_IsStrictlyGreater(t *testing.T) {
 	assert.False(t, ExceedsExactCap(UnionExactCap-1))
 	assert.False(t, ExceedsExactCap(UnionExactCap))
 	assert.True(t, ExceedsExactCap(UnionExactCap+1))
-	assert.Equal(t, UnionExactCap, MembershipPageSize*MembershipMaxPages,
-		"the cap is derived from the paging budget; changing one without the other makes the boundary a lie")
 }
 
 // TestPreviewCount_NeverReportsAnEstimateAsExact pins the invariant the whole type
