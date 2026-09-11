@@ -65,10 +65,18 @@ spec:
     # HubSpot campaign owns the UTM token (LFXV2-2641). It therefore cannot join the discovery
     # branch; admitting /accounts for hubspot would rule a path the service does not serve, and
     # /emails or /campaigns for google-ads or meta-ads the same.
+    #
+    # audience-builder (LFXV2-2770) is a sibling of /briefs, not a descendant, so it
+    # inherits nothing and needs its own alternation branch here plus its own RuleSet
+    # entries. Its nine leaves are enumerated instead of taking a free `(/.*)?` tail:
+    # compose-master writes real contact lists into a production HubSpot portal and is
+    # NOT idempotent, so admitting a path the service does not serve is worse here than
+    # for a read family. Two leaves are two segments deep (lists/search, qa/run), which
+    # is why a single-segment placeholder would not have covered the family either.
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|qa/run))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

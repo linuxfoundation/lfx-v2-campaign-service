@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "internal/audience"
-description: "Derives the regional-expansion inclusion lists (HubSpot filter trees) that make up a brief's marketing audience."
+description: "Derives the regional-expansion inclusion lists (HubSpot filter trees) that make up a brief's marketing audience, plus the exploratory half an operator drives BEFORE committing to one: the deterministic discovery classifier, master-list naming and quarter ranking, name-search predicates, pre-send QA rules, and the transport-neutral results all of it is reported through."
 resource: "internal/audience"
 ---
 
@@ -347,5 +347,61 @@ audience silently adopts the older build's lists and the master points at stale 
 
 The discriminator is the audience row id, so the row is created BEFORE the plan is finalised.
 The plan is validated first, so a brief that cannot be planned leaves no row behind.
+
+## Also here: the exploratory half (LFXV2-2770)
+
+The files above are the **record** half — `plan.go` and `filters.go` materialise the audience a
+BRIEF commits to, and their failures fail the brief. The `builder_*.go` files are the
+**exploratory** half: what an operator assembles and inspects before any brief commits to
+anything. The split is deliberate and the two halves stay separate, because almost everything on
+the exploratory side degrades to a partial answer with the gap NAMED rather than failing.
+
+Everything here is pure — no HTTP, no credentials, no clock beyond an injected one — which is why
+the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispatch.md) instead.
+
+- **`builder_types.go`** — the shared vocabulary. `Signal` treats `SignalUncertain` as a
+  first-class value rather than an error state: silently dropping an unclassifiable list is how
+  an audience loses a group nobody notices is missing. `ClassifiedSignals` deliberately excludes
+  `last_sent` and `added` (provenance, which can never be "missing") and `uncertain` (the
+  fallback). The caps and budgets are not preferences — each bounds a fan-out against a
+  rate-limited API, and changing one changes how honest a result can be.
+- **`builder_discovery.go`** — the classifier, entirely DETERMINISTIC. The model is used for one
+  thing only, extracting the event's identity from its page (`EventExtractionSystemPrompt`),
+  because a model that guesses which list to email is a model that can silently mail the wrong
+  ten thousand people. `speakerScopeSuffixes` is ordered LONGEST FIRST so a narrower scope wins;
+  `behaviouralFilterTypes` is the only set that carries up from a one-hop child, since a child's
+  own `IN_LIST` filters would hop forever. `DiscoveryQueries` probes the full exact event name
+  first and only then name+year, because a bare brand acronym fills all twenty search slots with
+  wrong-year noise.
+- **`builder_master.go`** — naming and ordering. `QuarterCode` is computed in UTC deliberately,
+  and `EventQuarterCode` falls back to the current quarter because a name missing its code sorts
+  below every dated list. Blank segments are DROPPED from a master-list name, not blanked, and
+  `CombinedSuppressionName` suffixes the operator's own base name so the pair lands adjacent
+  alphabetically in the portal. `QuarterRank` returns `(-1, -1)` for an undated list — ranked
+  below every dated one rather than treated as recent.
+- **`builder_resolve.go`** — predicates, separate from the probes that find candidates, so both
+  test without a HubSpot client. HubSpot's list search matches LOOSELY, returns at most twenty
+  hits, and does not order by recency, so a probe proposes and a predicate decides. An EMPTY
+  keyword set matches nothing on purpose: treating "no evidence" as "matches" would accept every
+  suppression list in the portal. `MatchesEventSuppression` requires keyword overlap AND a
+  suppression word, because either alone also matches the event's own AUDIENCE lists — and
+  excluding those would suppress exactly the people the send is for.
+- **`builder_qa.go`** — three pre-send checks, inferred from a list's own `filterBranch` plus the
+  NAMES of the lists it references, because the portal carries no machine-readable marker for
+  "this is the GDPR list". `NEEDS VERIFY` is the honest and most common verdict, and no caller
+  may read a `PASS` as authorization to send. `Severity` ranks a finding by legal exposure, not
+  tidiness, and a `Finding`'s `Fix` is never empty.
+- **`builder_results.go`** — transport-neutral results, defined here so orchestration tests need
+  no generated types and a change to the generated contract cannot silently change what
+  orchestration promises. `Size` is a `*int64` throughout because an absent size is not zero;
+  `DiscoveryOutcome.Inspected` is reported so a capped run is visible AS capped; a
+  `SuppressionRow`'s `Key` identifies the ROW and not the list, so an unresolved GDPR row shows
+  as unavailable instead of vanishing; and `ListBrief.Missing` is carried explicitly because a
+  deleted list still leaves its id on the email that targeted it.
+- **`builder_errors.go`** — the failure vocabulary, living beside the results rather than in the
+  orchestration, because importing the orchestration package would close a cycle through its
+  tests. `ComposePartialError` unwraps to BOTH `ErrComposePartial` and the underlying cause: the
+  combined suppression list was created and the master list was not, which is a state an operator
+  must be shown rather than a failure to retry blindly.
 
 See [internal/audience](../../../internal/audience).

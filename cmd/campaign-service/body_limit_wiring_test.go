@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	exploresvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -40,8 +41,9 @@ func realChain(t *testing.T) http.Handler {
 	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
 	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
+	exploreEndpoints := exploresvc.NewEndpoints(service.NewAudienceExploreService(nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder and the audience EXPLORER an operator drives before a brief commits — discovery, suppression and precedent reads that degrade to a partial answer with the gap named, and the one non-idempotent write that does not."
 resource: "internal/dispatch"
 ---
 
@@ -1953,3 +1953,45 @@ default is the safe direction for a non-idempotent write, and
 `TestHubSpot_CreateCampaignTagsDomainSentinels` pins it with a 500 case — because a translation
 that silently stopped happening would leave the service's own tests passing against sentinels
 nothing produces.
+
+## Also here: the audience EXPLORER (LFXV2-2770)
+
+`AudienceExplorer` (`audience_explorer.go`) is a SEPARATE type from `AudienceBuilder` even though
+it borrows the same credential resolution, and the separation is the point.
+`AudienceBuilder` materialises the audience a brief has COMMITTED to, and its failures fail the
+brief. Exploration is what an operator does before committing, so almost every method here
+degrades to a partial answer with the gap named — a suppression row that could not be resolved,
+a list id that no longer exists, a discovery run reported AS capped — rather than failing the
+whole request. The one exception is `ComposeMaster`, which creates real contact lists in a
+production portal and is NOT idempotent.
+
+It talks to HubSpot through the system-scoped connection (`systemScopedHubSpot`), and takes three
+narrow seams so the orchestration tests without a live portal:
+
+- `eventPageReader` — satisfied in production only by `eventurl.Fetcher`, which carries the SSRF
+  guard. An operator-supplied URL is the input to this whole flow, so no other implementation may
+  reach the network on its behalf.
+- `eventPageParser` — the same JSON-LD/OpenGraph/HTML ladder the brief pre-fill uses.
+- `completer` — the LLM seam, used for ONE thing: recovering the short brand token ("CNCF") the
+  page states in prose but not in metadata. It is optional, and nothing an operator acts on
+  depends on it, which is why an unconfigured model degrades the answer instead of failing it.
+
+Classification itself never calls the model: it happens in
+[internal/audience](internal-audience.md)'s `builder_discovery.go`, and this package only
+fans out the probes and collects what came back.
+
+`PreviewCount` unions MEMBERSHIPS rather than summing list sizes, because registrant/speaker
+overlap is the normal case, not the exception, and a sum over-counts the people an email would
+actually reach. Above the exact-count cap it reports the cap as a floor — `25,000+` — and never
+an exact number it cannot stand behind.
+
+`ComposeMaster` creates the combined suppression list FIRST and the master second, because that
+ordering is what makes a partial failure describable: the suppression list exists and the master
+does not, which is exactly what `ComposePartialError` carries up so the handler can report the
+created list instead of inviting a blind retry that would duplicate it.
+
+`RunQA` reads a list's own filter branch plus the NAMES of the lists it references — including
+names only the legacy v1 endpoint can still resolve — and hands both to the pure rules in
+`builder_qa.go`. A name it cannot read is a suppression it cannot credit, which is why the legacy
+lookup is not optional decoration.
+
