@@ -316,3 +316,100 @@ func TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly(t
 	assert.NotEmpty(t, partial.Suppression.Name,
 		"the name is what lets an operator search HubSpot for a list that may already exist")
 }
+
+// TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName mirrors
+// TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly for the
+// OTHER half of compose: the master create itself is the one that comes back
+// unconfirmed. Before this fix, ComposeMaster only checked hubspot.IsUnconfirmed on
+// the SUPPRESSION create -- an unconfirmed MASTER create fell through to a bare
+// wrapped error, silently dropping the one signal ("HubSpot may have created it
+// under this name") an operator needs before deciding whether to retry.
+func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *testing.T) {
+	var suppressionCreated bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost && !suppressionCreated:
+			// First create: the combined suppression list, which succeeds normally.
+			suppressionCreated = true
+			_, _ = io.WriteString(w, `{"list":{"listId":"999","name":"suppression","objectTypeId":"0-1","size":0}}`)
+		default:
+			// Second create: the master, which is unconfirmed -- a 2xx with no listId.
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	_, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs:        []string{"111"},
+		ExcludeListIDs: []string{"222"},
+		Name:           "KubeCon NA 2026 — master",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, audience.ErrComposePartial)
+
+	var partial *audience.ComposePartialError
+	require.ErrorAs(t, err, &partial)
+	assert.Equal(t, "KubeCon NA 2026 — master", partial.MasterName,
+		"the master's deterministic name is the only reconcile key an unconfirmed create can give")
+	assert.Equal(t, "999", partial.Suppression.ListID,
+		"the suppression list DID confirm-create, so its real id must still be reported alongside the unconfirmed master")
+}
+
+// TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit pins that QA-by-name
+// always resolves the chosen candidate's filters via a real GetList call, never from
+// the SearchLists hit sitting in hand. SearchLists never populates filterBranch (only
+// GetList's includeFilters=true does), so seeding the filter-resolution cache straight
+// from search hits would make every QA-by-name run silently audit against zero
+// filters -- passing every "no suppression applied" style check for the wrong reason.
+func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) {
+	var getListCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+			// A search hit, exactly as HubSpot returns one: no filterBranch at all.
+			_, _ = io.WriteString(w, `{"lists":[{"listId":"111","name":"KubeCon NA 2026 - master",`+
+				`"objectTypeId":"0-1"}],"hasMore":false,"offset":0}`)
+		case r.URL.Path == "/crm/v3/lists/111" && r.Method == http.MethodGet:
+			getListCalls++
+			// The real GetList response: a suppression exclusion the search hit above
+			// could never have carried.
+			_, _ = io.WriteString(w, `{"list":{"listId":"111","name":"KubeCon NA 2026 - master",`+
+				`"objectTypeId":"0-1","size":42,"filterBranch":{"filterBranchType":"OR",`+
+				`"filterBranches":[{"filterBranchType":"AND","filters":[{"filterType":"LIST_BRANCH",`+
+				`"operator":"NOT_IN_LIST","listId":222}]}]}}}`)
+		case r.URL.Path == "/crm/v3/lists/222" && r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"list":{"listId":"222","name":"GDPR Opt-Out Suppression",`+
+				`"objectTypeId":"0-1","size":5}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", false, false)
+	require.NoError(t, err)
+	require.False(t, outcome.NeedsDisambiguation)
+
+	assert.Equal(t, 1, getListCalls,
+		"the chosen candidate's filters must come from a real GetList call, not the filterless search hit")
+	assert.NotEmpty(t, outcome.Checks.Suppression.Findings,
+		"the excluded GDPR list only appears if the real filterBranch (not an empty cached one) was read")
+}

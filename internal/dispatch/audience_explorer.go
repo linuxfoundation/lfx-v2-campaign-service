@@ -774,10 +774,18 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 
 	master, cerr := x.createList(ctx, projectID, masterName, filter)
 	if cerr != nil {
+		wrapped := fmt.Errorf("audience compose: create master list: %w", cerr)
+		if hubspot.IsUnconfirmed(cerr) {
+			partial := &audience.ComposePartialError{MasterName: masterName, Err: wrapped}
+			if suppression != nil {
+				partial.Suppression = *suppression
+			}
+			return nil, partial
+		}
 		if suppression != nil {
 			return nil, &audience.ComposePartialError{Suppression: *suppression, Err: cerr}
 		}
-		return nil, fmt.Errorf("audience compose: create master list: %w", cerr)
+		return nil, wrapped
 	}
 
 	return &audience.ComposeOutcome{
@@ -838,11 +846,12 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 		rows := map[string]*hubspot.List{}
 		for i := range hits {
 			candidates = append(candidates, listCandidate(&hits[i]))
+			// rows is name/size-only, from SearchLists -- NOT the filter cache. A
+			// search hit never carries FilterBranch (only GetList's includeFilters=true
+			// does), so seeding the filter cache from it would make listWithFilters
+			// return an empty filter set for the chosen candidate instead of fetching
+			// its real filters, silently blanking every downstream QA check.
 			rows[hits[i].ListID] = &hits[i]
-			// Seed the cache from the search results already in hand: the chosen
-			// candidate's own list is fetched again below otherwise, for data this
-			// same request already has.
-			cache[hits[i].ListID] = &hits[i]
 		}
 		chosen, ambiguous := audience.PickNameMatches(listRef, candidates)
 		switch {

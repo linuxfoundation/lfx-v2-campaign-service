@@ -246,10 +246,13 @@ func ExclusionIDs(excludeIDs, includeIDs []string) []string {
 // PreviewCount is the answer to "how many people would this reach", and how much
 // to trust it.
 //
-// `Exact` is the whole point of the type. Above UnionExactCap no exact answer is
-// available, and `Count` then carries the SUM — an over-count, which is the safe
-// direction. `Reason` is non-empty exactly when Exact is false, so the UI never
-// has to decide whether to explain itself.
+// `Exact` is the whole point of the type. When it is false, `Count` carries a SUM
+// rather than a deduplicated union, and that sum is not always an over-count in the
+// safe direction: OverCapPreviewCount's and DegradedPreviewCount's sums over-count
+// (they double-count any overlap between lists), but IncompleteSizePreviewCount's
+// sum UNDER-counts, since it omits any list HubSpot reported no size for entirely.
+// `Reason` is non-empty exactly when Exact is false, so the UI never has to decide
+// whether to explain itself, and always names which direction the caveat runs.
 type PreviewCount struct {
 	Exact    bool
 	Count    int

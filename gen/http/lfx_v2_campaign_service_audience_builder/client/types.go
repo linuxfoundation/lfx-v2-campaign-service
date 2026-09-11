@@ -112,10 +112,12 @@ type PreviewAudienceCountResponseBody struct {
 	Exact *bool `form:"exact,omitempty" json:"exact,omitempty" xml:"exact,omitempty"`
 	// Exact union size; meaningful only when exact is true
 	Count *int64 `form:"count,omitempty" json:"count,omitempty" xml:"count,omitempty"`
-	// Sum of the selected lists' sizes when exact is false — an upper bound that
-	// over-counts any overlap between lists
+	// Sum of the selected lists' sizes when exact is false — usually an over-count
+	// from list overlap, but an under-count when one of the lists had no reported
+	// size at all; see reason
 	Estimate *int64 `form:"estimate,omitempty" json:"estimate,omitempty" xml:"estimate,omitempty"`
-	// Why the count is exact or bounded
+	// Why the count is exact or bounded, and which direction the estimate's error
+	// runs
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
@@ -693,8 +695,12 @@ type ComposeAudienceMasterComposePartialResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-	// Platform state that WAS created and must be reconciled
+	// The suppression list that WAS created and must be reconciled
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
+	// The master list's deterministic name, set only when the master create itself
+	// is unconfirmed (HubSpot may have created it) -- search for this name in
+	// HubSpot before composing again
+	MasterName *string `form:"master_name,omitempty" json:"master_name,omitempty" xml:"master_name,omitempty"`
 }
 
 // ComposeAudienceMasterInternalServerErrorResponseBody is the type of the
@@ -1841,8 +1847,9 @@ func NewComposeAudienceMasterAudienceComposeMasterResultCreated(body *ComposeAud
 // endpoint ComposePartial error.
 func NewComposeAudienceMasterComposePartial(body *ComposeAudienceMasterComposePartialResponseBody) *lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError {
 	v := &lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError{
-		Code:    *body.Code,
-		Message: *body.Message,
+		Code:       *body.Code,
+		Message:    *body.Message,
+		MasterName: body.MasterName,
 	}
 	if body.Suppression != nil {
 		v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)
@@ -3239,6 +3246,12 @@ func ValidateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	}
 	if len(body.ListIds) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
+	}
+	if len(body.ListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 200, false))
+	}
+	if len(body.ExcludeListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
 	}
 	return
 }

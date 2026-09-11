@@ -215,15 +215,20 @@ var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
 //
 // exact is what makes this type honest. Computing a true union means paging every list's
 // membership, which is bounded — above the bound the union is reported as the SUM of the
-// selected lists' sizes with exact=false, an upper bound that over-counts by however much
-// the lists overlap. The one thing this must never do is return a fabricated precise
-// number for a union it did not finish counting, so count is meaningful only when exact
-// is true and estimate carries the sum-based upper bound otherwise.
+// selected lists' sizes with exact=false instead. That sum is not always an over-count:
+// most of the time it over-counts by however much the lists overlap, but when HubSpot did
+// not report a size for one of the selected lists at all, the sum omits that list entirely
+// and UNDER-counts instead — reason always says which direction applies. The one thing
+// this must never do is return a fabricated precise number for a union it did not finish
+// counting, so count is meaningful only when exact is true and estimate carries the
+// sum-based approximation otherwise.
 var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("exact", Boolean, "True when the union was counted in full")
 	Attribute("count", Int64, "Exact union size; meaningful only when exact is true")
-	Attribute("estimate", Int64, "Sum of the selected lists' sizes when exact is false — an upper bound that over-counts any overlap between lists")
-	Attribute("reason", String, "Why the count is exact or bounded")
+	Attribute("estimate", Int64,
+		"Sum of the selected lists' sizes when exact is false — usually an over-count from list "+
+			"overlap, but an under-count when one of the lists had no reported size at all; see reason")
+	Attribute("reason", String, "Why the count is exact or bounded, and which direction the estimate's error runs")
 	Required("exact", "count", "estimate", "reason")
 })
 
@@ -245,8 +250,13 @@ var AudienceComposedList = Type("audience-composed-list", func() {
 var AudienceComposeMasterInput = Type("audience-compose-master-input", func() {
 	Attribute("list_ids", ArrayOf(String), "Lists whose union forms the master audience", func() {
 		MinLength(1)
+		// Same bound and reason as preview-count's list_ids: this becomes one AND branch
+		// per id in the filter MasterListWithSuppressionFilter builds.
+		MaxLength(200)
 	})
-	Attribute("exclude_list_ids", ArrayOf(String), "Lists to suppress from the master")
+	Attribute("exclude_list_ids", ArrayOf(String), "Lists to suppress from the master", func() {
+		MaxLength(200)
+	})
 	Attribute("name", String, "Explicit master list name; overrides the derived name")
 	Attribute("brand_short", String, "Short brand token for the derived name")
 	Attribute("event_name", String, "Event name for the derived name")
@@ -270,8 +280,11 @@ var AudienceComposeMasterResult = Type("audience-compose-master-result", func() 
 // contact list), and it must show the operator the list that DOES exist. A plain
 // InternalServerError would leave an orphaned suppression list invisible.
 var AudienceComposePartialError = Type("audience-compose-partial-error", func() {
-	errorAttrs("500", "The suppression list was created but the master list was not.")
-	Attribute("suppression", AudienceComposedList, "Platform state that WAS created and must be reconciled")
+	errorAttrs("500", "Compose failed after creating or possibly creating platform state that must be reconciled before retrying.")
+	Attribute("suppression", AudienceComposedList, "The suppression list that WAS created and must be reconciled")
+	Attribute("master_name", String,
+		"The master list's deterministic name, set only when the master create itself is unconfirmed "+
+			"(HubSpot may have created it) -- search for this name in HubSpot before composing again")
 })
 
 // AudienceQaFinding is one problem found by a QA check.
@@ -493,12 +506,17 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("preview-audience-count", func() {
-		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, and as a sum-based upper bound when it is not. Creates nothing.")
+		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, and as a sum-based estimate (see reason for which direction it errs) when it is not. Creates nothing.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
 			Attribute("list_ids", ArrayOf(String), "Lists to union", func() {
 				MinLength(1)
+				// 200 comfortably covers every real selection (discovery inspects far fewer
+				// candidates than this) while keeping an unbounded id array from turning one
+				// request into an unbounded membership sweep or an unbounded HubSpot filter
+				// branch -- the OR/AND shape MasterListFilter builds grows one branch per id.
+				MaxLength(200)
 			})
 			Required("project_id", "list_ids")
 		})

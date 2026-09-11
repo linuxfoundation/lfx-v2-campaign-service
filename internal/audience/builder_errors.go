@@ -40,18 +40,26 @@ var (
 	ErrEventNameUnresolved = errors.New("audience discovery: the page did not declare an event name")
 )
 
-// ErrComposePartial reports that the combined suppression list WAS created but the
-// master was not.
+// ErrComposePartial reports that compose left behind platform state that a plain
+// retry must not blindly duplicate: a suppression list that WAS created, a master
+// create that is UNCONFIRMED (HubSpot may have created it), or both.
 //
-// A sentinel because the caller must not offer a plain retry: the suppression list
-// exists in the portal under its final name, so a retry either fails on the duplicate
-// name or leaves a second one behind. The orphan is surfaced to the operator with a
-// link instead.
-var ErrComposePartial = errors.New("audience compose: the combined suppression list was created but the master list was not")
+// A sentinel because the caller must not offer a plain retry: any list this
+// describes may already exist in the portal under its final name, so a retry either
+// fails on the duplicate name or leaves a second one behind. ComposePartialError
+// carries the specifics an operator needs to reconcile before trying again.
+var ErrComposePartial = errors.New("audience compose: left platform state that must be reconciled before retrying")
 
 // ComposePartialError carries the orphaned suppression list alongside the cause.
+//
+// MasterName is set only when the MASTER create itself is unconfirmed (HubSpot may
+// have created it despite the error) -- a definite master-create failure leaves it
+// empty, since nothing needs reconciling on that side. An unconfirmed create has no
+// id to give, so the deterministic name is the only reconcile key available, exactly
+// as it is for Suppression.
 type ComposePartialError struct {
 	Suppression ComposedList
+	MasterName  string
 	Err         error
 }
 

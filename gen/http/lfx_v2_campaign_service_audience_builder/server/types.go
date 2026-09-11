@@ -114,10 +114,12 @@ type PreviewAudienceCountResponseBody struct {
 	Exact bool `form:"exact" json:"exact" xml:"exact"`
 	// Exact union size; meaningful only when exact is true
 	Count int64 `form:"count" json:"count" xml:"count"`
-	// Sum of the selected lists' sizes when exact is false — an upper bound that
-	// over-counts any overlap between lists
+	// Sum of the selected lists' sizes when exact is false — usually an over-count
+	// from list overlap, but an under-count when one of the lists had no reported
+	// size at all; see reason
 	Estimate int64 `form:"estimate" json:"estimate" xml:"estimate"`
-	// Why the count is exact or bounded
+	// Why the count is exact or bounded, and which direction the estimate's error
+	// runs
 	Reason string `form:"reason" json:"reason" xml:"reason"`
 }
 
@@ -695,8 +697,12 @@ type ComposeAudienceMasterComposePartialResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
-	// Platform state that WAS created and must be reconciled
+	// The suppression list that WAS created and must be reconciled
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
+	// The master list's deterministic name, set only when the master create itself
+	// is unconfirmed (HubSpot may have created it) -- search for this name in
+	// HubSpot before composing again
+	MasterName *string `form:"master_name,omitempty" json:"master_name,omitempty" xml:"master_name,omitempty"`
 }
 
 // ComposeAudienceMasterInternalServerErrorResponseBody is the type of the
@@ -1799,8 +1805,9 @@ func NewPreviewAudienceCountUnauthorizedResponseBody(res *lfxv2campaignserviceau
 // "lfx-v2-campaign-service-audience-builder" service.
 func NewComposeAudienceMasterComposePartialResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError) *ComposeAudienceMasterComposePartialResponseBody {
 	body := &ComposeAudienceMasterComposePartialResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
+		Code:       res.Code,
+		Message:    res.Message,
+		MasterName: res.MasterName,
 	}
 	if res.Suppression != nil {
 		body.Suppression = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Suppression)
@@ -2099,6 +2106,9 @@ func ValidatePreviewAudienceCountRequestBody(body *PreviewAudienceCountRequestBo
 	if len(body.ListIds) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
 	}
+	if len(body.ListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 200, false))
+	}
 	return
 }
 
@@ -2138,6 +2148,12 @@ func ValidateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	}
 	if len(body.ListIds) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
+	}
+	if len(body.ListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 200, false))
+	}
+	if len(body.ExcludeListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
 	}
 	return
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAudienceExploreErr_ArmOrdering pins the switch's documented precedence
@@ -113,6 +114,83 @@ func TestAudienceExploreErr_ArmOrdering(t *testing.T) {
 				t.Fatalf("unhandled result type %T", got)
 			}
 			assert.Equal(t, tc.wantStatus, code)
+		})
+	}
+}
+
+// TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster pins that composeErr's
+// message tells the operator which half of the partial state is CONFIRMED (the
+// suppression list, reported by CheckSuppression's own create) versus merely
+// UNCONFIRMED (the master, which may or may not exist in HubSpot). Collapsing these
+// into one message would tell an operator "the suppression list was created but the
+// master was not" in a case where the master might actually exist too -- sending them
+// to compose a duplicate under a different name instead of searching for the
+// deterministic one first.
+func TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster(t *testing.T) {
+	cause := errors.New("hubspot: 503 upstream timeout")
+
+	cases := []struct {
+		name              string
+		partial           *audience.ComposePartialError
+		wantMasterNameSet bool
+		wantSuppression   bool
+		wantSubstrings    []string
+	}{
+		{
+			name: "definite master failure reports only the suppression orphan",
+			partial: &audience.ComposePartialError{
+				Suppression: audience.ComposedList{ListRow: audience.ListRow{ListID: "555", Name: "Combined Suppression"}},
+				Err:         cause,
+			},
+			wantMasterNameSet: false,
+			wantSuppression:   true,
+			wantSubstrings:    []string{"combined suppression list was created but the master list was not"},
+		},
+		{
+			name: "unconfirmed master with no suppression names only the master and omits the suppression object",
+			partial: &audience.ComposePartialError{
+				MasterName: "KubeCon NA 2026 — master",
+				Err:        cause,
+			},
+			wantMasterNameSet: true,
+			wantSuppression:   false,
+			wantSubstrings:    []string{"master list creation is unconfirmed", "search HubSpot for it by name"},
+		},
+		{
+			name: "unconfirmed master alongside a confirmed suppression names both",
+			partial: &audience.ComposePartialError{
+				Suppression: audience.ComposedList{ListRow: audience.ListRow{ListID: "555", Name: "Combined Suppression"}},
+				MasterName:  "KubeCon NA 2026 — master",
+				Err:         cause,
+			},
+			wantMasterNameSet: true,
+			wantSuppression:   true,
+			wantSubstrings:    []string{"suppression list was created and the master list creation is unconfirmed", "verify both in HubSpot"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := composeErr(context.Background(), "proj-1", tc.partial)
+
+			var partialErr *explore.AudienceComposePartialError
+			require.ErrorAs(t, got, &partialErr)
+
+			for _, sub := range tc.wantSubstrings {
+				assert.Contains(t, partialErr.Message, sub)
+			}
+			if tc.wantMasterNameSet {
+				require.NotNil(t, partialErr.MasterName)
+				assert.Equal(t, tc.partial.MasterName, *partialErr.MasterName)
+			} else {
+				assert.Nil(t, partialErr.MasterName)
+			}
+			if tc.wantSuppression {
+				require.NotNil(t, partialErr.Suppression)
+				assert.Equal(t, tc.partial.Suppression.ListID, partialErr.Suppression.ListID)
+			} else {
+				assert.Nil(t, partialErr.Suppression)
+			}
 		})
 	}
 }
