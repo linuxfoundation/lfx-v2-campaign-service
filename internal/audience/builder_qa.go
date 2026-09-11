@@ -138,7 +138,13 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 	switch {
 	case len(matches) == 0:
 		return nil, nil
-	case len(matches) > 1 && len(exact) == 0:
+	case len(matches) > 1:
+		// Ambiguous whether or not the names matched EXACTLY. The previous `&& len(exact)
+		// == 0` meant two lists sharing a name silently resolved to `matches[0]`, i.e.
+		// whichever order HubSpot returned -- so QA would audit an arbitrary one and report
+		// a verdict under the name the operator typed. Duplicate names are reachable in a
+		// real portal, especially after an ambiguous create leaves a second list behind.
+		// Disambiguation is the honest answer in both cases.
 		return nil, matches
 	default:
 		best := matches[0]

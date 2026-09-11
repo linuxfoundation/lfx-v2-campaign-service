@@ -357,3 +357,30 @@ func TestPreviewCountRefusesMoreListsThanTheBudget(t *testing.T) {
 		t.Errorf("ErrTooManyPreviewLists must wrap ErrInvalidRequest so the handler maps it to 400; got %v", err)
 	}
 }
+
+// An unreported list size must stop the estimate, not be summed as zero.
+//
+// This is the decision PreviewCount makes before it ever sweeps memberships. Summing a nil
+// as 0 leaves the total short by that entire list, and the degraded fallback then returns
+// that short sum as its "safe" over-count — an UNDERCOUNT presented as an over-count, which
+// DegradedPreviewCount's own doc calls the one direction that must never be reported.
+func TestSumKnownSizesRefusesToTotalAnUnreportedSize(t *testing.T) {
+	size := func(n int64) *int64 { return &n }
+
+	if total, ok := sumKnownSizes([]*int64{size(10), size(32)}); !ok || total != 42 {
+		t.Errorf("all sizes known: want (42, true), got (%d, %v)", total, ok)
+	}
+
+	total, ok := sumKnownSizes([]*int64{size(1200), nil, size(800)})
+	if ok {
+		t.Errorf("an unreported size was summed as zero, producing %d — short by the whole unreported list", total)
+	}
+	if total != 0 {
+		t.Errorf("no partial total may leak out when a size is unknown; got %d", total)
+	}
+
+	// A genuinely empty list is NOT an unknown size and must still total.
+	if total, ok := sumKnownSizes([]*int64{size(0), size(5)}); !ok || total != 5 {
+		t.Errorf("a real zero is a known size: want (5, true), got (%d, %v)", total, ok)
+	}
+}

@@ -292,6 +292,23 @@ func DegradedPreviewCount(estimate int) PreviewCount {
 	}
 }
 
+// UnknownSizePreviewCount is the fallback when at least one selected list did not
+// report a size. HubSpot omits the size property on some list shapes, and
+// hubspot.List.Size is a plain int, so an omitted size and a genuinely empty list
+// are both 0 — summing them yields a total that is short by the whole unreported
+// list. Returning that as DegradedPreviewCount's "sum estimate" would understate
+// reach, which the comment above names as the one direction with no recovery after
+// a send. No number is offered here at all: the sum cannot be trusted and the union
+// was never completed, so there is nothing honest left to report.
+func UnknownSizePreviewCount() PreviewCount {
+	return PreviewCount{
+		Exact:    false,
+		Count:    0,
+		Estimate: 0,
+		Reason:   "one or more selected lists did not report a size, so no reliable total can be shown; open them in HubSpot to check",
+	}
+}
+
 // ExactPreviewCount reports a completed union sweep. `estimate` (the sum) is kept
 // alongside it so the UI can show how much overlap the union removed.
 func ExactPreviewCount(unionSize, estimate int) PreviewCount {

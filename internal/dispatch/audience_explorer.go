@@ -721,13 +721,26 @@ func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, l
 	ctx, cancel := context.WithTimeout(ctx, previewCountTimeout)
 	defer cancel()
 
-	estimate := 0
+	sizes := make([]*int64, 0, len(ids))
 	for _, id := range ids {
 		list, gerr := client.GetList(ctx, id)
 		if gerr != nil {
+			if hubspot.IsNotFound(gerr) {
+				return audience.PreviewCount{}, fmt.Errorf("audience preview: list %s: %w", id, audience.ErrListNotFound)
+			}
 			return audience.PreviewCount{}, fmt.Errorf("audience preview: read list %s: %w", id, gerr)
 		}
-		estimate += list.Size
+		// `list.Size` is a plain int, so an OMITTED size is indistinguishable from a
+		// genuinely empty list -- `sizeOf` exists precisely to keep them apart. Summing
+		// an omitted size as 0 makes the total short by that whole list, and if the
+		// membership sweep below then fails, that short sum is returned as the "safe"
+		// over-count. Understating reach is the one direction with no recovery after a
+		// send, so an unknown size stops the estimate rather than silently shrinking it.
+		sizes = append(sizes, sizeOf(list))
+	}
+	estimate, known := sumKnownSizes(sizes)
+	if !known {
+		return audience.UnknownSizePreviewCount(), nil
 	}
 	if audience.ExceedsExactCap(estimate) {
 		return audience.OverCapPreviewCount(estimate), nil
@@ -748,6 +761,28 @@ func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, l
 		}
 	}
 	return audience.ExactPreviewCount(len(union), estimate), nil
+}
+
+// sumKnownSizes totals the selected lists' sizes, reporting whether every one was known.
+//
+// A nil entry is a size HubSpot did not report. `hubspot.List.Size` is a plain int, so an
+// omitted size is indistinguishable from a genuinely empty list; `sizeOf` returns *int64
+// to keep them apart, and this is where that distinction has to be honoured. Summing a nil
+// as zero makes the total short by that entire list, and PreviewCount then hands the short
+// sum back as the "safe" over-count when the membership sweep fails — understating reach,
+// which is the one direction with no recovery after a send.
+//
+// Extracted from PreviewCount so the decision is reachable in a unit test: the call site
+// needs a live portal and an encrypted connection to exercise, and a guard no test can
+// reach is a guard that silently stops working.
+func sumKnownSizes(sizes []*int64) (total int, allKnown bool) {
+	for _, size := range sizes {
+		if size == nil {
+			return 0, false
+		}
+		total += int(*size)
+	}
+	return total, true
 }
 
 // ---------------------------------------------------------------------------
@@ -986,6 +1021,13 @@ func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client,
 func (x *AudienceExplorer) listWithFilters(ctx context.Context, client *hubspot.Client, listID string) (*hubspot.List, []audience.ListFilter, error) {
 	list, err := client.GetList(ctx, listID)
 	if err != nil {
+		// A 404 means the portal holds no such list, which the contract declares as a 404.
+		// Passing the raw API error up sends it to audienceExploreErr's default arm and a
+		// generic 500, telling the operator the service broke when the real answer is that
+		// the id they gave does not exist.
+		if hubspot.IsNotFound(err) {
+			return nil, nil, fmt.Errorf("hubspot: list %s: %w", listID, audience.ErrListNotFound)
+		}
 		return nil, nil, err
 	}
 	if list == nil {

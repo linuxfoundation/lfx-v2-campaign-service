@@ -11795,7 +11795,7 @@ components:
                     format: int64
                 estimate:
                     type: integer
-                    description: Lower bound on the union size when exact is false
+                    description: Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists
                     example: 7258649524097721285
                     format: int64
                 exact:

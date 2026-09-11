@@ -4,6 +4,7 @@
 package audience
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -265,5 +266,26 @@ func TestWithThousands_GroupsEveryBoundary(t *testing.T) {
 	}
 	for n, want := range cases {
 		assert.Equal(t, want, withThousands(n))
+	}
+}
+
+// An unknown list size must not be summed as zero.
+//
+// hubspot.List.Size is a plain int, so an OMITTED size and a genuinely empty list are both
+// 0 — `sizeOf` returns *int64 precisely to keep them apart. Summing an omitted size makes
+// the estimate short by that whole list, and if the membership sweep then fails, that short
+// sum is handed back as DegradedPreviewCount's "safe" over-count. Understating reach is the
+// one direction with no recovery after a send, so no number is offered at all.
+func TestUnknownSizePreviewCountOffersNoNumber(t *testing.T) {
+	got := UnknownSizePreviewCount()
+
+	if got.Exact {
+		t.Error("an unknown size can never yield an exact count")
+	}
+	if got.Count != 0 || got.Estimate != 0 {
+		t.Errorf("no number may be offered when a size is unknown; got count=%d estimate=%d", got.Count, got.Estimate)
+	}
+	if !strings.Contains(got.Reason, "did not report a size") {
+		t.Errorf("the reason must tell the operator WHY there is no total, so they can check the lists; got %q", got.Reason)
 	}
 }

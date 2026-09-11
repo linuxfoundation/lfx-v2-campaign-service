@@ -86,9 +86,15 @@ func (c *Client) ListMembershipIDs(ctx context.Context, listID string) (ids []st
 			return nil, false, fmt.Errorf("hubspot: list %s memberships returned a 2xx with no results array (malformed response)", listID)
 		}
 		for _, r := range resp.Results {
-			if id := strings.TrimSpace(r.RecordID.String()); id != "" {
-				out = append(out, id)
+			id := strings.TrimSpace(r.RecordID.String())
+			if id == "" {
+				// Dropping the row would leave `out` short while `truncated` stays false,
+				// so PreviewCount would label an incomplete walk EXACT -- an undercount
+				// presented as a counted total. A membership row with no record id is a
+				// malformed response, not an empty membership, so it fails the read.
+				return nil, false, fmt.Errorf("hubspot: list %s memberships returned a row with no recordId (malformed response)", listID)
 			}
+			out = append(out, id)
 		}
 		if resp.Paging == nil || resp.Paging.Next == nil || strings.TrimSpace(resp.Paging.Next.After) == "" {
 			return out, false, nil
