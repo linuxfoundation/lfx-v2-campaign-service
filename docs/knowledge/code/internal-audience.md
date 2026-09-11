@@ -368,11 +368,9 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
 - **`builder_discovery.go`** — the classifier, entirely DETERMINISTIC. The model is used for one
   thing only, extracting the event's identity from its page (`EventExtractionSystemPrompt`),
   because a model that guesses which list to email is a model that can silently mail the wrong
-  ten thousand people. `speakerScopeSuffixes` is ordered LONGEST FIRST so a narrower scope wins;
-  `behaviouralFilterTypes` is the only set that carries up from a one-hop child, since a child's
-  own `IN_LIST` filters would hop forever. `DiscoveryQueries` probes the full exact event name
-  first and only then name+year, because a bare brand acronym fills all twenty search slots with
-  wrong-year noise.
+  ten thousand people. `speakerScopeSuffixes` is ordered LONGEST FIRST so a narrower scope wins.
+  `DiscoveryQueries` probes the full exact event name first and only then name+year, because a
+  bare brand acronym fills all twenty search slots with wrong-year noise.
 - **`builder_master.go`** — naming and ordering. `QuarterCode` is computed in UTC deliberately,
   and `EventQuarterCode` falls back to the current quarter because a name missing its code sorts
   below every dated list. Blank segments are DROPPED from a master-list name, not blanked, and
