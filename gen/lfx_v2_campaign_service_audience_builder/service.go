@@ -471,6 +471,10 @@ type AudienceComposePartialError struct {
 	Message string
 	// The suppression list that WAS created and must be reconciled
 	Suppression *AudienceComposedList
+	// The suppression list's deterministic name, set only when the suppression
+	// create itself is unconfirmed (HubSpot may have created it) -- search for
+	// this name in HubSpot before composing again
+	SuppressionName *string
 	// The master list's deterministic name, set only when the master create itself
 	// is unconfirmed (HubSpot may have created it) -- search for this name in
 	// HubSpot before composing again

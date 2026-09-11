@@ -57,10 +57,18 @@ var ErrComposePartial = errors.New("audience compose: left platform state that m
 // empty, since nothing needs reconciling on that side. An unconfirmed create has no
 // id to give, so the deterministic name is the only reconcile key available, exactly
 // as it is for Suppression.
+//
+// SuppressionUnconfirmed marks the same distinction on the suppression side: it is
+// set only when the SUPPRESSION create itself is unconfirmed, in which case
+// Suppression carries just its deterministic Name (ListID empty, since HubSpot never
+// confirmed one). Without this marker, an unconfirmed suppression create is
+// indistinguishable from a confirmed one that merely lacks a size -- both would
+// otherwise present Suppression.Name set and ListID empty as "created".
 type ComposePartialError struct {
-	Suppression ComposedList
-	MasterName  string
-	Err         error
+	Suppression            ComposedList
+	SuppressionUnconfirmed bool
+	MasterName             string
+	Err                    error
 }
 
 func (e *ComposePartialError) Error() string {

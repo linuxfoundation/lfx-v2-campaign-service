@@ -754,8 +754,9 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		if cerr != nil {
 			if hubspot.IsUnconfirmed(cerr) {
 				return nil, &audience.ComposePartialError{
-					Suppression: audience.ComposedList{ListRow: audience.ListRow{Name: suppressionName}},
-					Err:         fmt.Errorf("audience compose: create combined suppression list: %w", cerr),
+					Suppression:            audience.ComposedList{ListRow: audience.ListRow{Name: suppressionName}},
+					SuppressionUnconfirmed: true,
+					Err:                    fmt.Errorf("audience compose: create combined suppression list: %w", cerr),
 				}
 			}
 			return nil, fmt.Errorf("audience compose: create combined suppression list: %w", cerr)

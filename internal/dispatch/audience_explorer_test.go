@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
@@ -325,15 +326,15 @@ func TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly(t
 // wrapped error, silently dropping the one signal ("HubSpot may have created it
 // under this name") an operator needs before deciding whether to retry.
 func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *testing.T) {
-	var suppressionCreated bool
+	var suppressionCreated atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
-		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost && !suppressionCreated:
+		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost && !suppressionCreated.Load():
 			// First create: the combined suppression list, which succeeds normally.
-			suppressionCreated = true
+			suppressionCreated.Store(true)
 			_, _ = io.WriteString(w, `{"list":{"listId":"999","name":"suppression","objectTypeId":"0-1","size":0}}`)
 		default:
 			// Second create: the master, which is unconfirmed -- a 2xx with no listId.
@@ -371,7 +372,7 @@ func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *t
 // from search hits would make every QA-by-name run silently audit against zero
 // filters -- passing every "no suppression applied" style check for the wrong reason.
 func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) {
-	var getListCalls int
+	var getListCalls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -382,7 +383,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 			_, _ = io.WriteString(w, `{"lists":[{"listId":"111","name":"KubeCon NA 2026 - master",`+
 				`"objectTypeId":"0-1"}],"hasMore":false,"offset":0}`)
 		case r.URL.Path == "/crm/v3/lists/111" && r.Method == http.MethodGet:
-			getListCalls++
+			getListCalls.Add(1)
 			// The real GetList response: a suppression exclusion the search hit above
 			// could never have carried.
 			_, _ = io.WriteString(w, `{"list":{"listId":"111","name":"KubeCon NA 2026 - master",`+
@@ -393,7 +394,11 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 			_, _ = io.WriteString(w, `{"list":{"listId":"222","name":"GDPR Opt-Out Suppression",`+
 				`"objectTypeId":"0-1","size":5}}`)
 		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			// t.Errorf, not t.Fatalf: FailNow from inside a handler goroutine does not
+			// stop the test and can leave the server blocked against the deferred
+			// Close() below -- still write a response so the client call returns.
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
@@ -408,7 +413,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	require.NoError(t, err)
 	require.False(t, outcome.NeedsDisambiguation)
 
-	assert.Equal(t, 1, getListCalls,
+	assert.Equal(t, int32(1), getListCalls.Load(),
 		"the chosen candidate's filters must come from a real GetList call, not the filterless search hit")
 	assert.NotEmpty(t, outcome.Checks.Suppression.Findings,
 		"the excluded GDPR list only appears if the real filterBranch (not an empty cached one) was read")

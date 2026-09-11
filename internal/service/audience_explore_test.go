@@ -130,11 +130,12 @@ func TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster(t *testing.T) {
 	cause := errors.New("hubspot: 503 upstream timeout")
 
 	cases := []struct {
-		name              string
-		partial           *audience.ComposePartialError
-		wantMasterNameSet bool
-		wantSuppression   bool
-		wantSubstrings    []string
+		name                string
+		partial             *audience.ComposePartialError
+		wantMasterNameSet   bool
+		wantSuppression     bool
+		wantSuppressionName bool
+		wantSubstrings      []string
 	}{
 		{
 			name: "definite master failure reports only the suppression orphan",
@@ -145,6 +146,18 @@ func TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster(t *testing.T) {
 			wantMasterNameSet: false,
 			wantSuppression:   true,
 			wantSubstrings:    []string{"combined suppression list was created but the master list was not"},
+		},
+		{
+			name: "unconfirmed suppression create reports only its name, never a suppression object",
+			partial: &audience.ComposePartialError{
+				Suppression:            audience.ComposedList{ListRow: audience.ListRow{Name: "Combined Suppression"}},
+				SuppressionUnconfirmed: true,
+				Err:                    cause,
+			},
+			wantMasterNameSet:   false,
+			wantSuppression:     false,
+			wantSuppressionName: true,
+			wantSubstrings:      []string{"combined suppression list creation is unconfirmed", "search HubSpot for it by name"},
 		},
 		{
 			name: "unconfirmed master with no suppression names only the master and omits the suppression object",
@@ -190,6 +203,12 @@ func TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster(t *testing.T) {
 				assert.Equal(t, tc.partial.Suppression.ListID, partialErr.Suppression.ListID)
 			} else {
 				assert.Nil(t, partialErr.Suppression)
+			}
+			if tc.wantSuppressionName {
+				require.NotNil(t, partialErr.SuppressionName)
+				assert.Equal(t, tc.partial.Suppression.Name, *partialErr.SuppressionName)
+			} else {
+				assert.Nil(t, partialErr.SuppressionName)
 			}
 		})
 	}

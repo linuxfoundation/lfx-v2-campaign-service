@@ -697,6 +697,10 @@ type ComposeAudienceMasterComposePartialResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 	// The suppression list that WAS created and must be reconciled
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
+	// The suppression list's deterministic name, set only when the suppression
+	// create itself is unconfirmed (HubSpot may have created it) -- search for
+	// this name in HubSpot before composing again
+	SuppressionName *string `form:"suppression_name,omitempty" json:"suppression_name,omitempty" xml:"suppression_name,omitempty"`
 	// The master list's deterministic name, set only when the master create itself
 	// is unconfirmed (HubSpot may have created it) -- search for this name in
 	// HubSpot before composing again
@@ -1847,9 +1851,10 @@ func NewComposeAudienceMasterAudienceComposeMasterResultCreated(body *ComposeAud
 // endpoint ComposePartial error.
 func NewComposeAudienceMasterComposePartial(body *ComposeAudienceMasterComposePartialResponseBody) *lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError {
 	v := &lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError{
-		Code:       *body.Code,
-		Message:    *body.Message,
-		MasterName: body.MasterName,
+		Code:            *body.Code,
+		Message:         *body.Message,
+		SuppressionName: body.SuppressionName,
+		MasterName:      body.MasterName,
 	}
 	if body.Suppression != nil {
 		v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)

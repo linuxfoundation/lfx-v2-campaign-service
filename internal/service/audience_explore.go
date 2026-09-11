@@ -433,14 +433,20 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 			Code:    "500",
 			Message: composePartialMessage(partial),
 		}
-		// Suppression is set only when one was actually created. A master-create-only
-		// failure (no exclusions requested, or the suppression create itself failed)
-		// leaves partial.Suppression zero-valued -- sending it anyway would put a
-		// suppression object on the wire with blank list_id/name/hubspot_url despite
-		// AudienceComposedList declaring all three Required, misreporting a list that
-		// does not exist as one the operator must go reconcile in HubSpot.
-		if partial.Suppression.ListID != "" || partial.Suppression.Name != "" {
+		// Suppression is set only when one was actually CONFIRMED created (ListID
+		// present). A master-create-only failure (no exclusions requested, or the
+		// suppression create itself failed) leaves partial.Suppression zero-valued --
+		// sending it anyway would put a suppression object on the wire with blank
+		// list_id/name/hubspot_url despite AudienceComposedList declaring all three
+		// Required, misreporting a list that does not exist as one the operator must go
+		// reconcile in HubSpot. An UNCONFIRMED suppression create (SuppressionUnconfirmed)
+		// has no id to give either, so it goes out as SuppressionName instead, mirroring
+		// how an unconfirmed master is reported via MasterName rather than Suppression.
+		switch {
+		case partial.Suppression.ListID != "":
 			out.Suppression = composedListResult(&partial.Suppression)
+		case partial.SuppressionUnconfirmed && partial.Suppression.Name != "":
+			out.SuppressionName = &partial.Suppression.Name
 		}
 		if partial.MasterName != "" {
 			out.MasterName = &partial.MasterName
@@ -451,13 +457,17 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 }
 
 // composePartialMessage distinguishes a CONFIRMED suppression orphan (the master
-// create definitely failed) from an UNCONFIRMED master create (HubSpot may have
-// created it despite the error) — the remedy differs: the first names one list an
-// operator must reconcile, the second tells them to search by name before assuming
+// create definitely failed) from an UNCONFIRMED master create, and from an
+// UNCONFIRMED suppression create (HubSpot may have created either despite the
+// error) — the remedy differs: the confirmed case names one list an operator must
+// reconcile, the unconfirmed cases tell them to search by name before assuming
 // nothing happened.
 func composePartialMessage(partial *audience.ComposePartialError) string {
 	hasSuppression := partial.Suppression.ListID != "" || partial.Suppression.Name != ""
 	switch {
+	case partial.SuppressionUnconfirmed:
+		return "the combined suppression list creation is unconfirmed (it may have been created) — " +
+			"search HubSpot for it by name before composing again; do not simply retry"
 	case partial.MasterName != "" && hasSuppression:
 		return "the combined suppression list was created and the master list creation is unconfirmed " +
 			"(it may have been created) — verify both in HubSpot before composing again; do not simply retry"

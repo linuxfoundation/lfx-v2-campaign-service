@@ -282,6 +282,9 @@ var AudienceComposeMasterResult = Type("audience-compose-master-result", func() 
 var AudienceComposePartialError = Type("audience-compose-partial-error", func() {
 	errorAttrs("500", "Compose failed after creating or possibly creating platform state that must be reconciled before retrying.")
 	Attribute("suppression", AudienceComposedList, "The suppression list that WAS created and must be reconciled")
+	Attribute("suppression_name", String,
+		"The suppression list's deterministic name, set only when the suppression create itself is "+
+			"unconfirmed (HubSpot may have created it) -- search for this name in HubSpot before composing again")
 	Attribute("master_name", String,
 		"The master list's deterministic name, set only when the master create itself is unconfirmed "+
 			"(HubSpot may have created it) -- search for this name in HubSpot before composing again")
