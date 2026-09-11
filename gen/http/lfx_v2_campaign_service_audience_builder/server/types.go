@@ -114,7 +114,8 @@ type PreviewAudienceCountResponseBody struct {
 	Exact bool `form:"exact" json:"exact" xml:"exact"`
 	// Exact union size; meaningful only when exact is true
 	Count int64 `form:"count" json:"count" xml:"count"`
-	// Lower bound on the union size when exact is false
+	// Sum of the selected lists' sizes when exact is false — an upper bound that
+	// over-counts any overlap between lists
 	Estimate int64 `form:"estimate" json:"estimate" xml:"estimate"`
 	// Why the count is exact or bounded
 	Reason string `form:"reason" json:"reason" xml:"reason"`

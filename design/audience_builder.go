@@ -214,14 +214,15 @@ var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
 // AudiencePreviewCount is the size of the union of the selected lists.
 //
 // exact is what makes this type honest. Computing a true union means paging every list's
-// membership, which is bounded — above the bound the union is reported as a floor with
-// exact=false and the UI renders "25,000+". The one thing this must never do is return a
-// fabricated precise number for a union it did not finish counting, so count is
-// meaningful only when exact is true and estimate carries the floor otherwise.
+// membership, which is bounded — above the bound the union is reported as the SUM of the
+// selected lists' sizes with exact=false, an upper bound that over-counts by however much
+// the lists overlap. The one thing this must never do is return a fabricated precise
+// number for a union it did not finish counting, so count is meaningful only when exact
+// is true and estimate carries the sum-based upper bound otherwise.
 var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("exact", Boolean, "True when the union was counted in full")
 	Attribute("count", Int64, "Exact union size; meaningful only when exact is true")
-	Attribute("estimate", Int64, "Lower bound on the union size when exact is false")
+	Attribute("estimate", Int64, "Sum of the selected lists' sizes when exact is false — an upper bound that over-counts any overlap between lists")
 	Attribute("reason", String, "Why the count is exact or bounded")
 	Required("exact", "count", "estimate", "reason")
 })
@@ -492,7 +493,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("preview-audience-count", func() {
-		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, and as a floor when it is not. Creates nothing.")
+		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, and as a sum-based upper bound when it is not. Creates nothing.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

@@ -33,7 +33,8 @@ type Service interface {
 	// first.
 	GetExistingAudienceMasterLists(context.Context, *GetExistingAudienceMasterListsPayload) (res *GetExistingAudienceMasterListsResult, err error)
 	// Count the union of the selected lists' memberships — exactly when that is
-	// within bounds, and as a floor when it is not. Creates nothing.
+	// within bounds, and as a sum-based upper bound when it is not. Creates
+	// nothing.
 	PreviewAudienceCount(context.Context, *PreviewAudienceCountPayload) (res *AudiencePreviewCount, err error)
 	// Create the combined suppression list and then the master list in the
 	// project's HubSpot portal. NOT idempotent.
@@ -213,7 +214,8 @@ type AudiencePreviewCount struct {
 	Exact bool
 	// Exact union size; meaningful only when exact is true
 	Count int64
-	// Lower bound on the union size when exact is false
+	// Sum of the selected lists' sizes when exact is false — an upper bound that
+	// over-counts any overlap between lists
 	Estimate int64
 	// Why the count is exact or bounded
 	Reason string
