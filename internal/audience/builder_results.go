@@ -87,7 +87,12 @@ type SuppressionRow struct {
 const (
 	SuppressionCategoryStandard = "standard"
 	SuppressionCategoryBrand    = "brand"
-	SuppressionCategoryEvent    = "event"
+	// "event_specific", NOT "event": design/audience_builder.go declares
+	// Enum("standard", "brand", "event_specific") and the UI's AudienceSuppressionCategory
+	// matches it. Emitting "event" put every event-specific row outside the published enum,
+	// so a consumer grouping on the generated contract dropped exactly the rows that outrank
+	// the other two — the per-event suppression list is the highest-value exclusion here.
+	SuppressionCategoryEvent = "event_specific"
 )
 
 // ListBrief names a list referenced from somewhere else — a prior send's include or

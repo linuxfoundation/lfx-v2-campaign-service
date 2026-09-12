@@ -1844,9 +1844,7 @@ func NewComposeAudienceMasterComposePartial(body *ComposeAudienceMasterComposePa
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
-	if body.Suppression != nil {
-		v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)
-	}
+	v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)
 
 	return v
 }
@@ -2890,6 +2888,9 @@ func ValidateComposeAudienceMasterComposePartialResponseBody(body *ComposeAudien
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Suppression == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suppression", "body"))
 	}
 	if body.Suppression != nil {
 		if err2 := ValidateAudienceComposedListResponseBody(body.Suppression); err2 != nil {
