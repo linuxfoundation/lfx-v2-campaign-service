@@ -17,7 +17,8 @@ The service serves its API under `/projects/{projectId}/…` (the approved contr
 every endpoint is nested under a project and gated on that project's
 `campaign_manager` relation). `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
-`jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience`, `hubspot`)
+`jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience`, `hubspot`,
+`audience-builder`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
 
@@ -53,6 +54,20 @@ rows for this reason: a widened alternation passes every positive test.
 As each further provider gains a sub-path, add it to the branch that matches its SHAPE
 rather than widening a shared one. Collapsing branches back together is correct only once
 the providers in them carry the same sub-paths.
+
+**The `audience-builder` family is enumerated leaf by leaf**, not admitted with a free
+`(/.*)?` tail (LFXV2-2770). It is a SIBLING of `briefs`, so it inherits nothing from the
+`briefs(/.*)?` branch and needs its own alternation branch here plus its own RuleSet
+entries. Nine leaves are spelled out — `capabilities`, `discover`, `lists/search`,
+`suppression-lists`, `last-sent`, `existing-master-lists`, `preview-count`,
+`compose-master`, `qa/run` — for two reasons. `compose-master` creates real contact lists
+in a production HubSpot portal and is not idempotent, so routing a path the service does
+not serve is worse here than for a read-only family: the base path serves nothing, and
+`POST /signal-list` is specified in the plan but deliberately unimplemented. And two of
+the leaves are two segments deep (`lists/search`, `qa/run`), so a single-segment
+placeholder would not have covered the family anyway. Adding an endpoint to this service
+therefore means editing this regex, `ruleset.yaml`, and `parity_test.go` in the same
+commit.
 
 The route therefore uses a **`RegularExpression` path match** selecting
 exactly this service's project-nested subpaths; `project-service`'s `/projects/`

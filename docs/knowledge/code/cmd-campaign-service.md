@@ -70,4 +70,13 @@ unbounded body. Extracting it lets a test drive the REAL chain — a security co
 presence is invisible to any test that exercises the mux directly. See
 [internal/middleware](internal-middleware.md) for the cap's rationale and sizing.
 
+## Mounting the audience-builder service (LFXV2-2770)
+
+`server.go` mounts the generated audience-builder endpoints alongside the rest. Its paths must
+stay in step with the chart: the HTTPRoute regex and the Heimdall RuleSet enumerate the nine
+leaves individually, and Heimdall is default-deny, so an endpoint mounted here but absent from
+either chart file is UNREACHABLE through the gateway rather than merely unauthorized — which
+presents to a caller as a 404 from the edge, not as a missing permission. See
+[HTTPRoute](../kubernetes/httproute.md) and [RuleSet](../kubernetes/ruleset.md).
+
 See [cmd/campaign-service](../../../cmd/campaign-service).

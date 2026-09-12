@@ -33,7 +33,14 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
-   providers, `google-ads/keywords|audience|campaign-ref`, `hubspot`). **`{provider}/metrics` is
+   providers, `google-ads/keywords|audience|campaign-ref`, `hubspot`, and the nine
+   `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
+   entry by entry rather than covered by an `audience-builder/**` wildcard: two of its
+   leaves are two segments deep (`lists/search`, `qa/run`) so a single-segment capture
+   would miss them, and `compose-master` writes real contact lists into a production
+   HubSpot portal and is not idempotent, so a `**` that also authorized the bare base and
+   the unimplemented `signal-list` would rule paths the service does not serve.
+   **`{provider}/metrics` is
    ruled and routed but NOT SERVED** — no `design/` file declares it, so a request
    reaching it is authorized here and forwarded to a service with no such route.
    `parity_test` cannot catch that: it compares the RuleSet to the regex and reads

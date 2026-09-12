@@ -1133,4 +1133,35 @@ The classification itself is read from DOMAIN sentinels the dispatcher tags, nev
 platform client to inspect its unexported error types — that would invert service → dispatch →
 platform. See [internal/dispatch](internal-dispatch.md).
 
+## Audience-builder handlers (LFXV2-2770)
+
+`audience_explore.go` serves the nine `audience-builder` endpoints and does three things and
+nothing else: it refuses unauthenticated callers, it maps the orchestration's transport-neutral
+results onto the generated Goa types, and it turns failures into the statuses the contract
+declares. Everything about WHICH lists an audience is made of lives in
+[internal/audience](internal-audience.md), and everything that calls HubSpot lives in
+[internal/dispatch](internal-dispatch.md).
+
+The split matters most for error mapping. A 404 on a list an operator typed is an ANSWER they
+act on; the same failure reported as a 500 sends them looking for an outage that does not exist.
+
+`AudienceExplorer` is an interface here rather than a concrete dependency for two reasons: the
+handlers stay testable without a live HubSpot portal, and a deployment with no connection store
+degrades to the contract's typed 503 instead of a nil dereference.
+
+`GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
+endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
+with the actions disabled instead of nine broken buttons.
+
+`ComposeAudienceMaster` is the one handler with two distinct 500s. Goa maps both the declared
+`ComposePartial` error and `InternalServerError` to HTTP 500, discriminating with a `goa-error`
+response header — which a proxying BFF does not see. So the BODY is the discriminator: a
+`ComposePartial` body carries the created suppression list alongside the code and message, and
+the handler always passes a non-nil suppression (the address of a value), so body-shape
+discrimination is sound. This is what lets a caller show the operator the list that WAS created
+rather than offering a retry that would duplicate it.
+
+There is no streaming variant: Goa v3 has no SSE encoding, so `discover` is a synchronous POST
+here and any progress feel is the caller's own concern.
+
 See [internal/service](../../../internal/service).
