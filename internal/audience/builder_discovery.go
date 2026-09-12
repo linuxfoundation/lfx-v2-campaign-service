@@ -6,6 +6,7 @@ package audience
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -85,15 +86,35 @@ guess a name from the URL and do not invent dates.`
 // isoDateRE matches the ISO prefix a date must have to be trusted. MasterListName
 // derives a production list's YYQN segment from these, and a half-parsed date
 // there names a real list for the wrong quarter.
+const (
+	// isoDateLayout is the ONLY shape EventIdentity.Dates may carry.
+	isoDateLayout = "2006-01-02"
+	isoDateLen    = len(isoDateLayout)
+)
+
+// isoDateRE is the cheap shape pre-check. It is NOT sufficient on its own — it matches
+// 2026-02-30 — so every caller must parse before trusting the value.
 var isoDateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)
 
 // SanitizeEventDates keeps only well-formed ISO dates, in order.
 func SanitizeEventDates(dates []string) []string {
 	out := make([]string, 0, len(dates))
 	for _, d := range dates {
-		if d = strings.TrimSpace(d); isoDateRE.MatchString(d) {
-			out = append(out, d)
+		d = strings.TrimSpace(d)
+		if len(d) < isoDateLen {
+			continue
 		}
+		// PARSED, not pattern-matched. The regex accepted any date-shaped prefix and returned
+		// it unchanged, so `2026-02-30` and `2026-13-99` survived as "canonical" dates — and
+		// EventYear reads Dates[0][:4], so an impossible date still names a quarter and a
+		// master list. A timestamp like `2026-03-17T09:00:00Z` also survived whole, emitting a
+		// wire shape `Dates` does not promise. Reformatting from the parsed value is what makes
+		// the YYYY-MM-DD guarantee true rather than merely likely.
+		parsed, err := time.Parse(isoDateLayout, d[:isoDateLen])
+		if err != nil {
+			continue
+		}
+		out = append(out, parsed.Format(isoDateLayout))
 	}
 	return out
 }

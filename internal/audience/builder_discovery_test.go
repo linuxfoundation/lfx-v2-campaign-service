@@ -278,3 +278,63 @@ func TestIsRollupRequiresTheFilterTypeNotJustTheOperator(t *testing.T) {
 		t.Error("a rollup must be ALL list-membership filters; one property filter disqualifies it")
 	}
 }
+
+// Dates must be PARSED, not pattern-matched.
+//
+// The guard was a regex prefix match that returned the input unchanged, so an impossible
+// date survived as canonical — and EventYear reads Dates[0][:4], so `2026-13-99` still
+// named a year, a quarter, and the master list built from it. A timestamp survived whole,
+// emitting a wire shape `EventIdentity.Dates` does not promise.
+func TestSanitizeEventDatesRejectsWhatItCannotParse(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"a real date passes", "2026-11-09", []string{"2026-11-09"}},
+		{"an impossible day is rejected", "2026-02-30", nil},
+		{"an impossible month is rejected", "2026-13-99", nil},
+		{"a timestamp is normalised, not passed through", "2026-03-17T09:00:00Z", []string{"2026-03-17"}},
+		{"a short string is rejected", "2026-11", nil},
+		{"surrounding space is trimmed", "  2026-11-09  ", []string{"2026-11-09"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeEventDates([]string{tc.in})
+			if len(got) != len(tc.want) {
+				t.Fatalf("SanitizeEventDates(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("SanitizeEventDates(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// A bare year must not be a matching keyword.
+//
+// HubSpot's search is loose, so "2026" alone made "Open Source Summit 2026 Registrants"
+// look plausible for "KubeCon Europe 2026" — presentable as an event-registration list for
+// the wrong event, and consuming an inspection from the DiscoveryMaxInspections budget that
+// a genuine candidate then could not use.
+func TestEventKeywordsExcludesBareYears(t *testing.T) {
+	got := EventKeywords("KubeCon Europe 2026")
+
+	if _, present := got["2026"]; present {
+		t.Error("a bare year is a keyword; any list mentioning the same year now matches on that alone")
+	}
+	// The real name tokens must survive, or discovery matches nothing at all.
+	for _, want := range []string{"kubecon", "europe"} {
+		if _, present := got[want]; !present {
+			t.Errorf("keyword %q was dropped along with the year", want)
+		}
+	}
+
+	// A number that is not a plausible year is NOT excluded — it can be a real edition token.
+	if _, present := EventKeywords("Cloud Expo 3000")["3000"]; !present {
+		t.Error("only 19xx/20xx years are noise; other numerics may be meaningful")
+	}
+}

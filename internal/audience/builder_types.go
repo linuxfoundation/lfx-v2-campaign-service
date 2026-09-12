@@ -324,6 +324,16 @@ func EventKeywords(text string) map[string]struct{} {
 		if _, skip := stopwords[token]; skip {
 			continue
 		}
+		// A four-digit YEAR is noise for the same reason the stopwords are. HubSpot's search
+		// is loose, so "2026" alone makes "Open Source Summit 2026 Registrants" look plausible
+		// for "KubeCon Europe 2026": it can be presented as an event-registration list for the
+		// wrong event, and it consumes an inspection from the DiscoveryMaxInspections budget
+		// that a genuine candidate then cannot use. The year still reaches the search through
+		// DiscoveryQueries and EventQuarterCode, which use the DATES; it just cannot carry a
+		// match on its own.
+		if yearRE.MatchString(token) {
+			continue
+		}
 		out[token] = struct{}{}
 	}
 	return out
