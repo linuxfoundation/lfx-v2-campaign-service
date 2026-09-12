@@ -68,3 +68,47 @@ func TestListMembershipIDsReadsAWellFormedPage(t *testing.T) {
 		t.Fatalf("want 2 ids, got %d (%v)", len(ids), ids)
 	}
 }
+
+// A 2xx with no `to` object must FAIL, not return an email that targeted nobody.
+//
+// `to` decoded as a value struct, so a truncated response like `{"id":"123"}` produced a
+// successful EmailSendLists with empty include and exclude — the exact outcome this
+// function's doc comment guards `includedProperties` against, arriving by another route.
+// The caller uses those ids to decide what a past send reached; an empty answer that is
+// really "the response was malformed" misreports the send's audience as nobody.
+func TestGetEmailSendListsRejectsAResponseWithNoToObject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"123","publishDate":"2026-01-01T00:00:00Z"}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(Credentials{PrivateAppToken: "t"}, AccountConfig{PortalID: "8112310"}, WithBaseURL(server.URL))
+
+	got, err := c.GetEmailSendLists(context.Background(), "123")
+	if err == nil {
+		t.Fatalf("a response with no `to` object was accepted: %+v — the send's audience is reported as nobody", got)
+	}
+	if !strings.Contains(err.Error(), "`to`") {
+		t.Errorf("the error must name the missing field so the cause is diagnosable; got %v", err)
+	}
+}
+
+// An empty-but-PRESENT `to` is a real answer and must still be accepted.
+func TestGetEmailSendListsAcceptsAnEmptyToObject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"123","to":{}}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(Credentials{PrivateAppToken: "t"}, AccountConfig{PortalID: "8112310"}, WithBaseURL(server.URL))
+
+	got, err := c.GetEmailSendLists(context.Background(), "123")
+	if err != nil {
+		t.Fatalf("an email that genuinely selected nothing must still read: %v", err)
+	}
+	if len(got.Include) != 0 || len(got.Exclude) != 0 {
+		t.Errorf("want an empty selection, got include=%v exclude=%v", got.Include, got.Exclude)
+	}
+}
