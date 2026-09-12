@@ -277,6 +277,11 @@ var AudienceComposeMasterResult = Type("audience-compose-master-result", func() 
 var AudienceComposePartialError = Type("audience-compose-partial-error", func() {
 	errorAttrs("500", "The suppression list was created but the master list was not.")
 	Attribute("suppression", AudienceComposedList, "Platform state that WAS created and must be reconciled")
+	// REQUIRED, because `suppression` is the whole reason this type exists: it names the
+	// orphan the caller must reconcile before composing again. Optional, generated client
+	// validation accepted a partial-error body without it — leaving a consumer told "do not
+	// retry" and not told what to go and fix, which is strictly worse than a plain 500.
+	Required("suppression")
 })
 
 // AudienceQaFinding is one problem found by a QA check.

@@ -11310,6 +11310,7 @@ components:
             required:
                 - code
                 - message
+                - suppression
         AudienceComposedList:
             type: object
             properties:

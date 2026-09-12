@@ -696,7 +696,7 @@ type ComposeAudienceMasterComposePartialResponseBody struct {
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 	// Platform state that WAS created and must be reconciled
-	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
+	Suppression *AudienceComposedListResponseBody `form:"suppression" json:"suppression" xml:"suppression"`
 }
 
 // ComposeAudienceMasterInternalServerErrorResponseBody is the type of the
