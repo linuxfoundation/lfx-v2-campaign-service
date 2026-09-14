@@ -7,7 +7,7 @@ The old OCI LiteLLM (`litellm.tools.lfx.dev`) routed on the bare inference profi
 instances require the prefix, and the two disagree in BOTH directions — measured against a live
 key rather than inferred:
 
-| model | old `tools.lfx.dev` | v2 `*.v2.cluster` |
+| model | old `litellm.tools.lfx.dev` | v2 `*.v2.cluster` |
 |---|---|---|
 | `us.anthropic.claude-sonnet-4-20250514-v1:0` | 200 | 400 |
 | `bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0` | 401 | 200 |

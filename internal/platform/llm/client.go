@@ -37,7 +37,7 @@ const (
 	// The prefix is not cosmetic and the two instances disagree about it — measured, both
 	// directions, against a live key:
 	//
-	//	model                                          old (tools.lfx.dev)   v2 (*.v2.cluster)
+	//	model                                          old (litellm.tools.lfx.dev)   v2 (*.v2.cluster)
 	//	us.anthropic.claude-sonnet-4-20250514-v1:0     200                   400
 	//	bedrock/us.anthropic.claude-sonnet-4-...       401                   200
 	//

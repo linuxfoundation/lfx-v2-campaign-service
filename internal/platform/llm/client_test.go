@@ -934,7 +934,7 @@ func TestComplete_RefusesACompletionTheModelDidNotFinish(t *testing.T) {
 // The value needs its own guard because the two LiteLLM instances disagree about it in opposite
 // directions — measured against a live key:
 //
-//	model                                          old (tools.lfx.dev)   v2 (*.v2.cluster)
+//	model                                          old (litellm.tools.lfx.dev)   v2 (*.v2.cluster)
 //	us.anthropic.claude-sonnet-4-20250514-v1:0     200                   400
 //	bedrock/us.anthropic.claude-sonnet-4-...       401                   200
 //
@@ -943,8 +943,6 @@ func TestComplete_RefusesACompletionTheModelDidNotFinish(t *testing.T) {
 // a 400 whose body the client discards. That combination is what made the original incident take
 // four attempts to diagnose, so the regression is worth a test that fails loudly instead.
 func TestDefaultModelCarriesTheBedrockPrefix(t *testing.T) {
-	t.Parallel()
-
 	const want = "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
 	if DefaultModel != want {
 		t.Errorf("DefaultModel = %q, want %q", DefaultModel, want)
