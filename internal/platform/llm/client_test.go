@@ -924,3 +924,34 @@ func TestComplete_RefusesACompletionTheModelDidNotFinish(t *testing.T) {
 		})
 	}
 }
+
+// TestDefaultModelCarriesTheBedrockPrefix pins the literal, not the constant.
+//
+// Every other model assertion in this file compares the wire value against DefaultModel itself,
+// which is the right shape for "the client sends the default when none is configured" but cannot
+// protect the default's VALUE: restore the unprefixed id and they all still pass.
+//
+// The value needs its own guard because the two LiteLLM instances disagree about it in opposite
+// directions — measured against a live key:
+//
+//	model                                          old (tools.lfx.dev)   v2 (*.v2.cluster)
+//	us.anthropic.claude-sonnet-4-20250514-v1:0     200                   400
+//	bedrock/us.anthropic.claude-sonnet-4-...       401                   200
+//
+// and every campaign-service environment runs on v2. Dropping the prefix is therefore a silent
+// production break: auth still SUCCEEDS, the service starts clean, and only generation fails with
+// a 400 whose body the client discards. That combination is what made the original incident take
+// four attempts to diagnose, so the regression is worth a test that fails loudly instead.
+func TestDefaultModelCarriesTheBedrockPrefix(t *testing.T) {
+	t.Parallel()
+
+	const want = "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
+	if DefaultModel != want {
+		t.Errorf("DefaultModel = %q, want %q", DefaultModel, want)
+	}
+	// Stated separately from the equality above: if a future model id changes the suffix, that
+	// assertion moves with it, and this one still has to hold for the v2 instances to resolve it.
+	if !strings.HasPrefix(DefaultModel, "bedrock/") {
+		t.Errorf("DefaultModel = %q, want the bedrock/ provider prefix the v2 LiteLLM requires", DefaultModel)
+	}
+}
