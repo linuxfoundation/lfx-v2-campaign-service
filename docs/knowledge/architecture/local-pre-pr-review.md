@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Local pre-PR review"
-description: "Repo-owned review content for the local pre-PR review — the code-review rules and the empirical learnings knowledge base — and its known unresolved target-only pattern limitation; not the review lifecycle or its configuration."
+description: "Repo-owned review content for the local pre-PR review — the code-review rules and the empirical learnings knowledge base — its known unresolved target-only pattern limitation, and the interim state until the central lifecycle publishes; not the review lifecycle or its configuration."
 resource: "docs/reviews/knowledge-base/README.md"
 ---
 
@@ -40,8 +40,10 @@ target lifecycle in
 [lfx-skills#73](https://github.com/linuxfoundation/lfx-skills/pull/73). The
 lifecycle published before that change probes retired alias paths and prefers a
 repo-owned fallback launcher, both of which this repo has removed on purpose, so
-local review is intentionally inoperative here until #73 merges and publishes.
-This is the coordinated release's documented merge gate, not a defect to work
-around; do not restore the retired paths or add an override. The adoption log
-entry `docs/knowledge/log/2026-09-02-central-review-lifecycle-adoption.md`
-records the decision.
+local review is intentionally inoperative here until lfx-skills#73 merges and
+publishes. This is the coordinated release's documented merge gate, not a defect
+to work around; do not restore the retired paths or add an override. The
+adoption log entry
+`docs/knowledge/log/2026-09-02-central-review-lifecycle-adoption.md` records
+the decision. Remove this section once lfx-skills#73 has merged and published
+and local review has been verified to run here against the published lifecycle.

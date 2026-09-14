@@ -10,10 +10,11 @@ configuration surface, and it is not repeated anywhere else in the repo.
 
 The old lifecycle/configuration concept at
 `docs/knowledge/architecture/local-pre-pr-review.md` is replaced in place by a
-narrow concept covering only the repo-owned review content and its known
-unresolved target-only pattern limitation, so historical log links to that path
-stay valid; it restates no configuration or lifecycle rule, and its index bullet
-is updated to match.
+narrow concept covering only the repo-owned review content, its known
+unresolved target-only pattern limitation, and (as a time-bounded note) the
+interim state until the central lifecycle publishes, so historical log links to
+that path stay valid; it restates no configuration or lifecycle rule, and its
+index bullet is updated to match.
 
 Deleted as obsolete: the repo-owned fallback launcher
 `.claude/skills/local-review-fallback` with its `.agents/skills/` link, and the
