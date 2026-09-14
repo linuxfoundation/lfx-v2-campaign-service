@@ -148,10 +148,20 @@ func systemScopedHubSpot(err error, fromSystem bool) error {
 
 // Capabilities reports whether this project has a usable HubSpot connection.
 //
-// It resolves a client and throws it away. That is the only honest test available:
+// It resolves a client and throws it away. That is the only LOCAL test available:
 // "a connection row exists" is not the same as "a client can be built from it", and
 // the difference (a connection deactivated, or an undecryptable credential) is
 // exactly what leaves an operator staring at a tab whose every button fails.
+//
+// SCOPE, stated because the field name over-promises: `HubSpotConfigured: true` means
+// "a client can be BUILT for this project", not "that client can talk to HubSpot". A
+// syntactically valid but revoked or expired token passes this check — nothing here
+// makes an authenticated call. That is deliberate: this endpoint gates whether the tab
+// renders at all, so paying for a live round-trip on every page load to catch a case
+// the first real request surfaces anyway is the wrong trade. The real requests DO fail
+// closed on a revoked token now (the search paths propagate permission rejections
+// rather than reporting an empty portal), so the operator gets a typed 503 on first use
+// instead of a silent empty state.
 //
 // Never returns an error. An unresolvable connection is the ANSWER here, not a
 // failure — this endpoint exists to drive a degraded UI, so failing it would leave
@@ -407,6 +417,12 @@ func stripJSONFence(raw string) string {
 // SearchLists is the typeahead over the portal's contact lists, for attaching a list
 // by hand. Unfiltered by any predicate on purpose: the operator is the filter.
 func (x *AudienceExplorer) SearchLists(ctx context.Context, projectID, query string) (rows []audience.ListRow, err error) {
+	// MinLength(1) at the edge accepts "   ", which the HubSpot client then trims to an empty
+	// query and answers by walking every list page — turning a typeahead keystroke into the
+	// endpoint's worst-case fan-out. Rejected here as the invalid request it is.
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("%w: a list search needs a non-whitespace query", audience.ErrInvalidRequest)
+	}
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -443,18 +459,26 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 
 	for _, term := range audience.StandardSuppressionTerms {
 		row := audience.SuppressionRow{Key: term.Key, Label: term.Label, Category: audience.SuppressionCategoryStandard}
-		if hit := x.bestMatch(ctx, client, []string{term.SearchTerm}, func(name string) bool {
+		hit, berr := x.bestMatch(ctx, client, []string{term.SearchTerm}, func(name string) bool {
 			return audience.MatchesStandardSuppression(name, term.SearchTerm)
-		}); hit != nil {
+		})
+		if berr != nil {
+			return nil, berr
+		}
+		if hit != nil {
 			row.ListID, row.Name, row.Size, row.HubSpotURL = hit.ListID, hit.Name, sizeOf(hit), hit.AppURL
 		}
 		out = append(out, row)
 	}
 
 	if probe := audience.BrandOptOutProbe(brandShort); probe != "" {
-		if hit := x.bestMatch(ctx, client, []string{probe}, func(name string) bool {
+		hit, berr := x.bestMatch(ctx, client, []string{probe}, func(name string) bool {
 			return audience.MatchesBrandOptOut(name, brandShort)
-		}); hit != nil {
+		})
+		if berr != nil {
+			return nil, berr
+		}
+		if hit != nil {
 			out = append(out, audience.SuppressionRow{
 				Key:        "brand_global_opt_outs",
 				Label:      audience.BrandOptOutLabel(brandShort),
@@ -468,9 +492,13 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 	}
 
 	if probes := audience.EventSuppressionProbes(eventName); len(probes) > 0 {
-		if hit := x.bestMatch(ctx, client, probes, func(name string) bool {
+		hit, berr := x.bestMatch(ctx, client, probes, func(name string) bool {
 			return audience.MatchesEventSuppression(name, keywords)
-		}); hit != nil {
+		})
+		if berr != nil {
+			return nil, berr
+		}
+		if hit != nil {
 			out = append(out, audience.SuppressionRow{
 				Key:        "event_suppression",
 				Label:      audience.EventSuppressionLabel(eventName),
@@ -565,6 +593,12 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	for _, term := range audience.LastSentSearchTerms(eventName, brandShort) {
 		emails, serr := client.SearchEmails(ctx, term)
 		if serr != nil {
+			// A revoked token fails EVERY term alike, so absorbing them all returned 200
+			// with an empty history — telling the operator there were no prior sends when
+			// the truth is the credential no longer works.
+			if hubspot.IsPermissionRejection(serr) {
+				return nil, serr
+			}
 			if errors.Is(serr, hubspot.ErrSearchIncomplete) {
 				// The scan bound was reached having matched nothing, so "no prior
 				// send" would be an absence nobody established. Try the next term.
@@ -669,17 +703,36 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 // A probe whose search fails is skipped: the next probe may still resolve the row,
 // and a row that resolves to nothing is rendered as unavailable rather than as an
 // error.
-func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) *hubspot.List {
+// newerSuppression ranks two candidate suppression lists: newest quarter first, size as the
+// same-quarter tiebreak. Mirrors audience.NewerFirst, which takes a ListCandidate rather than
+// the *hubspot.List this path carries.
+func newerSuppression(a, b *hubspot.List) bool {
+	aYear, aQuarter := audience.QuarterRank(a.Name)
+	bYear, bQuarter := audience.QuarterRank(b.Name)
+	if aYear != bYear {
+		return aYear > bYear
+	}
+	if aQuarter != bQuarter {
+		return aQuarter > bQuarter
+	}
+	return a.Size > b.Size
+}
+
+// Returns an error ONLY for a credential rejection. Every other per-probe failure is absorbed,
+// because one failed probe must not lose the others — but a revoked token fails every probe
+// alike, and absorbing those made SuppressionLists return 200 with every hygiene row marked
+// "unavailable": an authentication outage rendered as "this portal has no GDPR lists", which is
+// the one answer that must never be guessed.
+func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
 	for _, probe := range probes {
 		hits, err := client.SearchLists(ctx, probe)
 		if err != nil {
-			// NOTE: a credential rejection is NOT propagated here, unlike the discovery
-			// and existing-master search loops above. bestMatch returns only *hubspot.List
-			// and has three inline `if hit := ...` callers, so threading an error through
-			// is a wider change than this fix should make silently. The consequence is
-			// bounded: suppression probes feed the OPTIONAL suppression panel, and the
-			// caller's own credential resolution already failed loudly before reaching
-			// here for a wholly revoked token. Tracked rather than half-done.
+			// A revoked token fails EVERY probe, so absorbing them all reported an empty
+			// hygiene set for what is really a credential problem — and bypassed the
+			// deferred systemScopedHubSpot classifier that turns it into a typed 503.
+			if hubspot.IsPermissionRejection(err) {
+				return nil, err
+			}
 			slog.WarnContext(ctx, "suppression list search failed", "error", err)
 			continue
 		}
@@ -689,15 +742,20 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 			if !accept(hit.Name) {
 				continue
 			}
-			if best == nil || hit.Size > best.Size {
+			// Newest QUARTER first, size only as the same-quarter tiebreak — mirroring
+			// audience.NewerFirst. Ranking by size alone let a larger stale list beat the
+			// current quarter's, which contradicts StandardSuppressionTerms' invariant that
+			// recurring hygiene lists select the highest YYQN — and can omit contacts who
+			// were only ever added to the current list.
+			if best == nil || newerSuppression(hit, best) {
 				best = hit
 			}
 		}
 		if best != nil {
-			return best
+			return best, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // ---------------------------------------------------------------------------

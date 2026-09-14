@@ -13,6 +13,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -382,5 +383,43 @@ func TestSumKnownSizesRefusesToTotalAnUnreportedSize(t *testing.T) {
 	// A genuinely empty list is NOT an unknown size and must still total.
 	if total, ok := sumKnownSizes([]*int64{size(0), size(5)}); !ok || total != 5 {
 		t.Errorf("a real zero is a known size: want (5, true), got (%d, %v)", total, ok)
+	}
+}
+
+// A whitespace-only query must be REFUSED, not forwarded.
+//
+// The design's MinLength(1) accepts "   ". The HubSpot client then trims it to an empty
+// query and answers by walking every list page — turning one typeahead keystroke into the
+// endpoint's worst-case fan-out against a rate-limited API.
+func TestSearchListsRefusesAWhitespaceOnlyQuery(t *testing.T) {
+	x := explorerWithNoPortal(nil, nil, nil)
+
+	for _, q := range []string{"", "   ", "\t\n "} {
+		_, err := x.SearchLists(context.Background(), "tlf", q)
+		if !errors.Is(err, audience.ErrInvalidRequest) {
+			t.Errorf("SearchLists(%q): want ErrInvalidRequest, got %v — an empty query walks the whole portal", q, err)
+		}
+	}
+}
+
+// Suppression candidates rank by newest QUARTER, with size only as the same-quarter
+// tiebreak. Ranking by size alone let a larger STALE list beat the current quarter's,
+// contradicting StandardSuppressionTerms' highest-YYQN invariant — and omitting contacts
+// who were only ever added to the current list.
+func TestNewerSuppressionPrefersTheCurrentQuarterOverALargerStaleList(t *testing.T) {
+	stale := &hubspot.List{Name: "24Q1 - LF Events GDPR Suppression", Size: 900_000}
+	current := &hubspot.List{Name: "26Q3 - LF Events GDPR Suppression", Size: 1_000}
+
+	if !newerSuppression(current, stale) {
+		t.Error("a larger stale-quarter list outranked the current quarter's suppression list")
+	}
+	if newerSuppression(stale, current) {
+		t.Error("ranking is not antisymmetric across quarters")
+	}
+
+	// Same quarter: size is the tiebreak, since that is usually the real list vs a draft.
+	small := &hubspot.List{Name: "26Q3 - LF Events GDPR Suppression", Size: 10}
+	if !newerSuppression(current, small) {
+		t.Error("within a quarter the larger list should win")
 	}
 }
