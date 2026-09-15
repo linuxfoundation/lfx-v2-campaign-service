@@ -199,7 +199,7 @@ type Container struct {
 	// Explore serves the audience-builder read/compose endpoints. Always non-nil so the
 	// routes are mounted on every path; it answers the contract's typed 503 while the
 	// explorer behind it is unset, which is the same degradation Audiences uses.
-	Explore     exploresvc.Service
+	Explore exploresvc.Service
 
 	// Metrics owns the Prometheus registry served at /metrics. It is built FIRST in
 	// NewContainer, before any wiring branch, so the endpoint exists on every path —

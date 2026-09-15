@@ -562,7 +562,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: preview-audience-count lfx-v2-campaign-service-audience-builder
-            description: Count the union of the selected lists' memberships — exactly when that is within bounds, and as a sum-based estimate (see reason for which direction it errs) when it is not. Creates nothing.
+            description: Count the union of the selected lists' memberships — exactly when that is within bounds, as an UPPER-bound estimate (the sum of list sizes, which double-counts overlap) when it is not, and as no number at all when any selected list did not report a size. Creates nothing.
             operationId: lfx-v2-campaign-service-audience-builder#preview-audience-count
             parameters:
                 - name: project_id
@@ -8685,7 +8685,7 @@ definitions:
                 format: int64
             estimate:
                 type: integer
-                description: Sum of the selected lists' sizes when exact is false — usually an over-count from list overlap, but an under-count when one of the lists had no reported size at all; see reason
+                description: Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists
                 example: 4418518094423092480
                 format: int64
             exact:
@@ -8694,7 +8694,7 @@ definitions:
                 example: true
             reason:
                 type: string
-                description: Why the count is exact or bounded, and which direction the estimate's error runs
+                description: Why the count is exact or bounded
                 example: Aliquam voluptatibus dolorem.
         example:
             count: 3862270925100704491
@@ -11718,7 +11718,7 @@ definitions:
                     - Minus nihil aliquam quos ea cumque enim.
                     - Et rerum assumenda nam aut quis facere.
                 minItems: 1
-                maxItems: 200
+                maxItems: 50
         example:
             list_ids:
                 - Aut ducimus nisi.

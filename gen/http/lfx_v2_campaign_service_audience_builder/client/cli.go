@@ -255,8 +255,8 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 		if len(body.ListIds) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
 		}
-		if len(body.ListIds) > 200 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 200, false))
+		if len(body.ListIds) > 50 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 50, false))
 		}
 		if err != nil {
 			return nil, err

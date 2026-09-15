@@ -62,7 +62,13 @@ func (c *Client) GetEmailSendLists(ctx context.Context, emailID string) (*EmailS
 	var resp struct {
 		ID          string `json:"id"`
 		PublishDate string `json:"publishDate"`
-		To          struct {
+		// A POINTER, so an absent `to` is distinguishable from one that selected nothing.
+		// As a value struct it decoded to a zero value, and a truncated 2xx such as
+		// `{"id":"123"}` returned a successful email with no include or suppression lists —
+		// precisely the "indistinguishable from a send that targeted nothing" outcome the
+		// doc comment above guards `includedProperties` against. The individual selection
+		// fields inside may still be absent; the OBJECT may not.
+		To *struct {
 			ContactIlsLists *idSelection `json:"contactIlsLists"`
 			ContactLists    *idSelection `json:"contactLists"`
 		} `json:"to"`
@@ -72,6 +78,9 @@ func (c *Client) GetEmailSendLists(ctx context.Context, emailID string) (*EmailS
 	}
 	if resp.ID == "" {
 		return nil, fmt.Errorf("hubspot: GetEmailSendLists(%s) returned a 2xx with no id (malformed response)", emailID)
+	}
+	if resp.To == nil {
+		return nil, fmt.Errorf("hubspot: GetEmailSendLists(%s) returned a 2xx with no `to` object (malformed response)", emailID)
 	}
 	out := &EmailSendLists{PublishDate: strings.TrimSpace(resp.PublishDate)}
 	if sel := resp.To.ContactIlsLists; sel != nil {

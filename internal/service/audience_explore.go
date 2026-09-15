@@ -6,6 +6,8 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"log/slog"
 	"strings"
 	"sync"
@@ -13,7 +15,6 @@ import (
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 
 	"goa.design/goa/v3/security"
 )
@@ -387,12 +388,27 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 	switch {
 	case errors.Is(err, audience.ErrListNotFound):
 		return &explore.NotFoundError{Code: "404", Message: "no list in this project's HubSpot portal matches that reference"}
-	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved),
-		errors.Is(err, eventurl.ErrEventURLInvalid), errors.Is(err, eventurl.ErrEventURLForbidden):
+	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved):
 		// 400, not 500: nothing is wrong with the service, and the fix is a different
 		// request — a resolvable list reference, or an event URL whose page declares a
 		// name. Reported as a server fault, an operator would wait for it to clear.
+		//
+		// eventurl.ErrEventURLInvalid/ErrEventURLForbidden are deliberately NOT listed
+		// here even though they are also 400s: the arm below gives them a more specific,
+		// URL-focused message, and listing the same sentinel in two arms would make this
+		// one win by switch order and silently shadow the more useful message.
 		return &explore.BadRequestError{Code: "400", Message: "the request could not be satisfied as given: check the event URL or list reference"}
+	case errors.Is(err, eventurl.ErrEventURLInvalid), errors.Is(err, eventurl.ErrEventURLForbidden):
+		// 400: the caller gave a URL this service will not fetch — malformed, or resolving
+		// to an address SSRF protection refuses. Reported as a 500 these read as "the
+		// service is broken", so an operator retries a URL that can never work.
+		// `mapEventURLErr` classifies the same sentinels for /fetch-event-url; it returns
+		// briefs.* types, so the arms are mirrored here rather than reused.
+		return &explore.BadRequestError{Code: "400", Message: "event URL is invalid, or resolves to an address this service will not connect to"}
+	case errors.Is(err, eventurl.ErrEventURLFetchFailed):
+		// 503, not 400: the URL is fine and the origin did not answer. Retrying may work,
+		// which is the opposite of the advice a 400 gives.
+		return &explore.ConnServiceUnavailableError{Code: "503", Message: "the event page could not be fetched"}
 	case errors.Is(err, audience.ErrEventPageUnavailable):
 		return &explore.ConnServiceUnavailableError{Code: "503", Message: "this deployment cannot read event pages, so discovery is unavailable"}
 	case errors.Is(err, domain.ErrSystemConnectionMissing), errors.Is(err, domain.ErrSystemConnectionNotUsable):
@@ -406,6 +422,18 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 		// a rotated encryption key failing every project at once, and only an operator
 		// can tell those apart or fix either.
 		return &explore.InternalServerError{Code: "500", Message: "this project's stored HubSpot credentials could not be decrypted — an operator must investigate"}
+	case hubspot.IsUnconfirmed(err):
+		// An AMBIGUOUS upstream outcome -- a mutating 429/5xx/transport failure, or a
+		// 2xx with no id. Both CreateList calls behind compose are non-idempotent, so a
+		// list may ALREADY exist. Falling through to the generic 500 below gives text
+		// that reads like an ordinary transient error and invites exactly the blind
+		// retry that creates a duplicate in a production portal. `unconfirmedNote` in
+		// audience_build.go exists because this same defect was fixed once already on
+		// the build path; this is the explore path's equivalent.
+		return &explore.InternalServerError{
+			Code:    "500",
+			Message: "HubSpot did not confirm whether this change was applied — check the portal before retrying, as a retry may create a duplicate",
+		}
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrConnectionNotUsable):
 		// 503 rather than 404: the LIST or email asked about may well exist. What is
 		// unavailable is the connection needed to look, which is what /capabilities
@@ -429,6 +457,14 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 		slog.ErrorContext(ctx, "audience compose left orphaned or unconfirmed platform state",
 			"project_id", projectID, "suppression_list_id", partial.Suppression.ListID,
 			"master_name", partial.MasterName, "error", err)
+		// 500, matching `Response("ComposePartial", StatusInternalServerError)` in the
+		// design. The body's `code` is documented as the HTTP status, so "409" here left
+		// a client reading the status and a client reading the body disagreeing about the
+		// same response -- on the one response that must never be blindly retried.
+		// 409 is not available to switch the mapping TO: commonBriefErrors already binds
+		// StatusConflict to the generic Conflict error, and Goa cannot map two errors to
+		// one status. The do-not-retry instruction is carried by the message and by the
+		// distinct error type, which is what the UI branches on.
 		out := &explore.AudienceComposePartialError{
 			Code:    "500",
 			Message: composePartialMessage(partial),

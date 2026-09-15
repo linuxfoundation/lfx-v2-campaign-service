@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,7 +81,38 @@ type AudienceExplorer struct {
 // nil: a deployment without them still serves every endpoint that does not read an
 // event page, and Discover reports what it could not do rather than failing.
 func NewAudienceExplorer(builder *AudienceBuilder, fetcher eventPageReader, parser eventPageParser, llm completer) *AudienceExplorer {
+	// A nil *llm.Client (what the container returns when AI_PROXY_URL/AI_API_KEY are
+	// unset) arrives here as a non-nil interface holding a nil pointer, so the
+	// `x.llm == nil` guards downstream read false and call through to a nil receiver.
+	// Normalising at the single construction site is what makes "llm may be nil" in
+	// the doc comment above actually true for every guard, rather than each guard
+	// having to re-derive it. Same for the other two optional dependencies, which
+	// reach their guards by the identical path.
+	if isNilIface(llm) {
+		llm = nil
+	}
+	if isNilIface(fetcher) {
+		fetcher = nil
+	}
+	if isNilIface(parser) {
+		parser = nil
+	}
 	return &AudienceExplorer{builder: builder, fetcher: fetcher, parser: parser, llm: llm, now: time.Now}
+}
+
+// isNilIface reports whether v is either an untyped nil interface or an interface
+// holding a nil pointer. reflect is the only way to see the second case.
+//
+// Only llm reaches this with a typed nil today (the container's eventFetcher and
+// NewParser never return nil), but all three arrive by the same route and are
+// guarded by the same `== nil` test, so normalising one and not the others would
+// leave the next nil-returning constructor to rediscover this panic.
+func isNilIface(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
 // ---------------------------------------------------------------------------
@@ -116,10 +148,20 @@ func systemScopedHubSpot(err error, fromSystem bool) error {
 
 // Capabilities reports whether this project has a usable HubSpot connection.
 //
-// It resolves a client and throws it away. That is the only honest test available:
+// It resolves a client and throws it away. That is the only LOCAL test available:
 // "a connection row exists" is not the same as "a client can be built from it", and
 // the difference (a connection deactivated, or an undecryptable credential) is
 // exactly what leaves an operator staring at a tab whose every button fails.
+//
+// SCOPE, stated because the field name over-promises: `HubSpotConfigured: true` means
+// "a client can be BUILT for this project", not "that client can talk to HubSpot". A
+// syntactically valid but revoked or expired token passes this check — nothing here
+// makes an authenticated call. That is deliberate: this endpoint gates whether the tab
+// renders at all, so paying for a live round-trip on every page load to catch a case
+// the first real request surfaces anyway is the wrong trade. The real requests DO fail
+// closed on a revoked token now (the search paths propagate permission rejections
+// rather than reporting an empty portal), so the operator gets a typed 503 on first use
+// instead of a silent empty state.
 //
 // Never returns an error. An unresolvable connection is the ANSWER here, not a
 // failure — this endpoint exists to drive a degraded UI, so failing it would leave
@@ -157,7 +199,10 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	}
 
 	keywords := audience.EventKeywords(identity.Name)
-	candidates := x.searchCandidates(ctx, client, identity, keywords)
+	candidates, serr := x.searchCandidates(ctx, client, identity, keywords)
+	if serr != nil {
+		return nil, serr
+	}
 
 	// Newest quarter first, so the inspection budget is spent on the lists most
 	// likely to be the current edition's rather than on whatever the search returned
@@ -254,12 +299,23 @@ func (x *AudienceExplorer) classifyInto(
 
 // searchCandidates runs discovery's searches and returns the plausible hits,
 // de-duplicated by list id.
-func (x *AudienceExplorer) searchCandidates(ctx context.Context, client *hubspot.Client, identity audience.EventIdentity, keywords map[string]struct{}) []audience.ListCandidate {
+//
+// Returns an error ONLY for a credential rejection. Every other per-query failure is
+// absorbed, because one bad query must not lose the hits the others returned — but a
+// revoked token fails every query alike, and absorbing those would turn a broken
+// connection into a confident "this portal has no lists".
+func (x *AudienceExplorer) searchCandidates(ctx context.Context, client *hubspot.Client, identity audience.EventIdentity, keywords map[string]struct{}) ([]audience.ListCandidate, error) {
 	seen := map[string]struct{}{}
 	out := make([]audience.ListCandidate, 0, 32)
 	for _, query := range audience.DiscoveryQueries(identity) {
 		hits, err := client.SearchLists(ctx, query)
 		if err != nil {
+			// A revoked token fails EVERY query, so continuing past them all reports an
+			// empty portal for what is really a credential problem — and bypasses the
+			// deferred systemScopedHubSpot classifier that would make it a typed 503.
+			if hubspot.IsPermissionRejection(err) {
+				return nil, err
+			}
 			// A failed search narrows the candidate set; it does not invalidate the
 			// hits the other queries returned. Discovery reports what it found.
 			slog.WarnContext(ctx, "audience discovery search failed", "query_len", len(query), "error", err)
@@ -277,7 +333,7 @@ func (x *AudienceExplorer) searchCandidates(ctx context.Context, client *hubspot
 			out = append(out, listCandidate(hit))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // eventIdentity resolves the event's name, brand token and dates from its page.
@@ -369,6 +425,12 @@ func stripJSONFence(raw string) string {
 // SearchLists is the typeahead over the portal's contact lists, for attaching a list
 // by hand. Unfiltered by any predicate on purpose: the operator is the filter.
 func (x *AudienceExplorer) SearchLists(ctx context.Context, projectID, query string) (rows []audience.ListRow, err error) {
+	// MinLength(1) at the edge accepts "   ", which the HubSpot client then trims to an empty
+	// query and answers by walking every list page — turning a typeahead keystroke into the
+	// endpoint's worst-case fan-out. Rejected here as the invalid request it is.
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("%w: a list search needs a non-whitespace query", audience.ErrInvalidRequest)
+	}
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -405,18 +467,26 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 
 	for _, term := range audience.StandardSuppressionTerms {
 		row := audience.SuppressionRow{Key: term.Key, Label: term.Label, Category: audience.SuppressionCategoryStandard}
-		if hit := x.bestMatch(ctx, client, []string{term.SearchTerm}, func(name string) bool {
+		hit, berr := x.bestMatch(ctx, client, []string{term.SearchTerm}, func(name string) bool {
 			return audience.MatchesStandardSuppression(name, term.SearchTerm)
-		}); hit != nil {
+		})
+		if berr != nil {
+			return nil, berr
+		}
+		if hit != nil {
 			row.ListID, row.Name, row.Size, row.HubSpotURL = hit.ListID, hit.Name, sizeOf(hit), hit.AppURL
 		}
 		out = append(out, row)
 	}
 
 	if probe := audience.BrandOptOutProbe(brandShort); probe != "" {
-		if hit := x.bestMatch(ctx, client, []string{probe}, func(name string) bool {
+		hit, berr := x.bestMatch(ctx, client, []string{probe}, func(name string) bool {
 			return audience.MatchesBrandOptOut(name, brandShort)
-		}); hit != nil {
+		})
+		if berr != nil {
+			return nil, berr
+		}
+		if hit != nil {
 			out = append(out, audience.SuppressionRow{
 				Key:        "brand_global_opt_outs",
 				Label:      audience.BrandOptOutLabel(brandShort),
@@ -430,9 +500,13 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 	}
 
 	if probes := audience.EventSuppressionProbes(eventName); len(probes) > 0 {
-		if hit := x.bestMatch(ctx, client, probes, func(name string) bool {
+		hit, berr := x.bestMatch(ctx, client, probes, func(name string) bool {
 			return audience.MatchesEventSuppression(name, keywords)
-		}); hit != nil {
+		})
+		if berr != nil {
+			return nil, berr
+		}
+		if hit != nil {
 			out = append(out, audience.SuppressionRow{
 				Key:        "event_suppression",
 				Label:      audience.EventSuppressionLabel(eventName),
@@ -470,6 +544,11 @@ func (x *AudienceExplorer) ExistingMasterLists(ctx context.Context, projectID, e
 	for _, probe := range audience.ExistingMasterProbes(brandShort, eventName) {
 		hits, serr := client.SearchLists(ctx, probe)
 		if serr != nil {
+			// A credential rejection fails every probe alike; swallowing them all would
+			// report "no master lists exist" for a broken connection.
+			if hubspot.IsPermissionRejection(serr) {
+				return nil, serr
+			}
 			slog.WarnContext(ctx, "existing-master search failed", "project_id", projectID, "error", serr)
 			continue
 		}
@@ -522,6 +601,12 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	for _, term := range audience.LastSentSearchTerms(eventName, brandShort) {
 		emails, serr := client.SearchEmails(ctx, term)
 		if serr != nil {
+			// A revoked token fails EVERY term alike, so absorbing them all returned 200
+			// with an empty history — telling the operator there were no prior sends when
+			// the truth is the credential no longer works.
+			if hubspot.IsPermissionRejection(serr) {
+				return nil, serr
+			}
 			if errors.Is(serr, hubspot.ErrSearchIncomplete) {
 				// The scan bound was reached having matched nothing, so "no prior
 				// send" would be an absence nobody established. Try the next term.
@@ -626,42 +711,91 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 // A probe whose search fails is skipped: the next probe may still resolve the row,
 // and a row that resolves to nothing is rendered as unavailable rather than as an
 // error.
-func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) *hubspot.List {
+// newerSuppression ranks two candidate suppression lists: newest quarter first, size as the
+// same-quarter tiebreak. Mirrors audience.NewerFirst, which takes a ListCandidate rather than
+// the *hubspot.List this path carries.
+//
+// The size tiebreak goes through sizeOf, not the raw Size field: a hit with a known size
+// always outranks one HubSpot reported no size for, and reported "no size" must never be
+// read as zero (see sizeOf) — comparing raw ints would let an unranked hit tie or beat a
+// hit with a genuinely known (even zero) size.
+func newerSuppression(a, b *hubspot.List) bool {
+	aYear, aQuarter := audience.QuarterRank(a.Name)
+	bYear, bQuarter := audience.QuarterRank(b.Name)
+	if aYear != bYear {
+		return aYear > bYear
+	}
+	if aQuarter != bQuarter {
+		return aQuarter > bQuarter
+	}
+	aSize, bSize := sizeOf(a), sizeOf(b)
+	switch {
+	case aSize == nil && bSize == nil:
+		// Neither hit carries a resolvable size (e.g. a directly-constructed
+		// candidate that never went through resolveSize) -- fall back to the raw,
+		// already-normalized Size field rather than treating both as unranked.
+		return a.Size > b.Size
+	case aSize == nil:
+		return false
+	case bSize == nil:
+		return true
+	default:
+		return *aSize > *bSize
+	}
+}
+
+// Returns an error ONLY for a credential rejection. Every other per-probe failure is absorbed,
+// because one failed probe must not lose the others — but a revoked token fails every probe
+// alike, and absorbing those made SuppressionLists return 200 with every hygiene row marked
+// "unavailable": an authentication outage rendered as "this portal has no GDPR lists", which is
+// the one answer that must never be guessed.
+func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
 	for _, probe := range probes {
 		hits, err := client.SearchLists(ctx, probe)
 		if err != nil {
+			// A revoked token fails EVERY probe, so absorbing them all reported an empty
+			// hygiene set for what is really a credential problem — and bypassed the
+			// deferred systemScopedHubSpot classifier that turns it into a typed 503.
+			if hubspot.IsPermissionRejection(err) {
+				return nil, err
+			}
 			slog.WarnContext(ctx, "suppression list search failed", "error", err)
 			continue
 		}
 		var best *hubspot.List
-		var bestSize *int64
 		for i := range hits {
 			hit := &hits[i]
 			if !accept(hit.Name) {
 				continue
 			}
-			size := sizeOf(hit)
-			switch {
-			case best == nil:
-				best, bestSize = hit, size
-			case size != nil && (bestSize == nil || *size > *bestSize):
-				// A hit with a known size always outranks one HubSpot reported no
-				// size for, and reported "no size" must never be read as zero (see
-				// sizeOf) — an unranked hit would otherwise always lose, in the
-				// unsafe direction, to any hit HubSpot simply didn't size.
-				best, bestSize = hit, size
+			// Newest QUARTER first, size only as the same-quarter tiebreak — mirroring
+			// audience.NewerFirst. Ranking by size alone let a larger stale list beat the
+			// current quarter's, which contradicts StandardSuppressionTerms' invariant that
+			// recurring hygiene lists select the highest YYQN — and can omit contacts who
+			// were only ever added to the current list.
+			if best == nil || newerSuppression(hit, best) {
+				best = hit
 			}
 		}
 		if best != nil {
-			return best
+			return best, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // ---------------------------------------------------------------------------
 // Preview count
 // ---------------------------------------------------------------------------
+
+// previewCountTimeout bounds the whole preview sweep: up to PreviewMaxLists GetList
+// calls plus, below the cap, paginated membership reads. It must be shorter than the
+// gateway's patience -- the failure this replaces was a 504 with nothing in this
+// service's log -- yet long enough that a legitimate selection completes. It is also
+// deliberately far below the HubSpot client's own retryMax*maxRetryWait (180s): under
+// sustained throttling the retry policy alone would outlast any request budget, and a
+// preview must degrade to a stated over-count rather than hang.
+const previewCountTimeout = 25 * time.Second
 
 // PreviewCount answers "how many people would this reach" for a selection of lists.
 //
@@ -680,28 +814,45 @@ func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, l
 	if len(ids) == 0 {
 		return audience.EmptyPreviewCount(), nil
 	}
+	// Defence in depth behind the design's MaxLength: that bound guards the HTTP
+	// edge, this one guards every caller of the method (a future internal one
+	// included) and is what the budget comment on PreviewMaxLists actually promises.
+	if len(ids) > audience.PreviewMaxLists {
+		return audience.PreviewCount{}, audience.ErrTooManyPreviewLists
+	}
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return audience.PreviewCount{}, err
 	}
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
-	estimate := 0
-	incompleteSize := false
+	// The sweep below is up to 2*PreviewMaxLists sequential round-trips. Without a
+	// deadline the request runs until the gateway kills it, which surfaces to the
+	// operator as a bare 504 and leaves no line in this service's log saying why.
+	// Bounding it here turns that into a degraded-but-honest answer.
+	ctx, cancel := context.WithTimeout(ctx, previewCountTimeout)
+	defer cancel()
+
+	sizes := make([]*int64, 0, len(ids))
 	for _, id := range ids {
 		list, gerr := client.GetList(ctx, id)
 		if gerr != nil {
+			if hubspot.IsNotFound(gerr) {
+				return audience.PreviewCount{}, fmt.Errorf("audience preview: list %s: %w", id, audience.ErrListNotFound)
+			}
 			return audience.PreviewCount{}, fmt.Errorf("audience preview: read list %s: %w", id, gerr)
 		}
-		size := sizeOf(list)
-		if size == nil {
-			incompleteSize = true
-			continue
-		}
-		estimate += int(*size)
+		// `list.Size` is a plain int, so an OMITTED size is indistinguishable from a
+		// genuinely empty list -- `sizeOf` exists precisely to keep them apart. Summing
+		// an omitted size as 0 makes the total short by that whole list, and if the
+		// membership sweep below then fails, that short sum is returned as the "safe"
+		// over-count. Understating reach is the one direction with no recovery after a
+		// send, so an unknown size stops the estimate rather than silently shrinking it.
+		sizes = append(sizes, sizeOf(list))
 	}
-	if incompleteSize {
-		return audience.IncompleteSizePreviewCount(estimate), nil
+	estimate, known := sumKnownSizes(sizes)
+	if !known {
+		return audience.UnknownSizePreviewCount(), nil
 	}
 	if audience.ExceedsExactCap(estimate) {
 		return audience.OverCapPreviewCount(estimate), nil
@@ -722,6 +873,28 @@ func (x *AudienceExplorer) PreviewCount(ctx context.Context, projectID string, l
 		}
 	}
 	return audience.ExactPreviewCount(len(union), estimate), nil
+}
+
+// sumKnownSizes totals the selected lists' sizes, reporting whether every one was known.
+//
+// A nil entry is a size HubSpot did not report. `hubspot.List.Size` is a plain int, so an
+// omitted size is indistinguishable from a genuinely empty list; `sizeOf` returns *int64
+// to keep them apart, and this is where that distinction has to be honoured. Summing a nil
+// as zero makes the total short by that entire list, and PreviewCount then hands the short
+// sum back as the "safe" over-count when the membership sweep fails — understating reach,
+// which is the one direction with no recovery after a send.
+//
+// Extracted from PreviewCount so the decision is reachable in a unit test: the call site
+// needs a live portal and an encrypted connection to exercise, and a guard no test can
+// reach is a guard that silently stops working.
+func sumKnownSizes(sizes []*int64) (total int, allKnown bool) {
+	for _, size := range sizes {
+		if size == nil {
+			return 0, false
+		}
+		total += int(*size)
+	}
+	return total, true
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,6 +1182,13 @@ func (x *AudienceExplorer) listWithFilters(ctx context.Context, client *hubspot.
 	if !ok {
 		fetched, err := client.GetList(ctx, listID)
 		if err != nil {
+			// A 404 means the portal holds no such list, which the contract declares as a 404.
+			// Passing the raw API error up sends it to audienceExploreErr's default arm and a
+			// generic 500, telling the operator the service broke when the real answer is that
+			// the id they gave does not exist.
+			if hubspot.IsNotFound(err) {
+				return nil, nil, fmt.Errorf("hubspot: list %s: %w", listID, audience.ErrListNotFound)
+			}
 			return nil, nil, err
 		}
 		list = fetched

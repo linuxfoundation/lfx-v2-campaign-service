@@ -32,6 +32,12 @@ var (
 	// ErrInvalidRequest so a handler can map every bad request in one arm while a
 	// caller that cares about this specific case can still match it.
 	ErrNoInclusionLists = fmt.Errorf("%w: at least one inclusion list is required", ErrInvalidRequest)
+	// ErrTooManyPreviewLists means a preview-count selected more lists than the
+	// sweep budget allows. Wraps ErrInvalidRequest for the same reason
+	// ErrNoInclusionLists does: it is the caller's request to change, not a
+	// transient upstream condition to retry. Names the limit because the only
+	// useful remedy is to select fewer.
+	ErrTooManyPreviewLists = fmt.Errorf("%w: at most %d lists can be previewed at once", ErrInvalidRequest, PreviewMaxLists)
 	// ErrListNotFound means the referenced list does not exist in this portal.
 	ErrListNotFound = errors.New("audience: the portal holds no such list")
 	// ErrEventPageUnavailable means this deployment cannot read event pages at all.

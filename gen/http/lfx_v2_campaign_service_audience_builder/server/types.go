@@ -114,12 +114,10 @@ type PreviewAudienceCountResponseBody struct {
 	Exact bool `form:"exact" json:"exact" xml:"exact"`
 	// Exact union size; meaningful only when exact is true
 	Count int64 `form:"count" json:"count" xml:"count"`
-	// Sum of the selected lists' sizes when exact is false — usually an over-count
-	// from list overlap, but an under-count when one of the lists had no reported
-	// size at all; see reason
+	// Upper bound on the union size (the sum of list sizes) when exact is false; 0
+	// when no reliable total exists
 	Estimate int64 `form:"estimate" json:"estimate" xml:"estimate"`
-	// Why the count is exact or bounded, and which direction the estimate's error
-	// runs
+	// Why the count is exact or bounded
 	Reason string `form:"reason" json:"reason" xml:"reason"`
 }
 
@@ -2111,8 +2109,8 @@ func ValidatePreviewAudienceCountRequestBody(body *PreviewAudienceCountRequestBo
 	if len(body.ListIds) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
 	}
-	if len(body.ListIds) > 200 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 200, false))
+	if len(body.ListIds) > 50 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 50, false))
 	}
 	return
 }

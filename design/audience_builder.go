@@ -214,21 +214,21 @@ var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
 // AudiencePreviewCount is the size of the union of the selected lists.
 //
 // exact is what makes this type honest. Computing a true union means paging every list's
-// membership, which is bounded — above the bound the union is reported as the SUM of the
-// selected lists' sizes with exact=false instead. That sum is not always an over-count:
-// most of the time it over-counts by however much the lists overlap, but when HubSpot did
-// not report a size for one of the selected lists at all, the sum omits that list entirely
-// and UNDER-counts instead — reason always says which direction applies. The one thing
-// this must never do is return a fabricated precise number for a union it did not finish
-// counting, so count is meaningful only when exact is true and estimate carries the
-// sum-based approximation otherwise.
+// membership, which is bounded — above the bound the count is abandoned and exact=false.
+// The one thing this must never do is return a fabricated precise number for a union it
+// did not finish counting, so count is meaningful only when exact is true.
+//
+// When exact is false, estimate is the SUM of the selected lists' sizes, which is an UPPER
+// bound on the union: every contact in more than one list is counted once per list, so the
+// real union can only be smaller. It is not a floor. An earlier version of this comment and
+// the estimate attribute below both said "lower bound", which inverts the guarantee — a
+// client trusting that would read "25,000+" as "at least 25,000 people" when the true reach
+// may be far less, and size a send around it.
 var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("exact", Boolean, "True when the union was counted in full")
 	Attribute("count", Int64, "Exact union size; meaningful only when exact is true")
-	Attribute("estimate", Int64,
-		"Sum of the selected lists' sizes when exact is false — usually an over-count from list "+
-			"overlap, but an under-count when one of the lists had no reported size at all; see reason")
-	Attribute("reason", String, "Why the count is exact or bounded, and which direction the estimate's error runs")
+	Attribute("estimate", Int64, "Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists")
+	Attribute("reason", String, "Why the count is exact or bounded")
 	Required("exact", "count", "estimate", "reason")
 })
 
@@ -509,17 +509,17 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("preview-audience-count", func() {
-		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, and as a sum-based estimate (see reason for which direction it errs) when it is not. Creates nothing.")
+		Description("Count the union of the selected lists' memberships — exactly when that is within bounds, as an UPPER-bound estimate (the sum of list sizes, which double-counts overlap) when it is not, and as no number at all when any selected list did not report a size. Creates nothing.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
+			// MaxLength bounds a fan-out, not a form field: the sweep is two
+			// sequential HubSpot round-trips per id, so an unbounded array is a
+			// slow-request lever. Mirrors audience.PreviewMaxLists; rejecting here
+			// costs one 400 instead of a gateway timeout with nothing in the log.
 			Attribute("list_ids", ArrayOf(String), "Lists to union", func() {
 				MinLength(1)
-				// 200 comfortably covers every real selection (discovery inspects far fewer
-				// candidates than this) while keeping an unbounded id array from turning one
-				// request into an unbounded membership sweep or an unbounded HubSpot filter
-				// branch -- the OR/AND shape MasterListFilter builds grows one branch per id.
-				MaxLength(200)
+				MaxLength(50)
 			})
 			Required("project_id", "list_ids")
 		})

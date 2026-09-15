@@ -6,17 +6,20 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 
+	genserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audience_builder/server"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -469,4 +472,157 @@ func TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported(t *testing.T)
 	require.NotNil(t, brandRow, "the brand opt-out probe must have matched one of the two hits")
 	assert.Equal(t, "222", brandRow.ListID,
 		"the hit HubSpot reported a size for must outrank the one it reported none for")
+}
+
+// A nil *llm.Client -- exactly what container.newLLMClient() returns when
+// AI_PROXY_URL/AI_API_KEY are unset -- must read as "absent" at the guards inside
+// Discover. Assigned straight into the completer parameter it becomes a non-nil
+// interface holding a nil pointer, the `x.llm == nil` guard reads false, and
+// Discover panics with a nil-receiver dereference inside llm.Client.Complete.
+// Observed locally on 2026-09-11: every Discover call 500'd with
+// "Audience discovery failed" on a service with no AI proxy configured.
+func TestNewAudienceExplorerNormalisesTypedNilDependencies(t *testing.T) {
+	var client *llm.Client
+	var fetcher *eventurl.Fetcher
+	var parser *eventurl.Parser
+
+	x := explorerWithNoPortal(fetcher, parser, client)
+
+	if x.llm != nil {
+		t.Errorf("llm: want nil interface for a nil *llm.Client, got %T", x.llm)
+	}
+	if x.fetcher != nil {
+		t.Errorf("fetcher: want nil interface for a nil *eventurl.Fetcher, got %T", x.fetcher)
+	}
+	if x.parser != nil {
+		t.Errorf("parser: want nil interface for a nil *eventurl.Parser, got %T", x.parser)
+	}
+}
+
+// Deliberately asserted at the constructor rather than through Discover: every
+// fixture in this file is a project with no HubSpot connection, so Discover
+// refuses at the credential seam and returns before reaching enrichIdentity. A
+// Discover-level test of this panic passes with the fix reverted -- it proves
+// nothing. The constructor is the narrowest place the defect is observable.
+
+// The design's MaxLength on list_ids is a DSL literal and cannot reference
+// audience.PreviewMaxLists, so the two can drift silently -- raising the Go budget
+// without the design would leave the edge rejecting valid requests, and lowering it
+// without the design would let the edge admit a sweep the method then refuses.
+//
+// This drives the GENERATED validator rather than comparing against a hardcoded copy
+// of the number. A literal here would be a third copy of 50 and would keep passing
+// with the design set to anything at all -- it would pin nothing. Running the real
+// decoder means `make apigen` output is what is under test, which is what actually
+// rejects the request in production.
+func TestPreviewMaxListsMatchesTheGeneratedEdgeValidation(t *testing.T) {
+	ids := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("list-%d", i)
+		}
+		return out
+	}
+
+	// Exactly the budget must be ACCEPTED by the edge...
+	atBudget := &genserver.PreviewAudienceCountRequestBody{ListIds: ids(audience.PreviewMaxLists)}
+	if err := genserver.ValidatePreviewAudienceCountRequestBody(atBudget); err != nil {
+		t.Errorf("the generated edge rejects %d ids but audience.PreviewMaxLists allows it: %v\n"+
+			"the design's MaxLength is BELOW PreviewMaxLists; update design/audience_builder.go and re-run `make apigen`",
+			audience.PreviewMaxLists, err)
+	}
+
+	// ...and one past it must be REFUSED there, not left to the method.
+	overBudget := &genserver.PreviewAudienceCountRequestBody{ListIds: ids(audience.PreviewMaxLists + 1)}
+	if err := genserver.ValidatePreviewAudienceCountRequestBody(overBudget); err == nil {
+		t.Errorf("the generated edge accepts %d ids but audience.PreviewMaxLists is %d\n"+
+			"the design's MaxLength is ABOVE PreviewMaxLists; update design/audience_builder.go and re-run `make apigen`",
+			audience.PreviewMaxLists+1, audience.PreviewMaxLists)
+	}
+}
+
+// Over-budget selections must be refused before any HubSpot call, and as an invalid
+// request rather than a transient one -- the remedy is to select fewer lists, so a
+// retry of the same payload can never succeed.
+func TestPreviewCountRefusesMoreListsThanTheBudget(t *testing.T) {
+	x := explorerWithNoPortal(nil, nil, nil)
+
+	ids := make([]string, audience.PreviewMaxLists+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("list-%d", i)
+	}
+
+	_, err := x.PreviewCount(context.Background(), "tlf", ids)
+	if !errors.Is(err, audience.ErrTooManyPreviewLists) {
+		t.Fatalf("want ErrTooManyPreviewLists for %d lists, got %v", len(ids), err)
+	}
+	// Wrapping ErrInvalidRequest is what maps this to a 400 rather than a retryable 5xx.
+	if !errors.Is(err, audience.ErrInvalidRequest) {
+		t.Errorf("ErrTooManyPreviewLists must wrap ErrInvalidRequest so the handler maps it to 400; got %v", err)
+	}
+}
+
+// An unreported list size must stop the estimate, not be summed as zero.
+//
+// This is the decision PreviewCount makes before it ever sweeps memberships. Summing a nil
+// as 0 leaves the total short by that entire list, and the degraded fallback then returns
+// that short sum as its "safe" over-count — an UNDERCOUNT presented as an over-count, which
+// DegradedPreviewCount's own doc calls the one direction that must never be reported.
+func TestSumKnownSizesRefusesToTotalAnUnreportedSize(t *testing.T) {
+	size := func(n int64) *int64 { return &n }
+
+	if total, ok := sumKnownSizes([]*int64{size(10), size(32)}); !ok || total != 42 {
+		t.Errorf("all sizes known: want (42, true), got (%d, %v)", total, ok)
+	}
+
+	total, ok := sumKnownSizes([]*int64{size(1200), nil, size(800)})
+	if ok {
+		t.Errorf("an unreported size was summed as zero, producing %d — short by the whole unreported list", total)
+	}
+	if total != 0 {
+		t.Errorf("no partial total may leak out when a size is unknown; got %d", total)
+	}
+
+	// A genuinely empty list is NOT an unknown size and must still total.
+	if total, ok := sumKnownSizes([]*int64{size(0), size(5)}); !ok || total != 5 {
+		t.Errorf("a real zero is a known size: want (5, true), got (%d, %v)", total, ok)
+	}
+}
+
+// A whitespace-only query must be REFUSED, not forwarded.
+//
+// The design's MinLength(1) accepts "   ". The HubSpot client then trims it to an empty
+// query and answers by walking every list page — turning one typeahead keystroke into the
+// endpoint's worst-case fan-out against a rate-limited API.
+func TestSearchListsRefusesAWhitespaceOnlyQuery(t *testing.T) {
+	x := explorerWithNoPortal(nil, nil, nil)
+
+	for _, q := range []string{"", "   ", "\t\n "} {
+		_, err := x.SearchLists(context.Background(), "tlf", q)
+		if !errors.Is(err, audience.ErrInvalidRequest) {
+			t.Errorf("SearchLists(%q): want ErrInvalidRequest, got %v — an empty query walks the whole portal", q, err)
+		}
+	}
+}
+
+// Suppression candidates rank by newest QUARTER, with size only as the same-quarter
+// tiebreak. Ranking by size alone let a larger STALE list beat the current quarter's,
+// contradicting StandardSuppressionTerms' highest-YYQN invariant — and omitting contacts
+// who were only ever added to the current list.
+func TestNewerSuppressionPrefersTheCurrentQuarterOverALargerStaleList(t *testing.T) {
+	stale := &hubspot.List{Name: "24Q1 - LF Events GDPR Suppression", Size: 900_000}
+	current := &hubspot.List{Name: "26Q3 - LF Events GDPR Suppression", Size: 1_000}
+
+	if !newerSuppression(current, stale) {
+		t.Error("a larger stale-quarter list outranked the current quarter's suppression list")
+	}
+	if newerSuppression(stale, current) {
+		t.Error("ranking is not antisymmetric across quarters")
+	}
+
+	// Same quarter: size is the tiebreak, since that is usually the real list vs a draft.
+	small := &hubspot.List{Name: "26Q3 - LF Events GDPR Suppression", Size: 10}
+	if !newerSuppression(current, small) {
+		t.Error("within a quarter the larger list should win")
+	}
 }

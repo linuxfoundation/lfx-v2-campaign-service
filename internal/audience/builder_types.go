@@ -90,11 +90,34 @@ const (
 	// then comes back truncated instead of exact.
 	UnionExactCap = 25000
 
+	// MembershipPageSize is HubSpot's maximum page size for
+	// GET /crm/v3/lists/{id}/memberships.
+	MembershipPageSize = 250
+
+	// MembershipMaxPages is the hard stop on membership pagination.
+	// MembershipPageSize * this == UnionExactCap records.
+	MembershipMaxPages = 100
+
+	// PreviewMaxLists bounds how many lists one preview-count may union. The sweep
+	// is TWO sequential HubSpot round-trips per id -- GetList for the estimate, then
+	// paginated ListMembershipIDs -- so cost grows linearly with the selection and
+	// nothing else stops it: the design's list_ids carried MinLength(1) and no upper
+	// bound, and the handler had no deadline, so a large array simply ran until the
+	// gateway gave up and returned a 504 with no diagnosis.
+	//
+	// 50 is well clear of any real selection (discovery surfaces at most
+	// DiscoveryMaxInspections candidates across 4 signals, and an operator ticks a
+	// handful) while keeping the worst case bounded at 50 GetList calls plus, below
+	// the cap, at most UnionExactCap membership records.
+	PreviewMaxLists = 50
+
 	// DiscoveryMaxInspections is how many candidate lists discovery will fetch in
 	// full before it stops inspecting. Every inspection is a
 	// GET /crm/v3/lists/{id}?includeFilters=true; a broad event name can return
 	// hundreds of candidates across two searches plus one-hop rollup resolution.
-	// Candidates past the budget are still listed and classified from their names.
+	// Candidates past the budget are NOT listed at all: the loop breaks, so `Inspected`
+	// is the caller's only signal that the result is partial. (An earlier version of this
+	// comment claimed a name-only classification pass that was never implemented.)
 	DiscoveryMaxInspections = 40
 )
 
@@ -305,6 +328,16 @@ func EventKeywords(text string) map[string]struct{} {
 			continue
 		}
 		if _, skip := stopwords[token]; skip {
+			continue
+		}
+		// A four-digit YEAR is noise for the same reason the stopwords are. HubSpot's search
+		// is loose, so "2026" alone makes "Open Source Summit 2026 Registrants" look plausible
+		// for "KubeCon Europe 2026": it can be presented as an event-registration list for the
+		// wrong event, and it consumes an inspection from the DiscoveryMaxInspections budget
+		// that a genuine candidate then cannot use. The year still reaches the search through
+		// DiscoveryQueries and EventQuarterCode, which use the DATES; it just cannot carry a
+		// match on its own.
+		if yearRE.MatchString(token) {
 			continue
 		}
 		out[token] = struct{}{}
