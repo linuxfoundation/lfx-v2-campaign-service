@@ -147,7 +147,27 @@ malformed-port shape specifically, because it is the case that passes under unwr
 **The composition root is `Container.newLLMClient()` in `internal/container/container.go`.** This package is imported and used by `BriefService.GenerateEmailCopy`, which handles the synchronous `POST /projects/{id}/briefs/{id}/email-copy` endpoint. When the LLM client is nil (AI_PROXY_URL or AI_API_KEY unset), `GenerateEmailCopy` returns 503 ServiceUnavailable. Two of the three `AI_*` values — `AI_PROXY_URL` and `AI_API_KEY` — are wired in the chart as OPTIONAL secret refs, on the same reasoning as
 `SNOWFLAKE_*`: generated copy is an enrichment, so an unprovisioned secret must not stop the pod.
 `AI_MODEL` is a plain `value: ''`, because a model id is not a credential and empty is a
-meaningful default (it selects `llm.DefaultModel`). See
+meaningful default (it selects `llm.DefaultModel`).
+
+`DefaultModel` carries the **`bedrock/` provider prefix** — `bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0`
+— because the v2 LiteLLM instances require it. The prefix is host-specific, and the two instances
+disagree in opposite directions (measured against a live key):
+
+| model | old `litellm.tools.lfx.dev` | v2 `*.v2.cluster` |
+|---|---|---|
+| `us.anthropic.claude-sonnet-4-20250514-v1:0` | 200 | 400 |
+| `bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0` | 401 | 200 |
+
+Every campaign-service environment runs on v2, so the prefixed form is the correct default and
+`AI_MODEL` remains the override for an instance that disagrees again.
+
+Getting this wrong does not look like a model problem, which is why it matters here: **auth
+SUCCEEDS with an unresolvable model.** The key reads as healthy, the pod starts with no warning,
+and only generation fails — with a bare 400 this client cannot explain, since it discards the
+error body on purpose (above). `TestDefaultModelCarriesTheBedrockPrefix` pins the literal, because
+every other model assertion compares against `DefaultModel` itself and so cannot protect its value.
+
+See
 [internal/infrastructure/config](internal-infrastructure-config.md). The secret is the
 **proxy's** key, not a Bedrock or Anthropic credential, so it cannot be replayed against a model
 provider directly.
