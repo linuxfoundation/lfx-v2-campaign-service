@@ -1993,7 +1993,6 @@ func assertedDeliveryType(v *string) *model.DeliveryType {
 	return &d
 }
 
-
 func mapBriefErr(err error) error {
 	switch {
 	case err == nil:
