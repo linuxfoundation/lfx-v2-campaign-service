@@ -340,10 +340,6 @@ func WithBaseURL(u string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
 }
 
-// WithAdsManagerURL overrides the Ads Manager base URL.
-func WithAdsManagerURL(u string) Option {
-	return func(c *Client) { c.adsManagerURL = strings.TrimRight(u, "/") }
-}
 
 // WithClock overrides the time source used for 429 backoff. For tests.
 func WithClock(now func() time.Time) Option {
