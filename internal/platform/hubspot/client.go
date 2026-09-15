@@ -143,7 +143,6 @@ func WithBaseURL(u string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
 }
 
-
 // WithHTTPClient overrides the underlying *http.Client (default has a 30s
 // timeout). A nil client is ignored so the option can't produce an unusable
 // Client whose httpClient.Do would panic. Redirect following is force-disabled on

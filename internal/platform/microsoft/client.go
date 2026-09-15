@@ -294,7 +294,6 @@ func WithTokenURL(u string) Option {
 	}
 }
 
-
 // WithClock overrides the time source. For tests.
 func WithClock(now func() time.Time) Option {
 	return func(c *Client) {
