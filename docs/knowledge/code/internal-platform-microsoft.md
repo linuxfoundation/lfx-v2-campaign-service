@@ -515,9 +515,9 @@ otherwise look correct. Reporting is a THIRD service again
 `WithReportingBaseURL` / `doReportingRequest`) — see the metrics section below. It is
 REST/JSON like the other two, NOT SOAP; what makes it different is that it is
 ASYNCHRONOUS (submit, poll, then download a zipped CSV). The version segment is NOT a
-second knob: `c.apiVersion` is a single field shared by both hosts (initialised to the
-`v13` constant at construction), because Microsoft versions the two services in lockstep — any
-version change applies to both.
+second knob: `c.apiVersion` is a single field shared by all three hosts (Campaign Management,
+Customer Management, and Reporting — initialised to the `v13` constant at construction),
+because Microsoft versions all three services in lockstep — any version change applies to all.
 
 **The request asks about the CREDENTIALS, not about an account.** `doCustomerRequest`
 deliberately does NOT call `validateAccountIDs` and does NOT send `CustomerAccountId`
