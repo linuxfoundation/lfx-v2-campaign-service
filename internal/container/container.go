@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	exploresvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -86,6 +87,17 @@ type audienceBackendSetter interface {
 	// with a 503 forever while looking fully wired.
 	SetBriefRepo(domain.BriefRepository)
 	SetBuilder(service.AudienceBuilder)
+}
+
+// exploreBackendSetter late-binds the audience-builder explorer after a cold-start retry.
+// *AudienceExploreService implements it.
+//
+// A separate interface from audienceBackendSetter even though both hang off the same
+// builder: the two services are distinct, and expressing the cold-start binding as a
+// declared contract is what makes a missed injection a compile error instead of nine
+// endpoints that serve 503 for the life of the pod.
+type exploreBackendSetter interface {
+	SetExplorer(service.AudienceExplorer)
 }
 
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
@@ -184,6 +196,10 @@ type Container struct {
 	Connections connsvc.Service
 	Briefs      briefsvc.Service
 	Audiences   audiencesvc.Service
+	// Explore serves the audience-builder read/compose endpoints. Always non-nil so the
+	// routes are mounted on every path; it answers the contract's typed 503 while the
+	// explorer behind it is unset, which is the same degradation Audiences uses.
+	Explore exploresvc.Service
 
 	// Metrics owns the Prometheus registry served at /metrics. It is built FIRST in
 	// NewContainer, before any wiring branch, so the endpoint exists on every path —
@@ -201,7 +217,11 @@ type Container struct {
 	// audienceBuilder performs the platform side of an audience build (Snowflake lookups +
 	// HubSpot list creation). Nil when neither is configured, in which case the build endpoint
 	// reports a typed 503 and the audience CRUD routes are unaffected.
-	audienceBuilder service.AudienceBuilder
+	// Concrete rather than service.AudienceBuilder: the explorer reuses this builder's
+	// per-project credential resolution and client cache, and dispatch.NewAudienceExplorer
+	// needs the concrete type to do so. It still satisfies the interface every consumer
+	// here binds through.
+	audienceBuilder *dispatch.AudienceBuilder
 
 	// tokenVerifier verifies the bearer token on every authenticated request. Built ONCE
 	// before any wiring branch and injected on every path — same rationale as
@@ -333,6 +353,7 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 		c.Connections = c.newConnectionService(nil, nil)
 		c.Briefs = c.newBriefService(nil, nil, nil, nil)
 		c.Audiences = c.newAudienceService(nil, nil)
+		c.Explore = c.newAudienceExploreService()
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
@@ -385,15 +406,17 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 	connections := c.newConnectionService(nil, enc)
 	briefs := c.newBriefService(nil, nil, nil, nil)
 	auds := c.newAudienceService(nil, nil)
+	expl := c.newAudienceExploreService()
 	c.Service = campaign
 	c.Connections = connections
 	c.Briefs = briefs
 	c.Audiences = auds
+	c.Explore = expl
 
 	initCtx, cancel := context.WithCancel(context.Background())
 	c.cancelInit = cancel
 	c.initDone = make(chan struct{})
-	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs, auds)
+	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs, auds, expl)
 
 	return c, nil
 }
@@ -478,7 +501,7 @@ var dispatchableProviders = []model.Provider{
 //
 // Returns (builder, snowflakeClient). The snowflakeClient (if non-nil) owns database
 // sessions and must be closed during Container.Close to release those resources.
-func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg *config.Config) (service.AudienceBuilder, *snowflake.Client) {
+func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg *config.Config) (*dispatch.AudienceBuilder, *snowflake.Client) {
 	var snow dispatch.PastEditionResolver
 	var client *snowflake.Client
 	if cfg.SnowflakeAccount != "" && cfg.SnowflakeUser != "" && cfg.SnowflakePrivateKey != "" {
@@ -537,6 +560,35 @@ func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs do
 		s.SetBuilder(c.audienceBuilder)
 	}
 	return s
+}
+
+// newAudienceExploreService constructs the audience-builder service with the shared token
+// verifier and, when the platform builder exists, an explorer over it. Same one-helper rule
+// as newBriefService: the explorer is opt-in via SetExplorer, so a path constructing the
+// service directly would compile, mount and serve a permanent 503.
+func (c *Container) newAudienceExploreService() *service.AudienceExploreService {
+	s := service.NewAudienceExploreService(c.newAudienceExplorer())
+	s.SetTokenVerifier(c.tokenVerifier)
+	return s
+}
+
+// newAudienceExplorer builds the audience-builder orchestration over the platform builder, or
+// returns nil when there is no builder to explore with.
+//
+// Nil rather than an explorer over a nil builder: with no connection repository there is
+// nothing for these endpoints to read, the service's typed 503 says exactly that, and an
+// explorer wrapping nil would instead panic on the first request.
+//
+// The event fetcher and LLM client are the SAME collaborators newBriefService injects --
+// discovery reads the event page through the SSRF-guarded fetcher and uses the LLM only to
+// extract the event's name and brand from it. A nil LLM client is normal (see newLLMClient);
+// discovery then reports that it could not resolve an event name, which is an answer rather
+// than a failure of the whole tab.
+func (c *Container) newAudienceExplorer() service.AudienceExplorer {
+	if c.audienceBuilder == nil {
+		return nil
+	}
+	return dispatch.NewAudienceExplorer(c.audienceBuilder, c.eventFetcher(), eventurl.NewParser(), c.newLLMClient())
 }
 
 // stuckClaimScanTimeout bounds the startup stuck-claim scan so a slow or unavailable database
@@ -808,6 +860,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch)
 	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
+	c.Explore = c.newAudienceExploreService()
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -846,7 +899,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 // readiness — and runs the same stuck-job recovery + periodic sweeper the fast path
 // does, so /readyz flips to healthy AND the connection + brief/job routes go live
 // without a pod restart.
-func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter, ab audienceBackendSetter) {
+func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter, ab audienceBackendSetter, xb exploreBackendSetter) {
 	defer close(c.initDone)
 
 	for attempt := 1; ; attempt++ {
@@ -893,6 +946,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// path. Bind the other two here (the builder was created just above).
 			ab.SetBriefRepo(briefRepo)
 			ab.SetBuilder(c.audienceBuilder)
+			// Same gap, one layer over: the explore service was constructed in 503 mode with
+			// no explorer, so without this every audience-builder route stays 503 for the
+			// life of a pod that merely cold-started. The builder was created just above.
+			xb.SetExplorer(c.newAudienceExplorer())
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the
