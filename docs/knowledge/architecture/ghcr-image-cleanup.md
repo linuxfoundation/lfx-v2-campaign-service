@@ -1,0 +1,63 @@
+---
+type: "Architecture Doc"
+title: "GHCR stale image cleanup"
+description: "How the scheduled and on-demand GitHub Actions workflow removes stale, untagged GHCR image versions for the campaign-service container package."
+resource: ".github/workflows/ghcr-image-cleanup.yaml"
+---
+
+# GHCR stale image cleanup
+
+[`.github/workflows/ghcr-image-cleanup.yaml`](../../../.github/workflows/ghcr-image-cleanup.yaml)
+deletes stale, untagged versions of the
+`linuxfoundation/lfx-v2-campaign-service/campaign-service` GHCR package using
+[`snok/container-retention-policy`](https://github.com/snok/container-retention-policy),
+pinned to a release commit SHA.
+
+## Triggers
+
+- **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
+  `cut-off: 30d`. `dry-run` currently defaults to `true` (preview only)
+  because the package's existing ~15,000-version backlog means the first
+  unattended run would otherwise face the whole backlog at once instead of
+  a manageable weekly slice. A maintainer flips the fallback to `false` in
+  the workflow file after reviewing a manual preview or draining the
+  backlog manually.
+- **Manual** (`workflow_dispatch`): a maintainer can preview or tune a single
+  run via the `dry-run` (default `true`) and `cut-off` (default `30d`)
+  inputs, without changing the schedule's defaults.
+
+## Scope
+
+`tag-selection` is hardcoded to `untagged` — tagged versions, including
+per-commit SHA tags and any release/production tags, are never deletion
+candidates. This is intentionally not exposed as an override: `ko build`
+publishes every image with both an immutable SHA tag and a moving
+branch-name tag (see `.github/workflows/ko-build-branch.yaml`), so the
+untagged versions this workflow reclaims are the orphaned digests left
+behind when a branch's moving tag is repointed to a newer build. SHA-tagged
+versions keep accumulating and are a known, accepted limitation of this
+rollout.
+
+`snok/container-retention-policy` automatically protects multi-arch child
+manifests still referenced by a retained parent index, so multi-platform
+images are not partially deleted.
+
+## Authentication
+
+The action deletes package versions via a GraphQL mutation the default
+`GITHUB_TOKEN` cannot call for container packages. The workflow instead
+uses `secrets.CONTAINER_RETENTION_PAT`, a classic PAT with `read:packages` +
+`delete:packages` scopes that must be provisioned by an org owner. Until
+that secret exists, only dry-run previews can succeed.
+
+## Auditability
+
+Every run's job log lists each considered/deleted image version by digest
+and age, and a final step writes a summary (trigger, mode, cut-off,
+deleted/failed counts) to the run's `$GITHUB_STEP_SUMMARY`. The
+`deleted`/`failed` fields in that summary come from the action's own
+outputs and may render `(none)` even on a run that deleted versions, if the
+underlying Docker action does not populate `GITHUB_OUTPUT`; the job log
+itself is the authoritative record regardless. Accidental deletions are
+recovered via GitHub's own package-version restore window, not by this
+workflow.
