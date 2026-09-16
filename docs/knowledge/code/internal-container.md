@@ -157,3 +157,13 @@ where this shows up first) each failed construction leaks a connection and its b
 error, rather than closing it at each `return`. The difference matters: this function grows a
 new failure path roughly every time the container gains a dependency, and a per-return close is
 a rule the next one has to remember. A deferred one is the default.
+
+## The audience explorer is wired only when its dependencies exist (LFXV2-2770)
+
+The explorer needs the same encrypted-connection store the dispatch adapters do, plus the
+SSRF-guarded event-page fetcher and, optionally, the LLM client. The container builds it after
+those and hands it to the handler through `SetExplorer`, so a deployment missing the connection
+store leaves the handler's explorer unset — and `ExplorerIsSet` is what turns that into the
+contract's typed `503` and an honest `capabilities` answer, instead of a nil dereference on the
+first request. The model client stays optional on purpose: it recovers a brand token and nothing
+an operator acts on depends on it.
