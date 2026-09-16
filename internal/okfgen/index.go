@@ -23,7 +23,7 @@ func RenderIndex(title string, entries []IndexEntry) string {
 	var b strings.Builder
 	b.WriteString("# " + title + "\n\n")
 	for _, e := range entries {
-		b.WriteString(fmt.Sprintf("* [%s](%s) - %s\n", e.Title, e.Link, e.Description))
+		fmt.Fprintf(&b, "* [%s](%s) - %s\n", e.Title, e.Link, e.Description)
 	}
 	return b.String()
 }

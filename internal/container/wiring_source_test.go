@@ -7,7 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -39,55 +39,65 @@ func TestNoServiceIsConstructedOutsideItsVerifierInjectingHelper(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
-		// Non-test files only: a test may legitimately construct a service directly to
-		// exercise the service itself, which is not a boot path.
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+
+	// Parse only non-test source files. os.ReadDir + parser.ParseFile replaces the
+	// deprecated parser.ParseDir, which did not consider build tags; for a source-level
+	// reachability check that distinction does not matter, but the replacement keeps the
+	// linter clean and is equally correct here.
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse the container package: %v", err)
+		t.Fatalf("read container package dir: %v", err)
+	}
+	var sourceFiles []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, parseErr := parser.ParseFile(fset, name, nil, 0)
+		if parseErr != nil {
+			t.Fatalf("parse %s: %v", name, parseErr)
+		}
+		sourceFiles = append(sourceFiles, f)
 	}
 
 	seen := map[string]bool{}
-	for _, pkg := range pkgs {
-		for path, file := range pkg.Files {
-			// enclosing tracks the function each call sits in, so the helper can call its
-			// own constructor while nothing else can.
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok {
-					continue
-				}
-				enclosing := fn.Name.Name
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					sel, ok := call.Fun.(*ast.SelectorExpr)
-					if !ok {
-						return true
-					}
-					pkgIdent, ok := sel.X.(*ast.Ident)
-					if !ok || pkgIdent.Name != "service" {
-						return true
-					}
-					helper, guarded := permitted[sel.Sel.Name]
-					if !guarded {
-						return true
-					}
-					seen[sel.Sel.Name] = true
-					if enclosing != helper {
-						t.Errorf("%s calls service.%s directly, in %s.\n"+
-							"Every construction must go through (*Container).%s, which injects the "+
-							"shared token verifier. A service built without one compiles and serves "+
-							"traffic, rejecting every request as unauthenticated.",
-							fset.Position(call.Pos()), sel.Sel.Name, enclosing, helper)
-					}
-					return true
-				})
+	for _, file := range sourceFiles {
+		// enclosing tracks the function each call sits in, so the helper can call its
+		// own constructor while nothing else can.
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
 			}
-			_ = path
+			enclosing := fn.Name.Name
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkgIdent, ok := sel.X.(*ast.Ident)
+				if !ok || pkgIdent.Name != "service" {
+					return true
+				}
+				helper, guarded := permitted[sel.Sel.Name]
+				if !guarded {
+					return true
+				}
+				seen[sel.Sel.Name] = true
+				if enclosing != helper {
+					t.Errorf("%s calls service.%s directly, in %s.\n"+
+						"Every construction must go through (*Container).%s, which injects the "+
+						"shared token verifier. A service built without one compiles and serves "+
+						"traffic, rejecting every request as unauthenticated.",
+						fset.Position(call.Pos()), sel.Sel.Name, enclosing, helper)
+				}
+				return true
+			})
 		}
 	}
 

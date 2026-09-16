@@ -4,9 +4,11 @@
 package model
 
 import (
+	"go/ast"
 	"go/doc"
 	"go/parser"
 	"go/token"
+	"os"
 	"strings"
 	"testing"
 )
@@ -249,15 +251,29 @@ func TestSummariseSettings_IsIdempotent(t *testing.T) {
 // present either way, and only the parser knows which declaration owns it.
 func TestDocCommentsAreAttachedToTheirOwnTypes(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", nil, parser.ParseComments)
+
+	// os.ReadDir + parser.ParseFile replaces the deprecated parser.ParseDir, and
+	// doc.NewFromFiles replaces doc.New (which required the deprecated *ast.Package).
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse package: %v", err)
+		t.Fatalf("read model package dir: %v", err)
 	}
-	pkg, ok := pkgs["model"]
-	if !ok {
-		t.Fatal("package model not found")
+	var astFiles []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		f, parseErr := parser.ParseFile(fset, name, nil, parser.ParseComments)
+		if parseErr != nil {
+			t.Fatalf("parse %s: %v", name, parseErr)
+		}
+		astFiles = append(astFiles, f)
 	}
-	docPkg := doc.New(pkg, ".", doc.AllDecls)
+	docPkg, err := doc.NewFromFiles(fset, astFiles, ".", doc.AllDecls)
+	if err != nil {
+		t.Fatalf("build doc package: %v", err)
+	}
 
 	// Each type's own name must appear in its own doc comment. Not a style rule — it is the
 	// cheapest signal that the comment belongs to the declaration it sits above, which is
