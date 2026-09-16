@@ -14,6 +14,17 @@ deletes stale, untagged versions of the
 invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
 pinned by image digest, not by a mutable release tag.
 
+Because this is a raw `docker://` reference rather than the
+`snok/container-retention-policy@<sha>` action alias, there is no
+`action.yaml` to translate `with:` inputs into CLI flags or fill in its
+defaults — every flag the underlying Rust CLI needs must appear explicitly in
+`with.args`. In particular, `--image-tags` and `--shas-to-skip` must always be
+passed, even as empty strings (`--image-tags=`, `--shas-to-skip=`): the CLI's
+argument parser requires both flags to be present, unlike
+`--keep-n-most-recent`/`--timestamp-to-use`, which have non-empty defaults
+baked into `action.yaml` this workflow reproduces directly in `with.args`.
+Omitting either flag entirely causes every run to fail immediately.
+
 ## Triggers
 
 - **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
