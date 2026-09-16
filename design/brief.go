@@ -1550,6 +1550,13 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			briefErrorResponses()
 		})
 	})
+
+	// The email-creation wizard's methods. They belong to THIS service (they are
+	// always scoped to a project + brief) but their DSL lives in brief_wizard.go:
+	// Goa rejects a second Service block with the same name, so a separate file
+	// cannot re-open this one and a helper call is the only way to keep the wizard's
+	// surface physically separate from the frozen LFXV2-1940 method set above.
+	wizardMethods()
 })
 
 // ─── shared DSL helpers for briefs ───

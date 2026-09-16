@@ -1528,7 +1528,9 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 
 	require.False(t, s.DecodeReserverIsSet(), "premise: unbound before wiring")
 
-	bindBriefLiveBackends(s, nil, nil, nil, nil, nil)
+	require.False(t, s.WizardSessionRepoIsSet(), "premise: unbound before wiring")
+
+	bindBriefLiveBackends(s, nil, nil, nil, nil, nil, nil, nil)
 
 	assert.True(t, s.CreativeAssetRepoIsSet(),
 		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
@@ -1541,6 +1543,14 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 	// green until this line existed.
 	assert.True(t, s.DecodeReserverIsSet(),
 		"the shared live-wiring helper must bind the decode reserver; without it BOTH startup paths decode concurrent uploads with no aggregate memory bound")
+
+	// Same assertion for the same reason, one failure mode further on: an unbound wizard
+	// session repository makes all eight wizard routes answer 503 for the life of the pod
+	// while every other brief route works, and that 503 is deliberately indistinguishable
+	// from the no-database mode's — so nothing outside this assertion can tell a mis-wired
+	// live container from a correctly wired one.
+	assert.True(t, s.WizardSessionRepoIsSet(),
+		"the shared live-wiring helper must bind the wizard session repository; without it BOTH startup paths serve every email-wizard route a 503 forever")
 }
 
 // TestSetCreativeAssetRepo_IgnoresNil guards the degraded path: a nil repo must leave the service
@@ -1619,6 +1629,10 @@ func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
 	r.calls = append(r.calls, "reserver")
 }
 
+func (r *orderRecordingBriefSetter) SetWizardBackend(domain.WizardSessionRepository, service.HubSpotClientResolver, domain.AudienceRepository) {
+	r.calls = append(r.calls, "wizard")
+}
+
 // TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate pins the ORDER of two independently
 // locked setters, which on the cold-start retry path decides whether a memory bound can be
 // bypassed.
@@ -1639,7 +1653,7 @@ func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
 func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
 	rec := &orderRecordingBriefSetter{}
 
-	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil)
+	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil, nil, nil)
 
 	idx := func(name string) int {
 		for i, c := range rec.calls {
