@@ -542,6 +542,76 @@ func TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported(t *testing.T)
 		"the hit HubSpot reported a size for must outrank the one it reported none for")
 }
 
+// TestDiscover_ARepeatedRollupChildDoesNotSpendAnInspectionSlot pins that the 40-item budget
+// is spent on DISTINCT lists.
+//
+// searchCandidates already dedupes its own hits, so a repeated TOP-LEVEL candidate cannot
+// reach the loop. Rollup children can: they come from RollupChildIDs, not from the search,
+// so two rollups naming the same child (or a child that is also a top-level candidate)
+// collide. classifyInto returns immediately for an id already classified, so the repeat costs
+// no HubSpot read -- but counting it still spent a slot, crowding out a unique list whose
+// signal was then reported MISSING. A false missing signal is the expensive outcome: the
+// operator concludes the portal has no such list.
+func TestDiscover_ARepeatedRollupChildDoesNotSpendAnInspectionSlot(t *testing.T) {
+	const budget = audience.DiscoveryMaxInspections
+
+	// Two rollups that name the SAME child, then enough unique lists to fill the budget
+	// exactly, then one more. The last fits only if the repeated child cost no slot.
+	var hits strings.Builder
+	fmt.Fprint(&hits, `{"listId":"7001","name":"26Q1 - Synthetic Summit - Rollup A","objectTypeId":"0-1"},`)
+	fmt.Fprint(&hits, `{"listId":"7002","name":"26Q1 - Synthetic Summit - Rollup B","objectTypeId":"0-1"},`)
+	for i := 0; i < budget-4; i++ {
+		fmt.Fprintf(&hits, `{"listId":"%d","name":"26Q1 - Synthetic Summit - Attendees %d","objectTypeId":"0-1"},`, 1000+i, i)
+	}
+	fmt.Fprint(&hits, `{"listId":"9999","name":"26Q1 - Synthetic Summit - Speakers","objectTypeId":"0-1"}`)
+
+	rollup := func(id string) string {
+		return fmt.Sprintf(`{"list":{"listId":"%s","name":"26Q1 - Synthetic Summit - Rollup","objectTypeId":"0-1",`+
+			`"filterBranch":{"filterBranchType":"OR","filterBranches":[{"filterBranchType":"AND",`+
+			`"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":8000}]}]}}}`, id)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"lists":[`+hits.String()+`],"hasMore":false,"offset":0}`)
+		case r.URL.Path == "/crm/v3/lists/7001" || r.URL.Path == "/crm/v3/lists/7002":
+			// Both rollups point at the same child, 8000.
+			_, _ = io.WriteString(w, rollup(strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")))
+		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
+			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			_, _ = io.WriteString(w, fmt.Sprintf(
+				`{"list":{"listId":"%s","name":"26Q1 - Synthetic Summit - Speakers","objectTypeId":"0-1","size":7}}`, id))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder,
+		&stubFetcher{body: []byte("x")},
+		stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit"}},
+		nil)
+
+	out, err := x.Discover(context.Background(), "proj-1", "https://events.example.org/synthetic-summit")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, out.Inspected, budget, "the inspection budget was exceeded")
+	seen := map[string]struct{}{}
+	for _, l := range out.Lists {
+		seen[l.ListID] = struct{}{}
+	}
+	assert.Contains(t, seen, "9999",
+		"a repeated rollup child spent an inspection slot and crowded out a unique list, whose signal reads as missing")
+}
+
 // TestLastSent_MarksARowWhoseListsCouldNotBeRead pins the discriminator. Two empty arrays
 // otherwise say "this send targeted nobody", which is the same wire shape as a genuine
 // empty selection — so a HubSpot 5xx on the lists read became false precedent for the

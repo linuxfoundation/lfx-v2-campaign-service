@@ -215,6 +215,10 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	cache := map[string]*hubspot.List{}
 
 	for _, candidate := range candidates {
+		// No dedup guard here, deliberately: searchCandidates already dedupes its hits by
+		// list id, so a repeated top-level candidate cannot reach this loop. The rollup
+		// child loop below DOES need one — children come from RollupChildIDs, not from the
+		// search, so two rollups naming the same child collide.
 		if out.Inspected >= audience.DiscoveryMaxInspections {
 			break
 		}
@@ -241,6 +245,11 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 		// classified nor reported.
 		if childIDs := audience.RollupChildIDs(filters); audience.IsRollup(filters) && len(childIDs) > 0 {
 			for _, childID := range childIDs {
+				// Same reason as the outer loop: two rollups can name the same child, and
+				// the second costs no read but would still spend a budget slot.
+				if _, dup := seenClassified[childID]; dup {
+					continue
+				}
 				if out.Inspected >= audience.DiscoveryMaxInspections {
 					break
 				}
