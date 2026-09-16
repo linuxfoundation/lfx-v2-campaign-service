@@ -1982,8 +1982,12 @@ fans out the probes and collects what came back.
 
 `PreviewCount` unions MEMBERSHIPS rather than summing list sizes, because registrant/speaker
 overlap is the normal case, not the exception, and a sum over-counts the people an email would
-actually reach. Above the exact-count cap it reports the cap as a floor — `25,000+` — and never
-an exact number it cannot stand behind. The initial per-list size read (used only to decide
+actually reach. Above the exact-count cap it SKIPS the membership sweep and returns the summed
+list sizes as an inexact estimate — an UPPER bound on the union, since a contact in two lists is
+counted twice — and never an exact number it cannot stand behind. It is not a floor and not the
+cap: `OverCapPreviewCount(estimate)` carries the sum through as both `count` and `estimate`. A
+list that reports no size at all is a third case: `UnknownSizePreviewCount` returns no number at
+all rather than a total short by that whole list. The initial per-list size read (used only to decide
 whether the union sweep is worth running) treats a list HubSpot reports no size for as distinct
 from a genuinely empty one — `sizeOf` returns `nil`, not `0`, and any `nil` in the selection
 short-circuits to `IncompleteSizePreviewCount`: an under-counted sum over the lists that DID

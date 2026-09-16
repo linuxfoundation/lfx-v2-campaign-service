@@ -1156,10 +1156,22 @@ with the actions disabled instead of nine broken buttons.
 `ComposeAudienceMaster` is the one handler with two distinct 500s. Goa maps both the declared
 `ComposePartial` error and `InternalServerError` to HTTP 500, discriminating with a `goa-error`
 response header — which a proxying BFF does not see. So the BODY is the discriminator: a
-`ComposePartial` body carries the created suppression list alongside the code and message, and
-the handler always passes a non-nil suppression (the address of a value), so body-shape
-discrimination is sound. This is what lets a caller show the operator the list that WAS created
-rather than offering a retry that would duplicate it.
+`ComposePartial` body carries whichever of three fields describes what actually happened, and the
+presence of ANY of them is the discriminator.
+
+**Four shapes are reachable, and only ONE carries `suppression`** — so keying on
+`suppression.list_id` alone silently rethrows the other three as ordinary failures. That is the
+worst available outcome here, because the fields it discards are the deterministic NAMES the
+operator needs to find lists that may already exist:
+
+- `suppression` set — the suppression list definitely exists; the master create failed.
+- `suppression_name` set — the suppression create itself is UNCONFIRMED (no id came back).
+- `master_name` set — no exclusions requested, or suppression failed outright; master unconfirmed.
+- `suppression` + `master_name` — suppression exists, master unconfirmed.
+
+`suppression` and `suppression_name` are never both set. See `docs/api-catalog.md` for the
+authoritative list. This is what lets a caller show the operator what WAS or MAY HAVE BEEN created
+rather than offering a retry that would duplicate it — compose is not idempotent.
 
 There is no streaming variant: Goa v3 has no SSE encoding, so `discover` is a synchronous POST
 here and any progress feel is the caller's own concern.

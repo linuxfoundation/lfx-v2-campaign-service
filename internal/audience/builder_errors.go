@@ -32,6 +32,10 @@ var (
 	// ErrInvalidRequest so a handler can map every bad request in one arm while a
 	// caller that cares about this specific case can still match it.
 	ErrNoInclusionLists = fmt.Errorf("%w: at least one inclusion list is required", ErrInvalidRequest)
+	// ErrBlankExclusionID rejects a whitespace-only exclusion rather than dropping it. Silently
+	// composing a master with NO suppression when one was requested is the wrong failure on a
+	// create path that is not idempotent.
+	ErrBlankExclusionID = fmt.Errorf("%w: an exclusion list id cannot be blank", ErrInvalidRequest)
 	// ErrTooManyPreviewLists means a preview-count selected more lists than the
 	// sweep budget allows. Wraps ErrInvalidRequest for the same reason
 	// ErrNoInclusionLists does: it is the caller's request to change, not a

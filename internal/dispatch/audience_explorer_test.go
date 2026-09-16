@@ -307,6 +307,23 @@ func TestComposeMaster_RefusesBeforeItCreatesAnything(t *testing.T) {
 		"blank ids are not a selection; treating them as one would build a list matching nobody")
 }
 
+// TestComposeMaster_RejectsABlankExclusionRatherThanDroppingIt pins the one case where
+// normalising the input changes what the caller asked for. ExclusionIDs drops whitespace-only
+// entries, so `exclude_list_ids: [" "]` used to compose a master with NO suppression while the
+// caller believed one was applied — and compose is not idempotent, so discovering that
+// afterwards means reconciling a real list in the portal.
+func TestComposeMaster_RejectsABlankExclusionRatherThanDroppingIt(t *testing.T) {
+	x := explorerWithNoPortal(nil, nil, nil)
+
+	_, err := x.ComposeMaster(context.Background(), "proj-1",
+		audience.ComposeInput{ListIDs: []string{"101"}, ExcludeListIDs: []string{" "}})
+
+	require.ErrorIs(t, err, audience.ErrBlankExclusionID,
+		"a blank exclusion was dropped, composing a master with no suppression the caller asked for")
+	assert.ErrorIs(t, err, audience.ErrInvalidRequest,
+		"the handler maps this to a 400 through the general sentinel, so the wrapping has to hold")
+}
+
 // TestComposePartialError_CarriesTheOrphanForward pins the shape the handler
 // needs. The suppression list is already in the portal when the master's create
 // fails, so the error has to name it — a bare failure invites a retry that creates

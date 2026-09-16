@@ -954,14 +954,25 @@ func sumKnownSizes(sizes []*int64) (total int, allKnown bool) {
 // makes this NOT idempotent — a failure between the two creates the orphan
 // ComposePartialError describes.
 func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error) {
+	// Reject blank EXCLUSIONS on the raw input, before ExclusionIDs drops them. Dropping one
+	// silently composed a master with NO suppression even though the caller asked for one — on a
+	// create path that is not idempotent, quietly building something different is worse than a
+	// 400. Inclusions keep their existing path: an all-blank selection is still
+	// ErrNoInclusionLists below, which is the wrapped sentinel the handler maps to a 400.
+	for _, id := range in.ExcludeListIDs {
+		if strings.TrimSpace(id) == "" {
+			return nil, audience.ErrBlankExclusionID
+		}
+	}
+
 	include := audience.UniqueIDs(in.ListIDs)
 	if len(include) == 0 {
 		return nil, audience.ErrNoInclusionLists
 	}
-	exclude := audience.ExclusionIDs(in.ExcludeListIDs, include)
 	if err := audience.ValidateInclusionIDs(include); err != nil {
 		return nil, err
 	}
+	exclude := audience.ExclusionIDs(in.ExcludeListIDs, include)
 
 	// One resolved client for the whole composition. Both lists must land in the SAME
 	// portal, or the master references a suppression id that does not exist beside it.
