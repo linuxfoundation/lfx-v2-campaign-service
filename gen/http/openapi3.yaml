@@ -140,13 +140,13 @@ paths:
                                     - Et et aperiam.
                                 event_name: Est placeat explicabo aliquid.
                                 exclude_list_ids:
-                                    - Sint eius aut quo et.
+                                    - Quo et.
                                     - Ex et alias ea asperiores quas.
                                     - Corporis dolorem laborum maiores est ea ducimus.
                                 list_ids:
-                                    - Molestias laudantium quia iusto maxime recusandae illum.
-                                    - Debitis explicabo praesentium sint laudantium.
+                                    - Sint laudantium.
                                     - Sit nihil iure officiis nemo quia molestias.
+                                    - Id sint.
                                 name: Dolorem dignissimos.
             responses:
                 "201":
@@ -451,22 +451,22 @@ paths:
                                 $ref: '#/components/schemas/SearchAudienceListsResponseBody'
                             example:
                                 lists:
-                                    - hubspot_url: Hic quibusdam eveniet nostrum doloribus voluptas mollitia.
-                                      list_id: Non eum expedita non voluptas sit voluptatem.
-                                      name: Ab quasi tempora dolor.
-                                      size: 1231154037029474849
-                                    - hubspot_url: Hic quibusdam eveniet nostrum doloribus voluptas mollitia.
-                                      list_id: Non eum expedita non voluptas sit voluptatem.
-                                      name: Ab quasi tempora dolor.
-                                      size: 1231154037029474849
-                                    - hubspot_url: Hic quibusdam eveniet nostrum doloribus voluptas mollitia.
-                                      list_id: Non eum expedita non voluptas sit voluptatem.
-                                      name: Ab quasi tempora dolor.
-                                      size: 1231154037029474849
-                                    - hubspot_url: Hic quibusdam eveniet nostrum doloribus voluptas mollitia.
-                                      list_id: Non eum expedita non voluptas sit voluptatem.
-                                      name: Ab quasi tempora dolor.
-                                      size: 1231154037029474849
+                                    - hubspot_url: Doloremque totam cum veniam et ducimus.
+                                      list_id: Voluptas sit voluptatem ad ab quasi tempora.
+                                      name: Quis totam hic quibusdam eveniet nostrum doloribus.
+                                      size: 4396519385264320538
+                                    - hubspot_url: Doloremque totam cum veniam et ducimus.
+                                      list_id: Voluptas sit voluptatem ad ab quasi tempora.
+                                      name: Quis totam hic quibusdam eveniet nostrum doloribus.
+                                      size: 4396519385264320538
+                                    - hubspot_url: Doloremque totam cum veniam et ducimus.
+                                      list_id: Voluptas sit voluptatem ad ab quasi tempora.
+                                      name: Quis totam hic quibusdam eveniet nostrum doloribus.
+                                      size: 4396519385264320538
+                                    - hubspot_url: Doloremque totam cum veniam et ducimus.
+                                      list_id: Voluptas sit voluptatem ad ab quasi tempora.
+                                      name: Quis totam hic quibusdam eveniet nostrum doloribus.
+                                      size: 4396519385264320538
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -624,6 +624,7 @@ paths:
                                           name: Omnis quidem dolor ipsum voluptas.
                                           resolved_from_legacy_id: Ea sunt.
                                           size: 3737008917467127208
+                                      lists_unavailable: true
                                       sent_at: Iusto fugit non asperiores quidem natus.
                                       suppression_lists:
                                         - list_id: Hic voluptatem.
@@ -670,6 +671,7 @@ paths:
                                           name: Omnis quidem dolor ipsum voluptas.
                                           resolved_from_legacy_id: Ea sunt.
                                           size: 3737008917467127208
+                                      lists_unavailable: true
                                       sent_at: Iusto fugit non asperiores quidem natus.
                                       suppression_lists:
                                         - list_id: Hic voluptatem.
@@ -716,52 +718,7 @@ paths:
                                           name: Omnis quidem dolor ipsum voluptas.
                                           resolved_from_legacy_id: Ea sunt.
                                           size: 3737008917467127208
-                                      sent_at: Iusto fugit non asperiores quidem natus.
-                                      suppression_lists:
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                    - email_id: Aliquid aspernatur.
-                                      email_name: In cupiditate consequatur et dolorem quod.
-                                      hubspot_url: Nostrum atque illum nesciunt adipisci odit corrupti.
-                                      included_lists:
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
-                                        - list_id: Hic voluptatem.
-                                          missing: false
-                                          name: Omnis quidem dolor ipsum voluptas.
-                                          resolved_from_legacy_id: Ea sunt.
-                                          size: 3737008917467127208
+                                      lists_unavailable: true
                                       sent_at: Iusto fugit non asperiores quidem natus.
                                       suppression_lists:
                                         - list_id: Hic voluptatem.
@@ -1002,7 +959,8 @@ paths:
                             $ref: '#/components/schemas/PreviewAudienceCountRequestBody'
                         example:
                             list_ids:
-                                - Veniam et ducimus quos amet.
+                                - Quia doloremque commodi rerum.
+                                - Quidem omnis totam eos non molestias.
             responses:
                 "200":
                     description: OK response.
@@ -1011,10 +969,10 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/AudiencePreviewCount'
                             example:
-                                count: 8433491423155998732
-                                estimate: 3492912926612112535
-                                exact: true
-                                reason: Rerum esse quidem omnis totam.
+                                count: 6499237278315662645
+                                estimate: 6150421422111226538
+                                exact: false
+                                reason: Recusandae illum accusamus debitis.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -11270,20 +11228,20 @@ components:
                     $ref: '#/components/schemas/AudienceComposedList'
             example:
                 master:
-                    hubspot_url: Placeat velit ullam enim voluptatem cupiditate voluptas.
-                    list_id: Molestiae inventore voluptas.
-                    name: Et incidunt pariatur quod.
-                    size: 8396269253480787874
+                    hubspot_url: Magni autem.
+                    list_id: Sed exercitationem ut totam ut minus.
+                    name: Nemo perspiciatis et qui aliquam doloremque itaque.
+                    size: 2938455527951890433
                 source_list_ids:
                     - Consequatur rerum.
                     - Et autem velit fuga ipsum.
                     - Praesentium temporibus asperiores commodi possimus deleniti.
                     - Ut tempora veniam laboriosam.
                 suppression:
-                    hubspot_url: Placeat velit ullam enim voluptatem cupiditate voluptas.
-                    list_id: Molestiae inventore voluptas.
-                    name: Et incidunt pariatur quod.
-                    size: 8396269253480787874
+                    hubspot_url: Magni autem.
+                    list_id: Sed exercitationem ut totam ut minus.
+                    name: Nemo perspiciatis et qui aliquam doloremque itaque.
+                    size: 2938455527951890433
             required:
                 - master
                 - source_list_ids
@@ -11313,10 +11271,10 @@ components:
                 master_name: Sunt aut ut ut possimus et reprehenderit.
                 message: Compose failed after creating or possibly creating platform state that must be reconciled before retrying.
                 suppression:
-                    hubspot_url: Placeat velit ullam enim voluptatem cupiditate voluptas.
-                    list_id: Molestiae inventore voluptas.
-                    name: Et incidunt pariatur quod.
-                    size: 8396269253480787874
+                    hubspot_url: Magni autem.
+                    list_id: Sed exercitationem ut totam ut minus.
+                    name: Nemo perspiciatis et qui aliquam doloremque itaque.
+                    size: 2938455527951890433
                 suppression_name: Nisi qui voluptatem cupiditate autem itaque ut.
             required:
                 - code
@@ -11631,6 +11589,10 @@ components:
                           name: Autem tempore ut esse omnis debitis voluptatem.
                           resolved_from_legacy_id: Ipsa rerum odit et nostrum veritatis dolores.
                           size: 1764447663094093923
+                lists_unavailable:
+                    type: boolean
+                    description: True when this email's list selection could not be read. The two list arrays are then empty because they are UNKNOWN, not because the send targeted nothing.
+                    example: false
                 sent_at:
                     type: string
                     description: When the email was published/sent, RFC 3339
@@ -11662,8 +11624,8 @@ components:
                           resolved_from_legacy_id: Ipsa rerum odit et nostrum veritatis dolores.
                           size: 1764447663094093923
             example:
-                email_id: Consequuntur accusantium rem neque et facilis.
-                email_name: Non molestiae voluptatem aspernatur.
+                email_id: Accusantium rem neque.
+                email_name: Facilis ut.
                 hubspot_url: Corrupti sit.
                 included_lists:
                     - list_id: Et voluptas ut officiis earum.
@@ -11686,7 +11648,8 @@ components:
                       name: Autem tempore ut esse omnis debitis voluptatem.
                       resolved_from_legacy_id: Ipsa rerum odit et nostrum veritatis dolores.
                       size: 1764447663094093923
-                sent_at: Non consectetur impedit.
+                lists_unavailable: false
+                sent_at: Molestiae voluptatem aspernatur quo non consectetur impedit.
                 suppression_lists:
                     - list_id: Et voluptas ut officiis earum.
                       missing: false
@@ -11777,7 +11740,7 @@ components:
                 list_id:
                     type: string
                     description: HubSpot list id
-                    example: Voluptatum eaque aut nobis.
+                    example: Eaque aut nobis.
                 name:
                     type: string
                     description: HubSpot list name
@@ -11859,11 +11822,11 @@ components:
                         $ref: '#/components/schemas/AudienceQaFinding'
                     description: Findings that produced the verdict
                     example:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
                 verdict:
                     type: string
@@ -11875,17 +11838,17 @@ components:
                         - FAIL
             example:
                 findings:
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
                 verdict: PASS
             required:
@@ -11902,50 +11865,47 @@ components:
                     $ref: '#/components/schemas/AudienceQaSuppressionCheck'
             example:
                 exclusion_completeness:
-                    exclusion_count: 8099594961295990863
+                    exclusion_count: 1582559252019194505
                     findings:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
-                          severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
                     verdict: NEEDS VERIFY
                 signal_mapping:
                     findings:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                    verdict: PASS
+                    verdict: FAIL
                 suppression:
-                    applied_gdpr: false
-                    applied_opt_out: true
+                    applied_gdpr: true
+                    applied_opt_out: false
                     findings:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                    verdict: PASS
+                    verdict: FAIL
             required:
                 - signal_mapping
                 - suppression
@@ -11964,11 +11924,11 @@ components:
                         $ref: '#/components/schemas/AudienceQaFinding'
                     description: Findings that produced the verdict
                     example:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
                 verdict:
                     type: string
@@ -11981,11 +11941,11 @@ components:
             example:
                 exclusion_count: 4436940587496337929
                 findings:
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
                 verdict: PASS
             required:
@@ -12028,12 +11988,12 @@ components:
                         $ref: '#/components/schemas/AudienceQaCandidate'
                     description: Matches to choose between; set only when needs_disambiguation is true
                     example:
-                        - list_id: Ex tempore.
-                          name: Quos quo eum dignissimos iure praesentium.
-                          size: 6005334880494173001
-                        - list_id: Ex tempore.
-                          name: Quos quo eum dignissimos iure praesentium.
-                          size: 6005334880494173001
+                        - list_id: Ut temporibus aliquam animi unde.
+                          name: Ut est nobis aspernatur.
+                          size: 5092102736891991435
+                        - list_id: Ut temporibus aliquam animi unde.
+                          name: Ut est nobis aspernatur.
+                          size: 5092102736891991435
                 checks:
                     $ref: '#/components/schemas/AudienceQaChecks'
                 findings:
@@ -12042,17 +12002,17 @@ components:
                         $ref: '#/components/schemas/AudienceQaFinding'
                     description: Every finding across all checks, most severe first
                     example:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
                 hubspot_url:
                     type: string
@@ -12080,67 +12040,64 @@ components:
                         - FAIL
             example:
                 candidates:
-                    - list_id: Ex tempore.
-                      name: Quos quo eum dignissimos iure praesentium.
-                      size: 6005334880494173001
-                    - list_id: Ex tempore.
-                      name: Quos quo eum dignissimos iure praesentium.
-                      size: 6005334880494173001
+                    - list_id: Ut temporibus aliquam animi unde.
+                      name: Ut est nobis aspernatur.
+                      size: 5092102736891991435
+                    - list_id: Ut temporibus aliquam animi unde.
+                      name: Ut est nobis aspernatur.
+                      size: 5092102736891991435
                 checks:
                     exclusion_completeness:
-                        exclusion_count: 8099594961295990863
+                        exclusion_count: 1582559252019194505
                         findings:
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
-                              severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
                         verdict: NEEDS VERIFY
                     signal_mapping:
                         findings:
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                        verdict: PASS
+                        verdict: FAIL
                     suppression:
-                        applied_gdpr: false
-                        applied_opt_out: true
+                        applied_gdpr: true
+                        applied_opt_out: false
                         findings:
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                            - fix: Commodi reiciendis sit alias.
-                              message: Aspernatur aut fugit qui.
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
                               severity: HIGH
-                        verdict: PASS
+                        verdict: FAIL
                 findings:
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
                 hubspot_url: Sapiente aliquid.
                 list_id: Mollitia est qui voluptatem fugiat.
@@ -12166,17 +12123,17 @@ components:
                         $ref: '#/components/schemas/AudienceQaFinding'
                     description: Findings that produced the verdict
                     example:
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
-                        - fix: Commodi reiciendis sit alias.
-                          message: Aspernatur aut fugit qui.
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
                           severity: HIGH
                 verdict:
                     type: string
@@ -12190,17 +12147,17 @@ components:
                 applied_gdpr: false
                 applied_opt_out: false
                 findings:
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
-                    - fix: Commodi reiciendis sit alias.
-                      message: Aspernatur aut fugit qui.
+                    - fix: Explicabo cupiditate rerum.
+                      message: Voluptas et accusamus quia et officiis ipsum.
                       severity: HIGH
                 verdict: PASS
             required:
@@ -14046,13 +14003,13 @@ components:
                         - Et et aperiam.
                     event_name: Est placeat explicabo aliquid.
                     exclude_list_ids:
-                        - Sint eius aut quo et.
+                        - Quo et.
                         - Ex et alias ea asperiores quas.
                         - Corporis dolorem laborum maiores est ea ducimus.
                     list_ids:
-                        - Molestias laudantium quia iusto maxime recusandae illum.
-                        - Debitis explicabo praesentium sint laudantium.
+                        - Sint laudantium.
                         - Sit nihil iure officiis nemo quia molestias.
+                        - Id sint.
                     name: Dolorem dignissimos.
             required:
                 - compose
@@ -14582,6 +14539,7 @@ components:
                               name: Omnis quidem dolor ipsum voluptas.
                               resolved_from_legacy_id: Ea sunt.
                               size: 3737008917467127208
+                          lists_unavailable: true
                           sent_at: Iusto fugit non asperiores quidem natus.
                           suppression_lists:
                             - list_id: Hic voluptatem.
@@ -14628,6 +14586,7 @@ components:
                               name: Omnis quidem dolor ipsum voluptas.
                               resolved_from_legacy_id: Ea sunt.
                               size: 3737008917467127208
+                          lists_unavailable: true
                           sent_at: Iusto fugit non asperiores quidem natus.
                           suppression_lists:
                             - list_id: Hic voluptatem.
@@ -14674,6 +14633,7 @@ components:
                               name: Omnis quidem dolor ipsum voluptas.
                               resolved_from_legacy_id: Ea sunt.
                               size: 3737008917467127208
+                          lists_unavailable: true
                           sent_at: Iusto fugit non asperiores quidem natus.
                           suppression_lists:
                             - list_id: Hic voluptatem.
@@ -14722,6 +14682,7 @@ components:
                           name: Omnis quidem dolor ipsum voluptas.
                           resolved_from_legacy_id: Ea sunt.
                           size: 3737008917467127208
+                      lists_unavailable: true
                       sent_at: Iusto fugit non asperiores quidem natus.
                       suppression_lists:
                         - list_id: Hic voluptatem.
@@ -14768,6 +14729,7 @@ components:
                           name: Omnis quidem dolor ipsum voluptas.
                           resolved_from_legacy_id: Ea sunt.
                           size: 3737008917467127208
+                      lists_unavailable: true
                       sent_at: Iusto fugit non asperiores quidem natus.
                       suppression_lists:
                         - list_id: Hic voluptatem.
@@ -14814,6 +14776,7 @@ components:
                           name: Omnis quidem dolor ipsum voluptas.
                           resolved_from_legacy_id: Ea sunt.
                           size: 3737008917467127208
+                      lists_unavailable: true
                       sent_at: Iusto fugit non asperiores quidem natus.
                       suppression_lists:
                         - list_id: Hic voluptatem.
@@ -14860,6 +14823,7 @@ components:
                           name: Omnis quidem dolor ipsum voluptas.
                           resolved_from_legacy_id: Ea sunt.
                           size: 3737008917467127208
+                      lists_unavailable: true
                       sent_at: Iusto fugit non asperiores quidem natus.
                       suppression_lists:
                         - list_id: Hic voluptatem.

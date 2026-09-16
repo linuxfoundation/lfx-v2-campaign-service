@@ -118,6 +118,9 @@ type LastSentEmail struct {
 	HubSpotURL       string
 	IncludedLists    []ListBrief
 	SuppressionLists []ListBrief
+	// ListsUnavailable marks a row whose selection could not be read. Without it the two empty
+	// arrays are indistinguishable from a send that genuinely targeted nothing — false precedent.
+	ListsUnavailable bool
 }
 
 // ComposeInput is what a master list is composed from.

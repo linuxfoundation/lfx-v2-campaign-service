@@ -930,6 +930,10 @@ type AudienceLastSentEmailResponseBody struct {
 	IncludedLists []*AudienceListBriefResponseBody `form:"included_lists,omitempty" json:"included_lists,omitempty" xml:"included_lists,omitempty"`
 	// Lists the send suppressed
 	SuppressionLists []*AudienceListBriefResponseBody `form:"suppression_lists,omitempty" json:"suppression_lists,omitempty" xml:"suppression_lists,omitempty"`
+	// True when this email's list selection could not be read. The two list arrays
+	// are then empty because they are UNKNOWN, not because the send targeted
+	// nothing.
+	ListsUnavailable *bool `form:"lists_unavailable,omitempty" json:"lists_unavailable,omitempty" xml:"lists_unavailable,omitempty"`
 }
 
 // AudienceListBriefResponseBody is used to define fields on response body

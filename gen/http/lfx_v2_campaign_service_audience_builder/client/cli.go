@@ -247,7 +247,7 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Veniam et ducimus quos amet.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Quia doloremque commodi rerum.\",\n         \"Quidem omnis totam eos non molestias.\"\n      ]\n   }'")
 		}
 		if body.ListIds == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
@@ -296,7 +296,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Quo ullam ad iusto quos.\",\n         \"event_dates\": [\n            \"Ut voluptatem.\",\n            \"Vel iste aut cum voluptatem.\",\n            \"Et et aperiam.\"\n         ],\n         \"event_name\": \"Est placeat explicabo aliquid.\",\n         \"exclude_list_ids\": [\n            \"Sint eius aut quo et.\",\n            \"Ex et alias ea asperiores quas.\",\n            \"Corporis dolorem laborum maiores est ea ducimus.\"\n         ],\n         \"list_ids\": [\n            \"Molestias laudantium quia iusto maxime recusandae illum.\",\n            \"Debitis explicabo praesentium sint laudantium.\",\n            \"Sit nihil iure officiis nemo quia molestias.\"\n         ],\n         \"name\": \"Dolorem dignissimos.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Quo ullam ad iusto quos.\",\n         \"event_dates\": [\n            \"Ut voluptatem.\",\n            \"Vel iste aut cum voluptatem.\",\n            \"Et et aperiam.\"\n         ],\n         \"event_name\": \"Est placeat explicabo aliquid.\",\n         \"exclude_list_ids\": [\n            \"Quo et.\",\n            \"Ex et alias ea asperiores quas.\",\n            \"Corporis dolorem laborum maiores est ea ducimus.\"\n         ],\n         \"list_ids\": [\n            \"Sint laudantium.\",\n            \"Sit nihil iure officiis nemo quia molestias.\",\n            \"Id sint.\"\n         ],\n         \"name\": \"Dolorem dignissimos.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))

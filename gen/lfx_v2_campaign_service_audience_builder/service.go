@@ -170,6 +170,10 @@ type AudienceLastSentEmail struct {
 	IncludedLists []*AudienceListBrief
 	// Lists the send suppressed
 	SuppressionLists []*AudienceListBrief
+	// True when this email's list selection could not be read. The two list arrays
+	// are then empty because they are UNKNOWN, not because the send targeted
+	// nothing.
+	ListsUnavailable *bool
 }
 
 type AudienceListBrief struct {

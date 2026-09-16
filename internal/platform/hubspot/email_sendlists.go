@@ -83,11 +83,26 @@ func (c *Client) GetEmailSendLists(ctx context.Context, emailID string) (*EmailS
 		return nil, fmt.Errorf("hubspot: GetEmailSendLists(%s) returned a 2xx with no `to` object (malformed response)", emailID)
 	}
 	out := &EmailSendLists{PublishDate: strings.TrimSpace(resp.PublishDate)}
+	// Each selection is REPORTED AS COMPLETE to the caller, who reads it as the audience a
+	// previous send targeted. A blank element (encoding/json accepts `[1,null,3]` into
+	// []json.Number with an empty middle value) would silently shorten that audience by one
+	// list while still looking like a full answer — so it fails the read instead, the same way
+	// ListMembershipIDs refuses a result with no recordId.
 	if sel := resp.To.ContactIlsLists; sel != nil {
-		out.Include, out.Exclude = sel.include(), sel.exclude()
+		if out.Include, err = numberIDs(sel.Include); err != nil {
+			return nil, err
+		}
+		if out.Exclude, err = numberIDs(sel.Exclude); err != nil {
+			return nil, err
+		}
 	}
 	if sel := resp.To.ContactLists; sel != nil {
-		out.LegacyInclude, out.LegacyExclude = sel.include(), sel.exclude()
+		if out.LegacyInclude, err = numberIDs(sel.Include); err != nil {
+			return nil, err
+		}
+		if out.LegacyExclude, err = numberIDs(sel.Exclude); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -99,16 +114,15 @@ type idSelection struct {
 	Exclude []json.Number `json:"exclude"`
 }
 
-func (s *idSelection) include() []string { return numberIDs(s.Include) }
-func (s *idSelection) exclude() []string { return numberIDs(s.Exclude) }
-
-// numberIDs renders decoded ids as non-blank strings, preserving order.
-func numberIDs(nums []json.Number) []string {
+// numberIDs renders decoded ids as strings, preserving order, and REFUSES a blank one.
+func numberIDs(nums []json.Number) ([]string, error) {
 	out := make([]string, 0, len(nums))
 	for _, n := range nums {
-		if id := strings.TrimSpace(n.String()); id != "" {
-			out = append(out, id)
+		id := strings.TrimSpace(n.String())
+		if id == "" {
+			return nil, fmt.Errorf("hubspot: email send list selection contained a blank list id; the selection cannot be reported as complete")
 		}
+		out = append(out, id)
 	}
-	return out
+	return out, nil
 }

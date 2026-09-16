@@ -199,6 +199,13 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 	Attribute("hubspot_url", String, "Deep link to the email in the HubSpot UI")
 	Attribute("included_lists", ArrayOf(AudienceListBrief), "Lists the send included")
 	Attribute("suppression_lists", ArrayOf(AudienceListBrief), "Lists the send suppressed")
+	// Without this, a failed selection read and a send that genuinely targeted nothing have the
+	// IDENTICAL wire shape — two empty arrays — so a HubSpot 5xx renders as false precedent.
+	// The email's name and link are still worth showing, so the row is kept and marked rather
+	// than dropped or failing the whole listing.
+	Attribute("lists_unavailable", Boolean,
+		"True when this email's list selection could not be read. The two list arrays are then "+
+			"empty because they are UNKNOWN, not because the send targeted nothing.")
 	Required("email_id", "email_name", "hubspot_url", "included_lists", "suppression_lists")
 })
 

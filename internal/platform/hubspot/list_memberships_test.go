@@ -94,6 +94,27 @@ func TestGetEmailSendListsRejectsAResponseWithNoToObject(t *testing.T) {
 	}
 }
 
+// A blank element inside a selection makes the reported audience SHORT while still looking
+// like a complete answer — the caller reads it as the lists a previous send targeted.
+func TestGetEmailSendListsRejectsABlankIDInsideASelection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// encoding/json accepts a null into []json.Number as an empty value.
+		_, _ = fmt.Fprint(w, `{"id":"123","to":{"contactIlsLists":{"include":[1,null,3],"exclude":[]}}}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(Credentials{PrivateAppToken: "t"}, AccountConfig{PortalID: "8112310"}, WithBaseURL(server.URL))
+
+	got, err := c.GetEmailSendLists(context.Background(), "123")
+	if err == nil {
+		t.Fatalf("a selection with a blank id was accepted as complete: %+v — it reports 2 of 3 lists as the whole audience", got)
+	}
+	if !strings.Contains(err.Error(), "blank list id") {
+		t.Errorf("the error must name the cause so it is diagnosable; got %v", err)
+	}
+}
+
 // An empty-but-PRESENT `to` is a real answer and must still be accepted.
 func TestGetEmailSendListsAcceptsAnEmptyToObject(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

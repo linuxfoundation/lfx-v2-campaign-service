@@ -247,6 +247,12 @@ func (s *AudienceExploreService) GetAudienceLastSent(ctx context.Context, p *exp
 			IncludedLists:    listBriefResults(e.IncludedLists),
 			SuppressionLists: listBriefResults(e.SuppressionLists),
 		}
+		// Sent only when TRUE, matching `sent_at`'s treatment below: an absent flag reads as
+		// "the lists are what they say", which is the common case and the safe default.
+		if e.ListsUnavailable {
+			unavailable := true
+			row.ListsUnavailable = &unavailable
+		}
 		// Left absent rather than sent as "": a published-at the portal did not report
 		// is not a send that happened at the zero time.
 		if sentAt := strings.TrimSpace(e.SentAt); sentAt != "" {

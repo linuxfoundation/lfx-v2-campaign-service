@@ -542,6 +542,43 @@ func TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported(t *testing.T)
 		"the hit HubSpot reported a size for must outrank the one it reported none for")
 }
 
+// TestLastSent_MarksARowWhoseListsCouldNotBeRead pins the discriminator. Two empty arrays
+// otherwise say "this send targeted nobody", which is the same wire shape as a genuine
+// empty selection — so a HubSpot 5xx on the lists read became false precedent for the
+// operator's own selection. The row is still worth showing (its name and link are the way
+// into HubSpot), so it is MARKED rather than dropped or failing the whole listing.
+func TestLastSent_MarksARowWhoseListsCouldNotBeRead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case strings.HasSuffix(r.URL.Path, "/marketing/v3/emails"):
+			_, _ = io.WriteString(w, `{"results":[{"id":"55","name":"Synthetic Summit Invite","state":"PUBLISHED"}]}`)
+		case strings.Contains(r.URL.Path, "/marketing/v3/emails/55"):
+			// The selection read fails; the email itself was found.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"message":"upstream unavailable"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "Synthetic Summit", "LF", 5)
+	require.NoError(t, err, "the email is still worth showing; only its selection is unknown")
+	require.Len(t, rows, 1)
+	assert.True(t, rows[0].ListsUnavailable,
+		"a failed selection read rendered as an empty selection — indistinguishable from a send that targeted nobody")
+	assert.Empty(t, rows[0].IncludedLists)
+}
+
 // TestLastSent_AnAllIncompleteSweepIsNotAnEmptyHistory pins that a search which never
 // completed is not reported as "this event has never been emailed". Every term hits the
 // scan bound without matching, and the loop used to `continue` past each one and fall out

@@ -1626,10 +1626,11 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceSuppressionListToAudience
 // type *lfxv2campaignserviceaudiencebuilder.AudienceLastSentEmail.
 func marshalLfxv2campaignserviceaudiencebuilderAudienceLastSentEmailToAudienceLastSentEmailResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceLastSentEmail) *AudienceLastSentEmailResponseBody {
 	res := &AudienceLastSentEmailResponseBody{
-		EmailID:    v.EmailID,
-		EmailName:  v.EmailName,
-		SentAt:     v.SentAt,
-		HubspotURL: v.HubspotURL,
+		EmailID:          v.EmailID,
+		EmailName:        v.EmailName,
+		SentAt:           v.SentAt,
+		HubspotURL:       v.HubspotURL,
+		ListsUnavailable: v.ListsUnavailable,
 	}
 	if v.IncludedLists != nil {
 		res.IncludedLists = make([]*AudienceListBriefResponseBody, len(v.IncludedLists))

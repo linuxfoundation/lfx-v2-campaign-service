@@ -1546,7 +1546,7 @@ func lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-existing-audience-master-lists --project-id \"cncf\" --event-name \"nd\" --brand-short \"Unde ut.\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-existing-audience-master-lists --project-id \"cncf\" --event-name \"dzl\" --brand-short \"Sint non eum expedita.\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountUsage() {
@@ -1568,7 +1568,7 @@ func lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder preview-audience-count --body '{\n      \"list_ids\": [\n         \"Veniam et ducimus quos amet.\"\n      ]\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder preview-audience-count --body '{\n      \"list_ids\": [\n         \"Quia doloremque commodi rerum.\",\n         \"Quidem omnis totam eos non molestias.\"\n      ]\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage() {
@@ -1590,7 +1590,7 @@ func lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder compose-audience-master --body '{\n      \"compose\": {\n         \"brand_short\": \"Quo ullam ad iusto quos.\",\n         \"event_dates\": [\n            \"Ut voluptatem.\",\n            \"Vel iste aut cum voluptatem.\",\n            \"Et et aperiam.\"\n         ],\n         \"event_name\": \"Est placeat explicabo aliquid.\",\n         \"exclude_list_ids\": [\n            \"Sint eius aut quo et.\",\n            \"Ex et alias ea asperiores quas.\",\n            \"Corporis dolorem laborum maiores est ea ducimus.\"\n         ],\n         \"list_ids\": [\n            \"Molestias laudantium quia iusto maxime recusandae illum.\",\n            \"Debitis explicabo praesentium sint laudantium.\",\n            \"Sit nihil iure officiis nemo quia molestias.\"\n         ],\n         \"name\": \"Dolorem dignissimos.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder compose-audience-master --body '{\n      \"compose\": {\n         \"brand_short\": \"Quo ullam ad iusto quos.\",\n         \"event_dates\": [\n            \"Ut voluptatem.\",\n            \"Vel iste aut cum voluptatem.\",\n            \"Et et aperiam.\"\n         ],\n         \"event_name\": \"Est placeat explicabo aliquid.\",\n         \"exclude_list_ids\": [\n            \"Quo et.\",\n            \"Ex et alias ea asperiores quas.\",\n            \"Corporis dolorem laborum maiores est ea ducimus.\"\n         ],\n         \"list_ids\": [\n            \"Sint laudantium.\",\n            \"Sit nihil iure officiis nemo quia molestias.\",\n            \"Id sint.\"\n         ],\n         \"name\": \"Dolorem dignissimos.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage() {

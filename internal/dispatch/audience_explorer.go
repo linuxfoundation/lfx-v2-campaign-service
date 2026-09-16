@@ -717,6 +717,9 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 			// route into HubSpot to read the selection by hand.
 			slog.WarnContext(ctx, "could not read a last-sent email's lists",
 				"project_id", projectID, "email_id", r.email.ID, "error", lerr)
+			// Marked, not silently empty: two empty arrays otherwise say "this send targeted
+			// nobody", which an operator reads as precedent for their own selection.
+			row.ListsUnavailable = true
 			out = append(out, row)
 			continue
 		}

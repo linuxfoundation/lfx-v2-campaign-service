@@ -2014,10 +2014,11 @@ func unmarshalAudienceSuppressionListResponseBodyToLfxv2campaignserviceaudienceb
 // type *AudienceLastSentEmailResponseBody.
 func unmarshalAudienceLastSentEmailResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceLastSentEmail(v *AudienceLastSentEmailResponseBody) *lfxv2campaignserviceaudiencebuilder.AudienceLastSentEmail {
 	res := &lfxv2campaignserviceaudiencebuilder.AudienceLastSentEmail{
-		EmailID:    *v.EmailID,
-		EmailName:  *v.EmailName,
-		SentAt:     v.SentAt,
-		HubspotURL: *v.HubspotURL,
+		EmailID:          *v.EmailID,
+		EmailName:        *v.EmailName,
+		SentAt:           v.SentAt,
+		HubspotURL:       *v.HubspotURL,
+		ListsUnavailable: v.ListsUnavailable,
 	}
 	res.IncludedLists = make([]*lfxv2campaignserviceaudiencebuilder.AudienceListBrief, len(v.IncludedLists))
 	for i, val := range v.IncludedLists {
