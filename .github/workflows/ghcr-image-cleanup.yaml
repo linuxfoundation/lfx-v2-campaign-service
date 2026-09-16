@@ -48,16 +48,22 @@ jobs:
         # of deleting organization packages, pinning by digest closes the
         # gap where retagging upstream could substitute a different image.
         uses: docker://ghcr.io/snok/container-retention-policy@sha256:884037f146d6ef574b61fbcc59bef490f887322e6b9dc2eefcf364cb4e9b4112  # v3.1.0
+        # A raw `docker://` reference has no action.yaml, so there is no
+        # `with:`-to-CLI-flag mapping to rely on: the image's entrypoint is a
+        # Rust CLI that only understands `--flag=value` arguments. Inputs are
+        # passed via `with.args`, GitHub's documented mechanism for a Docker
+        # container step's args (see "jobs.<job_id>.steps[*].with.args" in the
+        # workflow syntax reference), which forwards this string to the
+        # container's ENTRYPOINT. cut-off is double-quoted because its value
+        # may contain a space (e.g. "4w 2d").
+        env:
+          RUST_LOG: container_retention_policy=INFO
         with:
-          account: linuxfoundation
-          image-names: lfx-v2-campaign-service/campaign-service
-          tag-selection: untagged
           # The default job GITHUB_TOKEN can delete package versions as long
           # as `image-names` is an exact string (not a wildcard), which it is
           # here — no separate PAT is needed. Requires the job-level
           # `permissions: packages: write` above.
-          token: ${{ secrets.GITHUB_TOKEN }}
-          cut-off: ${{ github.event.inputs.cut-off || '30d' }}
+          #
           # Scheduled runs default to dry-run:true for now: the package has
           # ~15,000 existing untagged versions, so the first unattended
           # Sunday run would face the whole accumulated backlog rather than
@@ -66,7 +72,13 @@ jobs:
           # to 'false' once a maintainer has reviewed a manual dry-run
           # preview (or drained the backlog manually) and confirmed the
           # candidate count is safe to delete unattended.
-          dry-run: ${{ github.event.inputs.dry-run || 'true' }}
+          args: >-
+            --account=linuxfoundation
+            --image-names=lfx-v2-campaign-service/campaign-service
+            --tag-selection=untagged
+            --token=${{ secrets.GITHUB_TOKEN }}
+            --cut-off="${{ github.event.inputs.cut-off || '30d' }}"
+            --dry-run=${{ github.event.inputs.dry-run || 'true' }}
 
       - name: Write run summary
         if: always()
