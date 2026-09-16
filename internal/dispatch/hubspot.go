@@ -58,7 +58,7 @@ type hubspotConfig struct {
 	// by hand.
 	Subject string `json:"subject"`
 	// BodyHTML optionally replaces the cloned draft's rich-text body. OPTIONAL, and written into
-	// the FIRST rich-text block of the draft's layout reading order — see applyEmailContent for
+	// the FIRST rich-text block of the draft's layout reading order — see hubspot.ApplyEmailContent for
 	// why the top block is a stated contract rather than a guess at which block "means" body.
 	//
 	// Two shapes leave the draft's content alone: one with no rich-text block at all, and one with
@@ -123,6 +123,24 @@ func NewHubSpotDispatcher(repo connReader, enc domain.Encryptor, audiences audie
 func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, err error) {
 	client, _, err = d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	return client, err
+}
+
+// ResolveEmailClient builds a HubSpot client for one project, for a caller outside this
+// package that needs to read and write emails — today, the email-creation wizard.
+//
+// It is a thin export of the unexported resolution above rather than a second
+// implementation, because that sequence is where the connection-state and
+// incomplete-credential checks live and two copies of it drift. It deliberately returns the
+// concrete *hubspot.Client: the CONSUMER declares the narrow interface it wants (see
+// service.HubSpotWizardClient), so this package does not learn what the wizard needs and
+// this edge stays one-directional — internal/service must never import internal/dispatch,
+// since this package's own tests import internal/service.
+//
+// Per-call, not cached: a project's connection can be revoked or rotated between two wizard
+// turns, and a client held from an earlier turn would keep writing with a credential the
+// project has since withdrawn.
+func (d *HubSpotDispatcher) ResolveEmailClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
+	return d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
 }
 
 // resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built the
@@ -413,7 +431,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// STEP 3 (mutating, BEST-EFFORT): apply generated copy to the draft. BEFORE the UTM tagging
 	// below, not after: tagging rewrites the body's links, so writing the body afterwards would
 	// discard every tag it had just added and send the email untracked.
-	applyEmailContent(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML)
+	hubspot.ApplyEmailContent(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML)
 
 	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
 	// traffic is attributable in the warehouse. Deliberately LAST and non-fatal: the email is
@@ -423,86 +441,6 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
 
 	return campaignFromHubSpot(ctx, email, cfg, portalID), nil
-}
-
-// applyEmailContent writes generated copy onto a cloned draft: the subject via
-// PatchEmailSettings, the body into the draft's FIRST rich-text block.
-//
-// BEST-EFFORT, like tagEmailLinks and for the same reason: by the time this runs the email is
-// cloned and pointed at the right audience, so it is already a working campaign. A failure here
-// leaves a draft carrying the TEMPLATE's copy — which is what every campaign had before
-// LFXV2-2775 — so turning it into a dispatch failure would trade a recoverable cosmetic gap for
-// a failed send and an orphaned draft. Every failure is logged and swallowed.
-//
-// FIRST LAYOUT-PLACED BLOCK, in the layout's reading order — the block at the top of the email.
-// (A draft with no layout has no such block; see the classic-template paragraph below.) It used to be
-// "the only block, or nothing": templates carry several rich-text widgets (an intro, keynote
-// copy, a footer note) and the API exposes no marker saying which is "the" body, so writing
-// nothing looked like the safe answer to that ambiguity. It was not. Every real template in the
-// portal has nine or so blocks, so the guard fired on all of them and the generated copy — the
-// copy an operator reviewed in the UI and pressed Stage on — reached the draft for no template
-// at all, with only an info log to say why.
-//
-// The first block is not a heuristic guess at which block "means" body; it is a stated contract
-// the operator can see. The generated copy is a lede written against the brief, the top of the
-// email is where a lede goes, and the other blocks — programme details, sponsor tiers, the
-// unsubscribe footer — are template furniture that the copy was never meant to replace. Picking
-// "the longest" or "the one that looks like prose" WOULD be a guess, and would move between
-// templates; the top block is the same block every time.
-//
-// That contract rests entirely on the position being the LAYOUT's. GetEmailHTMLWidgets orders
-// layout-placed blocks by the drag-and-drop tree and appends everything else in sorted key
-// order, so on a CLASSIC template — no flexAreas at all — blocks[0] is merely whichever opaque
-// module id sorts first, and is as likely the unsubscribe footer as the lede. Writing there
-// would overwrite template furniture with the operator's copy and log it as "the first block",
-// which is why this requires blocks[0].Placed rather than trusting the index. Without a layout
-// there is no top of the email to speak of, so the draft keeps its template body and the log
-// says so — the same conservative answer as the no-rich-text-block case below it.
-//
-// Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
-// hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
-// success while HubSpot silently ignored it.
-func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML string) {
-	if subject = strings.TrimSpace(subject); subject != "" {
-		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
-			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
-				"email_id", emailID, "error", err)
-		}
-	}
-
-	if bodyHTML = strings.TrimSpace(bodyHTML); bodyHTML == "" {
-		return
-	}
-
-	blocks, err := client.GetEmailHTMLWidgets(ctx, emailID)
-	if err != nil {
-		slog.WarnContext(ctx, "could not read the email draft to set its body; it keeps the template's body",
-			"email_id", emailID, "error", err)
-		return
-	}
-	if len(blocks) == 0 {
-		// An image-only or module-only template. Not an error: there is no rich-text block to
-		// write into, and inventing one would put copy somewhere the layout never placed.
-		slog.InfoContext(ctx, "email draft has no rich-text block to write the generated body into; it keeps the template's content",
-			"email_id", emailID)
-		return
-	}
-
-	target := blocks[0]
-	if !target.Placed {
-		// Sorted key order, not reading order: see the contract note above. Info, not Warn —
-		// a classic template is a legitimate choice by whoever built it, not a failure.
-		slog.InfoContext(ctx, "email draft has no layout-placed rich-text block, so there is no first block to write the generated body into; it keeps the template's content",
-			"email_id", emailID, "block_count", len(blocks))
-		return
-	}
-	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{target.Key: bodyHTML}); perr != nil {
-		slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
-			"email_id", emailID, "widget", target.Key, "error", perr)
-		return
-	}
-	slog.InfoContext(ctx, "wrote the generated body into the email draft's first rich-text block",
-		"email_id", emailID, "widget", target.Key, "block_count", len(blocks))
 }
 
 // tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by

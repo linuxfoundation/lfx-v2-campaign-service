@@ -41,7 +41,7 @@ func realChain(t *testing.T) http.Handler {
 	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
