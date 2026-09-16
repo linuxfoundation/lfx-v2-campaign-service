@@ -542,6 +542,99 @@ func TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported(t *testing.T)
 		"the hit HubSpot reported a size for must outrank the one it reported none for")
 }
 
+// TestLastSent_AnAllIncompleteSweepIsNotAnEmptyHistory pins that a search which never
+// completed is not reported as "this event has never been emailed". Every term hits the
+// scan bound without matching, and the loop used to `continue` past each one and fall out
+// with an empty list -- an absence nobody established, which is precisely what the
+// hubspot layer refuses to fabricate one level down.
+func TestLastSent_AnAllIncompleteSweepIsNotAnEmptyHistory(t *testing.T) {
+	var pages atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case strings.Contains(r.URL.Path, "/marketing/v3/emails"):
+			// Always another page, never a match: the filtered walk runs to its bound
+			// having matched nothing, which is the false-absence case. The cursor must
+			// ADVANCE each page — the client refuses a repeated `after` token as a
+			// non-advancing cursor and gives up before reaching the scan bound.
+			n := pages.Add(1)
+			_, _ = io.WriteString(w, fmt.Sprintf(
+				`{"results":[{"id":"%d","name":"Unrelated Newsletter","state":"PUBLISHED"}],`+
+					`"paging":{"next":{"after":"cursor-%d"}}}`, n, n))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	_, err := x.LastSent(context.Background(), "proj-1", "Synthetic Summit", "LF", 5)
+
+	require.ErrorIs(t, err, hubspot.ErrSearchIncomplete,
+		"a sweep that never completed was reported as an authoritative empty history")
+}
+
+// TestSuppressionLists_BestMatch_RanksAcrossProbesNotWithinOne pins that the synonyms in
+// EventSuppressionProbes are alternate SPELLINGS of one list, not an ordered fallback.
+// Returning on the first probe that matched anything meant a stale "... Suppression" won
+// outright even when the later "... Exclusion" probe held the current quarter's list --
+// the same stale-list selection the newest-quarter rule exists to prevent, surviving
+// because the rule only ever ran within a single probe.
+func TestSuppressionLists_BestMatch_RanksAcrossProbesNotWithinOne(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+			body, _ := io.ReadAll(r.Body)
+			// The FIRST probe ("... Suppression") finds only a stale quarter; the SECOND
+			// ("... Exclusion") holds the current one. Order is the whole point.
+			if strings.Contains(string(body), "Exclusion") {
+				_, _ = io.WriteString(w, `{"lists":[`+
+					`{"listId":"222","name":"26Q1 - Synthetic Summit Exclusion","objectTypeId":"0-1",`+
+					`"additionalProperties":{"hs_list_size":"10"}}`+
+					`],"hasMore":false,"offset":0}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"lists":[`+
+				`{"listId":"111","name":"25Q1 - Synthetic Summit Suppression","objectTypeId":"0-1",`+
+				`"additionalProperties":{"hs_list_size":"900"}}`+
+				`],"hasMore":false,"offset":0}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.SuppressionLists(context.Background(), "proj-1", "", "Synthetic Summit")
+	require.NoError(t, err)
+
+	var eventRow *audience.SuppressionRow
+	for i := range rows {
+		if rows[i].Category == audience.SuppressionCategoryEvent {
+			eventRow = &rows[i]
+		}
+	}
+	require.NotNil(t, eventRow, "the event suppression probes must have matched one of the two hits")
+	assert.Equal(t, "222", eventRow.ListID,
+		"a stale quarter from the FIRST probe won outright; the newest-quarter rule must rank across all probes")
+}
+
 // A nil *llm.Client -- exactly what container.newLLMClient() returns when
 // AI_PROXY_URL/AI_API_KEY are unset -- must read as "absent" at the guards inside
 // Discover. Assigned straight into the completer parameter it becomes a non-nil

@@ -643,6 +643,8 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	}
 	seen := map[string]struct{}{}
 	found := make([]ranked, 0, 8)
+	// Remembers a scan-bound hit so an all-incomplete sweep cannot return as an empty history.
+	var incomplete error
 	for _, term := range audience.LastSentSearchTerms(eventName, brandShort) {
 		emails, serr := client.SearchEmails(ctx, term)
 		if serr != nil {
@@ -654,7 +656,10 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 			}
 			if errors.Is(serr, hubspot.ErrSearchIncomplete) {
 				// The scan bound was reached having matched nothing, so "no prior
-				// send" would be an absence nobody established. Try the next term.
+				// send" would be an absence nobody established. Try the next term —
+				// but REMEMBER it: if no later term finds anything either, returning
+				// an empty list would report that unestablished absence as fact.
+				incomplete = serr
 				continue
 			}
 			slog.WarnContext(ctx, "last-sent email search failed", "project_id", projectID, "error", serr)
@@ -671,12 +676,23 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 			found = append(found, ranked{email: email, overlap: audience.KeywordOverlap(email.Name, keywords)})
 		}
 		if len(found) > 0 {
+			// A term matched, so the history is established regardless of what an
+			// earlier term's scan bound did.
+			incomplete = nil
 			// The first term that matched anything wins. The brand fallback exists for
 			// a renamed or first-time event; letting it also contribute rows to a
 			// successful event-name match would mix another event's sends into this
 			// event's precedent.
 			break
 		}
+	}
+
+	// Every term that ran hit its scan bound without matching, so nothing here establishes
+	// that there is no prior send. Saying so is the only honest answer: an empty list would
+	// be read as "this event has never been emailed", which is what the operator uses to
+	// decide whether a precedent exists at all.
+	if len(found) == 0 && incomplete != nil {
+		return nil, incomplete
 	}
 
 	// Most keyword overlap first, then most recently updated — SearchEmails already
@@ -795,6 +811,7 @@ func newerSuppression(a, b *hubspot.List) bool {
 // "unavailable": an authentication outage rendered as "this portal has no GDPR lists", which is
 // the one answer that must never be guessed.
 func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
+	var best *hubspot.List
 	for _, probe := range probes {
 		hits, err := client.SearchLists(ctx, probe)
 		if err != nil {
@@ -807,7 +824,6 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 			slog.WarnContext(ctx, "suppression list search failed", "error", err)
 			continue
 		}
-		var best *hubspot.List
 		for i := range hits {
 			hit := &hits[i]
 			if !accept(hit.Name) {
@@ -818,15 +834,18 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 			// current quarter's, which contradicts StandardSuppressionTerms' invariant that
 			// recurring hygiene lists select the highest YYQN — and can omit contacts who
 			// were only ever added to the current list.
+			//
+			// Ranked across ALL probes, not within each one. Returning on the first probe
+			// that matched anything meant the synonyms were an ordered fallback rather than
+			// alternate spellings of one list: a stale "... Suppression" won outright even
+			// when the later "... Exclusion" probe held the current quarter's list, which is
+			// the same stale-list selection the newest-quarter rule exists to prevent.
 			if best == nil || newerSuppression(hit, best) {
 				best = hit
 			}
 		}
-		if best != nil {
-			return best, nil
-		}
 	}
-	return nil, nil
+	return best, nil
 }
 
 // ---------------------------------------------------------------------------
