@@ -108,6 +108,15 @@ func TestAudienceExploreErrClassification(t *testing.T) {
 			why:             "the URL is fine and retrying may work — the opposite of what a 400 advises",
 		},
 		{
+			name:            "an incomplete prior-send search is a 503, not a generic 500",
+			err:             fmt.Errorf("search: %w", hubspot.ErrSearchIncomplete),
+			wantCode:        "503",
+			wantType:        &explore.ConnServiceUnavailableError{},
+			wantMsgContains: "could not be read completely",
+			why: "the portal did not answer the question — it did not answer \"no\". A generic 500 " +
+				"reads as an outage in this service and does not advise the retry that can succeed",
+		},
+		{
 			name:            "an unconfigured event-page reader is a 503",
 			err:             audience.ErrEventPageUnavailable,
 			wantCode:        "503",

@@ -411,6 +411,13 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 		// `mapEventURLErr` classifies the same sentinels for /fetch-event-url; it returns
 		// briefs.* types, so the arms are mirrored here rather than reused.
 		return &explore.BadRequestError{Code: "400", Message: "event URL is invalid, or resolves to an address this service will not connect to"}
+	case errors.Is(err, hubspot.ErrSearchIncomplete):
+		// 503, not 500: the search reached its scan bound without matching, so the portal did
+		// not answer the question — it did not answer "no". Retrying is the right advice and a
+		// generic 500 gives the opposite, reading as an outage in this service rather than a
+		// bounded read that can succeed. LastSent returns this rather than an empty list
+		// precisely so the caller is never told a prior send does not exist on this evidence.
+		return &explore.ConnServiceUnavailableError{Code: "503", Message: "the prior-send history could not be read completely; please retry"}
 	case errors.Is(err, eventurl.ErrEventURLFetchFailed):
 		// 503, not 400: the URL is fine and the origin did not answer. Retrying may work,
 		// which is the opposite of the advice a 400 gives.
