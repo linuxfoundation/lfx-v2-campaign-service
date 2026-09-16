@@ -40,17 +40,23 @@ jobs:
       # with no input here overriding that behavior.
       - name: Delete stale untagged image versions
         id: container-retention-policy
-        uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53  # v3.1.0
+        # Invoked as a direct container reference, pinned by digest, rather
+        # than via the `snok/container-retention-policy@<sha>` action alias:
+        # that alias only pins the action's metadata commit, while the
+        # metadata itself points at the mutable `v3.1.0` container tag it
+        # actually executes. Since this container now holds a token capable
+        # of deleting organization packages, pinning by digest closes the
+        # gap where retagging upstream could substitute a different image.
+        uses: docker://ghcr.io/snok/container-retention-policy@sha256:884037f146d6ef574b61fbcc59bef490f887322e6b9dc2eefcf364cb4e9b4112  # v3.1.0
         with:
           account: linuxfoundation
           image-names: lfx-v2-campaign-service/campaign-service
           tag-selection: untagged
-          # `CONTAINER_RETENTION_PAT` must be provisioned as a repository or
-          # organization secret (a classic PAT with `read:packages` +
-          # `delete:packages` scopes) by someone with org-owner permissions
-          # before any real (non-dry-run) run can succeed — the default
-          # GITHUB_TOKEN cannot delete container package versions.
-          token: ${{ secrets.CONTAINER_RETENTION_PAT }}
+          # The default job GITHUB_TOKEN can delete package versions as long
+          # as `image-names` is an exact string (not a wildcard), which it is
+          # here — no separate PAT is needed. Requires the job-level
+          # `permissions: packages: write` above.
+          token: ${{ secrets.GITHUB_TOKEN }}
           cut-off: ${{ github.event.inputs.cut-off || '30d' }}
           # Scheduled runs default to dry-run:true for now: the package has
           # ~15,000 existing untagged versions, so the first unattended
@@ -66,7 +72,7 @@ jobs:
         if: always()
         env:
           TRIGGER: ${{ github.event_name }}
-          DRY_RUN: ${{ github.event.inputs.dry-run || 'false' }}
+          DRY_RUN: ${{ github.event.inputs.dry-run || 'true' }}
           CUT_OFF: ${{ github.event.inputs.cut-off || '30d' }}
           DELETED: ${{ steps.container-retention-policy.outputs.deleted }}
           FAILED: ${{ steps.container-retention-policy.outputs.failed }}

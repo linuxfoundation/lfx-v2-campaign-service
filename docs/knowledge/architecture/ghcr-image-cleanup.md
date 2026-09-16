@@ -11,7 +11,8 @@ resource: ".github/workflows/ghcr-image-cleanup.yaml"
 deletes stale, untagged versions of the
 `linuxfoundation/lfx-v2-campaign-service/campaign-service` GHCR package using
 [`snok/container-retention-policy`](https://github.com/snok/container-retention-policy),
-pinned to a release commit SHA.
+invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
+pinned by image digest, not by a mutable release tag.
 
 ## Triggers
 
@@ -44,11 +45,11 @@ images are not partially deleted.
 
 ## Authentication
 
-The action deletes package versions via a GraphQL mutation the default
-`GITHUB_TOKEN` cannot call for container packages. The workflow instead
-uses `secrets.CONTAINER_RETENTION_PAT`, a classic PAT with `read:packages` +
-`delete:packages` scopes that must be provisioned by an org owner. Until
-that secret exists, only dry-run previews can succeed.
+The workflow uses the default job `GITHUB_TOKEN` with `permissions: packages:
+write` at the job level — no separate PAT is required. This works because
+`image-names` names an exact package, not a wildcard; a wildcard target would
+need a token with broader package visibility than a single job's
+`GITHUB_TOKEN` grants.
 
 ## Auditability
 
