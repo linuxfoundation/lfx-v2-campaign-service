@@ -594,6 +594,8 @@ func (x *AudienceExplorer) ExistingMasterLists(ctx context.Context, projectID, e
 	seen := map[string]struct{}{}
 	matches := make([]audience.ListCandidate, 0, 8)
 	rows := map[string]audience.ListRow{}
+	// Holds the last ordinary probe failure so an all-failed sweep cannot answer "none exists".
+	var probeErr error
 
 	for _, probe := range audience.ExistingMasterProbes(brandShort, eventName) {
 		hits, serr := client.SearchLists(ctx, probe)
@@ -603,7 +605,12 @@ func (x *AudienceExplorer) ExistingMasterLists(ctx context.Context, projectID, e
 			if hubspot.IsPermissionRejection(serr) {
 				return nil, serr
 			}
+			// Remembered, not just logged: this lookup exists to REVEAL an existing master
+			// so the operator does not compose a second one. If every probe fails, an empty
+			// result is read as "none exists" and the next compose — which is not
+			// idempotent — creates a duplicate. Same reasoning as LastSent's incomplete sweep.
 			slog.WarnContext(ctx, "existing-master search failed", "project_id", projectID, "error", serr)
+			probeErr = serr
 			continue
 		}
 		for i := range hits {
@@ -618,6 +625,12 @@ func (x *AudienceExplorer) ExistingMasterLists(ctx context.Context, projectID, e
 			matches = append(matches, listCandidate(hit))
 			rows[hit.ListID] = listRow(hit)
 		}
+	}
+
+	// Nothing matched AND a probe failed: no evidence establishes that no master exists, and
+	// that is the answer the caller acts on by composing a new one.
+	if len(matches) == 0 && probeErr != nil {
+		return nil, probeErr
 	}
 
 	sort.SliceStable(matches, func(i, j int) bool { return audience.NewerFirst(matches[i], matches[j]) })
@@ -740,12 +753,22 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	return out, nil
 }
 
-// isPublished reports whether an email state means it actually went out. HubSpot
-// spells the state in several ways across API versions, so the check is a prefix/
-// substring rather than an equality against one spelling.
+// isPublished reports whether an email state means it actually went out. HubSpot spells the
+// state in several ways across API versions, so this tolerates variants — but by PREFIX, never
+// by substring.
+//
+// Substring matching inverted the answer on the negative states: "UNPUBLISHED" contains
+// "PUBLISHED", so a withdrawn email counted as a send, and "NOT_SENT" contains "SENT". Those
+// are exactly the states that must not become precedent — an operator reads this list as "what
+// we sent last time" and builds the next audience from it.
 func isPublished(state string) bool {
 	s := strings.ToUpper(strings.TrimSpace(state))
-	return strings.Contains(s, "PUBLISHED") || strings.Contains(s, "SENT") || strings.Contains(s, "AUTOMATED")
+	for _, prefix := range []string{"PUBLISHED", "SENT", "AUTOMATED"} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // listBriefs resolves referenced list ids to names, v3 ids first and legacy ids

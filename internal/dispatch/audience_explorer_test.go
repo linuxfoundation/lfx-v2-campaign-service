@@ -649,6 +649,53 @@ func TestLastSent_MarksARowWhoseListsCouldNotBeRead(t *testing.T) {
 	assert.Empty(t, rows[0].IncludedLists)
 }
 
+// TestIsPublished_NegativeStatesAreNotSends pins that a withdrawn or unsent email cannot
+// become precedent. The check tolerates HubSpot's spelling variants across API versions, but
+// by PREFIX: substring matching inverted the answer, because "UNPUBLISHED" contains
+// "PUBLISHED" and "NOT_SENT" contains "SENT". An operator reads the last-sent list as "what
+// we sent last time" and builds the next audience from it.
+func TestIsPublished_NegativeStatesAreNotSends(t *testing.T) {
+	for _, state := range []string{"PUBLISHED", "SENT", "AUTOMATED", "published", " SENT "} {
+		assert.True(t, isPublished(state), "%q is a real send and must count", state)
+	}
+	for _, state := range []string{"UNPUBLISHED", "NOT_SENT", "DRAFT", "SCHEDULED", ""} {
+		assert.False(t, isPublished(state), "%q is not a send and must not become precedent", state)
+	}
+}
+
+// TestExistingMasters_AnAllFailedSweepIsNotAnEmptyResult pins the same false-absence rule on
+// the lookup whose whole purpose is to REVEAL an existing master. If every probe fails and the
+// result reads as "none exists", the caller composes a second one — and compose is not
+// idempotent.
+func TestExistingMasters_AnAllFailedSweepIsNotAnEmptyResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+			// An ordinary upstream failure — NOT a permission rejection, which already
+			// returns. This is the arm that used to be logged and swallowed.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"message":"upstream unavailable"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	_, err := x.ExistingMasterLists(context.Background(), "proj-1", "Synthetic Summit", "LF")
+
+	require.Error(t, err,
+		"every probe failed and the result read as \"no master exists\" — the caller composes a duplicate on that answer")
+}
+
 // TestLastSent_AnAllIncompleteSweepIsNotAnEmptyHistory pins that a search which never
 // completed is not reported as "this event has never been emailed". Every term hits the
 // scan bound without matching, and the loop used to `continue` past each one and fall out
