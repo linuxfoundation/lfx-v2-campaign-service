@@ -6,8 +6,6 @@ package service
 import (
 	"context"
 	"errors"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"log/slog"
 	"strings"
 	"sync"
@@ -15,6 +13,8 @@ import (
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 
 	"goa.design/goa/v3/security"
 )

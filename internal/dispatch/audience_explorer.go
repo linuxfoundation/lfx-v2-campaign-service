@@ -372,13 +372,18 @@ func (x *AudienceExplorer) enrichIdentity(ctx context.Context, identity *audienc
 	if x.llm == nil {
 		return
 	}
+	// The page is third-party content an operator merely pointed at, so it is delimited and
+	// declared untrusted rather than concatenated in raw. The markers are what the system prompt
+	// tells the model to treat as data; `sanitizePromptField` keeps the content from closing them
+	// early or spanning lines, so injected text cannot escape the block it is quoted in.
 	prompt := strings.Join([]string{
-		"Event page metadata:",
-		"name: " + details.Name,
-		"description: " + details.Description,
-		"location: " + details.Location,
-		"start: " + details.StartDate,
-		"end: " + details.EndDate,
+		"BEGIN PAGE METADATA",
+		"name: " + sanitizePromptField(details.Name),
+		"description: " + sanitizePromptField(details.Description),
+		"location: " + sanitizePromptField(details.Location),
+		"start: " + sanitizePromptField(details.StartDate),
+		"end: " + sanitizePromptField(details.EndDate),
+		"END PAGE METADATA",
 	}, "\n")
 	raw, err := x.llm.Complete(ctx, audience.EventExtractionSystemPrompt, prompt)
 	if err != nil {
@@ -397,13 +402,53 @@ func (x *AudienceExplorer) enrichIdentity(ctx context.Context, identity *audienc
 		slog.WarnContext(ctx, "audience discovery got an unparseable event extraction", "error", err)
 		return
 	}
-	identity.BrandShort = strings.TrimSpace(extracted.BrandShort)
+	// The model's reply is derived from untrusted page content, so it is bounded on the way out
+	// as well as on the way in. BrandShort reaches EventKeywords and MasterListName, and Name is
+	// used the same way — a multi-line or unbounded value there would carry injected text into a
+	// produced list name. Neither is interpreted as an instruction anywhere, so collapsing and
+	// truncating is enough; nothing here needs to reject a merely odd-looking brand.
+	identity.BrandShort = sanitizeExtractedField(extracted.BrandShort)
 	if identity.Name == "" {
-		identity.Name = strings.TrimSpace(extracted.EventName)
+		identity.Name = sanitizeExtractedField(extracted.EventName)
 	}
 	if len(identity.Dates) == 0 {
 		identity.Dates = audience.SanitizeEventDates(extracted.EventDates)
 	}
+}
+
+// extractedFieldMaxLen bounds a model-returned identity field. Real event names and brand
+// tokens are far shorter; this only has to stop an unbounded one reaching a list name.
+const extractedFieldMaxLen = 200
+
+// sanitizeExtractedField collapses whitespace and bounds a value the model returned.
+func sanitizeExtractedField(v string) string {
+	out := strings.Join(strings.Fields(v), " ")
+	if len(out) > extractedFieldMaxLen {
+		out = out[:extractedFieldMaxLen]
+	}
+	return out
+}
+
+// promptFieldMaxLen bounds a single scraped field in the prompt. A page can carry an
+// arbitrarily long description, and the budget matters less than the fact that a very long
+// field is where injected text hides.
+const promptFieldMaxLen = 500
+
+// sanitizePromptField makes one scraped value safe to quote inside the delimited block.
+//
+// Newlines are collapsed because the block is line-oriented: a value containing "\nEND PAGE
+// METADATA" would otherwise close the block early and everything after it would read as
+// instructions rather than data. The marker words are neutralised for the same reason, since
+// collapsing lines alone still lets a value end the block if the model is lenient about
+// surrounding whitespace. Truncation bounds the rest.
+func sanitizePromptField(v string) string {
+	out := strings.Join(strings.Fields(v), " ")
+	out = strings.ReplaceAll(out, "BEGIN PAGE METADATA", "[removed]")
+	out = strings.ReplaceAll(out, "END PAGE METADATA", "[removed]")
+	if len(out) > promptFieldMaxLen {
+		out = out[:promptFieldMaxLen]
+	}
+	return out
 }
 
 // stripJSONFence unwraps a fenced code block around a model's JSON reply, matching
