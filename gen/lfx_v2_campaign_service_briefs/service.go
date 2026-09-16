@@ -154,6 +154,45 @@ type Service interface {
 	DeleteCampaign(context.Context, *DeleteCampaignPayload) (err error)
 	// Poll campaign-creation job status.
 	GetJob(context.Context, *GetJobPayload) (res *JobPollResponse, err error)
+	// Open an email-creation wizard session for a brief and return its progress
+	// token immediately, before any scraping or model call runs. The client opens
+	// the SSE progress stream on the returned token and only then calls plan, so
+	// no progress frame is missed. Does no work beyond creating the session row.
+	StartEmailWizardPlan(context.Context, *StartEmailWizardPlanPayload) (res *WizardPlanStart, err error)
+	// Run the wizard's planning turn synchronously: resolve the event details
+	// (reusing the brief's cached scrape when present), resolve the
+	// event-lifecycle stage, and pick a past-campaign email to use as the clone
+	// source. Progress is also streamed to the session's token. Returns the plan
+	// the later turns will execute.
+	PlanEmailWizard(context.Context, *PlanEmailWizardPayload) (res *WizardPlanResult, err error)
+	// Generate BOTH email content variants for a planned session: a reference
+	// variant driven by past campaign emails, and a stage variant driven only by
+	// scraped event facts plus the stage library. The two variants are independent
+	// model calls, so one failing leaves the other intact — a failed variant
+	// reports mode "failed" inside a 200 rather than failing the request. Requires
+	// the AI model to be configured; without it this endpoint returns 503.
+	GenerateWizardContent(context.Context, *GenerateWizardContentPayload) (res *WizardContent, err error)
+	// Rebuild the email HTML from the content blocks the user kept after editing.
+	// Deterministic: no model call is made, so this endpoint works with the AI
+	// model unconfigured and always produces the same HTML for the same blocks.
+	UpdateWizardSections(context.Context, *UpdateWizardSectionsPayload) (res *WizardSections, err error)
+	// Clone the planned source email into a new HubSpot draft and write the
+	// approved variant's subject and body into it. Requires approval: an
+	// unapproved request is refused rather than silently creating a draft.
+	CloneWizardEmail(context.Context, *CloneWizardEmailPayload) (res *WizardClone, err error)
+	// Set the recipient (and suppression) lists on the session's HubSpot draft,
+	// recording the result on the brief's campaign audience so the ordinary
+	// dispatch path sees the same lists later. send_list_ids takes priority over
+	// send_list_id when both are given.
+	SetWizardSendList(context.Context, *SetWizardSendListPayload) (res *WizardSendList, err error)
+	// Append one free-form turn to the session's conversation and answer it. A
+	// single model call with the session's persisted history as context — there is
+	// no tool-calling loop, so a chat turn never mutates the HubSpot draft.
+	// Requires the AI model to be configured; without it this endpoint returns 503.
+	ChatWizardTurn(context.Context, *ChatWizardTurnPayload) (res *WizardChat, err error)
+	// Read a wizard session's current phase, plan and draft references — enough to
+	// rehydrate the UI after a reload or a pod change.
+	GetWizardSession(context.Context, *GetWizardSessionPayload) (res *WizardSession, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -176,7 +215,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [20]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job"}
+var MethodNames = [28]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -506,6 +545,46 @@ type CampaignUpdateInput struct {
 	Config any
 }
 
+// ChatWizardTurnPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service chat-wizard-turn method.
+type ChatWizardTurnPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+	// The user's message for this turn
+	Message string
+}
+
+// CloneWizardEmailPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service clone-wizard-email method.
+type CloneWizardEmailPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+	// Must be true; the request is refused with 400 otherwise, so a draft is never
+	// created by accident
+	Approved bool
+	// Override the generated subject line
+	Subject *string
+	// Override the generated preview text
+	PreviewText *string
+	// Apply this recipient list to the new draft in the same request
+	SendListID *string
+	// Which generated variant to write into the draft; defaults to the reference
+	// variant
+	Variant *string
+}
+
 // CreateBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
 // service create-brief method.
 type CreateBriefPayload struct {
@@ -682,6 +761,25 @@ type GenerateEmailCopyPayload struct {
 	Stage *string
 }
 
+// GenerateWizardContentPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service generate-wizard-content method.
+type GenerateWizardContentPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+	// What to change relative to the content already generated for this session;
+	// empty on the first pass
+	ChangeRequest *string
+	// Progress token to publish this turn's SSE frames on; defaults to the
+	// session's own token
+	ProgressToken *string
+}
+
 // GetBriefMetricsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service get-brief-metrics method.
 type GetBriefMetricsPayload struct {
@@ -763,6 +861,19 @@ type GetJobPayload struct {
 	JobID string
 }
 
+// GetWizardSessionPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-wizard-session method.
+type GetWizardSessionPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+}
+
 // JobCreateResponse is the result type of the lfx-v2-campaign-service-briefs
 // service create-campaigns method.
 type JobCreateResponse struct {
@@ -823,6 +934,31 @@ type KeywordActions struct {
 	AppliedCount int
 }
 
+// PlanEmailWizardPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service plan-email-wizard method.
+type PlanEmailWizardPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+	// Event page to plan from; defaults to the event details already scraped onto
+	// the brief
+	URL *string
+	// Free-text guidance appended to the planning prompt
+	ExtraContext *string
+	// Caller's own label for the kind of email being built
+	EmailType *string
+	// Whether the email is transactional rather than marketing
+	IsTransactional *bool
+	// Progress token to publish this turn's SSE frames on; defaults to the
+	// session's own token
+	ProgressToken *string
+}
+
 type PlatformResult struct {
 	// Platform this result is for
 	Platform string
@@ -834,6 +970,49 @@ type PlatformResult struct {
 	CampaignID *string
 	// Failure reason (present when not ok)
 	Error *string
+}
+
+// SetWizardSendListPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service set-wizard-send-list method.
+type SetWizardSendListPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+	// Draft to configure; defaults to the session's primary draft
+	EmailID *string
+	// Single recipient list id; ignored when send_list_ids is given
+	SendListID *string
+	// Recipient list ids; takes priority over send_list_id
+	SendListIds []string
+	// Lists whose members must not receive the send
+	SuppressionListIds []string
+}
+
+// StartEmailWizardPlanPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service start-email-wizard-plan method.
+type StartEmailWizardPlanPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Event page to plan from; defaults to the event details already scraped onto
+	// the brief
+	URL *string
+	// Free-text guidance appended to the planning prompt
+	ExtraContext *string
+	// Caller's own label for the kind of email being built
+	EmailType *string
+	// Whether the email is transactional rather than marketing
+	IsTransactional *bool
+	// Reuse an existing progress token instead of minting a new one
+	ProgressToken *string
 }
 
 // ToggleCampaignStatusPayload is the payload type of the
@@ -883,6 +1062,21 @@ type UpdateCampaignPayload struct {
 	Campaign *CampaignUpdateInput
 }
 
+// UpdateWizardSectionsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service update-wizard-sections method.
+type UpdateWizardSectionsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Wizard session UUID, as returned by plan-start
+	SessionID string
+	// Content blocks to render, in the order they should appear
+	Sections []any
+}
+
 // UploadCreativeAssetPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service upload-creative-asset method.
 type UploadCreativeAssetPayload struct {
@@ -898,6 +1092,174 @@ type UploadCreativeAssetPayload struct {
 	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
 	// server-side; the decoded image must not exceed 30 MiB.
 	Bytes string
+}
+
+// WizardChat is the result type of the lfx-v2-campaign-service-briefs service
+// chat-wizard-turn method.
+type WizardChat struct {
+	// Wizard session UUID
+	SessionID string
+	// The assistant's reply for this turn
+	Message string
+	// Session lifecycle phase
+	Phase string
+	// HubSpot app URL of the draft, once one exists
+	DraftURL *string
+}
+
+// WizardClone is the result type of the lfx-v2-campaign-service-briefs service
+// clone-wizard-email method.
+type WizardClone struct {
+	// Wizard session UUID
+	SessionID string
+	// Human-readable summary of what was cloned
+	Message string
+	// Session lifecycle phase
+	Phase string
+	// HubSpot id of the primary draft
+	EmailID *string
+	// HubSpot app URL of the primary draft
+	DraftURL *string
+	// HubSpot id of the stage variant's draft
+	VariantAEmailID *string
+	// HubSpot app URL of the stage variant's draft
+	VariantADraftURL *string
+	// HubSpot id of the reference variant's draft
+	VariantBEmailID *string
+	// HubSpot app URL of the reference variant's draft
+	VariantBDraftURL *string
+	// Whether every post-clone check passed
+	ValidationPassed bool
+	// Advisory problems found on the created draft; the draft exists regardless
+	ValidationIssues []string
+}
+
+// WizardContent is the result type of the lfx-v2-campaign-service-briefs
+// service generate-wizard-content method.
+type WizardContent struct {
+	// Wizard session UUID
+	SessionID string
+	// Reference variant subject line
+	Subject string
+	// Reference variant preview text
+	PreviewText string
+	// Reference variant full preview HTML
+	HTML string
+	// Reference variant body-only HTML
+	BodyHTML string
+	// Reference variant editable content blocks
+	Sections []any
+	// Sponsor logos scraped from the event page
+	Sponsors []*WizardSponsor
+	// Reference variant banner image URL
+	BannerURL *string
+	// Stage variant subject line
+	VariantASubject string
+	// Stage variant preview text
+	VariantAPreviewText string
+	// Stage variant full preview HTML
+	VariantAHTML string
+	// Stage variant body-only HTML
+	VariantABodyHTML string
+	// Stage variant editable content blocks
+	VariantASections []any
+	// Stage variant banner image URL
+	VariantABannerURL *string
+	// Stage template that produced the stage variant
+	VariantATemplateKey *string
+	// Stage variant outcome; "failed" is a normal, displayable state and does not
+	// fail the request
+	VariantAMode string
+}
+
+// WizardPlanResult is the result type of the lfx-v2-campaign-service-briefs
+// service plan-email-wizard method.
+type WizardPlanResult struct {
+	// Wizard session UUID
+	SessionID string
+	// Human-readable summary of the plan, rendered directly in the wizard's chat
+	// transcript
+	Message string
+	// Session lifecycle phase
+	Phase string
+	// How content will be produced for this session
+	Mode string
+	// Past-campaign email chosen as the clone source, when one was found
+	SourceEmail *WizardSourceEmail
+	// Resolved event-lifecycle stage template (name, purpose, tone, CTA strategy)
+	Stage any
+	// UTM parameters that will be applied to the draft's links
+	Utm any
+}
+
+// WizardPlanStart is the result type of the lfx-v2-campaign-service-briefs
+// service start-email-wizard-plan method.
+type WizardPlanStart struct {
+	// Wizard session UUID to pass to every subsequent turn
+	SessionID string
+	// Opaque progress token for the SSE stream at
+	// /projects/{project_id}/briefs/{brief_id}/wizard/progress/{token}
+	Token string
+}
+
+// WizardSections is the result type of the lfx-v2-campaign-service-briefs
+// service update-wizard-sections method.
+type WizardSections struct {
+	// Wizard session UUID
+	SessionID string
+	// Body-only HTML rebuilt from the submitted sections
+	BodyHTML string
+	// Full preview HTML rebuilt from the submitted sections
+	GeneratedHTML string
+}
+
+// WizardSendList is the result type of the lfx-v2-campaign-service-briefs
+// service set-wizard-send-list method.
+type WizardSendList struct {
+	// Whether the send list was applied
+	Success bool
+	// HubSpot id of the draft the list was applied to
+	EmailID string
+	// Primary recipient list id
+	SendListID string
+	// How the recipients were resolved
+	ListType *string
+	// HubSpot's own recipient descriptor for the draft
+	To any
+}
+
+// WizardSession is the result type of the lfx-v2-campaign-service-briefs
+// service get-wizard-session method.
+type WizardSession struct {
+	// Wizard session UUID
+	SessionID string
+	// Session lifecycle phase
+	Phase string
+	// The plan result recorded for this session, when planning has run
+	Plan any
+	// HubSpot id of the primary draft, once cloned
+	EmailID *string
+	// HubSpot app URL of the primary draft, once cloned
+	DraftURL *string
+}
+
+type WizardSourceEmail struct {
+	// HubSpot marketing email id
+	ID string
+	// HubSpot marketing email name
+	Name string
+}
+
+type WizardSponsor struct {
+	// Sponsor name
+	Name string
+	// Sponsor logo image URL
+	LogoURL string
+	// Sponsor link target
+	URL *string
+	// Sponsorship tier as the page expresses it; free text, not a normalised
+	// vocabulary
+	Tier *string
 }
 
 type BadRequestError struct {

@@ -3573,6 +3573,1387 @@ func EncodeGetJobError(encoder func(context.Context, http.ResponseWriter) goahtt
 	}
 }
 
+// EncodeStartEmailWizardPlanResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-briefs start-email-wizard-plan endpoint.
+func EncodeStartEmailWizardPlanResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardPlanStart)
+		enc := encoder(ctx, w)
+		body := NewStartEmailWizardPlanResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeStartEmailWizardPlanRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs start-email-wizard-plan endpoint.
+func DecodeStartEmailWizardPlanRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload, error) {
+		var payload *lfxv2campaignservicebriefs.StartEmailWizardPlanPayload
+		var (
+			body StartEmailWizardPlanRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewStartEmailWizardPlanPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeStartEmailWizardPlanError returns an encoder for errors returned by
+// the start-email-wizard-plan lfx-v2-campaign-service-briefs endpoint.
+func EncodeStartEmailWizardPlanError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewStartEmailWizardPlanUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodePlanEmailWizardResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs plan-email-wizard endpoint.
+func EncodePlanEmailWizardResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardPlanResult)
+		enc := encoder(ctx, w)
+		body := NewPlanEmailWizardResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodePlanEmailWizardRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs plan-email-wizard endpoint.
+func DecodePlanEmailWizardRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.PlanEmailWizardPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.PlanEmailWizardPayload, error) {
+		var payload *lfxv2campaignservicebriefs.PlanEmailWizardPayload
+		var (
+			body PlanEmailWizardRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidatePlanEmailWizardRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewPlanEmailWizardPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodePlanEmailWizardError returns an encoder for errors returned by the
+// plan-email-wizard lfx-v2-campaign-service-briefs endpoint.
+func EncodePlanEmailWizardError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPlanEmailWizardUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeGenerateWizardContentResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-briefs generate-wizard-content
+// endpoint.
+func EncodeGenerateWizardContentResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardContent)
+		enc := encoder(ctx, w)
+		body := NewGenerateWizardContentResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGenerateWizardContentRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-briefs generate-wizard-content endpoint.
+func DecodeGenerateWizardContentRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.GenerateWizardContentPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.GenerateWizardContentPayload, error) {
+		var payload *lfxv2campaignservicebriefs.GenerateWizardContentPayload
+		var (
+			body GenerateWizardContentRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateGenerateWizardContentRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGenerateWizardContentPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGenerateWizardContentError returns an encoder for errors returned by
+// the generate-wizard-content lfx-v2-campaign-service-briefs endpoint.
+func EncodeGenerateWizardContentError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGenerateWizardContentUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeUpdateWizardSectionsResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-briefs update-wizard-sections endpoint.
+func EncodeUpdateWizardSectionsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardSections)
+		enc := encoder(ctx, w)
+		body := NewUpdateWizardSectionsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeUpdateWizardSectionsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs update-wizard-sections endpoint.
+func DecodeUpdateWizardSectionsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload, error) {
+		var payload *lfxv2campaignservicebriefs.UpdateWizardSectionsPayload
+		var (
+			body UpdateWizardSectionsRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateUpdateWizardSectionsRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewUpdateWizardSectionsPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeUpdateWizardSectionsError returns an encoder for errors returned by
+// the update-wizard-sections lfx-v2-campaign-service-briefs endpoint.
+func EncodeUpdateWizardSectionsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateWizardSectionsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeCloneWizardEmailResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs clone-wizard-email endpoint.
+func EncodeCloneWizardEmailResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardClone)
+		enc := encoder(ctx, w)
+		body := NewCloneWizardEmailResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeCloneWizardEmailRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs clone-wizard-email endpoint.
+func DecodeCloneWizardEmailRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.CloneWizardEmailPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.CloneWizardEmailPayload, error) {
+		var payload *lfxv2campaignservicebriefs.CloneWizardEmailPayload
+		var (
+			body CloneWizardEmailRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateCloneWizardEmailRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewCloneWizardEmailPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeCloneWizardEmailError returns an encoder for errors returned by the
+// clone-wizard-email lfx-v2-campaign-service-briefs endpoint.
+func EncodeCloneWizardEmailError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCloneWizardEmailUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeSetWizardSendListResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs set-wizard-send-list endpoint.
+func EncodeSetWizardSendListResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardSendList)
+		enc := encoder(ctx, w)
+		body := NewSetWizardSendListResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeSetWizardSendListRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs set-wizard-send-list endpoint.
+func DecodeSetWizardSendListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.SetWizardSendListPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.SetWizardSendListPayload, error) {
+		var payload *lfxv2campaignservicebriefs.SetWizardSendListPayload
+		var (
+			body SetWizardSendListRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateSetWizardSendListRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewSetWizardSendListPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeSetWizardSendListError returns an encoder for errors returned by the
+// set-wizard-send-list lfx-v2-campaign-service-briefs endpoint.
+func EncodeSetWizardSendListError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSetWizardSendListUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeChatWizardTurnResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs chat-wizard-turn endpoint.
+func EncodeChatWizardTurnResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardChat)
+		enc := encoder(ctx, w)
+		body := NewChatWizardTurnResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeChatWizardTurnRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs chat-wizard-turn endpoint.
+func DecodeChatWizardTurnRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.ChatWizardTurnPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.ChatWizardTurnPayload, error) {
+		var payload *lfxv2campaignservicebriefs.ChatWizardTurnPayload
+		var (
+			body ChatWizardTurnRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateChatWizardTurnRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewChatWizardTurnPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeChatWizardTurnError returns an encoder for errors returned by the
+// chat-wizard-turn lfx-v2-campaign-service-briefs endpoint.
+func EncodeChatWizardTurnError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewChatWizardTurnUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeGetWizardSessionResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs get-wizard-session endpoint.
+func EncodeGetWizardSessionResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.WizardSession)
+		enc := encoder(ctx, w)
+		body := NewGetWizardSessionResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetWizardSessionRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-wizard-session endpoint.
+func DecodeGetWizardSessionRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.GetWizardSessionPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.GetWizardSessionPayload, error) {
+		var payload *lfxv2campaignservicebriefs.GetWizardSessionPayload
+		var (
+			projectID   string
+			briefID     string
+			sessionID   string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		sessionID = params["session_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("session_id", sessionID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetWizardSessionPayload(projectID, briefID, sessionID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetWizardSessionError returns an encoder for errors returned by the
+// get-wizard-session lfx-v2-campaign-service-briefs endpoint.
+func EncodeGetWizardSessionError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetWizardSessionUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // unmarshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput builds
 // a value of type *lfxv2campaignservicebriefs.BriefInput from a value of type
 // *BriefInputRequestBody.
@@ -3773,6 +5154,38 @@ func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody
 		OK:         v.OK,
 		CampaignID: v.CampaignID,
 		Error:      v.Error,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsWizardSourceEmailToWizardSourceEmailResponseBody
+// builds a value of type *WizardSourceEmailResponseBody from a value of type
+// *lfxv2campaignservicebriefs.WizardSourceEmail.
+func marshalLfxv2campaignservicebriefsWizardSourceEmailToWizardSourceEmailResponseBody(v *lfxv2campaignservicebriefs.WizardSourceEmail) *WizardSourceEmailResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &WizardSourceEmailResponseBody{
+		ID:   v.ID,
+		Name: v.Name,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsWizardSponsorToWizardSponsorResponseBody
+// builds a value of type *WizardSponsorResponseBody from a value of type
+// *lfxv2campaignservicebriefs.WizardSponsor.
+func marshalLfxv2campaignservicebriefsWizardSponsorToWizardSponsorResponseBody(v *lfxv2campaignservicebriefs.WizardSponsor) *WizardSponsorResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &WizardSponsorResponseBody{
+		Name:    v.Name,
+		LogoURL: v.LogoURL,
+		URL:     v.URL,
+		Tier:    v.Tier,
 	}
 
 	return res

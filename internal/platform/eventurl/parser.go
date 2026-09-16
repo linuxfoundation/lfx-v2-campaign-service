@@ -20,6 +20,11 @@ import (
 const (
 	maxFieldBytes       = 1 << 10 // 1 KiB
 	maxDescriptionBytes = 8 << 10 // 8 KiB
+	// maxListEntries bounds the two LIST fields (speakers, sponsors) by count, which the
+	// per-field byte bounds above cannot do. 64 is chosen to sit above any real event's
+	// headline speaker or sponsor list while keeping the worst case a bounded multiple of
+	// maxFieldBytes rather than a function of the page.
+	maxListEntries = 64
 )
 
 // EventDetails holds parsed event metadata extracted from an event page.
@@ -50,8 +55,47 @@ type EventDetails struct {
 	// `registrationUrl`: the dispatchers treat that as the link an ad sends a human to,
 	// and an event's landing page is often not its registration form. A caller that
 	// wants the two to be the same says so explicitly.
-	URL           string `json:"url,omitempty"`
+	URL string `json:"url,omitempty"`
+
+	// Speakers, Sponsors and RegistrationURL are the three fields the email-creation
+	// wizard needs beyond the ones above, and they are populated from the JSON-LD tier
+	// ONLY.
+	//
+	// That restriction is the point rather than an unfinished edge. The OpenGraph and
+	// <title> tiers exist because almost every page carries og: tags or a title, so a
+	// heuristic there is cheap and usually right. None of these three has any OpenGraph
+	// equivalent: recovering a speaker list or a sponsor grid from arbitrary markup means
+	// guessing at class names and heading text, and the failure mode is not an empty
+	// field — it is a CONFIDENT wrong one, printed into a marketing email under a real
+	// foundation's name. A page without JSON-LD simply leaves these empty, exactly as it
+	// leaves every other field it does not declare, and the wizard's prompts are written
+	// to work without them.
+	//
+	// They are `omitempty` and camelCase like the rest, so a brief's stored
+	// `event_details` blob gains three keys when the page declares them and is byte-wise
+	// unchanged when it does not.
+	Speakers        []string     `json:"speakers,omitempty"`
+	Sponsors        []SponsorRef `json:"sponsors,omitempty"`
+	RegistrationURL string       `json:"registrationUrl,omitempty"`
+
 	ExtractedFrom string `json:"extractedFrom,omitempty"` // "jsonld", "opengraph", or "fallback"
+}
+
+// SponsorRef is one sponsor named by an event page's JSON-LD.
+//
+// Every field is optional except Name: schema.org's `sponsor` is an Organization or
+// Person, and the only property those two reliably share is a name. A sponsor with no
+// name is not a sponsor anybody can render, so the extractor drops it rather than
+// emitting a blank row.
+type SponsorRef struct {
+	Name string `json:"name"`
+	Logo string `json:"logoUrl,omitempty"`
+	URL  string `json:"url,omitempty"`
+	// Tier is free text, taken from whatever the page calls the sponsorship level
+	// ("Diamond", "tier1", "Community"). It is NOT normalised: there is no cross-event
+	// vocabulary for sponsorship tiers, and mapping "Diamond" onto an invented scale
+	// would assert a ranking the page never made.
+	Tier string `json:"tier,omitempty"`
 }
 
 // sanitize makes s storable in a Postgres text column.
@@ -101,6 +145,30 @@ func (d *EventDetails) clampFields() {
 	d.EndDate = clamp(d.EndDate, maxFieldBytes)
 	d.Image = clamp(d.Image, maxFieldBytes)
 	d.URL = clamp(d.URL, maxFieldBytes)
+	d.RegistrationURL = clamp(d.RegistrationURL, maxFieldBytes)
+
+	// The two LISTS need a count bound as well as a per-entry byte bound, which the
+	// scalar fields did not. A single field can only be as long as the page makes one
+	// value; a list is as long as the page makes it, and the whole struct is serialised
+	// into a brief's event_details column, so an adversarial (or merely generated) page
+	// declaring fifty thousand performers would be a row bounded by nothing. Cutting the
+	// list is the right response rather than rejecting the page: the first entries are
+	// still correct and useful, and no consumer treats these as exhaustive.
+	if len(d.Speakers) > maxListEntries {
+		d.Speakers = d.Speakers[:maxListEntries]
+	}
+	for i := range d.Speakers {
+		d.Speakers[i] = clamp(d.Speakers[i], maxFieldBytes)
+	}
+	if len(d.Sponsors) > maxListEntries {
+		d.Sponsors = d.Sponsors[:maxListEntries]
+	}
+	for i := range d.Sponsors {
+		d.Sponsors[i].Name = clamp(d.Sponsors[i].Name, maxFieldBytes)
+		d.Sponsors[i].Logo = clamp(d.Sponsors[i].Logo, maxFieldBytes)
+		d.Sponsors[i].URL = clamp(d.Sponsors[i].URL, maxFieldBytes)
+		d.Sponsors[i].Tier = clamp(d.Sponsors[i].Tier, maxFieldBytes)
+	}
 }
 
 // Parser extracts event details from HTML using structured metadata.
@@ -373,6 +441,106 @@ func jsonLDAddressAt(v interface{}, depth int) string {
 	return ""
 }
 
+// jsonLDNames resolves a property that may name SEVERAL entities to their names.
+//
+// It is the list counterpart of jsonLDText: `performer` is a Person, an Organization, an
+// array of either, or a bare string, and jsonLDText's first-wins rule would return one
+// speaker from a page declaring twelve. Entries whose name cannot be resolved are dropped
+// rather than appended blank, so the length of the result means something.
+//
+// Collection stops at maxListEntries. clampFields would trim the slice anyway, but only
+// AFTER it had been built: the cap belongs here too so that a page declaring fifty
+// thousand performers costs a bounded walk and a bounded allocation rather than a large
+// one that is then thrown away.
+func jsonLDNames(v interface{}) []string {
+	var out []string
+	appendNamesAt(v, 0, &out)
+	return out
+}
+
+func appendNamesAt(v interface{}, depth int, out *[]string) {
+	if depth > maxJSONLDDepth || len(*out) >= maxListEntries {
+		return
+	}
+	switch t := v.(type) {
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			*out = append(*out, s)
+		}
+	case map[string]interface{}:
+		// "name" first, then the two halves a Person may carry instead — some generators
+		// emit givenName/familyName with no name at all.
+		if s := jsonLDTextAt(t["name"], depth+1, "name"); s != "" {
+			*out = append(*out, s)
+			return
+		}
+		given := jsonLDTextAt(t["givenName"], depth+1, "name")
+		family := jsonLDTextAt(t["familyName"], depth+1, "name")
+		if full := strings.TrimSpace(given + " " + family); full != "" {
+			*out = append(*out, full)
+		}
+	case []interface{}:
+		for _, e := range t {
+			appendNamesAt(e, depth+1, out)
+			if len(*out) >= maxListEntries {
+				return
+			}
+		}
+	}
+}
+
+// jsonLDSponsors resolves schema.org `sponsor` to the renderable sponsor rows.
+//
+// A sponsor is only kept when it has a NAME (see SponsorRef): logo-only entries cannot be
+// captioned, attributed, or given alt text, and an email that shows an unlabelled image
+// borrowed from a third party's CDN is worse than one that shows nothing. A bare string
+// sponsor — the common minimal shape — becomes a name-only row.
+//
+// Tier has no schema.org property of its own, so the three spellings real pages use are
+// tried in turn. A page that names none leaves Tier empty, which is honest; inventing one
+// would assert a ranking the page never made.
+func jsonLDSponsors(v interface{}) []SponsorRef {
+	var out []SponsorRef
+	appendSponsorsAt(v, 0, &out)
+	return out
+}
+
+func appendSponsorsAt(v interface{}, depth int, out *[]SponsorRef) {
+	if depth > maxJSONLDDepth || len(*out) >= maxListEntries {
+		return
+	}
+	switch t := v.(type) {
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			*out = append(*out, SponsorRef{Name: s})
+		}
+	case map[string]interface{}:
+		name := jsonLDTextAt(t["name"], depth+1, "name")
+		if name == "" {
+			return
+		}
+		s := SponsorRef{
+			Name: name,
+			Logo: jsonLDTextAt(t["logo"], depth+1, "url", "contentUrl"),
+			URL:  jsonLDTextAt(t["url"], depth+1, "url"),
+		}
+		for _, k := range []string{"sponsorshipLevel", "tier", "level"} {
+			if tier := jsonLDTextAt(t[k], depth+1, "name"); tier != "" {
+				s.Tier = tier
+				break
+			}
+		}
+		*out = append(*out, s)
+	case []interface{}:
+		for _, e := range t {
+			appendSponsorsAt(e, depth+1, out)
+			if len(*out) >= maxListEntries {
+				return
+			}
+		}
+	}
+}
+
 // parseJSONLD extracts event data from <script type="application/ld+json"> blocks.
 //
 // ONE node supplies every field, and the node is the first NAMED Event in document order.
@@ -516,6 +684,27 @@ func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDeta
 	// node) as fallback; an ImageObject uses url, or contentUrl for a distribution.
 	setIfEmpty(&details.Location, jsonLDLocation(ld["location"]))
 	setIfEmpty(&details.Image, jsonLDText(ld["image"], "url", "contentUrl"))
+
+	// Speakers come from `performer` ONLY, not from `organizer` as well. They are close
+	// enough to conflate by accident and must not be: schema.org's organizer is whoever
+	// PUTS ON the event — routinely a foundation, a sponsor, or a conference company — and
+	// an email that introduces "The Linux Foundation" as a speaker is wrong in a way a
+	// reader notices immediately. An event that declares no performer leaves the list
+	// empty, which every consumer already handles. `performers` is accepted as well
+	// because schema.org lists it as a supersededBy alias and real generators still emit
+	// it.
+	if speakers := jsonLDNames(ld["performer"]); len(speakers) > 0 {
+		details.Speakers = speakers
+	} else {
+		details.Speakers = jsonLDNames(ld["performers"])
+	}
+	details.Sponsors = jsonLDSponsors(ld["sponsor"])
+	// `offers` is an Offer (or a list of them) whose `url` is the page a human buys or
+	// registers on. This is the only place RegistrationURL is ever set, and deliberately
+	// NOT from the event's own `url`: EventDetails.URL documents why the landing page and
+	// the registration form are different things, and defaulting one to the other here
+	// would make that distinction silently untrue for every page with no offer.
+	setIfEmpty(&details.RegistrationURL, jsonLDText(ld["offers"], "url"))
 
 	return details.Name != ""
 }

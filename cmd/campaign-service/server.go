@@ -78,7 +78,7 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 // actually reachable (the bug this fixes — routes that compile but are never
 // mounted return 404) without standing up a full server. It returns an error
 // only for a programmer-level mis-wiring (nil endpoints).
-func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, promReg *metrics.Registry) (goahttp.Muxer, error) {
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, promReg *metrics.Registry, wizardProgress http.Handler) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -147,11 +147,35 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
+	// The email wizard's progress stream is the one route in this service that is not a Goa
+	// method, so it is mounted by hand here (see service/wizard_progress.go for why it cannot
+	// be expressed in the DSL). Mounted AFTER the generated routes and on a path no generated
+	// route claims, so it can never shadow one.
+	//
+	// nil is a normal argument, not a mis-wiring: the tests that only assert route presence
+	// pass nil, and so does any future entry point with no wizard. Unlike the endpoint sets
+	// above this is therefore not fatal — an unmounted stream leaves the wizard's eight
+	// request/response routes fully working, since every turn also returns what it streams.
+	if wizardProgress != nil {
+		mux.Handle(http.MethodGet, "/projects/{project_id}/briefs/{brief_id}/wizard/progress/{token}", wizardProgress.ServeHTTP)
+	}
+
 	return mux, nil
 }
 
 func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, cont *container.Container) error {
-	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont.Metrics)
+	// Type-asserted rather than read off a typed field, so the no-database and cold-start
+	// containers — whose Briefs is the same generated interface either way — stay mountable
+	// without the wizard, and so this file does not depend on the concrete service type.
+	var wizardProgress http.Handler
+	if h, ok := cont.Briefs.(interface {
+		WizardProgressHandler(context.Context) http.Handler
+	}); ok {
+		// ctx is the SERVER's lifetime context: the stream watches it so a draining pod closes
+		// its streams instead of holding graceful shutdown open on every attached browser.
+		wizardProgress = h.WizardProgressHandler(ctx)
+	}
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont.Metrics, wizardProgress)
 	if err != nil {
 		return err
 	}
