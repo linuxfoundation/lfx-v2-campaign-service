@@ -233,7 +233,13 @@ var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
 // may be far less, and size a send around it.
 var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("exact", Boolean, "True when the union was counted in full")
-	Attribute("count", Int64, "Exact union size; meaningful only when exact is true")
+	// It CARRIES the estimate when exact is false (OverCapPreviewCount and
+	// DegradedPreviewCount both set Count = Estimate), so a client that ignores it entirely
+	// is told to discard a value the implementation deliberately emits. What it must not do
+	// is read it as a counted figure: only `exact` says whether it was counted.
+	Attribute("count", Int64,
+		"Union size. COUNTED only when exact is true; when exact is false this mirrors estimate "+
+			"(an upper bound), or is 0 when no reliable total exists. Read `exact` before trusting it.")
 	Attribute("estimate", Int64, "Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists")
 	Attribute("reason", String, "Why the count is exact or bounded")
 	Required("exact", "count", "estimate", "reason")

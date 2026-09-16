@@ -11764,7 +11764,7 @@ components:
             properties:
                 count:
                     type: integer
-                    description: Exact union size; meaningful only when exact is true
+                    description: Union size. COUNTED only when exact is true; when exact is false this mirrors estimate (an upper bound), or is 0 when no reliable total exists. Read `exact` before trusting it.
                     example: 1637006030333970184
                     format: int64
                 estimate:

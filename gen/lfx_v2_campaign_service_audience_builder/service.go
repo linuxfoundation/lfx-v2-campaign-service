@@ -217,7 +217,9 @@ type AudienceMasterListBrief struct {
 type AudiencePreviewCount struct {
 	// True when the union was counted in full
 	Exact bool
-	// Exact union size; meaningful only when exact is true
+	// Union size. COUNTED only when exact is true; when exact is false this
+	// mirrors estimate (an upper bound), or is 0 when no reliable total exists.
+	// Read `exact` before trusting it.
 	Count int64
 	// Upper bound on the union size (the sum of list sizes) when exact is false; 0
 	// when no reliable total exists
