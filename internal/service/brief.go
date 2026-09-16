@@ -72,6 +72,17 @@ type BriefService struct {
 	// may allocate. Nil in every construction that does not wire one (SetDecodeReserver), which
 	// reserves nothing — so tests and cold-start paths behave exactly as before.
 	decodeReserve *DecodeReserver
+	// The email-creation wizard's collaborators (SetWizardBackend). All nil in the
+	// no-database and cold-start-pending modes, which is why the wizard handlers check
+	// them through wizardReady rather than ready() — the wizard is an OPTIONAL capability,
+	// and a deployment without it must still serve every other brief route.
+	wizardSessions  domain.WizardSessionRepository
+	wizardHubSpot   HubSpotClientResolver
+	wizardAudiences domain.AudienceRepository
+	// wizardProgress fans SSE frames out to subscribed browsers. Created on first use
+	// (WizardProgress) rather than in the constructor, so the ~40 existing NewBriefService
+	// call sites are unaffected and the SSE route is never handed a nil hub.
+	wizardProgress *WizardProgressHub
 }
 
 // SetClock overrides the time source used for pacing. For tests.

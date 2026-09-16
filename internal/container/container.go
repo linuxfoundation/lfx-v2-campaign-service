@@ -6,6 +6,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -74,6 +75,53 @@ type briefBackendSetter interface {
 	// with the aggregate decode budget unenforced — working normally, and unbounded, which is
 	// the failure a compile-time contract exists to prevent.
 	SetDecodeReserver(*service.DecodeReserver)
+	// SetWizardBackend is on this interface for the same reason the two setters above are: the
+	// email wizard's eight routes answer 503 while its session repository is nil, and a
+	// cold-started pod that bound the brief repos without it would serve every other brief
+	// route while the wizard stayed dead for the life of the process — the exact silent gap
+	// this interface exists to make unrepresentable.
+	SetWizardBackend(domain.WizardSessionRepository, service.HubSpotClientResolver, domain.AudienceRepository)
+}
+
+// hubspotWizardResolver adapts the HubSpot dispatcher's credential resolution to the
+// interface the wizard declares.
+//
+// The adapter lives HERE, in the container, and not in either package it joins: the wizard
+// is in internal/service and the resolution is in internal/dispatch, and internal/service
+// must never import internal/dispatch because dispatch's own tests import service — that
+// edge would close an import cycle. The container already depends on both, so this is the
+// one place the two can meet.
+type hubspotWizardResolver struct {
+	d *dispatch.HubSpotDispatcher
+}
+
+// ResolveHubSpotClient resolves the project's HubSpot client for one wizard turn.
+func (r hubspotWizardResolver) ResolveHubSpotClient(ctx context.Context, projectID string) (service.HubSpotWizardClient, error) {
+	client, err := r.d.ResolveEmailClient(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		// A nil *hubspot.Client returned into an interface would be a NON-nil interface
+		// holding a nil pointer, which the wizard's own nil check cannot see — the same trap
+		// registerDispatchers guards for the creative-asset repo. Fail here instead.
+		return nil, errors.New("hubspot client resolution returned no client")
+	}
+	return client, nil
+}
+
+// wizardResolverFrom finds the HubSpot dispatcher in the registered set and wraps it.
+//
+// Reuses the dispatcher the dispatch path already built rather than constructing a second
+// one, so the wizard and a dispatched send cannot resolve credentials through two separately
+// configured clients. Returns nil when HubSpot has no dispatcher registered, which leaves
+// the wizard's HubSpot-touching turns answering 503 and the rest of it working.
+func wizardResolverFrom(dispatchers map[model.Provider]service.PlatformDispatcher) service.HubSpotClientResolver {
+	hs, ok := dispatchers[model.ProviderHubSpot].(*dispatch.HubSpotDispatcher)
+	if !ok || hs == nil {
+		return nil
+	}
+	return hubspotWizardResolver{d: hs}
 }
 
 // audienceBackendSetter late-binds the audience repo after a cold-start retry.
@@ -756,7 +804,7 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 // the brief repos while forgetting the rest, because there is no longer a separate statement to
 // forget. This is the same reasoning that put SetOrchestrator behind the backendSetter interface
 // rather than a direct cast — one declared contract, both injection sites.
-func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) {
+func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, audiences domain.AudienceRepository, dispatchers map[model.Provider]service.PlatformDispatcher) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
 	// ORDER MATTERS between these two, and only in one direction.
 	//
@@ -773,6 +821,12 @@ func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs do
 	// upload is refused with 503, so no request can observe a live repo without a reserver.
 	bb.SetDecodeReserver(service.NewDecodeReserver(constants.DecodeAdmissionBudgetBytes))
 	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+	// The wizard binds LAST, and its own repository is its availability gate: until this
+	// returns its eight routes answer 503, which is the correct answer for a pod that has
+	// not finished wiring. The audience repository is passed as the SAME row source the
+	// audience service and the email dispatcher use, so the wizard sends to the audience
+	// this service actually built rather than to a parallel notion of the recipients.
+	bb.SetWizardBackend(postgres.NewWizardSessionRepo(pool), wizardResolverFrom(dispatchers), audiences)
 }
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
@@ -805,7 +859,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// leaving this one silently behind.
 	c.Connections.(backendSetter).SetOrchestrator(orch)
 	briefSvc := c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
-	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch)
+	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch, audienceRepo, dispatchers)
 	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
@@ -884,7 +938,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
 			c.orch = orch
-			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch)
+			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch, audienceRepo, dispatchers)
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)

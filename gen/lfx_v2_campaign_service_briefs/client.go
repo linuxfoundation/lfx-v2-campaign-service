@@ -15,52 +15,68 @@ import (
 
 // Client is the "lfx-v2-campaign-service-briefs" service client.
 type Client struct {
-	CreateBriefEndpoint          goa.Endpoint
-	FindBriefEndpoint            goa.Endpoint
-	GetBriefEndpoint             goa.Endpoint
-	UpdateBriefEndpoint          goa.Endpoint
-	ApproveBriefEndpoint         goa.Endpoint
-	DeleteBriefEndpoint          goa.Endpoint
-	FetchEventURLEndpoint        goa.Endpoint
-	UploadCreativeAssetEndpoint  goa.Endpoint
-	CreateCampaignsEndpoint      goa.Endpoint
-	AdoptCampaignEndpoint        goa.Endpoint
-	GetCampaignEndpoint          goa.Endpoint
-	GetCampaignMetricsEndpoint   goa.Endpoint
-	GetCampaignSettingsEndpoint  goa.Endpoint
-	GetBriefMetricsEndpoint      goa.Endpoint
-	GenerateEmailCopyEndpoint    goa.Endpoint
-	UpdateCampaignEndpoint       goa.Endpoint
-	ToggleCampaignStatusEndpoint goa.Endpoint
-	ApplyKeywordActionsEndpoint  goa.Endpoint
-	DeleteCampaignEndpoint       goa.Endpoint
-	GetJobEndpoint               goa.Endpoint
+	CreateBriefEndpoint           goa.Endpoint
+	FindBriefEndpoint             goa.Endpoint
+	GetBriefEndpoint              goa.Endpoint
+	UpdateBriefEndpoint           goa.Endpoint
+	ApproveBriefEndpoint          goa.Endpoint
+	DeleteBriefEndpoint           goa.Endpoint
+	FetchEventURLEndpoint         goa.Endpoint
+	UploadCreativeAssetEndpoint   goa.Endpoint
+	CreateCampaignsEndpoint       goa.Endpoint
+	AdoptCampaignEndpoint         goa.Endpoint
+	GetCampaignEndpoint           goa.Endpoint
+	GetCampaignMetricsEndpoint    goa.Endpoint
+	GetCampaignSettingsEndpoint   goa.Endpoint
+	GetBriefMetricsEndpoint       goa.Endpoint
+	GenerateEmailCopyEndpoint     goa.Endpoint
+	UpdateCampaignEndpoint        goa.Endpoint
+	ToggleCampaignStatusEndpoint  goa.Endpoint
+	ApplyKeywordActionsEndpoint   goa.Endpoint
+	DeleteCampaignEndpoint        goa.Endpoint
+	GetJobEndpoint                goa.Endpoint
+	StartEmailWizardPlanEndpoint  goa.Endpoint
+	PlanEmailWizardEndpoint       goa.Endpoint
+	GenerateWizardContentEndpoint goa.Endpoint
+	UpdateWizardSectionsEndpoint  goa.Endpoint
+	CloneWizardEmailEndpoint      goa.Endpoint
+	SetWizardSendListEndpoint     goa.Endpoint
+	ChatWizardTurnEndpoint        goa.Endpoint
+	GetWizardSessionEndpoint      goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, applyKeywordActions, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, applyKeywordActions, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
-		CreateBriefEndpoint:          createBrief,
-		FindBriefEndpoint:            findBrief,
-		GetBriefEndpoint:             getBrief,
-		UpdateBriefEndpoint:          updateBrief,
-		ApproveBriefEndpoint:         approveBrief,
-		DeleteBriefEndpoint:          deleteBrief,
-		FetchEventURLEndpoint:        fetchEventURL,
-		UploadCreativeAssetEndpoint:  uploadCreativeAsset,
-		CreateCampaignsEndpoint:      createCampaigns,
-		AdoptCampaignEndpoint:        adoptCampaign,
-		GetCampaignEndpoint:          getCampaign,
-		GetCampaignMetricsEndpoint:   getCampaignMetrics,
-		GetCampaignSettingsEndpoint:  getCampaignSettings,
-		GetBriefMetricsEndpoint:      getBriefMetrics,
-		GenerateEmailCopyEndpoint:    generateEmailCopy,
-		UpdateCampaignEndpoint:       updateCampaign,
-		ToggleCampaignStatusEndpoint: toggleCampaignStatus,
-		ApplyKeywordActionsEndpoint:  applyKeywordActions,
-		DeleteCampaignEndpoint:       deleteCampaign,
-		GetJobEndpoint:               getJob,
+		CreateBriefEndpoint:           createBrief,
+		FindBriefEndpoint:             findBrief,
+		GetBriefEndpoint:              getBrief,
+		UpdateBriefEndpoint:           updateBrief,
+		ApproveBriefEndpoint:          approveBrief,
+		DeleteBriefEndpoint:           deleteBrief,
+		FetchEventURLEndpoint:         fetchEventURL,
+		UploadCreativeAssetEndpoint:   uploadCreativeAsset,
+		CreateCampaignsEndpoint:       createCampaigns,
+		AdoptCampaignEndpoint:         adoptCampaign,
+		GetCampaignEndpoint:           getCampaign,
+		GetCampaignMetricsEndpoint:    getCampaignMetrics,
+		GetCampaignSettingsEndpoint:   getCampaignSettings,
+		GetBriefMetricsEndpoint:       getBriefMetrics,
+		GenerateEmailCopyEndpoint:     generateEmailCopy,
+		UpdateCampaignEndpoint:        updateCampaign,
+		ToggleCampaignStatusEndpoint:  toggleCampaignStatus,
+		ApplyKeywordActionsEndpoint:   applyKeywordActions,
+		DeleteCampaignEndpoint:        deleteCampaign,
+		GetJobEndpoint:                getJob,
+		StartEmailWizardPlanEndpoint:  startEmailWizardPlan,
+		PlanEmailWizardEndpoint:       planEmailWizard,
+		GenerateWizardContentEndpoint: generateWizardContent,
+		UpdateWizardSectionsEndpoint:  updateWizardSections,
+		CloneWizardEmailEndpoint:      cloneWizardEmail,
+		SetWizardSendListEndpoint:     setWizardSendList,
+		ChatWizardTurnEndpoint:        chatWizardTurn,
+		GetWizardSessionEndpoint:      getWizardSession,
 	}
 }
 
@@ -464,4 +480,164 @@ func (c *Client) GetJob(ctx context.Context, p *GetJobPayload) (res *JobPollResp
 		return
 	}
 	return ires.(*JobPollResponse), nil
+}
+
+// StartEmailWizardPlan calls the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// StartEmailWizardPlan may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) StartEmailWizardPlan(ctx context.Context, p *StartEmailWizardPlanPayload) (res *WizardPlanStart, err error) {
+	var ires any
+	ires, err = c.StartEmailWizardPlanEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardPlanStart), nil
+}
+
+// PlanEmailWizard calls the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// PlanEmailWizard may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) PlanEmailWizard(ctx context.Context, p *PlanEmailWizardPayload) (res *WizardPlanResult, err error) {
+	var ires any
+	ires, err = c.PlanEmailWizardEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardPlanResult), nil
+}
+
+// GenerateWizardContent calls the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// GenerateWizardContent may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) GenerateWizardContent(ctx context.Context, p *GenerateWizardContentPayload) (res *WizardContent, err error) {
+	var ires any
+	ires, err = c.GenerateWizardContentEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardContent), nil
+}
+
+// UpdateWizardSections calls the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// UpdateWizardSections may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) UpdateWizardSections(ctx context.Context, p *UpdateWizardSectionsPayload) (res *WizardSections, err error) {
+	var ires any
+	ires, err = c.UpdateWizardSectionsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardSections), nil
+}
+
+// CloneWizardEmail calls the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// CloneWizardEmail may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) CloneWizardEmail(ctx context.Context, p *CloneWizardEmailPayload) (res *WizardClone, err error) {
+	var ires any
+	ires, err = c.CloneWizardEmailEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardClone), nil
+}
+
+// SetWizardSendList calls the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// SetWizardSendList may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) SetWizardSendList(ctx context.Context, p *SetWizardSendListPayload) (res *WizardSendList, err error) {
+	var ires any
+	ires, err = c.SetWizardSendListEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardSendList), nil
+}
+
+// ChatWizardTurn calls the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// ChatWizardTurn may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) ChatWizardTurn(ctx context.Context, p *ChatWizardTurnPayload) (res *WizardChat, err error) {
+	var ires any
+	ires, err = c.ChatWizardTurnEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardChat), nil
+}
+
+// GetWizardSession calls the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// GetWizardSession may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) GetWizardSession(ctx context.Context, p *GetWizardSessionPayload) (res *WizardSession, err error) {
+	var ires any
+	ires, err = c.GetWizardSessionEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*WizardSession), nil
 }
