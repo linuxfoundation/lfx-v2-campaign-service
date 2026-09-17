@@ -56,3 +56,38 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 		t.Errorf("query body = %s, want it to contain the injected-clock window 2026-09-11..2026-09-17", body)
 	}
 }
+
+// TestListAccountCampaigns_MalformedMetrics_MarksFetchFailed pins a round-19 review fix: a
+// campaign row whose GAQL metrics fields fail to parse used to be silently skipped — no
+// FetchFailed marker was ever set anywhere in this package — so the rule engine (which already
+// defensively checks FetchFailed) could never actually reach that branch and instead read the
+// row's zero-valued accumulator as a genuine "no delivery" measurement.
+func TestListAccountCampaigns_MalformedMetrics_MarksFetchFailed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{
+			"campaign":{"id":"111","name":"Campaign One","status":"ENABLED","advertisingChannelType":"SEARCH"},
+			"campaignBudget":{"amountMicros":"5000000"},
+			"metrics":{"impressions":"not-a-number","clicks":"50","costMicros":"12500000"}
+		}]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "1234567890", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose metrics failed to parse", rows[0])
+	}
+	if rows[0].Impressions != 0 || rows[0].Clicks != 0 || rows[0].SpendUSD != 0 {
+		t.Errorf("row for campaign 111 = %+v, want zero metrics (never fabricated) alongside FetchFailed", rows[0])
+	}
+}

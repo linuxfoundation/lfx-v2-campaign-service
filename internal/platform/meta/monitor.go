@@ -273,17 +273,27 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 		for _, row := range *resp.Data {
 			impressions, errI := parseMetricInt(row.Impressions)
 			clicks, errC := parseMetricInt(row.Clicks)
-			if errI != nil || errC != nil {
+			// Meta omits spend entirely for a zero-delivery campaign rather than sending "0",
+			// so an empty string is a legitimate zero here, exactly like parseMetricInt treats
+			// empty impressions/clicks above — only a NON-empty unparseable value is a failure.
+			var spend float64
+			var errS error
+			if row.Spend != "" {
+				spend, errS = strconv.ParseFloat(row.Spend, 64)
+			}
+			if errI != nil || errC != nil || errS != nil {
 				// Per-row parse failure: skip this row rather than fail the whole read, but
 				// never fabricate a zero — the caller sees no insights entry for this
 				// campaign id, and its id is recorded in `failed` so ListAccountCampaigns can
 				// mark the row FetchFailed instead of silently treating it as zero-delivery.
+				// spend is included in this gate (round-19 review): a swallowed spend parse
+				// used to produce a confident $0 row, which the pacing/action-item rules then
+				// read as a real Underspending signal instead of an unknown.
 				if row.CampaignID != "" {
 					failed[row.CampaignID] = struct{}{}
 				}
 				continue
 			}
-			spend, _ := strconv.ParseFloat(row.Spend, 64)
 			out[row.CampaignID] = metaInsightsRow{Impressions: impressions, Clicks: clicks, SpendUSD: spend}
 		}
 		if resp.Paging.Next == "" {

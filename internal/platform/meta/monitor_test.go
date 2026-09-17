@@ -230,6 +230,60 @@ func TestListAccountCampaigns_PausedCampaignFetchFailed_IsNotDropped(t *testing.
 	}
 }
 
+// TestListAccountCampaigns_MalformedSpend_MarksFetchFailed pins a round-19 review fix:
+// spend used to be parsed with its error discarded (`strconv.ParseFloat(row.Spend, 64)`
+// followed by `_`), so a malformed spend value produced a fully-trusted $0 row instead of
+// FetchFailed — exactly the false-zero failure mode this range's impressions/clicks gate
+// already prevented for the sibling fields.
+func TestListAccountCampaigns_MalformedSpend_MarksFetchFailed(t *testing.T) {
+	malformedSpend := `{"data":[{"campaign_id":"111","impressions":"100","clicks":"50","spend":"not-a-number"}],"paging":{}}`
+	srv, _ := monitorPageResponses(t,
+		[]string{campaignPage("111", "Campaign One", StatusActive, false)},
+		[]string{malformedSpend},
+	)
+	c := newMonitorClient(srv)
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose spend failed to parse", rows[0])
+	}
+	if rows[0].Impressions != 0 || rows[0].Clicks != 0 || rows[0].SpendUSD != 0 {
+		t.Errorf("row for campaign 111 = %+v, want zero metrics (never fabricated) alongside FetchFailed", rows[0])
+	}
+}
+
+// TestListAccountCampaigns_EmptySpend_IsLegitimateZero confirms an OMITTED spend field
+// (Meta's convention for a zero-delivery campaign, decoded as "") is NOT treated as a parse
+// failure — only a non-empty, unparseable value is.
+func TestListAccountCampaigns_EmptySpend_IsLegitimateZero(t *testing.T) {
+	emptySpend := `{"data":[{"campaign_id":"111","impressions":"0","clicks":"0","spend":""}],"paging":{}}`
+	srv, _ := monitorPageResponses(t,
+		[]string{campaignPage("111", "Campaign One", StatusActive, false)},
+		[]string{emptySpend},
+	)
+	c := newMonitorClient(srv)
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=false for a legitimately empty spend field", rows[0])
+	}
+	if rows[0].SpendUSD != 0 {
+		t.Errorf("row for campaign 111 = %+v, want SpendUSD=0", rows[0])
+	}
+}
+
 func TestListAccountCampaigns_MissingCursor_IsAnError(t *testing.T) {
 	// paging.next present but no cursors.after: an unusable shape, not a truncated list.
 	badPage := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"1000","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{"next":"https://graph.facebook.com/next"}}`

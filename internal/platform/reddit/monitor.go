@@ -10,7 +10,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// monitorReportConcurrency bounds how many per-campaign report calls ListAccountCampaigns
+// runs at once (round-19 review): the whole read is capped at a fixed deadline by its caller,
+// and a serial one-request-per-campaign loop can exceed that deadline on an account with
+// several campaigns even when each individual request is healthy. Mirrors the ported BFF's
+// own batch size (reddit-ads.service.ts).
+const monitorReportConcurrency = 5
 
 // AccountCampaignRow is one campaign read live from an ad account for the account-monitor
 // endpoint, ported from lfx-self-serve's reddit-ads.service.ts (getRedditAnalytics).
@@ -202,45 +211,58 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		}
 	}
 
-	out := make([]AccountCampaignRow, 0, len(active))
-	for _, e := range active {
-		row := AccountCampaignRow{
-			CampaignID: e.ID,
-			Name:       e.Name,
-			Status:     e.ConfiguredStatus,
-			StartDate:  startDate,
-			EndDate:    endDate,
-		}
-		if e.GoalValue != nil {
-			row.TotalBudget = float64(*e.GoalValue) / 1_000_000
-		}
-		if strings.TrimSpace(e.StartTime) != "" {
-			if t, perr := time.Parse(time.RFC3339, e.StartTime); perr == nil {
-				row.StartDate = t.UTC().Format("2006-01-02")
+	rows := make([]AccountCampaignRow, len(active))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(monitorReportConcurrency)
+	for i, e := range active {
+		g.Go(func() error {
+			row := AccountCampaignRow{
+				CampaignID: e.ID,
+				Name:       e.Name,
+				Status:     e.ConfiguredStatus,
+				StartDate:  startDate,
+				EndDate:    endDate,
 			}
-		}
-		if strings.TrimSpace(e.EndTime) != "" {
-			if t, perr := time.Parse(time.RFC3339, e.EndTime); perr == nil {
-				row.EndDate = t.UTC().Format("2006-01-02")
+			if e.GoalValue != nil {
+				row.TotalBudget = float64(*e.GoalValue) / 1_000_000
 			}
-		}
+			if strings.TrimSpace(e.StartTime) != "" {
+				if t, perr := time.Parse(time.RFC3339, e.StartTime); perr == nil {
+					row.StartDate = t.UTC().Format("2006-01-02")
+				}
+			}
+			if strings.TrimSpace(e.EndTime) != "" {
+				if t, perr := time.Parse(time.RFC3339, e.EndTime); perr == nil {
+					row.EndDate = t.UTC().Format("2006-01-02")
+				}
+			}
 
-		impressions, clicks, spendUSD, ferr := c.fetchMonitorReport(ctx,
-			"/ad_accounts/"+accountID+"/campaigns/"+e.ID+"/reports", startDate, endDate)
-		if ferr != nil {
-			// DIVERGES from the BFF here — see AccountCampaignRow.FetchFailed's doc comment.
-			row.FetchFailed = true
-		} else {
-			row.Impressions = impressions
-			row.Clicks = clicks
-			row.SpendUSD = spendUSD
-			if impressions > 0 {
-				row.Ctr = float64(clicks) / float64(impressions) * 100
+			impressions, clicks, spendUSD, ferr := c.fetchMonitorReport(gctx,
+				"/ad_accounts/"+accountID+"/campaigns/"+e.ID+"/reports", startDate, endDate)
+			if ferr != nil {
+				// DIVERGES from the BFF here — see AccountCampaignRow.FetchFailed's doc comment.
+				row.FetchFailed = true
+			} else {
+				row.Impressions = impressions
+				row.Clicks = clicks
+				row.SpendUSD = spendUSD
+				if impressions > 0 {
+					row.Ctr = float64(clicks) / float64(impressions) * 100
+				}
 			}
-		}
-		out = append(out, row)
+			rows[i] = row
+			// Never propagated: a per-campaign report failure already has a home
+			// (FetchFailed on that row) and returning it here would cancel gctx, turning one
+			// campaign's failure into a partial read of every OTHER campaign in flight.
+			return nil
+		})
 	}
-	return out, nil
+	// Cannot return non-nil: every g.Go returns nil above. Checked anyway so a later edit
+	// that starts propagating an error cannot silently drop it.
+	if werr := g.Wait(); werr != nil {
+		return nil, fmt.Errorf("list account campaigns: %w", werr)
+	}
+	return rows, nil
 }
 
 // FetchAccountTotals ports fetchAccountMetrics: a single account-wide report over the

@@ -27,6 +27,9 @@ type AccountCampaignRow struct {
 	SpendUSD        float64
 	Conversions     *float64
 	BudgetDailyUSD  float64
+	// FetchFailed marks a row whose GAQL metrics fields could not be parsed — see the
+	// round-19-review comment at the parse site in ListAccountCampaigns below.
+	FetchFailed bool
 }
 
 // monitorGaqlRow mirrors gaqlMetricsRow's string-encoded-integer convention (see that
@@ -128,9 +131,12 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 		clicks, errC := parseMetricInt(row.Metrics.Clicks)
 		cost, errCost := parseMetricInt(row.Metrics.CostMicros)
 		if errI != nil || errC != nil || errCost != nil {
-			// Skip an unparseable row's metrics rather than fail the whole account read;
-			// the campaign still surfaces with its identity fields. Never fabricate a zero
-			// in their place — leave the accumulator untouched for this row.
+			// Mark the row FetchFailed rather than fail the whole account read; the campaign
+			// still surfaces with its identity fields. Never fabricate a zero in their place
+			// — leave the accumulator's numeric fields untouched for this row (round-19
+			// review: this used to leave FetchFailed unset too, so the rule engine read the
+			// zero-valued accumulator as a real "no delivery" measurement instead of unknown).
+			existing.FetchFailed = true
 			continue
 		}
 		existing.Impressions += impressions

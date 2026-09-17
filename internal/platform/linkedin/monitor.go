@@ -80,16 +80,22 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	out := make([]AccountCampaignRow, 0, len(campaigns))
 	for _, cm := range campaigns {
 		row := cm
+		// A campaign absent from a SUCCESSFUL account-wide analytics response is not a fetch
+		// failure: fetchAccountCampaignAnalytics is one account-level call that either returns
+		// this whole map or a non-nil error above, and LinkedIn omits a campaign with no
+		// activity in the window from its pivoted results entirely (round-19 review). Leaving
+		// the row at its zero defaults reports the honest "no delivery" reading; only a
+		// genuine per-row parse failure (m.FetchFailed, from a malformed costInUsd) marks the
+		// row failed.
 		if m, ok := metricsByID[cm.CampaignID]; ok {
 			row.Impressions = m.Impressions
 			row.Clicks = m.Clicks
 			row.SpendUSD = m.SpendUSD
 			row.Conversions = m.Conversions
+			row.FetchFailed = m.FetchFailed
 			if row.Impressions > 0 {
 				row.Ctr = float64(row.Clicks) / float64(row.Impressions) * 100
 			}
-		} else {
-			row.FetchFailed = true
 		}
 		out = append(out, row)
 	}
@@ -171,6 +177,9 @@ type monitorMetricsRow struct {
 	Clicks      int64
 	SpendUSD    float64
 	Conversions *float64
+	// FetchFailed marks a row whose costInUsd could not be converted — see the round-19-review
+	// comment at the parse site in fetchAccountCampaignAnalyticsRaw below.
+	FetchFailed bool
 }
 
 // fetchAccountCampaignAnalytics ports getLinkedInAnalytics' account-level adAnalyticsV2
@@ -262,6 +271,12 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 		if el.CostInUsd != nil {
 			if micros, err := costInUsdToMicros(*el.CostInUsd); err == nil {
 				row.SpendUSD = float64(micros) / 1_000_000
+			} else {
+				// A non-empty, unparseable costInUsd is an upstream-data failure, not a
+				// legitimate zero: reporting SpendUSD=0 here would read to the rule engine
+				// as a real "no delivery" measurement instead of unknown (round-19 review,
+				// same class as the sibling Google Ads/Meta fixes in this range).
+				row.FetchFailed = true
 			}
 		}
 		if el.Conversions != nil {

@@ -59,11 +59,9 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 			continue
 		}
 
-		// Currently unreachable: Google's GAQL read is all-or-nothing and nothing in
-		// internal/platform/googleads sets FetchFailed on a row today. Kept for defensive
-		// symmetry with LinkedIn/Meta/Reddit, which do have a per-campaign failure signal,
-		// and to be ready the day Google's client gains one — see fetchFailedRow's doc
-		// comment in monitor_shared.go (round-15 review).
+		// internal/platform/googleads.ListAccountCampaigns sets FetchFailed when a campaign's
+		// GAQL metrics fields fail to parse (round-19 review) — see fetchFailedRow's doc
+		// comment in monitor_shared.go.
 		if m.FetchFailed {
 			out = append(out, fetchFailedRow(m))
 			continue

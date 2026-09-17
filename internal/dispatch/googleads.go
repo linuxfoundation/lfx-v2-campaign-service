@@ -920,6 +920,7 @@ func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, pr
 			// LinkedIn/Meta/Reddit's are (see model.AccountCampaignMetrics.PacingUnknown's
 			// doc comment); StartDate/EndDate are left empty and PacingUnknown false —
 			// monitor_google.go's pacing formula does not consult flight dates at all.
+			FetchFailed: r.FetchFailed,
 		})
 	}
 	return out, nil

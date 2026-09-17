@@ -74,3 +74,62 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 		t.Errorf("adAnalytics request URI = %s, contains the AEST calendar date (18th) — the UTC normalization is not being exercised", analyticsURI)
 	}
 }
+
+// TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed pins a round-19 review
+// fix: fetchAccountCampaignAnalytics is one account-wide pivot call that either returns the
+// whole metrics map or a non-nil error — LinkedIn omits a campaign with no activity in the
+// window from that response entirely, rather than reporting it at zero. A campaign missing
+// from a SUCCESSFUL response used to be marked FetchFailed, which suppressed exactly the
+// zero-delivery pacing/action checks this endpoint exists to report.
+func TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"},{"id":222,"name":"Campaign Two","status":"ACTIVE"}],"metadata":{}}`,
+		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(rows), rows)
+	}
+	var missing AccountCampaignRow
+	for _, r := range rows {
+		if r.CampaignID == "222" {
+			missing = r
+		}
+	}
+	if missing.FetchFailed {
+		t.Errorf("row for campaign 222 = %+v, want FetchFailed=false — absent from a successful account-wide response means zero activity, not a failed fetch", missing)
+	}
+	if missing.Impressions != 0 || missing.Clicks != 0 || missing.SpendUSD != 0 {
+		t.Errorf("row for campaign 222 = %+v, want zero metrics", missing)
+	}
+}
+
+// TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed pins a round-19 review fix: a
+// non-empty, unparseable costInUsd used to be silently ignored (SpendUSD left at 0), converting
+// an upstream-data failure into a trusted zero spend.
+func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
+		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"not-a-number"}]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose costInUsd failed to parse", rows[0])
+	}
+	if rows[0].SpendUSD != 0 {
+		t.Errorf("row for campaign 111 = %+v, want SpendUSD=0 (never fabricated) alongside FetchFailed", rows[0])
+	}
+}
