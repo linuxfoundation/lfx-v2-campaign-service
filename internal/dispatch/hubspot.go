@@ -136,6 +136,16 @@ func toHubSpotSponsors(sponsors []hubspotSponsor) []hubspot.Sponsor {
 type hubspotConfigProvenance struct {
 	SourceEmailID string `json:"sourceEmailId"`
 	UTMCampaign   string `json:"utmCampaign,omitempty"`
+	// ABTestEnabled records that a variant was REQUESTED, which ABTestVariant cannot: that
+	// field is written only when creation SUCCEEDED, and variant creation is best-effort, so
+	// without this a campaign whose A/B creation failed is byte-identical in persisted state
+	// to one that never asked for a variant — erasing the only signal anyone could use to find
+	// and retry them.
+	//
+	// It does not violate the rule the comment above protects: a boolean saying what the
+	// operator asked for is provenance, not caller-supplied content, so it carries no tokens
+	// and nothing arbitrary into an unencrypted, API-visible column.
+	ABTestEnabled bool `json:"abTestEnabled,omitempty"`
 }
 
 // audienceReader is the narrow read slice of the audience repository the email dispatcher needs:
@@ -578,7 +588,21 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 		SentByOrg:    sentByOrg,
 		PreviewText:  previewText,
 	}); err != nil {
-		slog.WarnContext(ctx, "could not rebuild the email draft's content; it may keep the template's content or be left partially rebuilt",
+		// Two failures, opposite meanings. A failed PATCH leaves the clone intact: the draft
+		// still carries the template's content, which is wrong but coherent and retryable, and
+		// swallowing it is consistent with this function's best-effort contract.
+		//
+		// ErrContentNotPersisted is not that. HubSpot returned 2xx and then reverted the write,
+		// so the draft matches neither the template nor the generated copy and no retry of the
+		// same payload is known to fix it. Logging that at WARN alongside ordinary failures is
+		// what lets a broken draft read as a routine degrade, so it is raised to ERROR and
+		// named — an operator scanning for drafts that need manual repair can select on it.
+		if errors.Is(err, hubspot.ErrContentNotPersisted) {
+			slog.ErrorContext(ctx, "the email draft's content was accepted but not persisted; the draft is left in an inconsistent state and needs manual repair",
+				"email_id", emailID, "error", err)
+			return
+		}
+		slog.WarnContext(ctx, "could not rebuild the email draft's content; it keeps the template's content",
 			"email_id", emailID, "error", err)
 		return
 	}
@@ -821,6 +845,7 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 	applyCampaignConfig(ctx, c, 0, false, "", "", hubspotConfigProvenance{
 		SourceEmailID: cfg.SourceEmailID,
 		UTMCampaign:   cfg.UTMCampaign,
+		ABTestEnabled: cfg.ABTestEnabled,
 	})
 	// ABTestVariant is nil whenever ABTestEnabled was false OR variant creation failed
 	// (createABTestVariant's best-effort contract) — omitempty on a nil pointer drops the key

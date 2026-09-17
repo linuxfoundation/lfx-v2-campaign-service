@@ -256,6 +256,8 @@ nothing greps for it.
 - **TestFormatEventDates_RangeFormat**: Mutation test for date range format.
 - **TestTruncateString_EnforcesLimit**: Mutation test for truncation limits.
 - **TestParseEmailCopyResponse_EnforcesMaxLengths**: Mutation test for plain-text field truncation limits.
+- **TestParseEmailCopyResponse_RefusesLegacyShapeWhenSectionsWereRequested**: The legacy `body`/`cta` repackaging is gated on `allowLegacyShape`, true only on the frozen `legacySystemPrompt` path. Applying it unconditionally was a fail-open: a stage-aware request whose model output regressed to the flat shape was silently converted and returned as a success, so a prompt or model regression looked like ordinary operation.
+- **TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch**: Keeps that gate from swallowing the pre-existing case — a response with neither sections nor body still reaches the required-field rejection rather than being blamed on the shape.
 - **TestResolveEventDates**: Pins the fallback order — the structured `startDate`/`endDate` pair wins, the scraper's combined `dates` string is the fallback, and "Date TBD" is the answer when neither exists.
 - **TestGenerateEmailCopy_StageReachesThePrompt**: Pins that the caller's `stage` actually reaches the composed prompt, rather than being accepted and dropped.
 - **TestGenerateEmailCopy_NilStageIsNotAnError**: A caller that names no stage gets generated copy, not a 400 — the stage is optional by contract.

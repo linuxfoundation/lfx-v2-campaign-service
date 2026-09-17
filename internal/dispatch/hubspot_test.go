@@ -1541,3 +1541,47 @@ func TestHubSpot_DispatchReadsThePortalOnce(t *testing.T) {
 			"value is only a win if the stamp actually carries it, or ReadMetrics refuses the send", got)
 	}
 }
+
+// TestHubSpot_ConfigSnapshotRecordsThatABTestWasRequested pins the distinction the snapshot
+// could not previously make.
+//
+// ABTestVariant is written only when variant creation SUCCEEDED, and creation is best-effort,
+// so before ABTestEnabled was persisted a campaign whose A/B creation failed was byte-identical
+// in stored state to one that never asked for a variant. That erased the only signal anyone
+// could select on to find the failed ones and retry them.
+//
+// The assertion is on the REQUEST flag surviving, not on the variant: the variant's absence is
+// exactly the case being disambiguated.
+func TestHubSpot_ConfigSnapshotRecordsThatABTestWasRequested(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true,"subjectB":"Variant B subject","bodyHtmlB":"<p>B</p>"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if !strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
+		t.Errorf("ConfigSnapshot did not record that an A/B variant was requested: %s", out.ConfigSnapshot)
+	}
+}
+
+// TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested is the other half: omitempty must keep
+// the key off a campaign that never asked, so its presence alone is the signal.
+func TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
+		t.Errorf("ConfigSnapshot claimed an A/B variant was requested when none was: %s", out.ConfigSnapshot)
+	}
+}

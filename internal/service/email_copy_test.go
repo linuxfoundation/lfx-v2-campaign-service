@@ -224,7 +224,7 @@ func TestParseEmailCopyResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseEmailCopyResponse(tt.raw)
+			got, err := parseEmailCopyResponse(tt.raw, true)
 			if (err != nil) != tt.wantError {
 				t.Errorf("parseEmailCopyResponse() error = %v, wantError %v", err, tt.wantError)
 				return
@@ -607,7 +607,7 @@ func TestParseEmailCopyResponse_EnforcesMaxLengths(t *testing.T) {
 	tooLongSubject := repeatStr("x", 300)
 	raw := `{"subject":"` + tooLongSubject + `","preheader":"p","body":"b","cta":"c"}`
 
-	result, err := parseEmailCopyResponse(raw)
+	result, err := parseEmailCopyResponse(raw, true)
 	if err != nil {
 		t.Errorf("parseEmailCopyResponse() error = %v, want nil", err)
 		return
@@ -906,7 +906,7 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 				b, _ := io.ReadAll(r.Body)
 				sentBody.Store(string(b))
 				w.Header().Set("Content-Type", "application/json")
-				content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+				content, _ := json.Marshal(`{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>b</p>"},{"type":"button","text":"c"}]}`)
 				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
 			}))
 			defer srv.Close()
@@ -1463,7 +1463,7 @@ func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		sentBody.Store(string(b))
 		w.Header().Set("Content-Type", "application/json")
-		content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>b</p>"},{"type":"button","text":"c"}]}`)
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
 	}))
 	defer srv.Close()
@@ -1572,7 +1572,7 @@ func TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt(t *testing.T) {
 		}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			content := `{"subject":"s","preheader":"p","body":"<p>Register now</p>","cta":"Register"}`
+			content := `{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>Register now</p>"},{"type":"button","text":"Register"}]}`
 			encoded, err := json.Marshal(content)
 			if err != nil {
 				t.Fatalf("marshal fake LLM content: %v", err)
@@ -1672,5 +1672,40 @@ func TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages(t *testing.
 				t.Errorf("prompt carries an EMPTY 'Registration URL:' label; the line must be omitted entirely")
 			}
 		})
+	}
+}
+
+// TestParseEmailCopyResponse_RefusesLegacyShapeWhenSectionsWereRequested pins the gate on the
+// legacy repackaging.
+//
+// The repackaging exists for the frozen legacySystemPrompt path, which still asks the model for
+// a flat body/cta pair. Applying it unconditionally made it a fail-open: a stage-aware request
+// whose model output regressed to the legacy shape was silently converted and returned as a
+// normal success, so a prompt or model regression looked exactly like ordinary operation.
+func TestParseEmailCopyResponse_RefusesLegacyShapeWhenSectionsWereRequested(t *testing.T) {
+	raw := `{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`
+
+	if _, err := parseEmailCopyResponse(raw, false); err == nil {
+		t.Fatal("a legacy body/cta response was accepted for a request that asked for sections")
+	}
+
+	// The same bytes on the legacy path stay valid -- the gate is on what was REQUESTED, not on
+	// the shape being retired.
+	got, err := parseEmailCopyResponse(raw, true)
+	if err != nil {
+		t.Fatalf("the legacy path refused the shape it asks for: %v", err)
+	}
+	if got == nil || len(got.Sections) == 0 {
+		t.Fatal("legacy repackaging produced no sections")
+	}
+}
+
+// TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch keeps the new gate from
+// swallowing the pre-existing case: a response with neither sections nor body must still reach
+// the required-field rejection it always had, rather than being blamed on the shape.
+func TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch(t *testing.T) {
+	_, err := parseEmailCopyResponse(`{"subject":"s","preheader":"p"}`, false)
+	if err != nil && strings.Contains(err.Error(), "legacy body/cta shape") {
+		t.Fatalf("an empty response was reported as a shape mismatch: %v", err)
 	}
 }

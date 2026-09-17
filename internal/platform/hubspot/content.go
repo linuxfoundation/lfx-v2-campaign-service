@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -155,10 +156,22 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 	}
 
 	if verr := c.verifyContentSaved(ctx, id, widgets); verr != nil {
-		return email, verr
+		return email, fmt.Errorf("%w: %w", ErrContentNotPersisted, verr)
 	}
 	return email, nil
 }
+
+// ErrContentNotPersisted marks the one rebuild failure a caller CANNOT treat as
+// "the draft kept the template's content": the content PATCH returned 2xx but the
+// re-read shows the widgets are not referenced, i.e. HubSpot accepted and silently
+// reverted the write (see verifyContentSaved).
+//
+// It is worth distinguishing because the two failures need opposite responses. A
+// failed PATCH leaves the clone intact and is recoverable by retrying; a reverted
+// one leaves a draft whose state matches neither the template nor the generated
+// copy, and no retry of the same payload is known to fix it. Callers that swallow
+// rebuild errors as best-effort should still surface THIS one.
+var ErrContentNotPersisted = errors.New("hubspot: email content was accepted but not persisted")
 
 // rawEmailContent decodes only the `content` object one level deep, leaving each
 // key (widgets/flexAreas/styleSettings/templatePath) as raw JSON — widget shapes

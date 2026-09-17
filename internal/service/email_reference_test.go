@@ -26,6 +26,10 @@ import (
 // internal/dispatch (see hubspotCreds' doc comment for why that import is a cycle).
 type fakeConnReader struct {
 	byProject map[string]*model.Connection
+	// disconnected marks projects that explicitly disconnected HubSpot, and probeErr makes
+	// the probe itself fail — the two cases that must NOT reach the system fallback.
+	disconnected map[string]bool
+	probeErr     error
 }
 
 func (f fakeConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
@@ -36,8 +40,11 @@ func (f fakeConnReader) Get(_ context.Context, projectID string, _ model.Provide
 	return conn, nil
 }
 
-func (f fakeConnReader) Disconnected(context.Context, string, model.Provider) (bool, error) {
-	return false, nil
+func (f fakeConnReader) Disconnected(_ context.Context, projectID string, _ model.Provider) (bool, error) {
+	if f.probeErr != nil {
+		return false, f.probeErr
+	}
+	return f.disconnected[projectID], nil
 }
 
 // identityEncryptor treats ciphertext as plaintext, so tests can put readable JSON in
@@ -328,5 +335,61 @@ func TestTruncateRunes(t *testing.T) {
 	jp := strings.Repeat("こ", 5)
 	if got := truncateRunes(jp, 3); got != strings.Repeat("こ", 3) {
 		t.Errorf("truncateRunes must cut on rune boundaries, got %q", got)
+	}
+}
+
+// TestBuildReferenceBlock_DoesNotFallBackForADisconnectedProject pins the gate on the system
+// fallback.
+//
+// Connections are soft-deleted and Get filters `status <> 'deleted'`, so a project that
+// explicitly DISCONNECTED HubSpot returns the same domain.ErrNotFound as one that never
+// connected. Falling back on that is not a shared-portal convenience, it is styling a
+// project's copy from the portal it just opted out of — and no error reaches the caller,
+// because BuildReferenceBlock is best-effort, so it would never be noticed.
+//
+// Unreachable while every project resolves to the single system:linuxfoundation row, and
+// pinned anyway: it becomes reachable the moment a per-project connection is created, and
+// the failure is silent when it does.
+func TestBuildReferenceBlock_DoesNotFallBackForADisconnectedProject(t *testing.T) {
+	srv := emailDraftServer(t,
+		`{"results":[{"id":"1","subject":"System Template","state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z"}]}`,
+		map[string][]string{"1": {"Hello from the shared portal"}},
+	)
+	defer srv.Close()
+
+	src := NewEmailReferenceSource(
+		fakeConnReader{
+			byProject:    map[string]*model.Connection{model.SystemProjectID: activeConn(t, "system-tok")},
+			disconnected: map[string]bool{"proj-opted-out": true},
+		},
+		identityEncryptor{},
+		hubspot.WithBaseURL(srv.URL),
+	)
+
+	if got := src.BuildReferenceBlock(context.Background(), "proj-opted-out"); got != "" {
+		t.Errorf("a disconnected project was styled from the shared portal it opted out of: %q", got)
+	}
+}
+
+// TestBuildReferenceBlock_FailsClosedWhenTheDisconnectProbeFails: an unanswered "was this
+// disconnected?" is not a no. Mirrors dispatch's systemConn.
+func TestBuildReferenceBlock_FailsClosedWhenTheDisconnectProbeFails(t *testing.T) {
+	srv := emailDraftServer(t,
+		`{"results":[{"id":"1","subject":"System Template","state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z"}]}`,
+		map[string][]string{"1": {"Hello from the shared portal"}},
+	)
+	defer srv.Close()
+
+	src := NewEmailReferenceSource(
+		fakeConnReader{
+			byProject: map[string]*model.Connection{model.SystemProjectID: activeConn(t, "system-tok")},
+			probeErr:  errors.New("probe unavailable"),
+		},
+		identityEncryptor{},
+		hubspot.WithBaseURL(srv.URL),
+	)
+
+	if got := src.BuildReferenceBlock(context.Background(), "proj-unknown"); got != "" {
+		t.Errorf("fell back to the shared portal despite an unanswerable disconnect probe: %q", got)
 	}
 }
