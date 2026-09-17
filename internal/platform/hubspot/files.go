@@ -7,7 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -18,6 +23,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 const filesPath = "/files/v3/files"
@@ -97,7 +103,17 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 	}
 	resp, derr := client.Do(req)
 	if derr != nil {
-		return nil, "", "", fmt.Errorf("hubspot: download image: %w", derr)
+		// NOT %w on derr: http.Client.Do returns a *url.Error whose Error() renders the full
+		// request URL, and a hero URL is frequently signed — so wrapping it verbatim copies any
+		// credential in the query string into every error string this bubbles into, including
+		// logs. Unwrap to the cause, which carries the network reason without the URL, and name
+		// the target with its query removed.
+		cause := derr
+		var uerr *url.Error
+		if errors.As(derr, &uerr) && uerr.Err != nil {
+			cause = uerr.Err
+		}
+		return nil, "", "", fmt.Errorf("hubspot: download image from %s: %w", redact.URLUserinfo(imageURL), cause)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -122,30 +138,83 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 		return nil, "", "", fmt.Errorf("hubspot: downloaded image exceeds %d bytes", maxImageDownloadBytes)
 	}
 
-	return body, ct, deriveImageFilename(imageURL, ct), nil
+	// The DECODED format, not the declared one. The responding server chooses Content-Type, so
+	// the header above establishes intent, not content: an attacker can serve HTML as image/png.
+	// That matters here beyond the usual, because the bytes are re-hosted in the LF portal as a
+	// PUBLIC_INDEXABLE file — so an unvalidated payload becomes publicly served content under an
+	// LF domain. image.DecodeConfig reads only the header, so this is cheap.
+	format, sniffErr := sniffImageFormat(body)
+	if sniffErr != nil {
+		return nil, "", "", sniffErr
+	}
+
+	return body, "image/" + format, deriveImageFilename(imageURL, format), nil
 }
 
-// deriveImageFilename mirrors the prototype's filename derivation: use the source
-// URL's last path segment when it looks like a real filename, otherwise synthesize
-// one from the content type.
-func deriveImageFilename(imageURL, contentType string) string {
+// allowedImageFormats are the formats this service will re-host, keyed by the name
+// image.DecodeConfig reports. GIF is included because event pages use animated banners; SVG is
+// absent deliberately — it is a document format that can carry script, and re-hosting one as a
+// public LF-served asset is exactly the thing the sniff exists to prevent.
+var allowedImageFormats = map[string]string{
+	"jpeg": "jpg",
+	"png":  "png",
+	"gif":  "gif",
+}
+
+// WebP is absent because the standard library has no decoder for it and this service does not
+// take golang.org/x/image for one. The consequence is a REFUSAL, not a bypass: a WebP hero is
+// rejected with "not one this service re-hosts" rather than silently re-hosted unvalidated.
+
+// sniffImageFormat decodes just the image header and returns the canonical extension.
+func sniffImageFormat(body []byte) (string, error) {
+	_, format, derr := image.DecodeConfig(bytes.NewReader(body))
+	if derr != nil {
+		return "", fmt.Errorf("hubspot: source URL did not return a decodable image: %w", derr)
+	}
+	ext, ok := allowedImageFormats[format]
+	if !ok {
+		return "", fmt.Errorf("hubspot: image format %q is not one this service re-hosts", format)
+	}
+	return ext, nil
+}
+
+// deriveImageFilename keeps the source URL's basename for recognisability, but the EXTENSION
+// always comes from the sniffed format rather than the URL.
+//
+// The URL's own extension is caller-controlled and the upload is PUBLIC_INDEXABLE, so carrying
+// it through is what would let `payload.html` be re-hosted under an LF domain with an extension
+// that invites a browser to render it. The bytes decoded as an image; the name must say so too.
+func deriveImageFilename(imageURL, ext string) string {
+	stem := "email_img"
 	if u, perr := url.Parse(imageURL); perr == nil {
 		base := path.Base(u.Path)
-		if base != "" && base != "/" && base != "." && strings.Contains(base, ".") {
+		// A trailing slash makes path.Base return the last DIRECTORY, which is not a filename
+		// and would name every image after its folder. The original required a dot for the same
+		// reason; that test has to happen BEFORE the extension is stripped.
+		if strings.HasSuffix(u.Path, "/") {
+			base = ""
+		}
+		if base != "" && base != "/" && base != "." {
+			if i := strings.LastIndex(base, "."); i > 0 {
+				base = base[:i]
+			}
+			// Path separators cannot appear (path.Base strips them), but a name is still
+			// caller-supplied text going into a multipart filename field.
+			base = strings.Map(func(r rune) rune {
+				if r == '"' || r == '\\' || r == '/' || r < ' ' {
+					return -1
+				}
+				return r
+			}, base)
 			if len(base) > 80 {
 				base = base[:80]
 			}
-			return base
+			if base != "" {
+				stem = base
+			}
 		}
 	}
-	ext := strings.TrimPrefix(contentType, "image/")
-	if ext == "jpeg" {
-		ext = "jpg"
-	}
-	if ext == "" {
-		ext = "jpg"
-	}
-	return "email_img." + ext
+	return stem + "." + ext
 }
 
 type fileUploadResponse struct {

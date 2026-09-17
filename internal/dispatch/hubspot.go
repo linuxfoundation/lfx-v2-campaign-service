@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // portalLookupTimeout bounds the AuthenticatedPortalID call on BOTH paths that make it:
@@ -540,7 +541,10 @@ func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL strin
 	hosted, err := client.UploadImage(ctx, imageURL)
 	if err != nil {
 		slog.WarnContext(ctx, "could not upload the hero image to hubspot; the rebuilt email will have no hero section",
-			"source_url", imageURL, "error", err)
+			// Redacted: a hero URL is frequently a signed one (S3 pre-signed, a CDN token),
+			// so the query string can carry a credential. The host and path are what make the
+			// line actionable; the query never is.
+			"source_url", redact.URLUserinfo(imageURL), "error", err)
 		return ""
 	}
 	return hosted

@@ -27,6 +27,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -445,7 +446,11 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 // built send-list. The ad dispatchers don't need it, so it is a distinct arg rather than folded
 // into the connection repo. creatives is the same shape for Meta: the creative-asset store it
 // reads to resolve a variant's imageAssetId to the image bytes it uploads.
-func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo, creatives *postgres.CreativeAssetRepo) map[model.Provider]service.PlatformDispatcher {
+// nat64 carries the deployment's operator-specific NAT64 prefixes to the HubSpot dispatcher's
+// image-download guard. They are the SAME prefixes the event-URL fetcher gets: a guard that
+// judges only the well-known prefix cannot decode an address under an operator one, so the
+// private IPv4 it encodes is never seen and the image is fetched and re-hosted publicly.
+func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo, creatives *postgres.CreativeAssetRepo, nat64 []string) map[model.Provider]service.PlatformDispatcher {
 	// Bound here rather than in NewMetaDispatcher's signature so the ~30 direct-construction
 	// dispatch tests that create no asset-backed variants stay unchanged, and so BOTH call
 	// sites of registerDispatchers (fast path and cold-start retry) get the binding from one
@@ -475,7 +480,7 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
-		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
+		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}
 }
@@ -847,7 +852,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
-	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool))
+	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -925,7 +930,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
-			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool))
+			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
@@ -1390,4 +1395,13 @@ func newIndexPublisher(cfg *config.Config) (indexer.Publisher, error) {
 		slog.Info("query-service indexing disabled (no NATS URL configured)")
 	}
 	return p, nil
+}
+
+// nat64Prefixes returns the deployment's configured NAT64 prefixes, or nil when none are set
+// (in which case the guards judge the well-known prefix alone, which is correct).
+func nat64Prefixes(c *Container) []string {
+	if c == nil || c.Config == nil {
+		return nil
+	}
+	return c.Config.EventURLNAT64Prefixes
 }

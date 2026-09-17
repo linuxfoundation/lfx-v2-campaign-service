@@ -4,15 +4,20 @@
 package hubspot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -20,7 +25,7 @@ import (
 func TestUploadImage_HappyPathReturnsHostedURL(t *testing.T) {
 	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("fake-png-bytes"))
+		_, _ = w.Write(tinyPNG(t))
 	}))
 	t.Cleanup(imgSrv.Close)
 
@@ -48,8 +53,8 @@ func TestUploadImage_HappyPathReturnsHostedURL(t *testing.T) {
 			case "file":
 				gotFilename = part.FileName()
 				data, _ := io.ReadAll(part)
-				if string(data) != "fake-png-bytes" {
-					t.Errorf("uploaded bytes = %q, want fake-png-bytes", data)
+				if len(data) == 0 {
+					t.Errorf("uploaded no bytes")
 				}
 			case "folderPath":
 				b, _ := io.ReadAll(part)
@@ -112,7 +117,7 @@ func TestUploadImage_RejectsEmptyURL(t *testing.T) {
 func TestUploadImage_NonSuccessUploadStatusIsAnAPIError(t *testing.T) {
 	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("bytes"))
+		_, _ = w.Write(tinyPNG(t))
 	}))
 	t.Cleanup(imgSrv.Close)
 
@@ -136,15 +141,18 @@ func TestUploadImage_NonSuccessUploadStatusIsAnAPIError(t *testing.T) {
 
 func TestDeriveImageFilename(t *testing.T) {
 	cases := []struct {
-		url, contentType, want string
+		url, ext, want string
 	}{
-		{"https://cdn.example.com/path/hero-banner.jpg", "image/jpeg", "hero-banner.jpg"},
-		{"https://cdn.example.com/path/", "image/png", "email_img.png"},
-		{"https://cdn.example.com/no-extension", "image/jpeg", "email_img.jpg"},
+		{"https://cdn.example.com/path/hero-banner.jpg", "jpg", "hero-banner.jpg"},
+		{"https://cdn.example.com/path/", "png", "email_img.png"},
+		{"https://cdn.example.com/no-extension", "jpg", "no-extension.jpg"},
+		// The URL's extension never survives: the sniffed format decides it, so a payload
+		// served as HTML cannot be re-hosted under a name that invites a browser to render it.
+		{"https://cdn.example.com/payload.html", "png", "payload.png"},
 	}
 	for _, tc := range cases {
-		if got := deriveImageFilename(tc.url, tc.contentType); got != tc.want {
-			t.Errorf("deriveImageFilename(%q, %q) = %q, want %q", tc.url, tc.contentType, got, tc.want)
+		if got := deriveImageFilename(tc.url, tc.ext); got != tc.want {
+			t.Errorf("deriveImageFilename(%q, %q) = %q, want %q", tc.url, tc.ext, got, tc.want)
 		}
 	}
 }
@@ -162,7 +170,7 @@ func TestDownloadImage_DefaultClientRefusesAForbiddenAddress(t *testing.T) {
 	// Serves on 127.0.0.1, which the guard denies. Reaching it means no guard.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		_, _ = io.WriteString(w, "fake-png-bytes")
+		_, _ = w.Write(tinyPNG(t))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -207,7 +215,7 @@ func TestDownloadImage_FollowsARedirect(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
-		_, _ = io.WriteString(w, "fake-png-bytes")
+		_, _ = w.Write(tinyPNG(t))
 	}))
 	t.Cleanup(origin.Close)
 
@@ -220,8 +228,8 @@ func TestDownloadImage_FollowsARedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a redirected image URL failed to download: %v", err)
 	}
-	if string(data) != "fake-png-bytes" || ct != "image/png" {
-		t.Errorf("followed the redirect but got %q (%s)", data, ct)
+	if len(data) == 0 || ct != "image/png" {
+		t.Errorf("followed the redirect but got %d bytes (%s)", len(data), ct)
 	}
 }
 
@@ -241,9 +249,9 @@ func TestDownloadImage_RefusesAnOverlongRedirectChain(t *testing.T) {
 	}
 }
 
-// boundedRedirects mirrors NewGuardedRedirectClient's policy without the address guard, so these
-// tests can use a 127.0.0.1 httptest server. The guard's own half is covered by
-// TestDownloadImage_GuardAppliesAfterARedirect below, which uses the real default client.
+// boundedRedirects mirrors NewGuardedRedirectClient's policy without the address guard, so the
+// redirect tests can use a 127.0.0.1 httptest server. The guard's own half is covered by
+// TestDownloadImage_GuardAppliesAfterARedirect.
 func boundedRedirects(_ *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return fmt.Errorf("redirect chain exceeded 5 hops")
@@ -254,26 +262,45 @@ func boundedRedirects(_ *http.Request, via []*http.Request) error {
 // TestDownloadImage_GuardAppliesAfterARedirect is the half that makes following safe at all.
 //
 // The address guard is a Transport-level dial hook, not a per-request check, so every hop opens
-// its own connection and is judged on its own resolved address. A permitted host redirecting to a
-// forbidden one is refused at the hop that tries to dial it -- which is why following redirects
-// here is not the same as re-enabling them on an unguarded client.
+// its own connection and is judged on its own resolved address. The FIRST hop must therefore be
+// permitted and the SECOND refused: if the initial URL were itself forbidden, the guard would
+// reject it before any Location was read, and the test would prove nothing about hops.
 func TestDownloadImage_GuardAppliesAfterARedirect(t *testing.T) {
-	// The redirect TARGET is loopback, which the guard denies. The initial URL is the same
-	// server, so the refusal can only come from the guard judging a hop.
+	var hops int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = io.WriteString(w, "fake-png-bytes")
+		atomic.AddInt32(&hops, 1)
+		http.Redirect(w, r, "http://169.254.169.254/hero.png", http.StatusFound)
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewClient(testCreds(), testAccount())
+	c := NewClient(testCreds(), testAccount(),
+		withDownloadClient(&http.Client{
+			Timeout:       5 * time.Second,
+			CheckRedirect: boundedRedirects,
+			Transport:     &http.Transport{DialContext: refuseAfterFirstHop(&hops)},
+		}))
 
-	_, err := c.UploadImage(context.Background(), srv.URL+"/hero.png")
+	_, err := c.UploadImage(context.Background(), srv.URL+"/start.png")
 	if err == nil {
-		t.Fatal("the guard did not judge the hop")
+		t.Fatal("the redirect hop was not judged")
+	}
+	if atomic.LoadInt32(&hops) == 0 {
+		t.Fatal("no request reached the server; the test never exercised a redirect")
 	}
 	if !strings.Contains(err.Error(), "forbidden address") {
-		t.Fatalf("expected a forbidden-address refusal, got %v", err)
+		t.Fatalf("expected the hop to be refused as a forbidden address, got %v", err)
+	}
+}
+
+// refuseAfterFirstHop models guardDialAddress's per-hop behaviour: the first dial stands in for
+// a permitted public host, every later one is refused the way a forbidden address is.
+func refuseAfterFirstHop(hops *int32) func(context.Context, string, string) (net.Conn, error) {
+	var d net.Dialer
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if atomic.LoadInt32(hops) > 0 {
+			return nil, fmt.Errorf("event URL resolves to a forbidden address: %s", addr)
+		}
+		return d.DialContext(ctx, network, addr)
 	}
 }
 
@@ -297,5 +324,96 @@ func TestDownloadImage_DefaultClientFollowsRedirects(t *testing.T) {
 	via := make([]*http.Request, 5)
 	if err := c.downloadClient.CheckRedirect(nil, via); err == nil {
 		t.Fatal("the default download client follows an unbounded redirect chain")
+	}
+}
+
+// TestDownloadImage_NAT64PrefixesReachTheDownloadGuard pins that the download guard judges the
+// SAME address space as the event-URL fetcher.
+//
+// The guard decodes the IPv4 embedded in a NAT64 address and judges THAT. It can only do so for
+// prefixes it was told about: under an undeclared prefix the address is opaque, so the private
+// IPv4 it encodes is never seen and the fetch proceeds — and the response is re-hosted as a
+// PUBLIC_INDEXABLE file. Passing only the well-known prefix here is therefore a narrower guard
+// than the fetcher's, which is the gap this covers.
+func TestDownloadImage_NAT64PrefixesReachTheDownloadGuard(t *testing.T) {
+	// 2a01:4f8:808:808::a9fe:a9fe decodes to 169.254.169.254 at /96 — the metadata endpoint.
+	const encoded = "http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"
+
+	guarded := NewClient(testCreds(), testAccount(), WithNAT64Prefixes("2a01:4f8:808:808::/96"))
+	_, err := guarded.UploadImage(context.Background(), encoded)
+	if err == nil {
+		t.Fatal("a NAT64-encoded metadata address was fetched despite the prefix being configured")
+	}
+	if !strings.Contains(err.Error(), "forbidden address") {
+		t.Fatalf("expected a forbidden-address refusal, got %v", err)
+	}
+	// The refusal must name the DECODED destination, which is what proves the prefix was used
+	// rather than the address being rejected for some unrelated reason.
+	if !strings.Contains(err.Error(), "169.254.169.254") {
+		t.Fatalf("refused, but not by decoding the embedded IPv4: %v", err)
+	}
+}
+
+// TestDownloadImage_DoesNotLeakASignedURLIntoTheError pins that a credential in the query
+// string does not travel into the error text.
+//
+// http.Client.Do returns a *url.Error whose Error() renders the full request URL. Wrapping that
+// verbatim copies any signature into every string this error bubbles into, logs included — and
+// hero URLs are frequently signed (S3 pre-signed links, CDN tokens).
+func TestDownloadImage_DoesNotLeakASignedURLIntoTheError(t *testing.T) {
+	const secret = "SIGNATURE-THAT-MUST-NOT-APPEAR"
+	// A loopback address, so the guard refuses it and we get an error without a live server.
+	url := "http://127.0.0.1:1/hero.png?X-Amz-Signature=" + secret
+
+	c := NewClient(testCreds(), testAccount())
+
+	_, err := c.UploadImage(context.Background(), url)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the signed query string leaked into the error: %v", err)
+	}
+	// The host/path must survive, or the error names nothing actionable.
+	if !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("the error no longer names the target at all: %v", err)
+	}
+}
+
+// tinyPNG is a real 1x1 PNG. The fixtures need decodable bytes now that downloadImage sniffs the
+// format rather than trusting Content-Type — a literal "fake-png-bytes" string is exactly the
+// payload the sniff exists to reject.
+func tinyPNG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatalf("encode fixture png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestDownloadImage_RefusesHTMLServedAsAnImage pins the sniff.
+//
+// Content-Type is chosen by the responding server, so it establishes intent, not content. That
+// matters more here than usual: the bytes are re-hosted in the LF portal as a PUBLIC_INDEXABLE
+// file, so an unvalidated payload becomes publicly served content under an LF domain. The
+// format is therefore decided by decoding the bytes, and the stored extension comes from the
+// decoded format rather than the caller's URL.
+func TestDownloadImage_RefusesHTMLServedAsAnImage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = io.WriteString(w, "<html><script>alert(1)</script></html>")
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		withDownloadClient(&http.Client{Timeout: 5 * time.Second}))
+
+	_, err := c.UploadImage(context.Background(), srv.URL+"/payload.html")
+	if err == nil {
+		t.Fatal("HTML claiming to be a PNG was accepted for public re-hosting")
+	}
+	if !strings.Contains(err.Error(), "decodable image") {
+		t.Fatalf("expected a decode refusal, got %v", err)
 	}
 }
