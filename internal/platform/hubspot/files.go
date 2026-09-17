@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -17,6 +16,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
 const filesPath = "/files/v3/files"
@@ -92,7 +93,7 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 		// Only reachable via a zero-value Client built outside NewClient. Falling back
 		// to an unguarded &http.Client{} here would make the guard depend on how the
 		// struct was constructed, which is exactly the bug this defends against.
-		client = eventurl.NewGuardedClient(imageDownloadTimeout)
+		client = eventurl.NewGuardedRedirectClient(imageDownloadTimeout)
 	}
 	resp, derr := client.Do(req)
 	if derr != nil {

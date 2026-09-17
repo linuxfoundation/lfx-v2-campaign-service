@@ -25,13 +25,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
 // ---------------------------------------------------------------------------
@@ -127,7 +128,11 @@ type Client struct {
 	// trusted host, fixed by baseURL — whereas a hero/sponsor image URL is scraped
 	// from an event page an operator named, so it can address anything the network
 	// can reach, including cluster-internal services and the cloud metadata endpoint.
-	// It therefore carries eventurl's dial-time SSRF guard. Defaults in NewClient;
+	// It therefore carries eventurl's dial-time SSRF guard. Redirects are FOLLOWED (bounded):
+	// asset URLs routinely 302 -- S3 pre-signed links, Cloudinary/imgix transforms, CDN hotlink
+	// paths -- and each hop is judged on its own resolved address by the same dial hook, so
+	// following is safe while refusing would silently drop every hero image behind a CDN.
+	// Defaults in NewClient;
 	// injectable so tests can point it at an httptest server the guard would deny.
 	downloadClient *http.Client
 }
@@ -216,7 +221,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		now:            time.Now,
 		// SSRF-guarded by default, so a Client built with no options is already safe:
 		// the guard must be what you get by forgetting, not what you get by remembering.
-		downloadClient: eventurl.NewGuardedClient(imageDownloadTimeout),
+		downloadClient: eventurl.NewGuardedRedirectClient(imageDownloadTimeout),
 	}
 	for _, opt := range opts {
 		opt(c)

@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUploadImage_HappyPathReturnsHostedURL(t *testing.T) {
@@ -187,5 +189,113 @@ func TestDownloadImage_RefusesANonHTTPScheme(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not http(s)") {
 		t.Fatalf("expected a scheme refusal, got %v", err)
+	}
+}
+
+// TestDownloadImage_FollowsARedirect pins the behaviour the SSRF guard must NOT break.
+//
+// Asset URLs routinely answer 302 rather than serving bytes: S3 pre-signed links, Cloudinary and
+// imgix transforms, and most CDN hotlink paths. The guarded client refuses redirects by default
+// (correct for fetching an event PAGE, whose content is parsed), and adopting that default here
+// would have made every hero image behind a CDN fail upload -- silently, because
+// applyEmailContentWithHero swallows the error as best-effort.
+func TestDownloadImage_FollowsARedirect(t *testing.T) {
+	var origin *httptest.Server
+	origin = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect.png" {
+			http.Redirect(w, r, origin.URL+"/real.png", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = io.WriteString(w, "fake-png-bytes")
+	}))
+	t.Cleanup(origin.Close)
+
+	// The unguarded download client stands in for the guard, which would refuse 127.0.0.1; the
+	// redirect POLICY is what is under test, and TestDownloadImage_GuardAppliesAfterARedirect
+	// covers the guard's half.
+	c := NewClient(testCreds(), testAccount(), withDownloadClient(&http.Client{Timeout: 5 * time.Second, CheckRedirect: boundedRedirects}))
+
+	data, ct, _, err := c.downloadImage(context.Background(), origin.URL+"/redirect.png")
+	if err != nil {
+		t.Fatalf("a redirected image URL failed to download: %v", err)
+	}
+	if string(data) != "fake-png-bytes" || ct != "image/png" {
+		t.Errorf("followed the redirect but got %q (%s)", data, ct)
+	}
+}
+
+// TestDownloadImage_RefusesAnOverlongRedirectChain: following is bounded, so a redirector cannot
+// be used as an open one.
+func TestDownloadImage_RefusesAnOverlongRedirectChain(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/again", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(testCreds(), testAccount(), withDownloadClient(&http.Client{Timeout: 5 * time.Second, CheckRedirect: boundedRedirects}))
+
+	if _, _, _, err := c.downloadImage(context.Background(), srv.URL+"/start"); err == nil {
+		t.Fatal("an unbounded redirect loop was followed")
+	}
+}
+
+// boundedRedirects mirrors NewGuardedRedirectClient's policy without the address guard, so these
+// tests can use a 127.0.0.1 httptest server. The guard's own half is covered by
+// TestDownloadImage_GuardAppliesAfterARedirect below, which uses the real default client.
+func boundedRedirects(_ *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return fmt.Errorf("redirect chain exceeded 5 hops")
+	}
+	return nil
+}
+
+// TestDownloadImage_GuardAppliesAfterARedirect is the half that makes following safe at all.
+//
+// The address guard is a Transport-level dial hook, not a per-request check, so every hop opens
+// its own connection and is judged on its own resolved address. A permitted host redirecting to a
+// forbidden one is refused at the hop that tries to dial it -- which is why following redirects
+// here is not the same as re-enabling them on an unguarded client.
+func TestDownloadImage_GuardAppliesAfterARedirect(t *testing.T) {
+	// The redirect TARGET is loopback, which the guard denies. The initial URL is the same
+	// server, so the refusal can only come from the guard judging a hop.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = io.WriteString(w, "fake-png-bytes")
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(testCreds(), testAccount())
+
+	_, err := c.UploadImage(context.Background(), srv.URL+"/hero.png")
+	if err == nil {
+		t.Fatal("the guard did not judge the hop")
+	}
+	if !strings.Contains(err.Error(), "forbidden address") {
+		t.Fatalf("expected a forbidden-address refusal, got %v", err)
+	}
+}
+
+// TestDownloadImage_DefaultClientFollowsRedirects pins the PRODUCTION wiring, not the policy.
+//
+// TestDownloadImage_FollowsARedirect injects its own client, so it survives NewClient being
+// switched back to the no-follow NewGuardedClient -- verified by mutation. This one reads the
+// default client's own CheckRedirect, which is the thing that would regress.
+func TestDownloadImage_DefaultClientFollowsRedirects(t *testing.T) {
+	c := NewClient(testCreds(), testAccount())
+
+	if c.downloadClient.CheckRedirect == nil {
+		t.Fatal("the default download client has no redirect policy")
+	}
+	// A first hop must be allowed: refusing here is the regression that silently drops every
+	// hero image behind a CDN or pre-signed URL.
+	if err := c.downloadClient.CheckRedirect(nil, nil); err != nil {
+		t.Fatalf("the default download client refuses redirects: %v", err)
+	}
+	// And the chain must still be bounded.
+	via := make([]*http.Request, 5)
+	if err := c.downloadClient.CheckRedirect(nil, via); err == nil {
+		t.Fatal("the default download client follows an unbounded redirect chain")
 	}
 }

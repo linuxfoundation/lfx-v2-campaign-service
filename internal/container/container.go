@@ -814,7 +814,7 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 // the brief repos while forgetting the rest, because there is no longer a separate statement to
 // forget. This is the same reasoning that put SetOrchestrator behind the backendSetter interface
 // rather than a direct cast — one declared contract, both injection sites.
-func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, connRepo domain.ConnectionReader, enc domain.Encryptor) {
+func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, connRepo *postgres.ConnectionRepo, enc domain.Encryptor) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
 	bb.SetEmailReferenceSource(service.NewEmailReferenceSource(connRepo, enc))
 	// ORDER MATTERS between these two, and only in one direction.
