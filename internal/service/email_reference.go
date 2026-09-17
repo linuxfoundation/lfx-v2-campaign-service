@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -148,6 +149,31 @@ func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectI
 	return truncateRunes(b.String(), maxReferenceBlockRunes)
 }
 
+// disconnectedReader is the optional half of the connection port: whether a project
+// explicitly disconnected a provider, as opposed to never having connected it.
+//
+// It is a separate, optionally-satisfied interface rather than a widening of
+// domain.ConnectionReader because every other reader (and every test fake) would otherwise
+// have to grow a method only this fallback needs. The postgres ConnectionRepo already
+// implements it.
+type disconnectedReader interface {
+	Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error)
+}
+
+// disconnected reports whether projectID explicitly disconnected HubSpot.
+//
+// A reader that cannot answer returns false: without the probe there is no evidence of a
+// disconnect, and refusing every fallback on that basis would break the shared-portal case
+// this source exists to serve. That is a deliberate narrowing of the fail-closed rule to
+// "cannot ask" — an error from a reader that CAN ask still fails closed at the call site.
+func (r *EmailReferenceSource) disconnected(ctx context.Context, projectID string) (bool, error) {
+	probe, ok := r.conn.(disconnectedReader)
+	if !ok {
+		return false, nil
+	}
+	return probe.Disconnected(ctx, projectID, model.ProviderHubSpot)
+}
+
 // resolveClient builds a HubSpot client from the project's own connection, falling back to the
 // LF system-wide connection when the project has none — the same fallback shape
 // internal/dispatch's credsSource.resolve uses for every other HubSpot call, since ALL LF
@@ -155,10 +181,29 @@ func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectI
 func (r *EmailReferenceSource) resolveClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
 	conn, err := r.conn.Get(ctx, projectID, model.ProviderHubSpot)
 	if errors.Is(err, domain.ErrNotFound) {
+		// ErrNotFound does NOT mean "this project never connected". Connections are
+		// soft-deleted and Get filters `status <> 'deleted'`, so a project that explicitly
+		// DISCONNECTED HubSpot is indistinguishable here from one that never connected — and
+		// falling back for the first would style that project's copy from the LF portal it
+		// just opted out of. The probe is what separates them.
+		//
+		// Fails CLOSED on a probe error, matching dispatch's systemConn: an unanswered "was
+		// this disconnected?" is not a no.
+		if disconnected, derr := r.disconnected(ctx, projectID); derr != nil {
+			return nil, fmt.Errorf("could not determine whether %s disconnected hubspot: %w", projectID, derr)
+		} else if disconnected {
+			return nil, domain.ErrNotFound
+		}
 		conn, err = r.conn.Get(ctx, model.SystemProjectID, model.ProviderHubSpot)
 	}
 	if err != nil {
 		return nil, err
+	}
+	// domain.ConnectionReader does not forbid a (nil, nil) return, and dereferencing that
+	// would panic rather than degrade — the one failure mode this best-effort caller cannot
+	// absorb, since it takes the whole request down instead of dropping the reference block.
+	if conn == nil {
+		return nil, domain.ErrNotFound
 	}
 	if conn.Status != model.StatusActive || !conn.HasCredentials() {
 		return nil, errors.New("hubspot connection is not usable")

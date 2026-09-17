@@ -403,6 +403,15 @@ func (c *Client) CreateABTestVariant(ctx context.Context, parentID, variationNam
 	if e.ID == "" {
 		return nil, unconfirmed("hubspot: create A/B test variant UNCONFIRMED (2xx with no id or a null body — a variant may have been created; verify before retrying)", nil)
 	}
+	// The state HubSpot actually returns, checked rather than assumed. A 2xx carrying some
+	// other state means the variant was created as something this code has not modelled — the
+	// caller still gets it (the id is real and a variant exists), but the mismatch is recorded
+	// so a change in the live API surfaces here rather than as confusing behaviour downstream.
+	if e.State != "" && e.State != abTestVariantStateDraft {
+		slog.WarnContext(ctx, "hubspot returned an unexpected A/B variant state",
+			"parent_email_id", parentID, "variant_id", e.ID, "state", e.State,
+			"expected", abTestVariantStateDraft)
+	}
 	e.AppURL = c.emailEditURL(e.ID)
 	return &e, nil
 }
