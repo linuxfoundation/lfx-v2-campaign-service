@@ -18,19 +18,25 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
 
 1. **`openapi:get`** — `/_campaigns/openapi.*` docs are publicly readable
    (`oidc` + `anonymous_authenticator` → `allow_all` → `create_jwt`).
-2. **`project-api`** — every project-nested endpoint (`connection-*` — including two
-   provider-specific sub-paths that are ruled by their own entries rather than by the
-   shared `connection-*` family: `/accounts` on each provider whose dispatcher implements
-   `AccountLister` — google-ads, meta-ads, linkedin-ads, microsoft-ads and twitter-ads
-   (ad-account discovery; linkedin-ads and microsoft-ads added under LFXV2-3064,
-   twitter-ads under LFXV2-3319) — and
+2. **`project-api`** — every project-nested endpoint (`connection-*` — including three
+   provider-specific sub-path families that are ruled by their own entries rather than by
+   the shared `connection-*` family: `/accounts` on each provider whose dispatcher
+   implements `AccountLister` — google-ads, meta-ads, linkedin-ads, microsoft-ads and
+   twitter-ads (ad-account discovery; linkedin-ads and microsoft-ads added under
+   LFXV2-3064, twitter-ads under LFXV2-3319) — with the providers with neither (reddit-ads,
+   whose client has no `ListAdAccounts`) carrying no `/accounts` —
+   `/account-monitor` on each provider whose dispatcher implements the orchestrator's
+   `AccountMetricsReader` capability — google-ads, meta-ads, linkedin-ads and reddit-ads
+   (per-account monitoring/pacing, LFXV2-2665; microsoft-ads and twitter-ads implement
+   neither capability, so they carry no `/account-monitor`) — and
    `connection-hubspot/emails` (marketing-email search, LFXV2-3197) and
    `connection-hubspot/campaigns` (campaign UTM lookup and create, LFXV2-2641). The HTTPRoute
-   regex spells out THREE branches for the same reason — the `AccountLister` providers
-   with `accounts`, hubspot with `emails`, and the providers with neither (reddit-ads,
-   whose client has no `ListAdAccounts`) —
-   because folding them into one alternation would rule `/accounts` for hubspot and
-   `/emails` for google-ads, neither of which is served. `parity_test` fails if the
+   regex spells out FOUR branches for the same reason — google-ads/meta-ads/linkedin-ads
+   with both `accounts` and `account-monitor`, microsoft-ads/twitter-ads with `accounts`
+   only, hubspot with `emails`/`campaigns`, and reddit-ads with `account-monitor` only —
+   because folding them together would rule `/accounts` for hubspot, `/emails` for
+   google-ads, and `/account-monitor` for microsoft-ads/twitter-ads, none of which is
+   served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
    providers, `google-ads/keywords|audience|campaign-ref`, `hubspot`). **`{provider}/metrics` is

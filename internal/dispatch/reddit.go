@@ -466,15 +466,9 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 	}
 	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {
-		// reddit.ErrInvalidCampaignID here means the shape check on accountID itself, not a
-		// campaign id — ListAccountCampaigns reuses that sentinel for both. Reachable only if
-		// the platform client's own check ever diverges from ValidateAccountID's, since the
-		// latter already runs above; kept as defense in depth. This endpoint's account_id
-		// design attribute has no Pattern (see design/connection.go), so a malformed value
-		// otherwise falls through to the default 503 arm in classifyDiscoveryError; wrapping
-		// it in domain.ErrAccountIDMalformed gives Reddit the same clean 400 LinkedIn/Meta get
-		// from their design-layer Pattern for free.
-		if errors.Is(lerr, reddit.ErrInvalidCampaignID) {
+		// Defense in depth only: reachable if ListAccountCampaigns' own shape check ever
+		// diverges from ValidateAccountID's above it.
+		if errors.Is(lerr, reddit.ErrInvalidAccountID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)
 		}
 		return nil, lerr

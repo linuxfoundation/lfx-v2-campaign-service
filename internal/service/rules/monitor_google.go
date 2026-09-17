@@ -25,6 +25,27 @@ import (
 // Ported from lfx-self-serve's campaign-metrics.service.ts (resolveDateRange,
 // parseCampaignMetrics, generateActionItems).
 
+// fetchFailedRow builds the row all four EvaluateXMonitor loops below return, unevaluated, for
+// a campaign whose per-campaign metrics fetch failed upstream (m.FetchFailed == true).
+//
+// A FetchFailed row's numeric fields are left at their platform-reported zero value (see
+// AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc
+// against that placeholder zero would fabricate a bogus "underspending" label and a
+// HIGH-priority action item for a campaign this port never actually measured. The row is still
+// returned in the campaigns array (the caller sees it and its FetchFailed flag), just with
+// pacing/action-item evaluation skipped. PacingLabel keeps its zero-value "normal" placeholder —
+// pacing_label is a required enum with no "unknown" member — and PacingUnknown=true is the
+// caller's signal not to trust it, the same convention pacing_pct's own "meaningless when
+// pacing_unknown is true" doc comment establishes (design/connection.go).
+//
+// This is a contract-level rule shared by every platform, not a per-platform quirk — extracted
+// here (rather than left duplicated across the four files) so a fifth platform ported later
+// cannot silently omit it the way round 2 of this branch's review found all four had.
+func fetchFailedRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
+	m.PacingUnknown = true
+	return model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal}
+}
+
 // googlePacingUnderspending/Constrained/Overspending are campaign-metrics.service.ts's own
 // local literals (50/90/100) — NOT this package's shared Thresholds{50,100,130}, and not the
 // same 50/90/100 Reddit happens to also hardcode (a coincidence of value, not a shared
@@ -56,19 +77,8 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 			continue
 		}
 
-		// A FetchFailed row's numeric fields are left at their platform-reported zero value
-		// (see AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item
-		// calc against that placeholder zero would fabricate a bogus "underspending" label and a
-		// HIGH-priority action item for a campaign this port never actually measured. The row is
-		// still returned in the campaigns array (the caller sees it and its FetchFailed flag),
-		// just with pacing/action-item evaluation skipped. PacingLabel keeps its zero-value
-		// "normal" placeholder — pacing_label is a required enum with no "unknown" member — and
-		// PacingUnknown=true is the caller's signal not to trust it, the same convention
-		// pacing_pct's own "meaningless when pacing_unknown is true" doc comment establishes
-		// (design/connection.go).
 		if m.FetchFailed {
-			m.PacingUnknown = true
-			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
+			out = append(out, fetchFailedRow(m))
 			continue
 		}
 

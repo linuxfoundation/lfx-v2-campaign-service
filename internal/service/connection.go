@@ -425,10 +425,12 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 				d.notUsableRemedy,
 		}
 	case errors.Is(aerr, domain.ErrAccountIDMalformed):
-		// A caller-supplied account id, not a stored connection: Google Ads and Reddit have
-		// no design-layer Pattern to catch this at the HTTP boundary the way LinkedIn/Meta
-		// do (see domain.ErrAccountIDMalformed's doc comment), so their dispatchers validate
-		// the shape and reach here instead of the default 503 arm below.
+		// A caller-supplied account id, not a stored connection: every provider's dispatcher
+		// validates the shape itself before resolving a credential and reaches here instead of
+		// the default 503 arm below (see domain.ErrAccountIDMalformed's doc comment). LinkedIn
+		// and Meta additionally carry a Goa Pattern, so an ordinary HTTP caller's malformed id
+		// is refused before the handler — and this arm — ever run; this classification serves
+		// their non-HTTP callers, and Google Ads/Reddit's callers unconditionally.
 		return &conn.BadRequestError{Code: "400", Message: "the account id is not valid for " + d.displayName}
 	default:
 		slog.WarnContext(ctx, d.label()+" failed upstream",

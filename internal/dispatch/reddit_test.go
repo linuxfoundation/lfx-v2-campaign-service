@@ -1186,7 +1186,7 @@ func TestReddit_AuthorPostFailurePersistsCreatedDegraded(t *testing.T) {
 //
 // reddit.ValidateAccountID now rejects the empty id before resolveMonitorClient or
 // ListAccountCampaigns ever run, so this exercises that dispatch-level guard directly, not
-// the inner reddit.ErrInvalidCampaignID branch a few lines below it (kept only as defense in
+// the inner reddit.ErrInvalidAccountID branch a few lines below it (kept only as defense in
 // depth against the platform client's own check ever diverging from ValidateAccountID's — see
 // that branch's comment). No token or API server is wired: the shape check runs first.
 func TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.T) {
@@ -1200,7 +1200,7 @@ func TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.
 	if !errors.Is(err, domain.ErrAccountIDMalformed) {
 		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
 	}
-	if !errors.Is(err, reddit.ErrInvalidCampaignID) {
-		t.Errorf("expected err to still wrap reddit.ErrInvalidCampaignID, got: %v", err)
+	if !errors.Is(err, reddit.ErrInvalidAccountID) {
+		t.Errorf("expected err to still wrap reddit.ErrInvalidAccountID, got: %v", err)
 	}
 }

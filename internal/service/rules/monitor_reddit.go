@@ -49,12 +49,8 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 	items := make([]model.AccountMonitorActionItem, 0)
 
 	for _, m := range rows {
-		// See monitor_google.go's identical guard: a FetchFailed row's zero-value metrics must
-		// not be run through pacing/action-item evaluation, which would fabricate a finding
-		// against data this port never actually read.
 		if m.FetchFailed {
-			m.PacingUnknown = true
-			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
+			out = append(out, fetchFailedRow(m))
 			continue
 		}
 

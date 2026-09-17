@@ -164,7 +164,7 @@ func (c *Client) fetchMonitorReport(ctx context.Context, path, startDate, endDat
 func ValidateAccountID(accountID string) error {
 	id := strings.TrimSpace(accountID)
 	if id == "" || !accountIDRe.MatchString(id) {
-		return fmt.Errorf("validate account id: %w", ErrInvalidCampaignID)
+		return fmt.Errorf("validate account id: %w", ErrInvalidAccountID)
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func ValidateAccountID(accountID string) error {
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	id := strings.TrimSpace(accountID)
 	if id == "" || !accountIDRe.MatchString(id) {
-		return nil, fmt.Errorf("list account campaigns: %w", ErrInvalidCampaignID)
+		return nil, fmt.Errorf("list account campaigns: %w", ErrInvalidAccountID)
 	}
 
 	end := c.now().UTC()
@@ -260,7 +260,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 func (c *Client) FetchAccountTotals(ctx context.Context, accountID string, days, campaignCount int) (AccountTotals, error) {
 	id := strings.TrimSpace(accountID)
 	if id == "" || !accountIDRe.MatchString(id) {
-		return AccountTotals{}, fmt.Errorf("fetch account totals: %w", ErrInvalidCampaignID)
+		return AccountTotals{}, fmt.Errorf("fetch account totals: %w", ErrInvalidAccountID)
 	}
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))

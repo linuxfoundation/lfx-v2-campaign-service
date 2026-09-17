@@ -60,8 +60,10 @@ type AccountCampaignRow struct {
 // accountID must already be in Meta's "act_<digits>" form (the same form AccountConfig.
 // AccountID and normalizeMetaAccountID produce). On the account-monitor path this is a
 // caller-supplied id (MonitorMetaAdsAccountPayload.AccountID), not the resolved connection's
-// own account — validated at the design layer (MinLength/Pattern/MaxLength) before it reaches
-// here.
+// own account — validated at the design layer for an HTTP caller (Pattern/MaxLength; see
+// design/connection.go and docs/knowledge/architecture/account-monitor-endpoints.md for why no
+// MinLength is declared alongside them) before it reaches here, and again below as
+// defense-in-depth for a non-HTTP caller.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	id := strings.TrimSpace(accountID)
 	if err := ValidateAccountID(id); err != nil {
