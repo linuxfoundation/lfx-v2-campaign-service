@@ -64,8 +64,9 @@ per-commit SHA-tagged versions accumulated indefinitely; this widening to
 Known tradeoff: a PR branch whose last push is older than `cut-off` still
 carries a live branch-name tag, so its current image is now a deletion
 candidate too, not just superseded commits on an active branch. This is
-treated as normal cleanup of stale PR images; `dry-run` guards the rollout
-of this wider scope (see Triggers above).
+treated as normal cleanup of stale PR images; a maintainer can preview this
+wider scope by triggering `workflow_dispatch` with `dry-run: true` (see
+Triggers above), but nothing enforces that preview before a scheduled run.
 
 Known tradeoff: `!v*` matches any tag beginning with `v`, not only
 `vX.Y.Z` version strings — a branch name like `validate-something` or
