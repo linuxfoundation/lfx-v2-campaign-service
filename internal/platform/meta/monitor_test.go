@@ -174,6 +174,36 @@ func TestListAccountCampaigns_MultiPage_ConcatenatesEveryPage(t *testing.T) {
 	}
 }
 
+// TestListAccountCampaigns_MalformedInsightsRow_MarksFetchFailed pins a real defect found in
+// round-14 review: a campaign whose insights row could not be parsed (impressions/clicks not
+// numeric) used to end up indistinguishable from a campaign that simply had zero delivery in
+// the window — both left FetchFailed at its zero value, so the rule-engine's "underspending"
+// action item fired on a measurement failure. fetchAccountCampaignInsights now records the
+// campaign id of any row it drops for a parse failure, and ListAccountCampaigns marks that
+// row's FetchFailed true instead of leaving it silently zeroed.
+func TestListAccountCampaigns_MalformedInsightsRow_MarksFetchFailed(t *testing.T) {
+	malformedInsights := `{"data":[{"campaign_id":"111","impressions":"not-a-number","clicks":"50","spend":"12.50"}],"paging":{}}`
+	srv, _ := monitorPageResponses(t,
+		[]string{campaignPage("111", "Campaign One", StatusActive, false)},
+		[]string{malformedInsights},
+	)
+	c := newMonitorClient(srv)
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose insights row failed to parse", rows[0])
+	}
+	if rows[0].Impressions != 0 || rows[0].Clicks != 0 {
+		t.Errorf("row for campaign 111 = %+v, want zero metrics (never fabricated) alongside FetchFailed", rows[0])
+	}
+}
+
 func TestListAccountCampaigns_MissingCursor_IsAnError(t *testing.T) {
 	// paging.next present but no cursors.after: an unusable shape, not a truncated list.
 	badPage := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"1000","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{"next":"https://graph.facebook.com/next"}}`

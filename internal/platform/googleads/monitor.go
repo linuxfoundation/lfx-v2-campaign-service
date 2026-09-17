@@ -49,16 +49,25 @@ type monitorGaqlRow struct {
 	} `json:"metrics"`
 }
 
-// ListAccountCampaigns ports getMonitorData: every campaign visible on customerID over the
-// [startDate, endDate] window (inclusive, YYYY-MM-DD), aggregated per campaign (segments.date
-// is filtered by BETWEEN but never selected, so — same UNVERIFIED ASSUMPTION GetCampaignMetrics
-// documents — Google Ads returns one row per campaign rather than one per day; enforced below
-// exactly as GetCampaignMetrics enforces it for the single-campaign path, but per campaign.id
-// rather than for the whole result set, since this query legitimately returns many campaigns).
+// ListAccountCampaigns ports getMonitorData: every campaign visible on customerID over an
+// inclusive `days`-day window ending today (aggregated per campaign; segments.date is filtered
+// by BETWEEN but never selected, so — same UNVERIFIED ASSUMPTION GetCampaignMetrics documents —
+// Google Ads returns one row per campaign rather than one per day; enforced below exactly as
+// GetCampaignMetrics enforces it for the single-campaign path, but per campaign.id rather than
+// for the whole result set, since this query legitimately returns many campaigns).
+//
+// The window is rendered from the client's injected clock (c.now, not the wall clock) so it
+// stays deterministic and testable — mirroring the equivalent Meta/LinkedIn fix (see
+// TestListAccountCampaigns_UsesInjectedClockNotWallClock in this package and its siblings in
+// internal/platform/meta and internal/platform/linkedin).
 //
 // customerID must already be digits-only (validated by gaqlSearchForCustomer); this method
 // adds no additional validation of its own.
-func (c *Client) ListAccountCampaigns(ctx context.Context, customerID, startDate, endDate string) ([]AccountCampaignRow, error) {
+func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, days int) ([]AccountCampaignRow, error) {
+	end := c.now().UTC()
+	start := end.AddDate(0, 0, -(days - 1))
+	startDate := start.Format("2006-01-02")
+	endDate := end.Format("2006-01-02")
 	// The WHERE clause mirrors getMonitorData's GAQL query verbatim (campaign-metrics.service.ts)
 	// beyond the date window: channel type, status, and impressions>0 are load-bearing filters
 	// on the OLD path, not incidental — dropping any of them widens this read to every campaign

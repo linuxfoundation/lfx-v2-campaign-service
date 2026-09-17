@@ -80,7 +80,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	if err != nil {
 		return nil, err
 	}
-	insightsByID, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
+	insightsByID, failedInsightIDs, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +103,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			if row.Impressions > 0 {
 				row.Ctr = float64(row.Clicks) / float64(row.Impressions) * 100
 			}
+		} else if _, failed := failedInsightIDs[cm.ID]; failed {
+			row.FetchFailed = true
 		}
 		// Campaign-list filter ported from getMetaAnalytics: `c.impressions>0 ||
 		// c.status==='ACTIVE'` — everything else (a PAUSED campaign that never delivered)
@@ -216,12 +218,13 @@ type metaInsightsRow struct {
 // today, matching the same days-1 convention Google/Reddit's monitor dispatchers already use;
 // Meta itself interprets since/until in the ad account's configured timezone, so a boundary
 // day's spend can differ slightly from a strict UTC reading.
-func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, error) {
+func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, map[string]struct{}, error) {
 	end := c.timeNow().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	timeRange := `{"since":"` + start.Format("2006-01-02") + `","until":"` + end.Format("2006-01-02") + `"}`
 
 	out := make(map[string]metaInsightsRow, monitorPageSize)
+	failed := make(map[string]struct{})
 	after := ""
 	seen := make(map[string]struct{})
 	for page := 0; page < monitorMaxPages; page++ {
@@ -244,10 +247,10 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			} `json:"paging"`
 		}
 		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-			return nil, fmt.Errorf("list account campaign insights: %w", err)
+			return nil, nil, fmt.Errorf("list account campaign insights: %w", err)
 		}
 		if resp.Data == nil {
-			return nil, &transportError{
+			return nil, nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
 				Err:    fmt.Errorf("account insights returned a 2xx response with no data field"),
@@ -259,25 +262,29 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			if errI != nil || errC != nil {
 				// Per-row parse failure: skip this row rather than fail the whole read, but
 				// never fabricate a zero — the caller sees no insights entry for this
-				// campaign id and its row is FetchFailed-marked one layer up.
+				// campaign id, and its id is recorded in `failed` so ListAccountCampaigns can
+				// mark the row FetchFailed instead of silently treating it as zero-delivery.
+				if row.CampaignID != "" {
+					failed[row.CampaignID] = struct{}{}
+				}
 				continue
 			}
 			spend, _ := strconv.ParseFloat(row.Spend, 64)
 			out[row.CampaignID] = metaInsightsRow{Impressions: impressions, Clicks: clicks, SpendUSD: spend}
 		}
 		if resp.Paging.Next == "" {
-			return out, nil // fully enumerated
+			return out, failed, nil // fully enumerated
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
-			return nil, fmt.Errorf("list account campaign insights has more pages but no cursor; cannot guarantee every campaign was enumerated")
+			return nil, nil, fmt.Errorf("list account campaign insights has more pages but no cursor; cannot guarantee every campaign was enumerated")
 		}
 		if _, dup := seen[after]; dup {
-			return nil, fmt.Errorf("list account campaign insights did not terminate (repeated paging cursor)")
+			return nil, nil, fmt.Errorf("list account campaign insights did not terminate (repeated paging cursor)")
 		}
 		seen[after] = struct{}{}
 	}
-	return nil, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
+	return nil, nil, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
 }
 
 // minorUnitsToWhole converts a Meta budget string (minor units, e.g. cents) to whole

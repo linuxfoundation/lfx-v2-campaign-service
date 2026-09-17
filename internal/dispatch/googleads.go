@@ -825,10 +825,10 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 // backing the account-monitor endpoint. It resolves the same credentials-only,
 // account-agnostic client resolveGoogleAdsDiscoveryClient builds for ListAccounts (a
 // monitor read names its own target accountID, distinct from whatever customer id the
-// project's connection currently points at), computes the [start, end] date window
-// campaign-metrics.service.ts's resolveDateRange derives from a day count (end = today,
-// start = today - (days-1)), then reads every campaign visible on that customer id via
-// googleads.Client.ListAccountCampaigns.
+// project's connection currently points at), then reads every campaign visible on that
+// customer id via googleads.Client.ListAccountCampaigns, which itself derives the
+// campaign-metrics.service.ts resolveDateRange window (end = today, start = today -
+// (days-1)) from its own injected clock rather than the wall clock.
 func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	// Validated up front, before any credential is resolved: this is defense-in-depth for a
 	// non-HTTP caller that bypasses Goa — an ordinary HTTP request already gets refused by the
@@ -846,9 +846,7 @@ func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, pr
 	if err != nil {
 		return nil, err
 	}
-	end := time.Now().UTC()
-	start := end.AddDate(0, 0, -(days - 1))
-	rows, lerr := client.ListAccountCampaigns(ctx, accountID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {
 		return nil, lerr
 	}
