@@ -120,8 +120,9 @@ func (h *WizardProgressHub) Subscribe(token string) (<-chan WizardProgressFrame,
 				}
 			}
 			h.mu.Unlock()
-			// Closed only here, and only once: the publisher never closes a subscriber's
-			// channel, so a send can never race with a close.
+			// Closed only here, and only once, and always with h.mu held by this function's
+			// caller-side critical section above — Publish sends under the same mutex, so a
+			// send can never race with this close.
 			close(ch)
 		})
 	}
@@ -138,18 +139,24 @@ func (h *WizardProgressHub) Publish(token string, frame WizardProgressFrame) {
 	if token == "" {
 		return
 	}
+	// The send happens UNDER the lock, not after it. Copying the subscriber set and then
+	// sending outside the lock left a window in which a concurrent `cancel()` — which runs in
+	// the SSE handler's goroutine, while this runs in a wizard turn's — could close a channel
+	// between the copy and the send. `send on closed channel` is an unrecoverable panic that
+	// takes the whole pod down, not just the turn. Reproduced with 50 subscribers racing one
+	// publish; the narrow single-subscriber case passes, which is why it was easy to miss.
+	//
+	// Holding the lock is safe precisely because every send is non-blocking: the `default`
+	// arm means no subscriber can hold the mutex for longer than a buffered send, so a stalled
+	// browser still cannot delay the wizard turn.
 	h.mu.Lock()
-	subs := make([]chan WizardProgressFrame, 0, len(h.subs[token]))
 	for ch := range h.subs[token] {
-		subs = append(subs, ch)
-	}
-	h.mu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- frame:
 		default:
 		}
 	}
+	h.mu.Unlock()
 }
 
 // Subscribers reports how many streams are attached to a token. For tests and for the
