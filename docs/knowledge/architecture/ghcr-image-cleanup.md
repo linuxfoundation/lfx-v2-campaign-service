@@ -14,6 +14,19 @@ deletes stale, untagged versions of the
 invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
 pinned by image digest, not by a mutable release tag.
 
+Because this is a raw `docker://` reference rather than the
+`snok/container-retention-policy@<sha>` action alias, there is no
+`action.yaml` to translate `with:` inputs into CLI flags or fill in its
+defaults — any flag this workflow doesn't pass in `with.args` falls back to
+whatever default the CLI's own argument parser supplies, not `action.yaml`'s.
+`--keep-n-most-recent` and `--timestamp-to-use` are safe to omit because the
+CLI's own defaults happen to match what `action.yaml` would have passed
+(`0` and `updated_at`). `--image-tags` and `--shas-to-skip` are different: the
+CLI's argument parser requires both flags to be present, with no built-in
+default, so this workflow must always pass them explicitly, even as empty
+strings (`--image-tags=`, `--shas-to-skip=`). Omitting either one causes every
+run to fail immediately.
+
 ## Triggers
 
 - **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
