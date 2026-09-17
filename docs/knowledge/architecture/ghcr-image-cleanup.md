@@ -30,13 +30,10 @@ run to fail immediately.
 ## Triggers
 
 - **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
-  `cut-off: 30d`. `dry-run` currently defaults to `true` (preview only)
-  because this is the first run to widen scope from untagged-only to
-  `tag-selection=both` (see Scope below) on top of the package's existing
-  ~15,000-version untagged backlog — the first unattended run would
-  otherwise face both at once instead of a manageable weekly slice. A
-  maintainer flips the fallback to `false` in the workflow file after
-  reviewing a manual preview or draining the backlog manually.
+  `cut-off: 30d`, `dry-run: false` — since `github.event.inputs` is undefined
+  on a `schedule` trigger, the `dry-run` expression checks `github.event_name`
+  directly to give scheduled runs their own default rather than inheriting
+  the `workflow_dispatch` input default.
 - **Manual** (`workflow_dispatch`): a maintainer can preview or tune a single
   run via the `dry-run` (default `true`) and `cut-off` (default `30d`)
   inputs, without changing the schedule's defaults.
