@@ -416,12 +416,8 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 // NewFetcher constructs a Fetcher with the standard SSRF-safe defaults. It is the only
 // constructor in non-test code, so no production path can obtain an unguarded fetcher.
 func NewFetcher(opts ...Option) *Fetcher {
-	cfg := fetcherConfig{nat64: []nat64Prefix{wellKnownNAT64}}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
 	return &Fetcher{
-		client: newGuardedClient(cfg.nat64, fetchTimeout),
+		client: newGuardedClient(resolveNAT64(opts), fetchTimeout),
 	}
 }
 
@@ -441,8 +437,24 @@ func NewFetcher(opts ...Option) *Fetcher {
 // pass WithNAT64Prefixes through NewFetcher's options if an operator-specific translator
 // must also be decoded -- this constructor takes the defaults deliberately, so a caller
 // cannot silently narrow the guard.
-func NewGuardedClient(timeout time.Duration) *http.Client {
-	return newGuardedClient([]nat64Prefix{wellKnownNAT64}, timeout)
+// opts take the SAME options NewFetcher does, and passing the deployment's
+// WithNAT64Prefixes is REQUIRED of any caller whose deployment configures them: the well-known
+// prefix alone is a NARROWER guard than the fetcher's, and an address under an operator prefix
+// that this client cannot decode is fetched rather than refused.
+func NewGuardedClient(timeout time.Duration, opts ...Option) *http.Client {
+	return newGuardedClient(resolveNAT64(opts), timeout)
+}
+
+// resolveNAT64 applies opts to the same config NewFetcher builds, so a guarded client and a
+// fetcher constructed from the same options judge the same address space. Sharing the option
+// type rather than taking a prefix slice is deliberate: it makes "use the deployment's
+// prefixes" one argument to forward rather than a conversion each caller could get wrong.
+func resolveNAT64(opts []Option) []nat64Prefix {
+	cfg := fetcherConfig{nat64: []nat64Prefix{wellKnownNAT64}}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg.nat64
 }
 
 // maxGuardedRedirects bounds a followed redirect chain. Small on purpose: legitimate asset
@@ -463,8 +475,8 @@ const maxGuardedRedirects = 5
 //
 // Fetch keeps NewGuardedClient's refusal: an event PAGE that redirects is a different request
 // than the caller asked for, and its content is parsed rather than re-hosted.
-func NewGuardedRedirectClient(timeout time.Duration) *http.Client {
-	c := newGuardedClient([]nat64Prefix{wellKnownNAT64}, timeout)
+func NewGuardedRedirectClient(timeout time.Duration, opts ...Option) *http.Client {
+	c := newGuardedClient(resolveNAT64(opts), timeout)
 	c.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
 		if len(via) >= maxGuardedRedirects {
 			return fmt.Errorf("%w: redirect chain exceeded %d hops", ErrEventURLForbidden, maxGuardedRedirects)

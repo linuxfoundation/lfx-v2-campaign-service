@@ -264,7 +264,7 @@ var registeredProviders = []model.Provider{
 // wiring line (or adding an unlisted one) fails this test, not just a missing-key check.
 // registerDispatchers only stores its args, so nil repo/encryptor build the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
-	m := registerDispatchers(nil, nil, nil, nil)
+	m := registerDispatchers(nil, nil, nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
@@ -290,7 +290,7 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	// Feed a map with one provider deliberately REMOVED rather than relying on a real gap:
 	// adapters keep landing, so a test that asserts "provider X is still unregistered" rots
 	// the moment X ships. A synthetic gap keeps proving the function is not a no-op forever.
-	full := registerDispatchers(nil, nil, nil, nil)
+	full := registerDispatchers(nil, nil, nil, nil, nil)
 	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
 	for p, d := range full {
 		if p == model.ProviderRedditAds {
@@ -1646,7 +1646,7 @@ func (fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (in
 // the dispatcher's own view of whether it is bound. The nil case below is asserted in the
 // same test so the concrete-pointer guard in registerDispatchers is covered too.
 func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
-	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil))
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
 
 	md, ok := m[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
 	require.True(t, ok, "the meta entry must be a *dispatch.MetaDispatcher")
@@ -1657,7 +1657,7 @@ func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
 	// the CONCRETE pointer, because handing a typed nil to the interface parameter would
 	// produce a NON-nil interface holding a nil pointer — which reports as bound and then
 	// nil-panics mid-dispatch instead of failing cleanly pre-spend.
-	unbound := registerDispatchers(nil, nil, nil, nil)
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
 	mu, ok := unbound[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
 	require.True(t, ok, "the meta entry must be a *dispatch.MetaDispatcher")
 	assert.False(t, mu.CreativeAssetRepoIsSet(),

@@ -170,6 +170,22 @@ func WithHTTPClient(h *http.Client) Option {
 	}
 }
 
+// WithNAT64Prefixes supplies the deployment's operator-specific NAT64 prefixes to the image
+// download guard, matching what the event-URL fetcher is given.
+//
+// Without it the download guard judges only the well-known 64:ff9b::/96, which is NARROWER
+// than the fetcher's: an address under an operator prefix cannot be decoded, so the private
+// IPv4 it encodes is never seen and the fetch proceeds — and the response is re-hosted as a
+// PUBLIC_INDEXABLE file. Any deployment that sets EventURLNAT64Prefixes must pass them here too.
+func WithNAT64Prefixes(cidrs ...string) Option {
+	return func(c *Client) {
+		if len(cidrs) == 0 {
+			return
+		}
+		c.downloadClient = eventurl.NewGuardedRedirectClient(imageDownloadTimeout, eventurl.WithNAT64Prefixes(cidrs...))
+	}
+}
+
 // withDownloadClient overrides the SSRF-guarded client used to fetch caller-supplied
 // image URLs. Tests set it so an httptest server on 127.0.0.1 — which the real guard
 // denies, correctly — is reachable. Production must never call this: the default is
