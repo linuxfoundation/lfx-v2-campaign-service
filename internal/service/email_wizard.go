@@ -1426,7 +1426,11 @@ func (s *BriefService) ChatWizardTurn(ctx context.Context, p *briefs.ChatWizardT
 	}
 	plan := wizardStoredPlan(sess)
 	facts := wizardFacts(brief, decodeWizardEventDetails(brief.EventDetails), plan.ExtraContext, plan.EmailType, "")
-	systemPrompt, userPrompt := composeWizardChatPrompt(facts, wizardHistoryText(turns), message)
+	// The draft the operator is looking at. Chat previously received only event facts and the
+	// transcript, so a request about the email itself had nothing to act on.
+	subject, preview := wizardSubjectAndPreview(sess)
+	draft := wizardChatDraft{Subject: subject, PreviewText: preview}
+	systemPrompt, userPrompt := composeWizardChatPrompt(facts, draft, wizardHistoryText(turns), message)
 	reply, cerr := llmClient.Complete(ctx, systemPrompt, userPrompt)
 	if cerr != nil {
 		slog.WarnContext(ctx, "wizard chat turn failed on the AI platform",

@@ -230,7 +230,14 @@ wrong for this one. Every fact in your output must come from the event facts sec
 // A chat turn ANSWERS; it never acts. There is no tool-calling loop in this service, so a turn
 // that promised to "update the draft" would be describing something that will not happen — the
 // system block says so explicitly rather than leaving the model to assume it has hands.
-func composeWizardChatPrompt(f wizardPromptFacts, history []wizardTurnText, message string) (systemPrompt, userPrompt string) {
+// wizardChatDraft is the email as it currently stands, passed into a chat turn so the model can
+// discuss the thing being built rather than only the event behind it.
+type wizardChatDraft struct {
+	Subject     string
+	PreviewText string
+}
+
+func composeWizardChatPrompt(f wizardPromptFacts, draft wizardChatDraft, history []wizardTurnText, message string) (systemPrompt, userPrompt string) {
 	systemPrompt = `You are assisting an operator who is building one marketing email for a Linux
 Foundation event in a step-by-step wizard.
 
@@ -246,6 +253,18 @@ Reply with prose only -- no JSON and no markdown fencing. Keep it under 200 word
 	var b strings.Builder
 	b.WriteString("Event facts:\n")
 	b.WriteString(f.factBlock())
+	// The current draft, when one exists. Without it the model was answering about the EVENT
+	// while the operator was asking about the EMAIL — "make the subject shorter" drew "I don't
+	// see the current subject line", which is the one question this step exists to answer.
+	if draft.Subject != "" || draft.PreviewText != "" {
+		b.WriteString("\nCurrent draft:\n")
+		if draft.Subject != "" {
+			fmt.Fprintf(&b, "subject: %s\n", truncateString(draft.Subject, maxWizardChatMessage))
+		}
+		if draft.PreviewText != "" {
+			fmt.Fprintf(&b, "preview text: %s\n", truncateString(draft.PreviewText, maxWizardChatMessage))
+		}
+	}
 	if len(history) > 0 {
 		b.WriteString("\nConversation so far:\n")
 		for _, t := range history {
