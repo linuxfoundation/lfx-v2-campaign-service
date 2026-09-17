@@ -21,12 +21,13 @@ import (
 )
 
 // storedCustomerIDRE is the shape a STORED Google Ads account id must have: digits
-// only, no dashes, spaces, or grouping. It intentionally duplicates the client's
-// customerIDRE (internal/platform/googleads/client.go) rather than exporting it: the
-// client keeps its own copy as the backstop for every caller, while this one exists so
-// a malformed STORED value is caught at the dispatch boundary, where the failure can
-// still be classified as domain.ErrConnectionNotUsable instead of an upstream 503. The
-// two must stay in step — widen one and you must widen the other.
+// only, no dashes, spaces, or grouping. The client now exports googleads.ValidateCustomerID
+// for a caller-supplied id (see this file's account-monitor path), but this copy stays
+// separate for the STORED-value check below: a malformed stored value must classify as
+// domain.ErrConnectionNotUsable (a broken connection row), never as
+// domain.ErrAccountIDMalformed (a caller mistake) — sharing one helper would conflate
+// those two error paths. The two regexes must stay in step — widen one and you must
+// widen the other.
 var storedCustomerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // googleAdsCreds is the credential shape stored (encrypted) for a Google Ads

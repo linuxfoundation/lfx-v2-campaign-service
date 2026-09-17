@@ -1182,9 +1182,12 @@ func TestReddit_AuthorPostFailurePersistsCreatedDegraded(t *testing.T) {
 // TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the guard at
 // reddit.go:460: a shape-invalid account id must surface as domain.ErrAccountIDMalformed (a
 // clean 400), not fall through to the default 503 arm — this endpoint's design attribute has
-// no Pattern (see design/connection.go) the way LinkedIn/Meta's do.
+// no Pattern (see design/connection.go) the way LinkedIn/Meta's do, so a malformed-but-nonempty
+// id (unlike an empty one) reaches this dispatcher with no earlier, design-layer rejection.
 //
-// reddit.ValidateAccountID now rejects the empty id before resolveMonitorClient or
+// Deliberately nonempty and charset-invalid ("/" is outside reddit.accountIDRe): an empty id
+// is also rejected by the design layer's MinLength(1), so it would not exercise the gap this
+// test targets. reddit.ValidateAccountID rejects this shape before resolveMonitorClient or
 // ListAccountCampaigns ever run, so this exercises that dispatch-level guard directly, not
 // the inner reddit.ErrInvalidAccountID branch a few lines below it (kept only as defense in
 // depth against the platform client's own check ever diverging from ValidateAccountID's — see
@@ -1193,9 +1196,9 @@ func TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.
 	d := NewRedditDispatcher(
 		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
 	)
-	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "", 30)
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2/../abc", 30)
 	if err == nil {
-		t.Fatal("expected an error for a malformed (empty) account id")
+		t.Fatal("expected an error for a malformed (charset-invalid) account id")
 	}
 	if !errors.Is(err, domain.ErrAccountIDMalformed) {
 		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)

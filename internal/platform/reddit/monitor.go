@@ -178,10 +178,10 @@ func ValidateAccountID(accountID string) error {
 // FetchAccountTotals, called separately, exactly as getRedditAnalytics makes that a SEPARATE
 // call from the per-campaign fan-out.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
-	id := strings.TrimSpace(accountID)
-	if id == "" || !accountIDRe.MatchString(id) {
-		return nil, fmt.Errorf("list account campaigns: %w", ErrInvalidAccountID)
+	if err := ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
+	id := strings.TrimSpace(accountID)
 
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
@@ -258,10 +258,10 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 // The error is still returned so the caller (dispatch/reddit.go) decides whether to log
 // there, rather than this package silently swallowing it.
 func (c *Client) FetchAccountTotals(ctx context.Context, accountID string, days, campaignCount int) (AccountTotals, error) {
-	id := strings.TrimSpace(accountID)
-	if id == "" || !accountIDRe.MatchString(id) {
-		return AccountTotals{}, fmt.Errorf("fetch account totals: %w", ErrInvalidAccountID)
+	if err := ValidateAccountID(accountID); err != nil {
+		return AccountTotals{}, fmt.Errorf("fetch account totals: %w", err)
 	}
+	id := strings.TrimSpace(accountID)
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	impressions, clicks, spendUSD, err := c.fetchMonitorReport(ctx,

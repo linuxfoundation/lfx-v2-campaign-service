@@ -64,6 +64,13 @@ type AccountCampaignRow struct {
 // design/connection.go and docs/knowledge/architecture/account-monitor-endpoints.md for why no
 // MinLength is declared alongside them) before it reaches here, and again below as
 // defense-in-depth for a non-HTTP caller.
+//
+// days carries no such defense-in-depth check here: unlike accountID, this client trusts days
+// is already within the service layer's 7..90 bound (internal/service/connection_monitor.go's
+// validateMonitorDays, itself mirroring the design layer's Minimum/Maximum) before it reaches
+// fetchAccountCampaignInsights' window arithmetic. That is a deliberate asymmetry, not an
+// oversight — today's only caller is that service layer; a future non-HTTP caller of this
+// package directly would need to add its own bound rather than rely on one here.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	id := strings.TrimSpace(accountID)
 	if err := ValidateAccountID(id); err != nil {

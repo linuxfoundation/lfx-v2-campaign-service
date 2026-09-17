@@ -51,6 +51,12 @@ const monitorMaxPages = 50
 // ListAccountCampaigns ports getLinkedInAnalytics: every ACTIVE/PAUSED campaign on
 // accountID, merged with one account-level Ad Analytics pivot=CAMPAIGN read covering the
 // last `days` days (getLinkedInAnalytics's own dateRangeParams(days) window).
+//
+// days is not re-validated here: this client trusts it is already within the service layer's
+// 7..90 bound (internal/service/connection_monitor.go's validateMonitorDays, itself mirroring
+// the design layer's Minimum/Maximum) before it reaches fetchAccountCampaignAnalytics' window
+// arithmetic. That is a deliberate asymmetry, not an oversight — today's only caller is that
+// service layer; a future non-HTTP caller of this package directly would need its own bound.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	// Same guard client.go:654 and targeting.go apply before interpolating an account/campaign
 	// id into a URN or path: the Goa design layer's Pattern(`^[0-9]+$`) already rejects a

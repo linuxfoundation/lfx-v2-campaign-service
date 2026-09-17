@@ -612,7 +612,7 @@ var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 var ErrNotACustomerID = errors.New("google-ads: not a customer id")
 
 // ValidateCustomerID reports whether customerID is a digits-only Google Ads customer id,
-// the same shape customerIDRE enforces just below. Returns nil when valid, ErrNotACustomerID
+// the same shape customerIDRE enforces just above. Returns nil when valid, ErrNotACustomerID
 // otherwise.
 func ValidateCustomerID(customerID string) error {
 	if !customerIDRE.MatchString(customerID) {
