@@ -420,31 +420,55 @@ func NewFetcher(opts ...Option) *Fetcher {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress(cfg.nat64)}
 	return &Fetcher{
-		client: &http.Client{
-			Timeout:       fetchTimeout,
-			CheckRedirect: noFollow,
-			Transport: &http.Transport{
-				DialContext: dialer.DialContext,
-				// Proxy is nil ON PURPOSE, and the zero value is not enough of a
-				// statement to leave implicit. net/http uses no proxy when Proxy is
-				// nil, but http.DefaultTransport sets ProxyFromEnvironment — so
-				// "simplifying" this to DefaultTransport.Clone() would route every
-				// fetch through a cluster HTTP_PROXY, and the dialer would then only
-				// ever see the PROXY's address. The guard above would pass while the
-				// proxy fetched 169.254.169.254 on our behalf. Keep this direct.
-				Proxy: nil,
-				// The idle pool is bounded because the hostnames are CALLER-chosen.
-				// http.Transport's zero values here are "unlimited" and "never expire",
-				// so a stream of distinct event URLs would accumulate one permanent idle
-				// connection per origin — a file-descriptor leak driven by request input.
-				// These are http.DefaultTransport's numbers; the point is stating them,
-				// not the values. MaxIdleConnsPerHost stays at its default of 2, which
-				// already bounds a single origin.
-				MaxIdleConns:    100,
-				IdleConnTimeout: 90 * time.Second,
-			},
+		client: newGuardedClient(cfg.nat64, fetchTimeout),
+	}
+}
+
+// NewGuardedClient returns an *http.Client carrying the SAME dial-time address guard
+// Fetch uses, for callers outside this package that fetch a URL chosen by a caller.
+//
+// It exists so there is exactly ONE implementation of the guard. A second fetcher that
+// builds its own http.Client is not a smaller version of this one — it is an unguarded
+// one, because every protection here lives in the Transport rather than in a check the
+// caller could remember to repeat: the dial-time Control hook (closing the DNS-rebinding
+// window a resolve-then-check would leave open), the explicit nil Proxy (an inherited
+// HTTP_PROXY would show the guard only the proxy's address while the proxy fetched
+// 169.254.169.254 on our behalf), and the refusal to follow redirects (a permitted host
+// may 302 to a forbidden one, and the guard judges addresses, not intent).
+//
+// timeout bounds the whole request. Well-known NAT64 (64:ff9b::/96) is always judged;
+// pass WithNAT64Prefixes through NewFetcher's options if an operator-specific translator
+// must also be decoded -- this constructor takes the defaults deliberately, so a caller
+// cannot silently narrow the guard.
+func NewGuardedClient(timeout time.Duration) *http.Client {
+	return newGuardedClient([]nat64Prefix{wellKnownNAT64}, timeout)
+}
+
+func newGuardedClient(nat64 []nat64Prefix, timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress(nat64)}
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: noFollow,
+		Transport: &http.Transport{
+			DialContext: dialer.DialContext,
+			// Proxy is nil ON PURPOSE, and the zero value is not enough of a
+			// statement to leave implicit. net/http uses no proxy when Proxy is
+			// nil, but http.DefaultTransport sets ProxyFromEnvironment — so
+			// "simplifying" this to DefaultTransport.Clone() would route every
+			// fetch through a cluster HTTP_PROXY, and the dialer would then only
+			// ever see the PROXY's address. The guard above would pass while the
+			// proxy fetched 169.254.169.254 on our behalf. Keep this direct.
+			Proxy: nil,
+			// The idle pool is bounded because the hostnames are CALLER-chosen.
+			// http.Transport's zero values here are "unlimited" and "never expire",
+			// so a stream of distinct event URLs would accumulate one permanent idle
+			// connection per origin — a file-descriptor leak driven by request input.
+			// These are http.DefaultTransport's numbers; the point is stating them,
+			// not the values. MaxIdleConnsPerHost stays at its default of 2, which
+			// already bounds a single origin.
+			MaxIdleConns:    100,
+			IdleConnTimeout: 90 * time.Second,
 		},
 	}
 }

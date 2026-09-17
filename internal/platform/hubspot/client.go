@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"io"
 	"net"
 	"net/http"
@@ -120,6 +121,15 @@ type Client struct {
 	// now is injectable so tests can compute an HTTP-date Retry-After delay
 	// deterministically. Defaults to time.Now.
 	now func() time.Time
+
+	// downloadClient fetches CALLER-SUPPLIED image URLs (UploadImage), and is a
+	// different client from httpClient on purpose. httpClient talks to HubSpot — one
+	// trusted host, fixed by baseURL — whereas a hero/sponsor image URL is scraped
+	// from an event page an operator named, so it can address anything the network
+	// can reach, including cluster-internal services and the cloud metadata endpoint.
+	// It therefore carries eventurl's dial-time SSRF guard. Defaults in NewClient;
+	// injectable so tests can point it at an httptest server the guard would deny.
+	downloadClient *http.Client
 }
 
 // Option customizes a Client at construction time.
@@ -151,6 +161,18 @@ func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) {
 		if h != nil {
 			c.httpClient = h
+		}
+	}
+}
+
+// withDownloadClient overrides the SSRF-guarded client used to fetch caller-supplied
+// image URLs. Tests set it so an httptest server on 127.0.0.1 — which the real guard
+// denies, correctly — is reachable. Production must never call this: the default is
+// the guard.
+func withDownloadClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			c.downloadClient = h
 		}
 	}
 }
@@ -192,6 +214,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		retryBaseDelay: retryBaseDelay,
 		requestTimeout: requestTimeout,
 		now:            time.Now,
+		// SSRF-guarded by default, so a Client built with no options is already safe:
+		// the guard must be what you get by forgetting, not what you get by remembering.
+		downloadClient: eventurl.NewGuardedClient(imageDownloadTimeout),
 	}
 	for _, opt := range opts {
 		opt(c)
