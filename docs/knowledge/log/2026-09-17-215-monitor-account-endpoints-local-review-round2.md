@@ -3,17 +3,21 @@
 **Fix** — A second local pre-PR review round (general reviewer) on the
 account-monitor-endpoints branch found five more defects, on top of the
 Copilot-review fixes already logged in
-[2026-09-17-monitor-account-endpoints-pr-review-fixes.md](2026-09-17-monitor-account-endpoints-pr-review-fixes.md):
+[2026-09-17-215-monitor-account-endpoints-pr-review-fixes.md](2026-09-17-215-monitor-account-endpoints-pr-review-fixes.md):
 
 1. All four rule engines' `FetchFailed` branch emitted
-   `PacingLabel: MonitorPacingNormal` — asserting a computed "normal" pacing
-   verdict for a row whose metrics fetch never succeeded, the same
-   fabrication-of-a-finding defect class the earlier `FetchFailed`-skip fix
-   was meant to eliminate, just relocated into the pacing label. Each now
-   sets `PacingUnknown = true` on the row instead, per
+   `PacingLabel: MonitorPacingNormal` with no accompanying signal that the
+   verdict was not computed — a row whose metrics fetch never succeeded
+   looked identical, on the wire, to a genuinely-evaluated normal row. Each
+   now additionally sets `PacingUnknown = true` on the row, per
    `AccountCampaignMetrics.PacingUnknown`'s own doc comment
    (`internal/domain/model/monitor.go`): "a rule engine MUST NOT compute a
    pacing percentage against a fabricated flight window when this is true."
+   `PacingLabel` itself stays at the `"normal"` placeholder — `pacing_label`
+   is a required enum with no "unknown" member, so this mirrors the
+   pre-existing `pacing_pct`-stays-0-and-is-declared-meaningless convention
+   (`design/connection.go`'s `pacing_pct`/`pacing_label` doc comments) rather
+   than replacing the label with an absence.
 2. `internal/platform/linkedin/monitor_test.go`'s clock-injection test used
    an already-UTC injected clock, so it could not actually distinguish a
    `.UTC()` call from its absence — reverting the normalization left the

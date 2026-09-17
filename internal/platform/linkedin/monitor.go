@@ -57,8 +57,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	// malformed id at the HTTP boundary, but this dispatcher method is also reachable directly
 	// (e.g. from tests or a future non-HTTP caller), so it re-checks rather than trusting the
 	// caller.
-	if !accountIDRE.MatchString(accountID) {
-		return nil, fmt.Errorf("invalid LinkedIn ad account id %q: must be digits only", accountID)
+	if err := ValidateAccountID(accountID); err != nil {
+		return nil, err
 	}
 	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
 	if err != nil {

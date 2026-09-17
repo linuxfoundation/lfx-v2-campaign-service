@@ -1156,6 +1156,14 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // account the project's connection currently points at), then reads every campaign visible
 // on that account via meta.Client.ListAccountCampaigns.
 func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
+	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
+	// cost a credential decrypt. The Goa design layer's Pattern already rejects a malformed id at
+	// the HTTP boundary, but this dispatcher method is also reachable directly (e.g. tests or a
+	// future non-HTTP caller), so it re-checks rather than trusting the caller.
+	if err := meta.ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
 	client, err := d.resolveMetaDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err

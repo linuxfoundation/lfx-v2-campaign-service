@@ -64,8 +64,8 @@ type AccountCampaignRow struct {
 // here.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	id := strings.TrimSpace(accountID)
-	if !strings.HasPrefix(id, "act_") || !numericIDRE.MatchString(strings.TrimPrefix(id, "act_")) {
-		return nil, fmt.Errorf("list account campaigns: account id %q must be act_<digits>", accountID)
+	if err := ValidateAccountID(id); err != nil {
+		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
 
 	campaigns, err := c.fetchAccountCampaignList(ctx, id)

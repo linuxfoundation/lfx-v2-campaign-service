@@ -163,6 +163,11 @@ func TestEvaluateRedditMonitor_SkipsFetchFailedRows(t *testing.T) {
 	if !out[0].Metrics.FetchFailed || !out[0].Metrics.PacingUnknown {
 		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and PacingUnknown=true — a failed fetch must not report a computed pacing verdict", out[0])
 	}
+	// PacingLabel keeps its zero-value "normal" placeholder rather than going unset — pacing_label
+	// is a required enum with no "unknown" member; PacingUnknown=true is the signal not to trust it.
+	if out[0].PacingLabel != model.MonitorPacingNormal {
+		t.Errorf("FetchFailed row PacingLabel = %q, want the documented placeholder %q", out[0].PacingLabel, model.MonitorPacingNormal)
+	}
 	if len(items) != 0 {
 		t.Errorf("FetchFailed row produced action items, want none: %+v", items)
 	}

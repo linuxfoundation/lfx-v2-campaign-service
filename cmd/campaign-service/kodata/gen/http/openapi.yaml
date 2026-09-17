@@ -7917,7 +7917,7 @@ definitions:
                 example: KubeCon NA 2026 - Search
             pacing_label:
                 type: string
-                description: The pacing classification derived from pacing_pct.
+                description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
                 example: underspending
                 enum:
                     - normal

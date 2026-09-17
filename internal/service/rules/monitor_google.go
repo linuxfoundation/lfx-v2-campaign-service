@@ -61,7 +61,11 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		// calc against that placeholder zero would fabricate a bogus "underspending" label and a
 		// HIGH-priority action item for a campaign this port never actually measured. The row is
 		// still returned in the campaigns array (the caller sees it and its FetchFailed flag),
-		// just with pacing/action-item evaluation skipped.
+		// just with pacing/action-item evaluation skipped. PacingLabel keeps its zero-value
+		// "normal" placeholder — pacing_label is a required enum with no "unknown" member — and
+		// PacingUnknown=true is the caller's signal not to trust it, the same convention
+		// pacing_pct's own "meaningless when pacing_unknown is true" doc comment establishes
+		// (design/connection.go).
 		if m.FetchFailed {
 			m.PacingUnknown = true
 			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})

@@ -454,6 +454,12 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 // the resolved connection's own account rather than used to build an account-agnostic client
 // the way Meta/GoogleAds/LinkedIn's monitor methods do.
 func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
+	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
+	// cost a credential decrypt.
+	if err := reddit.ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
 	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err
@@ -461,11 +467,13 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {
 		// reddit.ErrInvalidCampaignID here means the shape check on accountID itself, not a
-		// campaign id — ListAccountCampaigns reuses that sentinel for both. This endpoint's
-		// account_id design attribute has no Pattern (see design/connection.go), so a
-		// malformed value otherwise falls through to the default 503 arm in
-		// classifyDiscoveryError; wrapping it in domain.ErrAccountIDMalformed gives Reddit
-		// the same clean 400 LinkedIn/Meta get from their design-layer Pattern for free.
+		// campaign id — ListAccountCampaigns reuses that sentinel for both. Reachable only if
+		// the platform client's own check ever diverges from ValidateAccountID's, since the
+		// latter already runs above; kept as defense in depth. This endpoint's account_id
+		// design attribute has no Pattern (see design/connection.go), so a malformed value
+		// otherwise falls through to the default 503 arm in classifyDiscoveryError; wrapping
+		// it in domain.ErrAccountIDMalformed gives Reddit the same clean 400 LinkedIn/Meta get
+		// from their design-layer Pattern for free.
 		if errors.Is(lerr, reddit.ErrInvalidCampaignID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)
 		}

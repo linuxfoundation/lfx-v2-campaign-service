@@ -463,7 +463,10 @@ type AccountMonitorCampaign struct {
 	FetchFailed bool
 	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
 	PacingPct float64
-	// The pacing classification derived from pacing_pct.
+	// The pacing classification derived from pacing_pct. Meaningless when
+	// pacing_unknown is true — a fetch-failed row keeps the placeholder value
+	// "normal" rather than carrying no label at all, since the enum has no unknown
+	// member.
 	PacingLabel string
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string

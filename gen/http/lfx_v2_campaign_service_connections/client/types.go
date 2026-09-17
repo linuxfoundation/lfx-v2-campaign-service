@@ -4891,7 +4891,10 @@ type AccountMonitorCampaignResponseBody struct {
 	FetchFailed *bool `form:"fetch_failed,omitempty" json:"fetch_failed,omitempty" xml:"fetch_failed,omitempty"`
 	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
 	PacingPct *float64 `form:"pacing_pct,omitempty" json:"pacing_pct,omitempty" xml:"pacing_pct,omitempty"`
-	// The pacing classification derived from pacing_pct.
+	// The pacing classification derived from pacing_pct. Meaningless when
+	// pacing_unknown is true — a fetch-failed row keeps the placeholder value
+	// "normal" rather than carrying no label at all, since the enum has no unknown
+	// member.
 	PacingLabel *string `form:"pacing_label,omitempty" json:"pacing_label,omitempty" xml:"pacing_label,omitempty"`
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string `form:"campaign_url,omitempty" json:"campaign_url,omitempty" xml:"campaign_url,omitempty"`

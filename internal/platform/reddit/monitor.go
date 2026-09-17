@@ -157,6 +157,18 @@ func (c *Client) fetchMonitorReport(ctx context.Context, path, startDate, endDat
 	return impressions, clicks, spendUSD, nil
 }
 
+// ValidateAccountID checks accountID against the same charset restriction
+// ListAccountCampaigns enforces, so a dispatcher can reject a malformed id
+// before resolving (and decrypting) any stored credential — mirrors
+// googleads.ValidateCustomerID's ordering.
+func ValidateAccountID(accountID string) error {
+	id := strings.TrimSpace(accountID)
+	if id == "" || !accountIDRe.MatchString(id) {
+		return fmt.Errorf("validate account id: %w", ErrInvalidCampaignID)
+	}
+	return nil
+}
+
 // ListAccountCampaigns ports getRedditAnalytics: every ACTIVE/PAUSED campaign visible on
 // accountID, each with its own per-campaign report over the trailing `days` days, ported
 // verbatim including the pacing inputs (goal_value/1e6 as TotalBudget, start_time/end_time as

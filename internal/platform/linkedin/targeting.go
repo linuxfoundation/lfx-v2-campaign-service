@@ -21,6 +21,17 @@ var orgIDRE = regexp.MustCompile(`^[0-9]+$`)
 // interpolated into a request URN.
 var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// ValidateAccountID checks accountID against the same digit-only shape accountIDRE
+// enforces elsewhere in this package, so a dispatcher can reject a malformed id
+// before resolving (and decrypting) any stored credential — mirrors
+// googleads.ValidateCustomerID's ordering.
+func ValidateAccountID(accountID string) error {
+	if !accountIDRE.MatchString(accountID) {
+		return fmt.Errorf("invalid LinkedIn ad account id %q: must be digits only", accountID)
+	}
+	return nil
+}
+
 // geoURNRE matches a LinkedIn geo URN (urn:li:geo:<digits>), used to reject a
 // caller-supplied GeoTarget with a malformed URN before any campaign is created.
 var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)

@@ -220,6 +220,12 @@ func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
 	if !out[0].Metrics.FetchFailed || !out[0].Metrics.PacingUnknown {
 		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and PacingUnknown=true — a failed fetch must not report a computed pacing verdict", out[0])
 	}
+	// PacingLabel keeps its zero-value "normal" placeholder rather than going unset — pacing_label
+	// is a required enum with no "unknown" member. PacingUnknown=true is the caller's signal not
+	// to trust it, mirroring pacing_pct's "meaningless when pacing_unknown is true" convention.
+	if out[0].PacingLabel != model.MonitorPacingNormal {
+		t.Errorf("FetchFailed row PacingLabel = %q, want the documented placeholder %q", out[0].PacingLabel, model.MonitorPacingNormal)
+	}
 	for _, it := range items {
 		if it.CampaignID == "1" {
 			t.Errorf("FetchFailed row produced an action item, want none: %+v", it)

@@ -1817,6 +1817,18 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 // internal/platform/twitter/client.go (accountIDRe).
 var accountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
 
+// ValidateAccountID checks accountID against the same act_<digits> shape accountIDRE
+// enforces elsewhere in this package, so a dispatcher can reject a malformed id before
+// resolving (and decrypting) any stored credential — mirrors googleads.ValidateCustomerID's
+// ordering.
+func ValidateAccountID(accountID string) error {
+	id := strings.TrimSpace(accountID)
+	if !accountIDRE.MatchString(id) {
+		return fmt.Errorf("invalid Meta ad account id %q: must be act_<digits>", accountID)
+	}
+	return nil
+}
+
 // numericIDRE matches a purely numeric Meta object id (Page id, Pixel id). Meta
 // object ids are decimal strings; validating the format up front stops a malformed
 // id (e.g. "PIX9") from creating a campaign/ad set that then fails at creative or
