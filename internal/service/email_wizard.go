@@ -722,7 +722,19 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 	sess.ReferenceVariant = marshalAny(reference)
 	sess.StageVariant = marshalAny(stageVariant)
 	sess.Sections = marshalAny(reference.Sections)
-	sess.Phase = model.WizardPhaseContent
+	// Never BACKWARDS. `cloned` is documented as the first phase with an effect outside this
+	// service and therefore the first that cannot be undone, so regressing a cloned or complete
+	// session to `content` described a session whose draft and recipients still exist as one
+	// that has no draft — and the freshly generated copy is not in that draft either, so the
+	// row contradicted both HubSpot and itself.
+	//
+	// Regeneration after a clone is still ALLOWED: the new variants are saved and the operator
+	// can push them into the existing draft. What is refused is the phase lie. Whether a
+	// re-clone should instead be required is a product question, and answering it here would
+	// make the answer a contract.
+	if sess.PhaseOrDefault() == model.WizardPhasePlanning {
+		sess.Phase = model.WizardPhaseContent
+	}
 	saved, uerr := saveWizardSession(ctx, sessions, sess, attributedActor(ctx, "generate-wizard-content"))
 	if uerr != nil {
 		return nil, uerr
