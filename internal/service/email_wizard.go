@@ -807,9 +807,11 @@ func wizardGenerationUnavailable(err error) error {
 
 // wizardReferenceEmails collects style references for the reference variant.
 //
-// Bounded by maxReferenceEmails and by maxReferenceExcerpt per email, and every failure
-// yields NO references rather than an error: a facts-only prompt writes a usable email, so
-// a HubSpot outage degrades the voice-matching rather than the endpoint.
+// Returns AT MOST ONE reference, and structurally cannot return more: a plan carries a single
+// `SourceEmail`, so there is exactly one email to read. Its excerpt is bounded by
+// maxReferenceExcerpt. Every failure yields NO references rather than an error: a facts-only
+// prompt writes a usable email, so a HubSpot outage degrades the voice-matching rather than
+// the endpoint.
 func (s *BriefService) wizardReferenceEmails(ctx context.Context, projectID string, sess *model.WizardSession) []wizardReferenceEmail {
 	src := wizardPlanSource(sess)
 	if src == nil {

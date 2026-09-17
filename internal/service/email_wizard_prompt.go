@@ -36,10 +36,6 @@ const (
 	// failure then surfaces as an opaque upstream error rather than as a budget this service
 	// owns.
 	maxWizardComposedPromptSize = 24000
-	// maxReferenceEmails is how many past-campaign emails the reference variant may consider.
-	// A compiled constant, not config: it is a prompt-budget decision, and an operator who
-	// raised it would be changing the shape of the prompt, not tuning a deployment.
-	maxReferenceEmails = 3
 	// maxReferenceExcerpt bounds ONE past email's excerpt, in runes.
 	maxReferenceExcerpt = 1200
 	// maxWizardChatHistory is how many prior turns are re-sent as context on a chat turn. The
