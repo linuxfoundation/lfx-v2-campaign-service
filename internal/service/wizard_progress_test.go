@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -291,5 +292,33 @@ func TestWizardProgressHandler_StreamsThenEndsOnADoneFrame(t *testing.T) {
 	}
 	if !strings.Contains(body.String(), "finished") {
 		t.Errorf("a published frame must reach the client, got %q", body.String())
+	}
+}
+
+// TestWizardProgressHub_PublishDoesNotRaceUnsubscribe pins the fix for a panic that took the
+// whole pod down, not just one turn.
+//
+// Publish used to copy the subscriber set under the mutex and then send OUTSIDE it. `cancel()`
+// runs in the SSE handler's goroutine while Publish runs in a wizard turn's, so a close could
+// land in that window: `send on closed channel`, which is unrecoverable.
+//
+// Fifty subscribers, because the single-subscriber case passes even against the broken code —
+// the window is only wide enough to hit reliably when the send loop is long. Before the fix
+// this panicked within a few iterations.
+func TestWizardProgressHub_PublishDoesNotRaceUnsubscribe(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		h := &WizardProgressHub{}
+		cancels := make([]func(), 0, 50)
+		for j := 0; j < 50; j++ {
+			_, c := h.Subscribe("tok")
+			cancels = append(cancels, c)
+		}
+		var wg sync.WaitGroup
+		wg.Add(1 + len(cancels))
+		go func() { defer wg.Done(); h.Publish("tok", WizardProgressFrame{}) }()
+		for _, c := range cancels {
+			go func(f func()) { defer wg.Done(); f() }(c)
+		}
+		wg.Wait()
 	}
 }
