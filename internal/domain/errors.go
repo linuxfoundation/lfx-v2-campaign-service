@@ -686,6 +686,19 @@ var (
 	// which would otherwise surface as classifyDiscoveryError's opaque default 503 instead
 	// of a clean 400.
 	ErrMonitorDaysInvalid = fmt.Errorf("days must be between %d and %d", MonitorDaysMin, MonitorDaysMax)
+
+	// ErrAccountNotManagedByConnection indicates a caller-supplied account id is well-formed
+	// but names an account the project's OWN resolved connection does not manage. Maps to 400.
+	//
+	// Reddit's resolveMonitorClient is the only place this can happen: a Reddit connection is
+	// bound to exactly one ad account, so a request for any other account id is a request
+	// mismatch, not a connection defect. Before round-18 review this rode on
+	// ErrConnectionNotUsable, whose message tells the operator to check that the STORED
+	// credential is active and valid — which it is; the wrong thing here is the REQUEST, not
+	// the connection. Distinct for the same reason ErrAccountIDMalformed is distinct from
+	// ErrConnectionNotUsable: this sentinel is about what the caller asked for on this one
+	// request, not about the state of the stored connection.
+	ErrAccountNotManagedByConnection = errors.New("the requested account is not managed by this project's connection")
 )
 
 // MonitorDaysMin and MonitorDaysMax are the account-monitor `days` window's inclusive

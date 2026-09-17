@@ -392,6 +392,17 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		slog.ErrorContext(ctx, "the LF system connection is not usable; "+d.label()+" is failing for every project without its own connection",
 			"provider", string(d.provider), "reason", unusableConnectionReason(aerr))
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
+	case errors.Is(aerr, domain.ErrAccountNotManagedByConnection):
+		// The stored connection is fine; the REQUEST named an account the connection
+		// does not manage (Reddit only, whose connection is bound to exactly one ad
+		// account). Checked before ErrConnectionNotUsable below: prior to round-18 review
+		// this sentinel did not exist and the mismatch rode on ErrConnectionNotUsable,
+		// whose message tells the caller to check that the stored credential is active
+		// and valid, which it is, so that message pointed at the wrong remedy.
+		return &conn.BadRequestError{
+			Code:    "400",
+			Message: "the requested account is not managed by this project's " + d.displayName + " connection",
+		}
 	case errors.Is(aerr, domain.ErrConnectionNotUsable):
 		// The connection EXISTS but cannot be used as it stands — inactive, an
 		// incomplete credential blob, or a malformed stored config value such as a

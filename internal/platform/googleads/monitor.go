@@ -63,6 +63,15 @@ type monitorGaqlRow struct {
 //
 // customerID must already be digits-only (validated by gaqlSearchForCustomer); this method
 // adds no additional validation of its own.
+//
+// days carries no such check here either: this client trusts days is already within the
+// service layer's 7..90 bound (internal/service/connection_monitor.go's validateMonitorDays,
+// itself mirroring the design layer's Minimum/Maximum) before it reaches the BETWEEN window
+// below. That is a deliberate asymmetry, not an oversight, matching the Meta/LinkedIn
+// siblings' equivalent comment — today's only caller is that service layer; a future
+// non-HTTP caller of this package directly would need to add its own bound rather than rely
+// on one here. An unchecked days <= 0 would silently invert the BETWEEN window rather than
+// error.
 func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, days int) ([]AccountCampaignRow, error) {
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))

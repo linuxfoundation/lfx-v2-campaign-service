@@ -508,6 +508,16 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 // rows ListAccountCampaignMetrics returns. See model.AccountMonitorTotals' doc comment for
 // why Reddit alone needs this second capability.
 func (d *RedditDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
+	// Validated up front, before any credential is resolved — same ordering as
+	// ListAccountCampaignMetrics, and the reason resolveMonitorClient's own comment can say
+	// accountID is guaranteed non-empty by the time it runs: both of resolveMonitorClient's
+	// callers validate before calling it, not just one of them.
+	if err := reddit.ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
 	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err
@@ -556,8 +566,12 @@ func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID s
 	want := strings.TrimSpace(accountID)
 	got := strings.TrimSpace(res.accountID)
 	if want != got {
+		// domain.ErrAccountNotManagedByConnection, not ErrConnectionNotUsable (round-18
+		// review): the stored connection is fine, the REQUEST named a different account.
+		// ErrConnectionNotUsable's classification tells the caller to check that the stored
+		// credential is active and valid, which is the wrong remedy for a request mismatch.
 		return nil, fmt.Errorf("%w: reddit connection for project %s resolves to account %s, not the requested account %s",
-			domain.ErrConnectionNotUsable, projectID, got, want)
+			domain.ErrAccountNotManagedByConnection, projectID, got, want)
 	}
 	return client, nil
 }

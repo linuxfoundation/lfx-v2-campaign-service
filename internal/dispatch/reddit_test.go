@@ -1247,3 +1247,48 @@ func TestReddit_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
 			"report the project as having no connection of its own", err)
 	}
 }
+
+// TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount pins round-18 review's fix:
+// a well-formed account id that simply isn't the one the project's own connection resolves to
+// must surface as domain.ErrAccountNotManagedByConnection, not domain.ErrConnectionNotUsable —
+// the stored connection here is perfectly fine, the REQUEST named a different account, and
+// ErrConnectionNotUsable's classification tells the caller to check the stored credential,
+// which would point at the wrong remedy.
+func TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	// activeRedditConn resolves to account t2_acct; request a different, still well-formed one.
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_other", 30)
+	if !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+		t.Errorf("expected err to wrap domain.ErrAccountNotManagedByConnection, got: %v", err)
+	}
+	if errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("did not expect err to wrap domain.ErrConnectionNotUsable, since the stored connection is fine: %v", err)
+	}
+}
+
+// TestReddit_ReadAccountTotals_RejectsMalformedAccountID and
+// TestReddit_ReadAccountTotals_RejectsInvalidDays pin round-18 review's fix: ReadAccountTotals
+// previously called resolveMonitorClient (and so resolved a credential) without validating
+// accountID or days first, unlike its sibling ListAccountCampaignMetrics — even though
+// resolveMonitorClient's own doc comment claimed every caller validated first.
+func TestReddit_ReadAccountTotals_RejectsMalformedAccountID(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadAccountTotals(context.Background(), "proj", model.ProviderRedditAds, "t2/../abc", 30, 5)
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
+	}
+}
+
+func TestReddit_ReadAccountTotals_RejectsInvalidDays(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadAccountTotals(context.Background(), "proj", model.ProviderRedditAds, "t2_abc123", 0, 5)
+	if !errors.Is(err, domain.ErrMonitorDaysInvalid) {
+		t.Errorf("expected err to wrap domain.ErrMonitorDaysInvalid, got: %v", err)
+	}
+}
