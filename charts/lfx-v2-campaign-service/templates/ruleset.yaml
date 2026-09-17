@@ -163,6 +163,22 @@ spec:
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.
           - path: /projects/:projectId/hubspot
           - path: /projects/:projectId/hubspot/**
+          # Audience builder (LFXV2-2770). Every sub-path is spelled out rather than
+          # admitted with **: this family creates REAL contact lists in a production
+          # HubSpot portal (compose-master is not idempotent), so a path the service
+          # does not serve must not be routed, and the two-segment leaves
+          # (lists/search, qa/run) mean a single-segment capture would not cover them
+          # either. Adding an endpoint here requires editing the HTTPRoute regex in
+          # the same commit or parity fails.
+          - path: /projects/:projectId/audience-builder/capabilities
+          - path: /projects/:projectId/audience-builder/discover
+          - path: /projects/:projectId/audience-builder/lists/search
+          - path: /projects/:projectId/audience-builder/suppression-lists
+          - path: /projects/:projectId/audience-builder/last-sent
+          - path: /projects/:projectId/audience-builder/existing-master-lists
+          - path: /projects/:projectId/audience-builder/preview-count
+          - path: /projects/:projectId/audience-builder/compose-master
+          - path: /projects/:projectId/audience-builder/qa/run
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator

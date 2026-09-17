@@ -418,7 +418,7 @@ func TestWizard_EndToEnd(t *testing.T) {
 	if sendList.SendListID != "ils-77" {
 		t.Errorf("with no explicit list the brief's built audience must decide, got %q", sendList.SendListID)
 	}
-	if got := derefOrEmpty(sendList.ListType); got != "audience" {
+	if got := derefStr(sendList.ListType); got != "audience" {
 		t.Errorf("list_type = %q, want audience", got)
 	}
 	if len(h.hubspot.suppression) != 1 || h.hubspot.suppression[0] != "sup-1" {
@@ -697,8 +697,8 @@ func TestWizard_ExplicitSendListSkipsTheAudience(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetWizardSendList: %v", err)
 	}
-	if out.SendListID != "ils-explicit" || derefOrEmpty(out.ListType) != "explicit" {
-		t.Errorf("an explicit list must be passed through, got id=%q type=%q", out.SendListID, derefOrEmpty(out.ListType))
+	if out.SendListID != "ils-explicit" || derefStr(out.ListType) != "explicit" {
+		t.Errorf("an explicit list must be passed through, got id=%q type=%q", out.SendListID, derefStr(out.ListType))
 	}
 }
 

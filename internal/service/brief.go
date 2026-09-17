@@ -204,6 +204,10 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 	}
 }
 
+// derefStr reads an optional string, treating absence as the empty value.
+//
+// For `stage` the empty string is not a fallback but the real stage of a paid brief, which has no
+// series -- and it is what the column stores, since NULL cannot participate in the unique index.
 func derefStr(s *string) string {
 	if s == nil {
 		return ""
@@ -341,7 +345,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	// brief the product has. Migration 000030's CHECK refuses both, but a constraint violation is
 	// SQLSTATE 23514 -- unclassified by the repository -- so it would reach the caller as a 500
 	// for a request that is merely invalid. Answering here makes it the 400 it is.
-	if perr := briefIdentityPairProblem(deliveryTypeOrPaid(in.DeliveryType), derefOrEmpty(in.Stage)); perr != nil {
+	if perr := briefIdentityPairProblem(deliveryTypeOrPaid(in.DeliveryType), derefStr(in.Stage)); perr != nil {
 		return nil, mapBriefErr(perr)
 	}
 	b := &model.CampaignBrief{
@@ -353,7 +357,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		// forgot to say which surface it belongs to. An omitted value means paid for the same
 		// reason it does on the read: paid was the only surface that could save one.
 		DeliveryType: deliveryTypeOrPaid(in.DeliveryType),
-		Stage:        derefOrEmpty(in.Stage),
+		Stage:        derefStr(in.Stage),
 		URL:          strVal(in.URL),
 		Platforms:    marshalStrings(in.Platforms),
 		EventDetails: marshalAny(in.EventDetails),
@@ -1998,17 +2002,6 @@ func assertedDeliveryType(v *string) *model.DeliveryType {
 	}
 	d := model.DeliveryType(*v)
 	return &d
-}
-
-// derefOrEmpty reads an optional string, treating absence as the empty value.
-//
-// For `stage` the empty string is not a fallback but the real stage of a paid brief, which has no
-// series -- and it is what the column stores, since NULL cannot participate in the unique index.
-func derefOrEmpty(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
 }
 
 func mapBriefErr(err error) error {

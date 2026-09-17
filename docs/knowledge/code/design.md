@@ -155,4 +155,33 @@ uses the permissive UUID-or-slug attribute, not the slug-only one `create-campai
 because the asset is bound to a campaign later by its own id and the id is never stamped into a
 campaign name.
 
+## The audience-builder service (LFXV2-2770)
+
+`audience_builder.go` declares a service of its own — nine methods under
+`/projects/{project_id}/audience-builder/…`, every one carrying `bearerToken()` and the
+project-id attribute, all behind `JWTAuth`. It is a separate Goa service rather than more methods
+on the brief surface because nothing here is subordinate to a brief: an operator explores an
+audience BEFORE any brief commits to one.
+
+Three declarations are load-bearing:
+
+- `search-audience-lists` requires `q` with `MinLength(1)` and `preview-audience-count` requires
+  `list_ids` with `MinLength(1)`. An empty search term matches everything in the portal and an
+  empty id set previews a count of nothing — both are caller mistakes worth a 400 rather than a
+  plausible-looking answer.
+- `get-audience-last-sent` caps `limit` at `Max(10)` with a default of 3. The endpoint fans out
+  per email against a rate-limited API, so the ceiling is a budget, not a preference.
+- `compose-audience-master` responds `201` and declares a second error, `ComposePartial`, mapped
+  to `500`. Goa maps both it and `InternalServerError` to that status and discriminates with a
+  `goa-error` header, so the ComposePartial body carries the created suppression list where the
+  internal error carries only code and message — the body is what a proxying caller can actually
+  read. See [internal/service](internal-service.md).
+
+`audience-compose-master-input` deliberately has NO `event_url`. Composition works from the lists
+and names an operator has already reviewed; re-fetching the page at write time would let a page
+edited since discovery change what gets created.
+
+There is no streaming method: Goa v3 has no SSE encoding, so `discover-audience-lists` is a plain
+synchronous POST and any progress reporting belongs to the caller.
+
 See [design](../../../design).
