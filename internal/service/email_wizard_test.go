@@ -1005,3 +1005,34 @@ func TestWizardSponsorsOut(t *testing.T) {
 		t.Errorf("tier must be carried through, got %v", got[0].Tier)
 	}
 }
+
+// TestComposeWizardChatPrompt_CarriesTheCurrentDraft pins that a chat turn can see the email
+// being built, not only the event behind it.
+//
+// The prompt previously carried event facts and the transcript and nothing else, so "make the
+// subject shorter" drew "I don't see the current subject line in the event facts you've
+// provided" — a refusal to do the one thing this step exists for, from a model that had the
+// answer withheld from it. Verified against the live proxy before and after.
+func TestComposeWizardChatPrompt_CarriesTheCurrentDraft(t *testing.T) {
+	facts := wizardPromptFacts{eventName: "KubeCon EU"}
+	draft := wizardChatDraft{Subject: "Join us at KubeCon + CloudNativeCon EU in London!", PreviewText: "Register before prices rise"}
+
+	_, user := composeWizardChatPrompt(facts, draft, nil, "make the subject shorter")
+
+	if !strings.Contains(user, draft.Subject) {
+		t.Errorf("the chat prompt omits the current subject, so the model cannot act on it:\n%s", user)
+	}
+	if !strings.Contains(user, draft.PreviewText) {
+		t.Errorf("the chat prompt omits the current preview text:\n%s", user)
+	}
+}
+
+// An empty draft must not add the section at all: a chat turn before generation has no email to
+// describe, and an empty "Current draft:" heading invites the model to invent one.
+func TestComposeWizardChatPrompt_OmitsAnEmptyDraft(t *testing.T) {
+	_, user := composeWizardChatPrompt(wizardPromptFacts{eventName: "KubeCon EU"}, wizardChatDraft{}, nil, "hello")
+
+	if strings.Contains(user, "Current draft:") {
+		t.Errorf("an empty draft still rendered its heading:\n%s", user)
+	}
+}
