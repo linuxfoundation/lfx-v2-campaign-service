@@ -160,8 +160,8 @@ func TestEvaluateRedditMonitor_SkipsFetchFailedRows(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1 — a FetchFailed row must still be returned: %+v", len(out), out)
 	}
-	if !out[0].Metrics.FetchFailed || out[0].PacingLabel != model.MonitorPacingNormal {
-		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and pacing label left at normal (unevaluated)", out[0])
+	if !out[0].Metrics.FetchFailed || !out[0].Metrics.PacingUnknown {
+		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and PacingUnknown=true — a failed fetch must not report a computed pacing verdict", out[0])
 	}
 	if len(items) != 0 {
 		t.Errorf("FetchFailed row produced action items, want none: %+v", items)

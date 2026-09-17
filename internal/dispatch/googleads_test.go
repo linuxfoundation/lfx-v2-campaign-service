@@ -2945,3 +2945,24 @@ func TestGoogleAds_ReadMetrics_ConversionsPointerSurvivesTheDispatcher(t *testin
 		t.Errorf("Conversions = %v after the dispatcher, want 0", *m2.Conversions)
 	}
 }
+
+// TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the guard at
+// googleads.go:838: a non-digits account id must be rejected before any credential is
+// resolved, since this endpoint's design attribute has no Pattern (see design/connection.go)
+// the way LinkedIn/Meta's do — a malformed id would otherwise reach gaqlSearchForCustomer's
+// own unsentineled error, which classifyDiscoveryError's default arm maps to an opaque 503.
+func TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.T) {
+	// No connection is wired at all: resolveGoogleAdsDiscoveryClient must never be reached,
+	// so a connection-lookup error here would prove nothing about this guard either way.
+	d := NewGoogleAdsDispatcher(fakeConnReader{err: errors.New("must not be reached")}, identityEncryptor{})
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderGoogleAds, "abc-123", 30)
+	if err == nil {
+		t.Fatal("expected an error for a malformed account id")
+	}
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
+	}
+	if !errors.Is(err, googleads.ErrNotACustomerID) {
+		t.Errorf("expected err to still wrap googleads.ErrNotACustomerID, got: %v", err)
+	}
+}

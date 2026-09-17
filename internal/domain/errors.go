@@ -649,4 +649,20 @@ var (
 	// The refusal costs nothing real, because a project with no ad account of its own has no
 	// campaign of its own to adopt.
 	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
+
+	// ErrAccountIDMalformed indicates a caller-supplied account id is shape-invalid for its
+	// platform. Maps to 400.
+	//
+	// LinkedIn and Meta's account-monitor design attributes carry a Goa Pattern, so a
+	// malformed id there never reaches a dispatcher — Goa itself refuses the request at the
+	// HTTP boundary. Google Ads and Reddit have no established regex convention to reuse for
+	// their design attributes (see design/connection.go), so their dispatchers validate the
+	// shape themselves and wrap the failure in this sentinel, giving those two platforms the
+	// same clean 400 LinkedIn/Meta get for free — rather than falling through to
+	// classifyDiscoveryError's default arm, which would report an unrelated-looking 503 for
+	// what is really a caller error.
+	//
+	// Distinct from ErrConnectionNotUsable: that sentinel is about the STORED connection
+	// being unusable; this one is about the id the CALLER passed on this one request.
+	ErrAccountIDMalformed = errors.New("the account id is not valid for this platform")
 )

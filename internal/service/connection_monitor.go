@@ -158,10 +158,15 @@ func (s *ConnectionService) monitorAccount(
 	// comment) is a secondary, derivable figure — summing the returned rows is not the
 	// platform's own number, but it is a strictly better answer than a 5xx that throws
 	// away campaign data the caller already has in hand.
-	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(metricsRows))
+	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(rows))
 	if terr != nil {
-		slog.ErrorContext(ctx, "account totals read failed; serving the row-summed fallback",
-			"error", terr, "project_id", projectID, "platform", platform)
+		// terr can carry ErrConnectionNotUsable, whose detection path decodes a decrypted
+		// credential blob — neither the cause nor its text may leave this function (see
+		// classifyDiscoveryError's ErrConnectionNotUsable arm in connection.go). Log the
+		// fixed-vocabulary reason instead, and at Warn: this is a handled/recovered condition,
+		// not an error that aborts the request.
+		slog.WarnContext(ctx, "account totals read failed; serving the row-summed fallback",
+			"reason", unusableConnectionReason(terr), "project_id", projectID, "platform", platform)
 		ok = false
 	}
 	if !ok {

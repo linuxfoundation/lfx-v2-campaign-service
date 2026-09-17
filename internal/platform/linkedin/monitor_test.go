@@ -34,7 +34,11 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
 		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
 	)
-	fixedNow := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	// fixedNow's local calendar date (AEST, UTC+10) is 2026-09-18, one day ahead of its UTC
+	// calendar date, 2026-09-17. restLiDate (metrics.go:477) renders day/month/year in the
+	// value's own location, so this is exactly the case the client's `.UTC()` normalization
+	// guards: without it, the request would be built against the 18th, not the 17th.
+	fixedNow := time.Date(2026, 9, 17, 22, 0, 0, 0, time.FixedZone("AEST", 10*3600))
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL), WithClock(func() time.Time { return fixedNow }))
 
 	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
@@ -54,13 +58,18 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 	if analyticsURI == "" {
 		t.Fatalf("no adAnalytics request recorded: %v", rec.all())
 	}
-	// days=7 ending 2026-09-17 (inclusive) starts 2026-09-11, the same days-1 convention the
-	// Google/Reddit/Meta monitor dispatchers share — not whatever the wall clock happens to be
-	// when the test runs.
+	// days=7 ending on the injected clock's UTC calendar date, 2026-09-17 (inclusive), starts
+	// 2026-09-11 — the same days-1 convention the Google/Reddit/Meta monitor dispatchers share.
+	// If `.UTC()` were dropped, both dates would instead render as the 18th/12th (the clock's
+	// AEST calendar date), so this pins the normalization rather than merely being consistent
+	// with it.
 	if !strings.Contains(analyticsURI, restLiDate(time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC))) {
-		t.Errorf("adAnalytics request URI = %s, want it to contain the start date derived from the injected clock", analyticsURI)
+		t.Errorf("adAnalytics request URI = %s, want it to contain the UTC-normalized start date", analyticsURI)
 	}
-	if !strings.Contains(analyticsURI, restLiDate(fixedNow)) {
-		t.Errorf("adAnalytics request URI = %s, want it to contain the end date derived from the injected clock", analyticsURI)
+	if !strings.Contains(analyticsURI, restLiDate(time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC))) {
+		t.Errorf("adAnalytics request URI = %s, want it to contain the UTC-normalized end date", analyticsURI)
+	}
+	if strings.Contains(analyticsURI, restLiDate(time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC))) {
+		t.Errorf("adAnalytics request URI = %s, contains the AEST calendar date (18th) — the UTC normalization is not being exercised", analyticsURI)
 	}
 }

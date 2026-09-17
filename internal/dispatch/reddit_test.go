@@ -1178,3 +1178,29 @@ func TestReddit_AuthorPostFailurePersistsCreatedDegraded(t *testing.T) {
 		t.Errorf("persisted status = %q, want %q: the campaign owns no ad, so a clean status would let idempotency freeze an ad-less campaign as a success", camp.Status, campaignStatusCreatedDegraded)
 	}
 }
+
+// TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the guard at
+// reddit.go:469: a shape-invalid account id must surface as domain.ErrAccountIDMalformed (a
+// clean 400), not fall through to the default 503 arm — this endpoint's design attribute has
+// no Pattern (see design/connection.go) the way LinkedIn/Meta's do.
+//
+// An empty id is used deliberately: resolveMonitorClient's own mismatch guard
+// (want != "" && got != "" && want != got) only fires for a NONEMPTY, DIFFERENT id, so an
+// empty one reaches ListAccountCampaigns' own accountIDRe check untouched — proving this is
+// the shape guard, not the unrelated foreign-account guard next to it. No token or API server
+// is wired: the shape check runs before any request.Client.ListAccountCampaigns.
+func TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "", 30)
+	if err == nil {
+		t.Fatal("expected an error for a malformed (empty) account id")
+	}
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
+	}
+	if !errors.Is(err, reddit.ErrInvalidCampaignID) {
+		t.Errorf("expected err to still wrap reddit.ErrInvalidCampaignID, got: %v", err)
+	}
+}

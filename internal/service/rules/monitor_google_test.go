@@ -217,8 +217,8 @@ func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("got %d rows, want 2 — a FetchFailed row must still be returned: %+v", len(out), out)
 	}
-	if !out[0].Metrics.FetchFailed || out[0].PacingLabel != model.MonitorPacingNormal {
-		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and pacing label left at normal (unevaluated)", out[0])
+	if !out[0].Metrics.FetchFailed || !out[0].Metrics.PacingUnknown {
+		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and PacingUnknown=true — a failed fetch must not report a computed pacing verdict", out[0])
 	}
 	for _, it := range items {
 		if it.CampaignID == "1" {

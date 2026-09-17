@@ -63,6 +63,7 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		// still returned in the campaigns array (the caller sees it and its FetchFailed flag),
 		// just with pacing/action-item evaluation skipped.
 		if m.FetchFailed {
+			m.PacingUnknown = true
 			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
 			continue
 		}

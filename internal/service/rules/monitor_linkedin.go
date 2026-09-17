@@ -50,6 +50,7 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 		// not be run through pacing/action-item evaluation, which would fabricate a finding
 		// against data this port never actually read.
 		if m.FetchFailed {
+			m.PacingUnknown = true
 			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
 			continue
 		}

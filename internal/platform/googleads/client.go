@@ -603,6 +603,24 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // the resource path.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// ErrNotACustomerID reports that a caller-supplied account id is not a digits-only Google
+// Ads customer id, so no request naming it should be built. Exported so a caller reached
+// directly by an untrusted account id (e.g. the account-monitor dispatcher, which has no
+// design-layer Pattern to reuse the way LinkedIn/Meta do — see design/connection.go) can
+// validate and classify before this client is invoked at all, rather than surfacing
+// gaqlSearchForCustomer's own unsentineled error as an opaque upstream failure.
+var ErrNotACustomerID = errors.New("google-ads: not a customer id")
+
+// ValidateCustomerID reports whether customerID is a digits-only Google Ads customer id,
+// the same shape customerIDRE enforces just below. Returns nil when valid, ErrNotACustomerID
+// otherwise.
+func ValidateCustomerID(customerID string) error {
+	if !customerIDRE.MatchString(customerID) {
+		return fmt.Errorf("%w: %q (must be digits only, no dashes)", ErrNotACustomerID, customerID)
+	}
+	return nil
+}
+
 // CustomerID reports the ad account (customer) id this client is bound to. Exposed so a
 // caller holding a campaign created under a KNOWN customer can verify the connection it just
 // resolved still points at that same account before issuing an account-scoped request —

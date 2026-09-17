@@ -63,6 +63,15 @@ window is the second: the BFF's `getMetaAnalytics` hardcoded
 not a threshold/labeling quirk, so the port renders an explicit
 `time_range` from the caller's `days` instead.
 
+A third, caught by local review rather than the differential diff: the Meta
+client's monitor path originally read the bare wall clock (`time.Now()`)
+rather than the client's injected clock to compute that `time_range`,
+making the request non-deterministic and untestable — LinkedIn's equivalent
+`monitor.go` path already used the injected clock. Fixed in `1061e662` to
+read the injected clock, with a test (`internal/platform/meta/monitor_test.go`)
+pinning the request against a fixed clock the way LinkedIn's
+`monitor_test.go` does.
+
 ## Correctness bugs found during local differential verification
 
 Local OLD-vs-NEW verification (Google only, so far) surfaced three real port
@@ -108,6 +117,20 @@ unreviewed shape decision rather than a port of an existing one. LinkedIn
 same patterns their existing `*ConnectionConfig` types already enforce — the
 regex itself already rejects an empty string, so a separate `MinLength(1)`
 would be redundant there.
+
+Google and Reddit's `MinLength`/`MaxLength`-only attributes still admit a
+malformed-but-nonempty id (e.g. `"abc"` for Google, which is digits-only
+upstream) past Goa entirely, unlike LinkedIn/Meta's `Pattern`, which refuses
+it at the HTTP boundary. Rather than leave that id to reach
+`gaqlSearchForCustomer`'s or Reddit's own unsentineled shape error —
+which `classifyDiscoveryError`'s default arm maps to an opaque 503 — each
+dispatcher's `ListAccountCampaignMetrics` now validates the shape itself
+(`googleads.ValidateCustomerID`; Reddit's existing `accountIDRe` check inside
+`ListAccountCampaigns`) and wraps the failure in a new sentinel,
+`domain.ErrAccountIDMalformed`, which `classifyDiscoveryError` maps to 400.
+Net effect: all four platforms now answer a malformed id with a clean 400 —
+LinkedIn and Meta at the design layer (Goa never calls the handler), Google
+and Reddit at the dispatcher layer (the handler runs, then refuses).
 
 ## Correctness bugs found during PR review
 
