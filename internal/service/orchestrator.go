@@ -2066,6 +2066,19 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	return rows, nil
 }
 
+// errAccountTotalsContractViolation wraps ReadAccountTotals' nil-result contract-violation
+// error, unlike the repo's other seven "(nil, nil) is a contract violation" sites (see the
+// grep for "returned a nil result with no error"): those all fold into a generic upstream-
+// failure path with no severity distinction, but this one's sole caller
+// (connection_monitor.go's monitorAccount) treats any non-nil error from this function as a
+// routine, WARN-level reason to serve the row-summed fallback — the same log line an ordinary
+// timeout or 500 gets. A broken AccountTotalsReader adapter is not that: it deserves an
+// ERROR-level log distinct from "Reddit's API had a bad day," so this sentinel exists solely
+// to let the caller tell the two apart. It is deliberately unexported and local to this one
+// return path rather than a case added to unusableConnectionReason's fixed vocabulary
+// (connection.go), which classifies credential/connection failures, not adapter defects.
+var errAccountTotalsContractViolation = errors.New("account totals reader returned a nil result with no error")
+
 // ReadAccountTotals reads accountID's separately-fetched monitor totals when platform's
 // dispatcher implements AccountTotalsReader, reporting ok=false (with a nil error) when it
 // does not — that is NOT a failure, it means the caller should fall back to summing the rows
@@ -2092,7 +2105,7 @@ func (o *Orchestrator) ReadAccountTotals(ctx context.Context, projectID string, 
 		return nil, true, rerr
 	}
 	if totals == nil {
-		return nil, true, fmt.Errorf("%s account totals reader returned a nil result with no error", platform)
+		return nil, true, fmt.Errorf("%s: %w", platform, errAccountTotalsContractViolation)
 	}
 	return totals, true, nil
 }

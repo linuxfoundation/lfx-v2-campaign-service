@@ -1733,9 +1733,7 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 	var accountID string
 	{
 		accountID = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
-		if utf8.RuneCountInString(accountID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
-		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
 		if utf8.RuneCountInString(accountID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
 		}
@@ -1894,9 +1892,7 @@ func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorR
 	var accountID string
 	{
 		accountID = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountID
-		if utf8.RuneCountInString(accountID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
-		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[A-Za-z0-9_]+$"))
 		if utf8.RuneCountInString(accountID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
 		}

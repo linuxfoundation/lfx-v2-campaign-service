@@ -11840,11 +11840,12 @@ func unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnecti
 // from a value of type *AccountMonitorTotalsResponseBody.
 func unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(v *AccountMonitorTotalsResponseBody) *lfxv2campaignserviceconnections.AccountMonitorTotals {
 	res := &lfxv2campaignserviceconnections.AccountMonitorTotals{
-		Spend:         *v.Spend,
-		Impressions:   *v.Impressions,
-		Clicks:        *v.Clicks,
-		Conversions:   *v.Conversions,
-		CampaignCount: *v.CampaignCount,
+		Spend:           *v.Spend,
+		Impressions:     *v.Impressions,
+		Clicks:          *v.Clicks,
+		Conversions:     *v.Conversions,
+		CampaignCount:   *v.CampaignCount,
+		DerivedFromRows: *v.DerivedFromRows,
 	}
 
 	return res

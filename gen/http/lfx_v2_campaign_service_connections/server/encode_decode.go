@@ -8049,9 +8049,7 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if accountID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
 		}
-		if utf8.RuneCountInString(accountID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
-		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
 		if utf8.RuneCountInString(accountID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
 		}
@@ -8560,9 +8558,7 @@ func DecodeMonitorRedditAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if accountID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
 		}
-		if utf8.RuneCountInString(accountID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
-		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[A-Za-z0-9_]+$"))
 		if utf8.RuneCountInString(accountID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
 		}
@@ -9070,11 +9066,12 @@ func marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMoni
 // type *lfxv2campaignserviceconnections.AccountMonitorTotals.
 func marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorTotals) *AccountMonitorTotalsResponseBody {
 	res := &AccountMonitorTotalsResponseBody{
-		Spend:         v.Spend,
-		Impressions:   v.Impressions,
-		Clicks:        v.Clicks,
-		Conversions:   v.Conversions,
-		CampaignCount: v.CampaignCount,
+		Spend:           v.Spend,
+		Impressions:     v.Impressions,
+		Clicks:          v.Clicks,
+		Conversions:     v.Conversions,
+		CampaignCount:   v.CampaignCount,
+		DerivedFromRows: v.DerivedFromRows,
 	}
 
 	return res

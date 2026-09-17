@@ -2856,7 +2856,7 @@ paths:
                   required: true
                   type: string
                   maxLength: 64
-                  minLength: 1
+                  pattern: ^[0-9]+$
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -6225,7 +6225,7 @@ paths:
                   required: true
                   type: string
                   maxLength: 64
-                  minLength: 1
+                  pattern: ^[A-Za-z0-9_]+$
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -7756,6 +7756,7 @@ definitions:
                 campaign_count: 14
                 clicks: 11420
                 conversions: 212.5
+                derived_from_rows: false
                 impressions: 184200
                 spend: 1842.55
         required:
@@ -8029,6 +8030,10 @@ definitions:
                 description: Account-wide conversions over the window.
                 example: 212.5
                 format: double
+            derived_from_rows:
+                type: boolean
+                description: True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call failed or is unsupported, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.
+                example: false
             impressions:
                 type: integer
                 description: Account-wide impressions over the window.
@@ -8043,6 +8048,7 @@ definitions:
             campaign_count: 14
             clicks: 11420
             conversions: 212.5
+            derived_from_rows: false
             impressions: 184200
             spend: 1842.55
         required:
@@ -8051,6 +8057,7 @@ definitions:
             - clicks
             - conversions
             - campaign_count
+            - derived_from_rows
     Audience:
         title: Audience
         type: object

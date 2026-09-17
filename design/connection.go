@@ -993,7 +993,8 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
 	Attribute("conversions", Float64, "Account-wide conversions over the window.", func() { Example(212.5) })
 	Attribute("campaign_count", Int, "How many campaigns the totals reflect.", func() { Example(14) })
-	Required("spend", "impressions", "clicks", "conversions", "campaign_count")
+	Attribute("derived_from_rows", Boolean, "True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call failed or is unsupported, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.", func() { Example(false) })
+	Required("spend", "impressions", "clicks", "conversions", "campaign_count", "derived_from_rows")
 })
 
 // AccountMonitor is the account-scoped monitor read result, shared across all four
@@ -1593,7 +1594,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			bearerToken()
 			projectIDAttr()
 			Attribute("account_id", String, "The Google Ads account to read.", func() {
-				MinLength(1)
+				Pattern(`^[0-9]+$`)
 				MaxLength(64)
 				Example("8666746580")
 			})
@@ -1708,7 +1709,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			bearerToken()
 			projectIDAttr()
 			Attribute("account_id", String, "The Reddit advertiser account to read.", func() {
-				MinLength(1)
+				Pattern(`^[A-Za-z0-9_]+$`)
 				MaxLength(64)
 				Example("t2_gv9wtbfa")
 			})

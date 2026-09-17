@@ -45,8 +45,15 @@ func validateMonitorDays(days int) error {
 // account-wide totals are derived (model.AccountMonitorTotals' own doc comment). A FetchFailed
 // row contributes its zero-value numeric fields, which is a no-op on the sum — it is not
 // specially excluded, because there is no correct non-zero contribution to substitute.
-func monitorTotalsFallback(rows []model.AccountCampaignMetrics) *model.AccountMonitorTotals {
-	t := &model.AccountMonitorTotals{CampaignCount: len(rows)}
+//
+// derived controls DerivedFromRows on the result and must be true only when this sum stands in
+// for a platform-native figure that was expected but unavailable — i.e. only ever for Reddit
+// (the one platform with its own AccountTotalsReader) when that call failed. For every other
+// platform this sum is not a stand-in, it IS the documented contract (see
+// model.AccountMonitorTotals), so the caller must pass false there even though the arithmetic
+// is identical.
+func monitorTotalsFallback(rows []model.AccountCampaignMetrics, derived bool) *model.AccountMonitorTotals {
+	t := &model.AccountMonitorTotals{CampaignCount: len(rows), DerivedFromRows: derived}
 	for _, r := range rows {
 		t.Spend += r.Spend
 		t.Impressions += r.Impressions
@@ -114,11 +121,12 @@ func toConnAccountMonitorActionItems(items []model.AccountMonitorActionItem) []*
 // toConnAccountMonitorTotals converts the domain totals to the generated response type.
 func toConnAccountMonitorTotals(t *model.AccountMonitorTotals) *conn.AccountMonitorTotals {
 	return &conn.AccountMonitorTotals{
-		Spend:         t.Spend,
-		Impressions:   t.Impressions,
-		Clicks:        t.Clicks,
-		Conversions:   t.Conversions,
-		CampaignCount: t.CampaignCount,
+		Spend:           t.Spend,
+		Impressions:     t.Impressions,
+		Clicks:          t.Clicks,
+		Conversions:     t.Conversions,
+		CampaignCount:   t.CampaignCount,
+		DerivedFromRows: t.DerivedFromRows,
 	}
 }
 
@@ -167,11 +175,22 @@ func (s *ConnectionService) monitorAccount(
 	// come from whatever that implementation actually returned, not from rows.
 	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(rows))
 	if terr != nil {
-		if errors.Is(terr, domain.ErrConnectionNotUsable) {
-			// terr can carry ErrConnectionNotUsable, whose detection path decodes a decrypted
-			// credential blob — neither the cause nor its text may leave this function (see
-			// classifyDiscoveryError's ErrConnectionNotUsable arm in connection.go). Log the
-			// fixed-vocabulary reason instead.
+		if errors.Is(terr, errAccountTotalsContractViolation) {
+			// A broken AccountTotalsReader adapter, not an ordinary upstream failure — see
+			// errAccountTotalsContractViolation's doc comment. Logged at ERROR so it doesn't
+			// blend into the routine WARN-level fallback traffic below; the row-summed
+			// fallback is still served, since the campaign rows above already succeeded.
+			slog.ErrorContext(ctx, "account totals reader violated its contract; serving the row-summed fallback",
+				"error", terr, "project_id", projectID, "platform", platform)
+		} else if errors.Is(terr, domain.ErrConnectionNotUsable) ||
+			errors.Is(terr, domain.ErrCredentialDecryptionFailed) ||
+			errors.Is(terr, domain.ErrServiceDefect) {
+			// terr can carry ErrConnectionNotUsable, ErrCredentialDecryptionFailed, or
+			// ErrServiceDefect — all three have detection/classification paths that touch a
+			// decrypted credential blob, so neither the cause nor its text may leave this
+			// function (see classifyDiscoveryError's arms in connection.go). Log the
+			// fixed-vocabulary reason instead; unusableConnectionReason has no case for the
+			// latter two and safely falls through to "unclassified" for them.
 			slog.WarnContext(ctx, "account totals read failed; serving the row-summed fallback",
 				"reason", unusableConnectionReason(terr), "project_id", projectID, "platform", platform)
 		} else {
@@ -192,7 +211,13 @@ func (s *ConnectionService) monitorAccount(
 		for i, r := range rows {
 			filteredMetrics[i] = r.Metrics
 		}
-		totals = monitorTotalsFallback(filteredMetrics)
+		// Only Reddit's dispatcher implements AccountTotalsReader (see ReadAccountTotals'
+		// doc comment); every other platform reaches this branch via the !ok-with-nil-err
+		// path above on EVERY request, not on failure, because it has no such capability —
+		// for them this sum IS the contractual figure, not a stand-in. Reddit reaches this
+		// branch only when its own independent totals call actually failed, so only there is
+		// the sum a derived substitute for a platform-native number that was expected.
+		totals = monitorTotalsFallback(filteredMetrics, platform == model.ProviderRedditAds)
 	}
 
 	connCampaigns := make([]*conn.AccountMonitorCampaign, 0, len(rows))

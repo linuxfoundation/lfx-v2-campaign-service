@@ -141,6 +141,13 @@ type AccountMonitorTotals struct {
 	Clicks        int64
 	Conversions   float64
 	CampaignCount int
+	// DerivedFromRows is true only when these totals are the row-summed fallback
+	// (monitorTotalsFallback) rather than the platform's own account-wide figure — see that
+	// function's doc comment. Every platform but Reddit always sets it false: their totals
+	// ARE a row sum by design, so "derived" carries no information for them. For Reddit it
+	// distinguishes the platform's own independent account-level number from a stand-in
+	// computed here because that call failed or is unsupported.
+	DerivedFromRows bool
 }
 
 // AccountMonitorRow wraps one AccountCampaignMetrics with rule-engine output, in the shape

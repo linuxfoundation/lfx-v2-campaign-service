@@ -485,6 +485,12 @@ type AccountMonitorTotals struct {
 	Conversions float64
 	// How many campaigns the totals reflect.
 	CampaignCount int
+	// True when these totals are a sum of the returned campaigns array rather than
+	// the platform's own account-wide figure. Always false except on a Reddit read
+	// whose separate account-totals call failed or is unsupported, in which case
+	// the campaign rows are still authoritative but this aggregate is a derived
+	// stand-in.
+	DerivedFromRows bool
 }
 
 type CampaignRef struct {

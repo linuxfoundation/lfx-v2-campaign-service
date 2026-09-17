@@ -195,6 +195,10 @@ func TestMonitorAccount_FallsBackToRowSumTotals(t *testing.T) {
 	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
 		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, campaignCount=1)", result.Totals)
 	}
+	if result.Totals.DerivedFromRows {
+		t.Errorf("DerivedFromRows = true, want false: for every platform but Reddit this row sum " +
+			"IS the contractual totals figure, not a stand-in for one that failed")
+	}
 }
 
 // mockAccountTotalsReaderDispatcher additionally implements AccountTotalsReader, so a test can
@@ -203,11 +207,18 @@ func TestMonitorAccount_FallsBackToRowSumTotals(t *testing.T) {
 type mockAccountTotalsReaderDispatcher struct {
 	mockAccountMetricsReaderDispatcher
 	totalsErr error
+	// totalsNilResult drives the Orchestrator.ReadAccountTotals contract-violation path: a
+	// dispatcher returning (nil, nil), the same broken-adapter shape ReadAccountCampaignMetrics
+	// and every sibling reader guard against.
+	totalsNilResult bool
 }
 
 func (m *mockAccountTotalsReaderDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
 	if m.totalsErr != nil {
 		return nil, m.totalsErr
+	}
+	if m.totalsNilResult {
+		return nil, nil
 	}
 	return &model.AccountMonitorTotals{Spend: 999, Impressions: 999, Clicks: 999, CampaignCount: 999}, nil
 }
@@ -245,5 +256,49 @@ func TestMonitorAccount_TotalsReaderErrorFallsBackToRowSum(t *testing.T) {
 	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
 		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, "+
 			"campaignCount=1), not the platform's own (999) totals since that call failed", result.Totals)
+	}
+	if !result.Totals.DerivedFromRows {
+		t.Errorf("DerivedFromRows = false, want true: Reddit's own account-wide totals call failed, " +
+			"so this row sum stands in for a platform-native figure that was expected but unavailable")
+	}
+}
+
+// TestMonitorAccount_ContractViolationFallsBackToRowSum pins the fix for general reviewer's
+// finding #3: when ReadAccountTotals' own dispatcher adapter is broken — it returns (nil, nil)
+// instead of a real result or error — that must not be logged the same way as an ordinary
+// upstream failure (ErrConnectionNotUsable, a timeout, a 500). It is still non-fatal to the
+// endpoint (the campaign rows and action items already succeeded), so it still falls back to
+// the row sum, but errAccountTotalsContractViolation must be identifiable via errors.Is so the
+// caller can log it at ERROR rather than folding it into the routine WARN-level path.
+func TestMonitorAccount_ContractViolationFallsBackToRowSum(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderRedditAds: &mockAccountTotalsReaderDispatcher{
+				mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{
+					rows: []model.AccountCampaignMetrics{
+						{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", Spend: 50, Impressions: 100, Clicks: 5},
+					},
+				},
+				totalsNilResult: true,
+			},
+		},
+	})
+
+	result, err := svc.MonitorRedditAdsAccount(context.Background(),
+		&conn.MonitorRedditAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+	if err != nil {
+		t.Fatalf("MonitorRedditAdsAccount failed: %T: %v — a broken AccountTotalsReader adapter must "+
+			"still fall back to the row sum, not abort the endpoint", err, err)
+	}
+	if result.Totals == nil {
+		t.Fatalf("expected non-nil totals from the row-sum fallback")
+	}
+	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
+		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, campaignCount=1)", result.Totals)
+	}
+	if !result.Totals.DerivedFromRows {
+		t.Errorf("DerivedFromRows = false, want true: Reddit's own totals reader is what returned the " +
+			"contract violation, so this row sum stands in for a platform-native figure that was expected")
 	}
 }

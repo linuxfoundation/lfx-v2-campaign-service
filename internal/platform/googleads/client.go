@@ -605,10 +605,12 @@ var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // ErrNotACustomerID reports that a caller-supplied account id is not a digits-only Google
 // Ads customer id, so no request naming it should be built. Exported so a caller reached
-// directly by an untrusted account id (e.g. the account-monitor dispatcher, which has no
-// design-layer Pattern to reuse the way LinkedIn/Meta do — see design/connection.go) can
-// validate and classify before this client is invoked at all, rather than surfacing
-// gaqlSearchForCustomer's own unsentineled error as an opaque upstream failure.
+// directly by an untrusted account id (e.g. the account-monitor dispatcher) can validate and
+// classify before this client is invoked at all, rather than surfacing gaqlSearchForCustomer's
+// own unsentineled error as an opaque upstream failure. The account-monitor method's
+// design-layer Pattern (design/connection.go) enforces this same shape at the transport, but
+// this check stays here too: a non-HTTP caller of this package skips Goa's validation
+// entirely, and the two must be widened together if the shape ever changes.
 var ErrNotACustomerID = errors.New("google-ads: not a customer id")
 
 // ValidateCustomerID reports whether customerID is a digits-only Google Ads customer id,
