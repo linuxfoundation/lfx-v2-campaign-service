@@ -11,12 +11,11 @@ import (
 // monitor_linkedin.go, monitor_meta.go, monitor_reddit.go) return, unevaluated, for a campaign
 // whose per-campaign metrics fetch failed upstream (m.FetchFailed == true).
 //
-// The Google branch is currently unreachable in production: Google's GAQL read is all-or-nothing
-// (internal/platform/googleads has no per-campaign partial-failure mode, so nothing ever sets
-// FetchFailed on a Google row), unlike LinkedIn/Meta/Reddit which do have one. It is kept for
-// defensive symmetry across the four loops and to be ready the day Google's client gains a
-// per-campaign failure signal — see the branch's own comment in monitor_google.go and its test's
-// comment in monitor_google_test.go, both of which say so explicitly (round-15 review).
+// The Google branch is reachable: internal/platform/googleads.ListAccountCampaigns sets
+// FetchFailed on a row whose GAQL metrics fields (impressions/clicks/costMicros) fail to parse
+// (monitor.go:133-141, round-19 review) — see the branch's own comment in monitor_google.go and
+// TestListAccountCampaigns_MalformedMetrics_MarksFetchFailed in
+// internal/platform/googleads/monitor_test.go.
 //
 // A FetchFailed row's numeric fields are left at their platform-reported zero value (see
 // AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc

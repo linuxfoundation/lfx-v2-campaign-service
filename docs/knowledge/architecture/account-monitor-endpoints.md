@@ -237,6 +237,24 @@ every foundation, so the fix closes the system-fallback gap but cannot make
 the endpoint project-scoped in the way LinkedIn/Meta/Reddit's per-project ad
 accounts are.
 
+### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
+
+The `resolveOwned*` resolvers above never consult `forceSystemPaidAds`
+(`internal/dispatch/creds.go`) — deliberately: an account-monitor read must
+never answer with another tenant's spend, so it resolves only the project's
+own connection regardless of that flag. In a deployment running with
+`LFX_FORCE_SYSTEM_ADS_ACCOUNT=true` this means monitor reads behave
+differently from the create path on the same project: a project with no
+connection of its own still gets the endpoint's ordinary no-connection
+404 rather than falling through to the system account the create path uses,
+and a project WITH its own connection resolves credentials for its own
+account, which will not see campaigns actually living on the forced system
+account (for Reddit specifically, the account-id equality check turns this
+into a 400 `ErrAccountNotManagedByConnection` instead). Neither outcome is a
+monitor-endpoint bug — read it as this flag's forced-system deployments
+trading monitor visibility for the create path's convenience, not as a
+regression to chase (round-19 review).
+
 ## Correctness bugs found during PR review
 
 Three more real defects, caught by automated PR review rather than the

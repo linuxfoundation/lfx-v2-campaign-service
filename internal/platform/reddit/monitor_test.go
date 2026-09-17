@@ -77,9 +77,7 @@ func TestListAccountCampaigns_BoundsReportConcurrency(t *testing.T) {
 
 	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
 
-	start := time.Now()
 	rows, err := c.ListAccountCampaigns(context.Background(), testAccount.AccountID, 7)
-	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("ListAccountCampaigns: %v", err)
 	}
@@ -92,12 +90,10 @@ func TestListAccountCampaigns_BoundsReportConcurrency(t *testing.T) {
 		}
 	}
 
-	// A fully serial loop would need numCampaigns*perRequestDelay; bounded concurrency at
-	// monitorReportConcurrency needs only ceil(numCampaigns/monitorReportConcurrency) batches.
-	serialWorstCase := time.Duration(numCampaigns) * perRequestDelay
-	if elapsed >= serialWorstCase {
-		t.Errorf("ListAccountCampaigns took %v, want well under the serial worst case %v — bounded concurrency does not appear to be in effect", elapsed, serialWorstCase)
-	}
+	// maxInFlight is the deterministic proof of boundedness: perRequestDelay only needs to hold
+	// each request open long enough for concurrent ones to pile up, never compared against a
+	// wall-clock budget (a fixed elapsed-time assertion here would be a flake waiting to happen
+	// under a loaded `go test -race` run — round-19 review).
 	if got := maxInFlight.Load(); got > int64(monitorReportConcurrency) {
 		t.Errorf("max concurrent /reports requests = %d, want <= %d (monitorReportConcurrency)", got, monitorReportConcurrency)
 	}
