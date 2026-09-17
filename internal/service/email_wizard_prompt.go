@@ -250,6 +250,13 @@ to HubSpot) rather than claiming you have made it.
 
 Reply with prose only -- no JSON and no markdown fencing. Keep it under 200 words.`
 
+	_, user := composeWizardChatPromptBody(f, draft, history, message)
+	return systemPrompt, trimChatPromptToBudget(systemPrompt, user, history, f, draft, message)
+}
+
+// composeWizardChatPromptBody builds the user half. Split out so the budget trim can rebuild
+// it with fewer history turns rather than string-surgering a finished prompt.
+func composeWizardChatPromptBody(f wizardPromptFacts, draft wizardChatDraft, history []wizardTurnText, message string) (string, string) {
 	var b strings.Builder
 	b.WriteString("Event facts:\n")
 	b.WriteString(f.factBlock())
@@ -272,7 +279,38 @@ Reply with prose only -- no JSON and no markdown fencing. Keep it under 200 word
 		}
 	}
 	fmt.Fprintf(&b, "\noperator: %s\n", truncateString(message, maxWizardChatMessage))
-	return systemPrompt, b.String()
+	return "", b.String()
+}
+
+// trimChatPromptToBudget enforces maxWizardComposedPromptSize on a chat turn.
+//
+// generateWizardVariant checks that budget and REJECTS on overflow, which is right there: what
+// overflows is a compiled-in template, so a failure names a service bug. Chat is the opposite —
+// the history is the caller's, twelve retained turns at maxWizardChatMessage each can reach
+// 48,000 runes against a 24,000 budget, and refusing the turn would turn a service-owned limit
+// into an error the operator cannot act on except by starting over.
+//
+// So it degrades the way the history is already documented to degrade: oldest turns dropped
+// first, until it fits. The facts, the draft and the operator's current message are never
+// dropped — those are what the turn is about.
+func trimChatPromptToBudget(systemPrompt, userPrompt string, history []wizardTurnText, f wizardPromptFacts, draft wizardChatDraft, message string) string {
+	fits := func(u string) bool {
+		return utf8.RuneCountInString(systemPrompt)+utf8.RuneCountInString(u) <= maxWizardComposedPromptSize
+	}
+	if fits(userPrompt) {
+		return userPrompt
+	}
+	for i := 1; i <= len(history); i++ {
+		_, candidate := composeWizardChatPromptBody(f, draft, history[i:], message)
+		if fits(candidate) {
+			return candidate
+		}
+	}
+	// Even with no history at all it does not fit, so the overflow is the facts or the draft
+	// rather than the conversation. Truncating the whole user prompt keeps the turn answerable
+	// on a bounded prompt instead of failing it.
+	_, bare := composeWizardChatPromptBody(f, draft, nil, message)
+	return truncateString(bare, maxWizardComposedPromptSize-utf8.RuneCountInString(systemPrompt))
 }
 
 // wizardTurnText is one prior turn, reduced to what a prompt needs.
