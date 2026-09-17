@@ -137,6 +137,11 @@ func TestMonitorAccount_ClassifiesDiscoveryError(t *testing.T) {
 		// gives that dispatcher-level rejection a clean 400 instead of falling through to the
 		// default 503 arm a plain unsentineled dispatcher error would land on.
 		{"malformed account id maps to 400", domain.ErrAccountIDMalformed, "400"},
+		// Same rationale as the account_id row above, for days: every dispatcher re-checks the
+		// design attribute's 7..90 Minimum/Maximum itself, as defense-in-depth for a non-HTTP
+		// caller that bypasses Goa; this classifier is what gives that rejection a clean 400
+		// instead of the default 503 arm.
+		{"invalid days maps to 400", domain.ErrMonitorDaysInvalid, "400"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

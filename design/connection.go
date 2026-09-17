@@ -37,6 +37,18 @@ var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
 
+// monitorDaysMin and monitorDaysMax are the account-monitor `days` attribute's
+// inclusive bound, shared by all four provider monitor methods so the pair can't
+// drift between them. This file defines the API contract only (see the package
+// doc) and deliberately does not import internal/domain's mirrored
+// MonitorDaysMin/MonitorDaysMax — internal/apivalidation/monitor_account_id_drift_test.go
+// drives the generated decoders from those runtime constants to catch the two
+// copies drifting apart instead.
+const (
+	monitorDaysMin = 7
+	monitorDaysMax = 90
+)
+
 // ─── Shared attribute helpers ───
 
 // bearerToken declares the JWT bearer token attribute on a payload.
@@ -1599,8 +1611,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Example("8666746580")
 			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
-				Minimum(7)
-				Maximum(90)
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
 				Example(30)
 			})
 			Required("project_id", "account_id", "days")
@@ -1637,8 +1649,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Example("512345678")
 			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
-				Minimum(7)
-				Maximum(90)
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
 				Example(30)
 			})
 			Required("project_id", "account_id", "days")
@@ -1675,8 +1687,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Example("act_8666746580")
 			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
-				Minimum(7)
-				Maximum(90)
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
 				Example(30)
 			})
 			Required("project_id", "account_id", "days")
@@ -1714,8 +1726,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Example("t2_gv9wtbfa")
 			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
-				Minimum(7)
-				Maximum(90)
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
 				Example(30)
 			})
 			Required("project_id", "account_id", "days")

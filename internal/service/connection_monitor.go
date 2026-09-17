@@ -35,8 +35,8 @@ var redditAdsAccountDiscovery = accountDiscovery{
 // drift this repo's rules exist to prevent, and a non-HTTP caller does not go through Goa's
 // generated validation at all.
 func validateMonitorDays(days int) error {
-	if days < 7 || days > 90 {
-		return &conn.BadRequestError{Code: "400", Message: "days must be between 7 and 90"}
+	if days < domain.MonitorDaysMin || days > domain.MonitorDaysMax {
+		return &conn.BadRequestError{Code: "400", Message: domain.ErrMonitorDaysInvalid.Error()}
 	}
 	return nil
 }

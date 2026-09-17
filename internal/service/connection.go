@@ -437,7 +437,7 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// domain.ErrMonitorDaysInvalid's doc comment for why the dispatchers re-check this
 		// themselves even though the service layer's validateMonitorDays already rejects it
 		// for an HTTP caller.
-		return &conn.BadRequestError{Code: "400", Message: "days must be between 7 and 90"}
+		return &conn.BadRequestError{Code: "400", Message: domain.ErrMonitorDaysInvalid.Error()}
 	default:
 		slog.WarnContext(ctx, d.label()+" failed upstream",
 			"project_id", projectID, "provider", string(d.provider), "error", aerr)

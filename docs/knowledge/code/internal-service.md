@@ -721,6 +721,12 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   request is already refused by the design attribute's own `Pattern` before the handler runs. See
   `domain.ErrAccountIDMalformed`'s doc comment and
   [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md).
+- `ErrMonitorDaysInvalid` → **400** — a caller-supplied `days` window, not a stored connection, is
+  outside the inclusive `domain.MonitorDaysMin`..`domain.MonitorDaysMax` bound. The service layer's
+  own `validateMonitorDays` already rejects this for an HTTP caller before any dispatcher runs, and
+  each of the four account-monitor dispatchers re-checks it themselves too — same defense-in-depth
+  rationale as `ErrAccountIDMalformed` above, for a non-HTTP caller that bypasses Goa. See
+  `domain.ErrMonitorDaysInvalid`'s doc comment.
 - Anything else → **503** — the platform was reached and did not answer.
 
 **`account_not_selected` is the one reason in that vocabulary that is not a fault.** Every other

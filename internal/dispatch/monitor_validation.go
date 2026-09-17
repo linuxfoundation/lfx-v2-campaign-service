@@ -11,7 +11,7 @@ import "github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 // Validate*AccountID call, rather than trusted from the caller. Shared by all four account-monitor
 // dispatchers because they live in this one package.
 func validateMonitorDays(days int) error {
-	if days < 7 || days > 90 {
+	if days < domain.MonitorDaysMin || days > domain.MonitorDaysMax {
 		return domain.ErrMonitorDaysInvalid
 	}
 	return nil

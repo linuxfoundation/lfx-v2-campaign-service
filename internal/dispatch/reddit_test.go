@@ -1209,3 +1209,21 @@ func TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.
 		t.Errorf("expected err to still wrap reddit.ErrInvalidAccountID, got: %v", err)
 	}
 }
+
+// TestReddit_ListAccountCampaignMetrics_RejectsInvalidDays is days' sibling of the
+// malformed-account-id test above: validateMonitorDays (internal/dispatch/monitor_validation.go)
+// runs right after ValidateAccountID, before resolveMonitorClient or any credential decrypt, as
+// defense-in-depth for the same non-HTTP-caller bypass — an ordinary HTTP request is already
+// refused by the design attribute's own Minimum/Maximum (see design/connection.go).
+func TestReddit_ListAccountCampaignMetrics_RejectsInvalidDays(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_abc123", 0)
+	if err == nil {
+		t.Fatal("expected an error for days=0, outside the 7..90 bound")
+	}
+	if !errors.Is(err, domain.ErrMonitorDaysInvalid) {
+		t.Errorf("expected err to wrap domain.ErrMonitorDaysInvalid, got: %v", err)
+	}
+}

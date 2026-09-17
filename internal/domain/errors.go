@@ -5,7 +5,10 @@
 // errors for the campaign service. It has no infrastructure dependencies.
 package domain
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Sentinel errors returned by repositories and mapped to HTTP status codes at
 // the service/handler boundary.
@@ -671,7 +674,7 @@ var (
 	ErrAccountIDMalformed = errors.New("the account id is not valid for this platform")
 
 	// ErrMonitorDaysInvalid indicates a caller-supplied days window for an account-monitor
-	// read is outside the design layer's 7..90 inclusive bound. Maps to 400, alongside
+	// read is outside MonitorDaysMin..MonitorDaysMax. Maps to 400, alongside
 	// ErrAccountIDMalformed.
 	//
 	// The service layer's own validateMonitorDays already rejects this for an HTTP caller
@@ -682,5 +685,19 @@ var (
 	// of 0 or negative inverts the [start, end] window each dispatcher computes from it,
 	// which would otherwise surface as classifyDiscoveryError's opaque default 503 instead
 	// of a clean 400.
-	ErrMonitorDaysInvalid = errors.New("days must be between 7 and 90")
+	ErrMonitorDaysInvalid = fmt.Errorf("days must be between %d and %d", MonitorDaysMin, MonitorDaysMax)
+)
+
+// MonitorDaysMin and MonitorDaysMax are the account-monitor `days` window's inclusive
+// bound, mirrored (not imported, to keep design/ standalone — see its package doc)
+// by the four Minimum/Maximum pairs in design/connection.go's monitor attributes, and
+// consumed directly by internal/service/connection_monitor.go's and
+// internal/dispatch/monitor_validation.go's validateMonitorDays so those two runtime
+// copies cannot drift from each other or from ErrMonitorDaysInvalid's own message.
+// internal/apivalidation/monitor_account_id_drift_test.go's sibling test drives the
+// design-layer boundary from these same constants, so a change here that isn't mirrored
+// in design/connection.go fails that test instead of drifting silently.
+const (
+	MonitorDaysMin = 7
+	MonitorDaysMax = 90
 )

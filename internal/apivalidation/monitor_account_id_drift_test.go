@@ -4,12 +4,14 @@
 package apivalidation
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	connsrv "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
@@ -94,6 +96,107 @@ func TestMonitorAccountIDPatterns_MatchPlatformValidators(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestMonitorDaysBound_MatchesDomainConstants guards the `days` sibling of the account_id
+// drift test above: design/connection.go's Minimum(monitorDaysMin)/Maximum(monitorDaysMax) pair
+// (design's own named constants, deliberately not importing internal/domain — see that file's
+// doc comment) must accept and reject at exactly the same boundary as
+// domain.MonitorDaysMin/MonitorDaysMax, the constants internal/service/connection_monitor.go's
+// and internal/dispatch/monitor_validation.go's validateMonitorDays both read. Driving the real
+// generated decoder from the runtime constants means a design change that isn't mirrored fails
+// this test instead of drifting silently, exactly as the account_id test does for Pattern.
+func TestMonitorDaysBound_MatchesDomainConstants(t *testing.T) {
+	cases := []int{domain.MonitorDaysMin - 1, domain.MonitorDaysMin, domain.MonitorDaysMax, domain.MonitorDaysMax + 1}
+
+	t.Run("google ads", func(t *testing.T) {
+		decodeOK := monitorDaysDecoderChecker(t, "/connection-google-ads/account-monitor",
+			connsrv.MountMonitorGoogleAdsAccountHandler, connsrv.DecodeMonitorGoogleAdsAccountRequest)
+		for _, days := range cases {
+			designOK := decodeOK(days)
+			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax
+			if designOK != runtimeOK {
+				t.Errorf("days %d: design decoder accepts=%v, domain.MonitorDaysMin/Max bound accepts=%v — the two bounds have drifted apart", days, designOK, runtimeOK)
+			}
+		}
+	})
+
+	t.Run("linkedin", func(t *testing.T) {
+		decodeOK := monitorDaysDecoderChecker(t, "/connection-linkedin-ads/account-monitor",
+			connsrv.MountMonitorLinkedinAdsAccountHandler, connsrv.DecodeMonitorLinkedinAdsAccountRequest)
+		for _, days := range cases {
+			designOK := decodeOK(days)
+			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax
+			if designOK != runtimeOK {
+				t.Errorf("days %d: design decoder accepts=%v, domain.MonitorDaysMin/Max bound accepts=%v — the two bounds have drifted apart", days, designOK, runtimeOK)
+			}
+		}
+	})
+
+	t.Run("meta", func(t *testing.T) {
+		decodeOK := monitorDaysDecoderChecker(t, "/connection-meta-ads/account-monitor",
+			connsrv.MountMonitorMetaAdsAccountHandler, connsrv.DecodeMonitorMetaAdsAccountRequest)
+		for _, days := range cases {
+			designOK := decodeOK(days)
+			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax
+			if designOK != runtimeOK {
+				t.Errorf("days %d: design decoder accepts=%v, domain.MonitorDaysMin/Max bound accepts=%v — the two bounds have drifted apart", days, designOK, runtimeOK)
+			}
+		}
+	})
+
+	t.Run("reddit", func(t *testing.T) {
+		decodeOK := monitorDaysDecoderChecker(t, "/connection-reddit-ads/account-monitor",
+			connsrv.MountMonitorRedditAdsAccountHandler, connsrv.DecodeMonitorRedditAdsAccountRequest)
+		for _, days := range cases {
+			designOK := decodeOK(days)
+			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax
+			if designOK != runtimeOK {
+				t.Errorf("days %d: design decoder accepts=%v, domain.MonitorDaysMin/Max bound accepts=%v — the two bounds have drifted apart", days, designOK, runtimeOK)
+			}
+		}
+	})
+}
+
+// monitorDaysDecoderChecker is monitorDecoderChecker's `days`-varying twin: account_id is fixed
+// to a valid id for the given platform (via a platform-agnostic digits-only-or-act_-prefixed
+// value each of the four Pattern checks below accepts) so only days varies.
+func monitorDaysDecoderChecker[P any](
+	t *testing.T,
+	path string,
+	mount func(goahttp.Muxer, http.Handler),
+	decodeFn func(goahttp.Muxer, func(*http.Request) goahttp.Decoder) func(*http.Request) (P, error),
+) func(days int) bool {
+	t.Helper()
+	mux := goahttp.NewMuxer()
+	decode := decodeFn(mux, goahttp.RequestDecoder)
+
+	// A digits-only id satisfies every platform's Pattern except Meta's act_<digits> and
+	// Reddit's t2_<base36>, so this checker takes the account_id to use rather than guessing.
+	accountID := "123456789"
+	switch path {
+	case "/connection-meta-ads/account-monitor":
+		accountID = "act_123456789"
+	case "/connection-reddit-ads/account-monitor":
+		accountID = "t2_abc123"
+	}
+
+	var routed *http.Request
+	mount(mux, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		routed = r
+	}))
+
+	return func(days int) bool {
+		routed = nil
+		q := url.Values{"account_id": {accountID}, "days": {fmt.Sprintf("%d", days)}}
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet,
+			"/projects/cncf"+path+"?"+q.Encode(), nil))
+		if routed == nil {
+			t.Fatalf("days %d: request was not routed; the decoder would not see path params", days)
+		}
+		_, err := decode(routed)
+		return err == nil
+	}
 }
 
 // monitorDecoderChecker routes a GET request for the given account-monitor path through a real
