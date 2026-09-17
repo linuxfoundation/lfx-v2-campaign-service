@@ -45,10 +45,13 @@ run to fail immediately.
 
 `tag-selection` is hardcoded to `both` — untagged versions and tagged
 versions are both deletion candidates once past `cut-off`. `--image-tags`
-carries the negative filter `"!latest !development"`, which protects any
-package version carrying a `latest` or a `development` tag regardless of
-its other tags: release builds (`.github/workflows/ko-build-tag.yaml`) tag
-with `latest` plus version strings, and the current main build
+carries the negative filter `"!v* !latest !development"`, which protects any
+package version carrying a tag matching `v*`, `latest`, or `development`
+regardless of its other tags: release builds
+(`.github/workflows/ko-build-tag.yaml`) tag with a `vX.Y.Z` version string
+plus `latest`, so `!v*` alone already protects every release; `!latest` is
+redundant today but kept as defense in depth in case a future release build
+ever tags `latest` without a version string. The current main build
 (`.github/workflows/ko-build-main.yaml`) tags with `development`. Neither
 workflow's tags ever share a digest with a plain PR/main SHA-tagged build,
 so this excludes exactly the versions that must survive.
@@ -66,6 +69,12 @@ carries a live branch-name tag, so its current image is now a deletion
 candidate too, not just superseded commits on an active branch. This is
 treated as normal cleanup of stale PR images; `dry-run` guards the rollout
 of this wider scope (see Triggers above).
+
+Known tradeoff: `!v*` matches any tag beginning with `v`, not only
+`vX.Y.Z` version strings — a branch name like `validate-something` or
+`v2-refactor` built by `ko-build-branch.yaml` would also carry a `v`-prefixed
+tag and be permanently protected from cleanup. This is accepted as
+over-protection, the opposite failure direction from deleting a release.
 
 `snok/container-retention-policy` automatically protects multi-arch child
 manifests still referenced by a retained parent index, so multi-platform

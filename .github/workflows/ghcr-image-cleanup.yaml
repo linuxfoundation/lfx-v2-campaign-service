@@ -66,7 +66,13 @@ jobs:
         # be present, even with an empty value — confirmed by a live dry-run
         # failing with "the following required arguments were not provided:
         # --image-tags <IMAGE_TAGS>, --shas-to-skip <SHAS_TO_SKIP>" when both
-        # flags were omitted outright.
+        # flags were omitted outright. --image-tags carries three negative
+        # patterns: "!v*" is the one that actually protects every release
+        # (ko-build-tag.yaml tags each release with both a `vX.Y.Z` version
+        # string and `latest`, so `!v*` alone already covers them); "!latest"
+        # is kept anyway as defense in depth in case a future release build
+        # ever tags `latest` without a version string; "!development"
+        # protects the current main build (ko-build-main.yaml).
         env:
           RUST_LOG: container_retention_policy=INFO
         with:
@@ -75,18 +81,21 @@ jobs:
           # here — no separate PAT is needed. Requires the job-level
           # `permissions: packages: write` above.
           #
-          # --image-tags="!latest !development" protects releases and the
+          # --image-tags="!v* !latest !development" protects releases and the
           # current main build without needing to enumerate every branch
           # name: per snok/container-retention-policy's matcher semantics
           # (src/core/select_package_versions.rs::filter_by_matchers), a
           # negative pattern matching *any* tag on a package version protects
           # that whole version, regardless of its other tags. Every release
-          # build (.github/workflows/ko-build-tag.yaml) tags with `latest`
-          # plus its version strings, and the current main build
-          # (ko-build-main.yaml) tags with `development` — neither workflow's
-          # tags ever share a digest with a plain PR/main SHA-tagged build, so
-          # this excludes exactly the versions that must survive and nothing
-          # else. Everything else tagged (per-commit SHA + a branch name from
+          # build (.github/workflows/ko-build-tag.yaml) tags with its version
+          # string (`vX.Y.Z`) plus `latest`, so `!v*` alone already protects
+          # every release; `!latest` is redundant today but kept as defense
+          # in depth in case a future release build ever tags `latest`
+          # without a version string. The current main build (ko-build-main.yaml)
+          # tags with `development` — neither workflow's tags ever share a
+          # digest with a plain PR/main SHA-tagged build, so this excludes
+          # exactly the versions that must survive and nothing else.
+          # Everything else tagged (per-commit SHA + a branch name from
           # ko-build-branch.yaml, or a superseded SHA + `development` pairing
           # from an older main build) is now a deletion candidate once past
           # cut-off, which is the point of widening tag-selection to `both`:
@@ -107,7 +116,7 @@ jobs:
           args: >-
             --account=linuxfoundation
             --image-names=lfx-v2-campaign-service/campaign-service
-            --image-tags="!latest !development"
+            --image-tags="!v* !latest !development"
             --shas-to-skip=
             --tag-selection=both
             --token=${{ secrets.GITHUB_TOKEN }}
