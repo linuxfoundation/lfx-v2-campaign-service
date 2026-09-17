@@ -1036,3 +1036,58 @@ func TestComposeWizardChatPrompt_OmitsAnEmptyDraft(t *testing.T) {
 		t.Errorf("an empty draft still rendered its heading:\n%s", user)
 	}
 }
+
+// TestSetWizardSendList_RefusesAnotherDraft pins the tenancy boundary on the one endpoint that
+// takes a HubSpot id from the caller.
+//
+// `firstNonEmpty(p.EmailID, sess.EmailID)` let a supplied id WIN over the session's recorded
+// draft with no ownership check. HubSpot credentials resolve through the shared LF portal, so a
+// campaign manager authorised for THIS project could retarget the recipients of any draft in
+// the portal — another foundation's included. Authorization here is scoped to the brief, so the
+// draft that brief created is the only one this endpoint may touch.
+func TestSetWizardSendList_RefusesAnotherDraft(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+		Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "ils-77", BuiltInPortalID: "portal-1",
+	}}
+	started := h.start(t)
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent: %v", err)
+	}
+	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+	}); err != nil {
+		t.Fatalf("CloneWizardEmail: %v", err)
+	}
+
+	h.hubspot.sendListID = ""
+	foreign := "999999-not-this-session"
+	_, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+		EmailID: &foreign,
+	})
+	if err == nil {
+		t.Fatal("a caller-supplied email_id retargeted a draft this session does not own")
+	}
+	// The Goa error types render an empty Error(); assert on the typed value instead.
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("want a 400 naming the mismatch, got %T: %v", err, err)
+	}
+	if !strings.Contains(bad.Message, "does not match this session") {
+		t.Errorf("the refusal must name the cause; got %q", bad.Message)
+	}
+	if h.hubspot.sendListID != "" {
+		t.Fatalf("SetSendList ran despite the refusal, list=%q", h.hubspot.sendListID)
+	}
+}

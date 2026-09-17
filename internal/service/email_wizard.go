@@ -1193,7 +1193,23 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 	if serr != nil {
 		return nil, serr
 	}
-	emailID := firstNonEmpty(strings.TrimSpace(strVal(p.EmailID)), strings.TrimSpace(sess.EmailID))
+	// The SESSION's draft, never the caller's. `firstNonEmpty(p.EmailID, sess.EmailID)` let a
+	// supplied id WIN over the recorded one with no ownership check — and because HubSpot
+	// credentials resolve through the shared LF portal, a campaign manager authorised for this
+	// project could retarget the recipients of any draft in the portal, including another
+	// foundation's. Authorization here is scoped to the brief, so the draft that brief created
+	// is the only one this endpoint may touch.
+	//
+	// A supplied id that MATCHES the session's is accepted, so a client that echoes back what
+	// it was given still works; anything else is refused rather than silently ignored, because
+	// quietly acting on a different draft than the caller named is its own defect.
+	emailID := strings.TrimSpace(sess.EmailID)
+	if supplied := strings.TrimSpace(strVal(p.EmailID)); supplied != "" && supplied != emailID {
+		return nil, &briefs.BadRequestError{
+			Code:    "400",
+			Message: "email_id does not match this session's draft; the send list can only be set on the draft this session created",
+		}
+	}
 	if emailID == "" {
 		return nil, &briefs.ConflictError{
 			Code:    "409",
