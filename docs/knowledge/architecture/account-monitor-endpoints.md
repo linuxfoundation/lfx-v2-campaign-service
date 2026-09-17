@@ -72,6 +72,20 @@ read the injected clock, with a test (`internal/platform/meta/monitor_test.go`)
 pinning the request against a fixed clock the way LinkedIn's
 `monitor_test.go` does.
 
+A fourth, caught by round-16 local review: the explicit `time_range` fix
+above also silently changed which calendar days a default-window request
+covers. Meta's own `last_30d` preset **excludes today** — it is the trailing
+30 days as of Meta's last completed reporting day — but the explicit range
+`{since: today-(days-1), until: today}` **includes today**, so a `days=30`
+request now returns 29 full days plus one partial trailing day instead of
+30 full days, biasing pacing toward "underspending" for that partial day.
+This is a deliberate, documented divergence, not a defect to fix: it is kept
+because it matches the days-1-ending-today convention Google/Reddit's
+monitor dispatchers already use, so all four platforms answer "last N days"
+identically rather than Meta alone excluding today the way its removed
+preset did. See `fetchAccountCampaignInsights`'s doc comment in
+`internal/platform/meta/monitor.go` for the same note next to the code.
+
 ## Correctness bugs found during local differential verification
 
 Local OLD-vs-NEW verification (Google only, so far) surfaced three real port

@@ -821,26 +821,67 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	), nil
 }
 
+// resolveOwnedGoogleAdsDiscoveryClient is resolveGoogleAdsDiscoveryClient for the monitor read,
+// which — like adoption's resolveOwnedGoogleAdsClient above — must NOT accept the LF system
+// fallback.
+//
+// round-16 review escalated the gap resolveGoogleAdsDiscoveryClient's caller used to accept
+// (documented, not fixed, in round-15) to Critical: the four monitor endpoints are externally
+// routed (see this branch's httproute.yaml/ruleset.yaml chart changes), so a project with no
+// Google Ads connection of its own could read another project's spend/budget/campaign data for
+// any customer id the shared LF system credential reaches.
+//
+// The fix mirrors adoption's precedent exactly, and for the same reason resolveOwned's own doc
+// comment gives: Google Ads is ONE shared customer across every foundation (docs/architecture.md,
+// "Account Tenancy"), so checking accountID against what ListAccounts would return for THIS
+// project is a no-op — two different projects both on the system fallback see the identical
+// shared account list from the identical credential, so membership in that list proves nothing
+// about ownership. Refusing the system fallback outright, rather than checking membership
+// against it, is the only version of this check that actually distinguishes the two projects.
+func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := validateGoogleAdsCredentials(projectID, res)
+	if err != nil {
+		return nil, err
+	}
+	loginCustomerID, err := validatedLoginCustomerID(res)
+	if err != nil {
+		return nil, err
+	}
+	return googleads.NewClient(
+		googleads.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		googleads.AccountConfig{
+			LoginCustomerID: loginCustomerID,
+			Label:           res.label,
+		},
+		d.opts...,
+	), nil
+}
+
 // ListAccountCampaignMetrics implements service.AccountMetricsReader for Google Ads,
-// backing the account-monitor endpoint. It resolves the same credentials-only,
-// account-agnostic client resolveGoogleAdsDiscoveryClient builds for ListAccounts (a
-// monitor read names its own target accountID, distinct from whatever customer id the
-// project's connection currently points at), then reads every campaign visible on that
-// customer id via googleads.Client.ListAccountCampaigns, which itself derives the
+// backing the account-monitor endpoint. It resolves an account-agnostic client the same way
+// ListAccounts does (a monitor read names its own target accountID, distinct from whatever
+// customer id the project's connection currently points at) — except, per round-16 review, it
+// refuses the LF system fallback entirely (resolveOwnedGoogleAdsDiscoveryClient, not
+// resolveGoogleAdsDiscoveryClient): see that resolver's doc comment for why membership-checking
+// against ListAccounts would not have closed this gap. It then reads every campaign visible on
+// that customer id via googleads.Client.ListAccountCampaigns, which itself derives the
 // campaign-metrics.service.ts resolveDateRange window (end = today, start = today -
 // (days-1)) from its own injected clock rather than the wall clock.
 //
-// Trust boundary (round-15 review, pre-existing since ListAccounts/`64141f23`, not introduced
-// by this method): accountID is caller-supplied and validated only for shape, never for
-// ownership. When the resolved credential falls back to the shared LF system connection
-// (resolveWithFallback -> systemConn, above), a project with no Google Ads connection of its
-// own can read spend/budget/campaign data for any customer id that system credential can see,
-// including one belonging to a different project. This mirrors the already-shipped
-// ListAccounts discovery endpoint's credential scope exactly, so it is not a new gap, but it
-// is not yet closed either — a caller that must not cross project boundaries should require
-// accountID to be one ListAccounts would itself return for this project, or refuse this read
-// entirely for system-fallback credentials. Same caveat applies to the LinkedIn/Meta/Reddit
-// siblings of this method.
+// A project with no Google Ads connection of its own now gets domain.ErrNotFound (404 "no
+// connection configured for this project", via classifyDiscoveryError) instead of a read served
+// from the shared system credential. Same fix applies to the LinkedIn/Meta siblings of this
+// method; Reddit needs none, because its dispatcher already scopes accountID to the resolved
+// connection's own single account rather than building an account-agnostic client.
 func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	// Validated up front, before any credential is resolved: this is defense-in-depth for a
 	// non-HTTP caller that bypasses Goa — an ordinary HTTP request already gets refused by the
@@ -854,7 +895,7 @@ func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, pr
 	if err := validateMonitorDays(days); err != nil {
 		return nil, err
 	}
-	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
+	client, err := d.resolveOwnedGoogleAdsDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}

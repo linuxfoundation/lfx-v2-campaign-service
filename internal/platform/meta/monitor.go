@@ -222,6 +222,16 @@ type metaInsightsRow struct {
 // today, matching the same days-1 convention Google/Reddit's monitor dispatchers already use;
 // Meta itself interprets since/until in the ad account's configured timezone, so a boundary
 // day's spend can differ slightly from a strict UTC reading.
+//
+// This deliberately diverges from Meta's own last_30d preset it replaces (round-16 review):
+// that preset EXCLUDES today (it is the trailing 30 days as of Meta's last completed reporting
+// day), while `until: today` here INCLUDES it — so a days=30 request now returns 29 full days
+// plus one partial trailing day, not 30 full ones, biasing pacing toward "underspending" for
+// that partial day. Kept anyway rather than shifted back a day, because the alternative is
+// Meta alone excluding today while Google/Reddit's identical days-1 convention includes it;
+// cross-platform consistency wins over exact preset-parity with a behavior this port is
+// already changing. See docs/knowledge/architecture/account-monitor-endpoints.md for the same
+// note next to the ticket history.
 func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, map[string]struct{}, error) {
 	end := c.timeNow().UTC()
 	start := end.AddDate(0, 0, -(days - 1))

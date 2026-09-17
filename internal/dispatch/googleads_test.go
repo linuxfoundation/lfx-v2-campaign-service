@@ -2968,3 +2968,21 @@ func TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testi
 		t.Errorf("expected err to still wrap googleads.ErrNotACustomerID, got: %v", err)
 	}
 }
+
+// TestGoogleAds_ListAccountCampaignMetrics_RefusesSystemFallback pins round-16 review's Critical
+// finding: a project with no Google Ads connection of its own must not have its monitor read
+// served from the shared LF system credential. scopedConnReader is configured with a valid
+// connection ONLY under model.SystemProjectID — if the fallback were still consulted, this read
+// would succeed against it, so a passing test here proves the fallback was actually refused, not
+// merely that some unrelated error was returned.
+func TestGoogleAds_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
+	d := NewGoogleAdsDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: activeGoogleAdsConn(goodGoogleAdsCreds)},
+	}, identityEncryptor{})
+
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890", 30)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want domain.ErrNotFound — the read must refuse the system row and "+
+			"report the project as having no connection of its own", err)
+	}
+}

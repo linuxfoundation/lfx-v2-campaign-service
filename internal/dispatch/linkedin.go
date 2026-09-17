@@ -633,6 +633,29 @@ func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Con
 	}
 }
 
+// resolveLinkedInOwnedDiscoveryCredentials is resolveLinkedInDiscoveryCredentials WITHOUT the
+// LF system fallback — the monitor read's equivalent of googleads.go's
+// resolveOwnedGoogleAdsDiscoveryClient (see that function's doc comment for the shared
+// rationale: round-16 review escalated the pre-existing credential-scope gap to Critical, and
+// membership-checking against ListAccounts would not have closed it given LinkedIn's own
+// shared-tenancy exposure through the fallback).
+//
+// It reuses resolveLinkedInCredentials, the same validation resolveLinkedInDiscoveryCredentials
+// itself calls, but bound to d.creds.resolveOwned instead of d.creds.resolve — so a project with
+// no LinkedIn connection of its own gets domain.ErrNotFound (via noOwnConnection) instead of a
+// credential borrowed from the shared LF system row.
+func (d *LinkedInDispatcher) resolveLinkedInOwnedDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (*resolved, linkedinCreds, error) {
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolveOwned)
+	switch {
+	case err == nil:
+		return res, creds, nil
+	case errors.Is(err, domain.ErrAccountNotSelected):
+		return res, creds, nil
+	default:
+		return nil, linkedinCreds{}, err
+	}
+}
+
 // ListAccounts discovers the ad accounts reachable via the project's stored, encrypted
 // LinkedIn connection credential, returning the bare numeric account id the connection's
 // account_id takes verbatim, plus a display label.
@@ -674,10 +697,11 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // It satisfies the service-side AccountMetricsReader interface, which Orchestrator
 // type-asserts on the dispatcher for the requested platform.
 //
-// Trust boundary: see the doc comment on GoogleAdsDispatcher.ListAccountCampaignMetrics
-// (internal/dispatch/googleads.go) — accountID is validated only for shape, never for
-// ownership, so a system-fallback credential can read another project's data. Same caveat
-// applies here (round-15 review).
+// Trust boundary (round-16 review, fixed): resolveLinkedInOwnedDiscoveryCredentials refuses the
+// LF system fallback entirely, so a project with no LinkedIn connection of its own gets a 404
+// instead of a read served from a credential that could reach another project's data. See that
+// resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
+// (internal/dispatch/googleads.go) for the shared rationale.
 func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
@@ -690,7 +714,7 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	if err := validateMonitorDays(days); err != nil {
 		return nil, err
 	}
-	res, creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInOwnedDiscoveryCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
