@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -1089,5 +1090,33 @@ func TestSetWizardSendList_RefusesAnotherDraft(t *testing.T) {
 	}
 	if h.hubspot.sendListID != "" {
 		t.Fatalf("SetSendList ran despite the refusal, list=%q", h.hubspot.sendListID)
+	}
+}
+
+// TestComposeWizardChatPrompt_StaysWithinTheComposedBudget pins that chat honours the same
+// service-owned prompt budget the generate path enforces.
+//
+// Chat bypassed it entirely: maxWizardChatHistory is 12 and maxWizardChatMessage is 4000, so
+// the retained history alone can reach 48,000 runes against a 24,000 budget — before facts,
+// draft and the current message. generateWizardVariant REJECTS on overflow, which is right
+// there because what overflows is a compiled-in template. Here the history is the caller's, so
+// it degrades the way the history is already documented to: oldest turns dropped first.
+func TestComposeWizardChatPrompt_StaysWithinTheComposedBudget(t *testing.T) {
+	long := strings.Repeat("x", maxWizardChatMessage)
+	history := make([]wizardTurnText, 0, maxWizardChatHistory)
+	for i := 0; i < maxWizardChatHistory; i++ {
+		history = append(history, wizardTurnText{Role: "user", Content: long})
+	}
+
+	system, user := composeWizardChatPrompt(wizardPromptFacts{eventName: "KubeCon EU"},
+		wizardChatDraft{Subject: "Join us"}, history, "make it shorter")
+
+	total := utf8.RuneCountInString(system) + utf8.RuneCountInString(user)
+	if total > maxWizardComposedPromptSize {
+		t.Errorf("composed chat prompt is %d runes, over the %d budget", total, maxWizardComposedPromptSize)
+	}
+	// The turn must still be answerable: the operator's own message survives the trim.
+	if !strings.Contains(user, "make it shorter") {
+		t.Error("the trim dropped the operator's current message, leaving nothing to answer")
 	}
 }
