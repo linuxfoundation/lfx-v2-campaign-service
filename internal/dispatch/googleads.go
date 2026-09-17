@@ -839,6 +839,9 @@ func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, pr
 	if err := googleads.ValidateCustomerID(accountID); err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
 	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err

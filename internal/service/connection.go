@@ -432,6 +432,12 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// refused before the handler — and this arm — ever run; this classification exists for
 		// non-HTTP callers, which bypass Goa entirely.
 		return &conn.BadRequestError{Code: "400", Message: "the account id is not valid for " + d.displayName}
+	case errors.Is(aerr, domain.ErrMonitorDaysInvalid):
+		// A caller-supplied days window, not a stored connection — see
+		// domain.ErrMonitorDaysInvalid's doc comment for why the dispatchers re-check this
+		// themselves even though the service layer's validateMonitorDays already rejects it
+		// for an HTTP caller.
+		return &conn.BadRequestError{Code: "400", Message: "days must be between 7 and 90"}
 	default:
 		slog.WarnContext(ctx, d.label()+" failed upstream",
 			"project_id", projectID, "provider", string(d.provider), "error", aerr)

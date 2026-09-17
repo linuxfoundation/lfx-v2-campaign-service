@@ -1164,12 +1164,20 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 	if err := meta.ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
 	client, err := d.resolveMetaDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
 	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {
+		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
+		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
+		if errors.Is(lerr, meta.ErrInvalidAccountID) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)
+		}
 		return nil, lerr
 	}
 	out := make([]model.AccountCampaignMetrics, 0, len(rows))

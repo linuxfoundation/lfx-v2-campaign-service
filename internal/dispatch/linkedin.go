@@ -682,6 +682,9 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	if err := linkedin.ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
 	res, creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
@@ -691,6 +694,11 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
 	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {
+		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
+		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
+		if errors.Is(lerr, linkedin.ErrInvalidAccountID) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)
+		}
 		return nil, res.systemScoped(linkedinExpiry(lerr))
 	}
 	out := make([]model.AccountCampaignMetrics, 0, len(rows))

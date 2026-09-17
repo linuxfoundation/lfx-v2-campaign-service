@@ -460,6 +460,9 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 	if err := reddit.ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
 	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err

@@ -669,4 +669,18 @@ var (
 	// Distinct from ErrConnectionNotUsable: that sentinel is about the STORED connection
 	// being unusable; this one is about the id the CALLER passed on this one request.
 	ErrAccountIDMalformed = errors.New("the account id is not valid for this platform")
+
+	// ErrMonitorDaysInvalid indicates a caller-supplied days window for an account-monitor
+	// read is outside the design layer's 7..90 inclusive bound. Maps to 400, alongside
+	// ErrAccountIDMalformed.
+	//
+	// The service layer's own validateMonitorDays already rejects this for an HTTP caller
+	// before any dispatcher runs, mirroring the design attribute's own Minimum/Maximum. The
+	// four account-monitor dispatchers re-check it themselves too, for the same reason they
+	// re-check account_id's shape (see ErrAccountIDMalformed's doc comment): a non-HTTP
+	// caller that bypasses Goa also bypasses the service-layer check, and an unchecked days
+	// of 0 or negative inverts the [start, end] window each dispatcher computes from it,
+	// which would otherwise surface as classifyDiscoveryError's opaque default 503 instead
+	// of a clean 400.
+	ErrMonitorDaysInvalid = errors.New("days must be between 7 and 90")
 )

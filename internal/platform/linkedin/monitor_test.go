@@ -5,6 +5,7 @@ package linkedin
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,8 @@ func TestListAccountCampaigns_RejectsMalformedAccountID(t *testing.T) {
 	if err == nil {
 		t.Fatal("a non-digits account id was accepted")
 	}
-	if !strings.Contains(err.Error(), "invalid LinkedIn ad account id") {
-		t.Errorf("error = %v, want it to name the invalid account id", err)
+	if !errors.Is(err, ErrInvalidAccountID) {
+		t.Errorf("error = %v, want it to wrap ErrInvalidAccountID", err)
 	}
 }
 

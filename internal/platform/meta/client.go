@@ -1820,13 +1820,19 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 // internal/platform/twitter/client.go (accountIDRe).
 var accountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
 
+// ErrInvalidAccountID reports that a caller-supplied account id is not an
+// act_<digits> Meta ad account id, mirroring googleads.ErrNotACustomerID and
+// reddit.ErrInvalidAccountID — lets a caller errors.Is-classify this failure instead
+// of matching on the message text.
+var ErrInvalidAccountID = errors.New("meta-ads: not an ad account id")
+
 // ValidateAccountID checks accountID against the same act_<digits> shape accountIDRE
 // enforces elsewhere in this package, so a dispatcher can reject a malformed id before
 // resolving (and decrypting) any stored credential — mirrors googleads.ValidateCustomerID's
 // ordering.
 func ValidateAccountID(accountID string) error {
 	if !accountIDRE.MatchString(accountID) {
-		return fmt.Errorf("invalid Meta ad account id %q: must be act_<digits>", accountID)
+		return fmt.Errorf("%w: %q: must be act_<digits>", ErrInvalidAccountID, accountID)
 	}
 	return nil
 }
