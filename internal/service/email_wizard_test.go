@@ -1120,3 +1120,49 @@ func TestComposeWizardChatPrompt_StaysWithinTheComposedBudget(t *testing.T) {
 		t.Error("the trim dropped the operator's current message, leaving nothing to answer")
 	}
 }
+
+// TestGenerateWizardContent_DoesNotRegressAPhase pins that regeneration cannot walk a session
+// backwards past a phase the model documents as irreversible.
+//
+// `cloned` is "the first phase with an effect OUTSIDE this service, so it is also the first one
+// that cannot be undone". Setting the phase unconditionally meant a regenerate after a clone
+// described a session whose HubSpot draft and recipients still exist as one that has no draft —
+// and the freshly generated copy was not in that draft either, so the row contradicted both
+// HubSpot and itself. Regeneration itself is still allowed; only the phase lie is refused.
+func TestGenerateWizardContent_DoesNotRegressAPhase(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	started := h.start(t)
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent: %v", err)
+	}
+	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+	}); err != nil {
+		t.Fatalf("CloneWizardEmail: %v", err)
+	}
+
+	// Regenerate AFTER the clone: allowed, but it must not claim the draft no longer exists.
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("regenerating after a clone must still work: %v", err)
+	}
+
+	sess, err := h.svc.GetWizardSession(context.Background(), &briefs.GetWizardSessionPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("GetWizardSession: %v", err)
+	}
+	if sess.Phase == string(model.WizardPhaseContent) {
+		t.Errorf("a cloned session regressed to %q; the draft still exists in HubSpot", sess.Phase)
+	}
+}
