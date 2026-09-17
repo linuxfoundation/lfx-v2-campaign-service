@@ -126,6 +126,11 @@ func TestMonitorAccount_ClassifiesDiscoveryError(t *testing.T) {
 	}{
 		{"no connection configured maps to 404", domain.ErrNotFound, "404"},
 		{"accounts unsupported maps to 400", domain.ErrAccountsUnsupported, "400"},
+		// A distinct sentinel from ErrAccountsUnsupported (list-accounts' "not supported"),
+		// deliberately not folded into it — classifyDiscoveryError must recognize both, or
+		// this one falls through to the default 503 arm, which promises a retry that can
+		// never succeed for a platform with no monitor dispatcher wired.
+		{"account metrics unsupported maps to 400", domain.ErrAccountMetricsUnsupported, "400"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,5 +189,56 @@ func TestMonitorAccount_FallsBackToRowSumTotals(t *testing.T) {
 	}
 	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
 		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, campaignCount=1)", result.Totals)
+	}
+}
+
+// mockAccountTotalsReaderDispatcher additionally implements AccountTotalsReader, so a test can
+// drive monitorAccount's ReadAccountTotals call — the Reddit-shaped path — independently of the
+// metrics-read call above.
+type mockAccountTotalsReaderDispatcher struct {
+	mockAccountMetricsReaderDispatcher
+	totalsErr error
+}
+
+func (m *mockAccountTotalsReaderDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
+	if m.totalsErr != nil {
+		return nil, m.totalsErr
+	}
+	return &model.AccountMonitorTotals{Spend: 999, Impressions: 999, Clicks: 999, CampaignCount: 999}, nil
+}
+
+// TestMonitorAccount_TotalsReaderErrorFallsBackToRowSum pins the fix for a real defect: a
+// dispatcher implementing AccountTotalsReader (Reddit's shape) whose separate account-wide
+// totals call FAILS must still return the per-campaign rows and action items already fetched
+// successfully, falling back to summing them — the same fallback the !ok (unsupported) arm
+// uses — rather than aborting the whole endpoint with an error. The per-campaign data is the
+// response's primary content; the account-wide totals are a secondary, derivable figure.
+func TestMonitorAccount_TotalsReaderErrorFallsBackToRowSum(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderRedditAds: &mockAccountTotalsReaderDispatcher{
+				mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{
+					rows: []model.AccountCampaignMetrics{
+						{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", Spend: 50, Impressions: 100, Clicks: 5},
+					},
+				},
+				totalsErr: domain.ErrConnectionNotUsable,
+			},
+		},
+	})
+
+	result, err := svc.MonitorRedditAdsAccount(context.Background(),
+		&conn.MonitorRedditAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+	if err != nil {
+		t.Fatalf("MonitorRedditAdsAccount failed: %T: %v — a failed account-totals call must fall "+
+			"back to the row sum, not abort the endpoint", err, err)
+	}
+	if result.Totals == nil {
+		t.Fatalf("expected non-nil totals from the row-sum fallback")
+	}
+	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
+		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, "+
+			"campaignCount=1), not the platform's own (999) totals since that call failed", result.Totals)
 	}
 }

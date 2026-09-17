@@ -8049,6 +8049,12 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if accountID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
 		}
+		if utf8.RuneCountInString(accountID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
+		}
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
 		{
 			daysRaw := qp.Get("days")
 			if daysRaw == "" {
@@ -8214,6 +8220,10 @@ func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*htt
 		accountID = qp.Get("account_id")
 		if accountID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
 		}
 		{
 			daysRaw := qp.Get("days")
@@ -8381,6 +8391,10 @@ func DecodeMonitorMetaAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Re
 		if accountID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
 		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^act_[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
 		{
 			daysRaw := qp.Get("days")
 			if daysRaw == "" {
@@ -8545,6 +8559,12 @@ func DecodeMonitorRedditAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		accountID = qp.Get("account_id")
 		if accountID == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		}
+		if utf8.RuneCountInString(accountID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
+		}
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
 		}
 		{
 			daysRaw := qp.Get("days")

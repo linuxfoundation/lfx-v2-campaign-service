@@ -1156,17 +1156,12 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // account the project's connection currently points at), then reads every campaign visible
 // on that account via meta.Client.ListAccountCampaigns.
 //
-// days is accepted for interface symmetry with the other three platforms but unused here:
-// meta.ListAccountCampaigns ports getMetaAnalytics, which always reads Meta's own
-// date_preset=last_30d window rather than a caller-supplied day count — see
-// meta/monitor.go's monitorInsightsPreset.
 func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
-	_ = days
 	client, err := d.resolveMetaDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
-	rows, lerr := client.ListAccountCampaigns(ctx, accountID)
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {
 		return nil, lerr
 	}

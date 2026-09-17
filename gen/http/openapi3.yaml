@@ -3980,6 +3980,8 @@ paths:
                     type: string
                     description: The Google Ads account to read.
                     example: "8666746580"
+                    minLength: 1
+                    maxLength: 64
                   example: "8666746580"
                 - name: days
                   in: query
@@ -5939,6 +5941,8 @@ paths:
                     type: string
                     description: The LinkedIn ad account to read.
                     example: "512345678"
+                    pattern: ^[0-9]+$
+                    maxLength: 64
                   example: "512345678"
                 - name: days
                   in: query
@@ -6894,6 +6898,8 @@ paths:
                     type: string
                     description: The Meta ad account to read.
                     example: act_8666746580
+                    pattern: ^act_[0-9]+$
+                    maxLength: 64
                   example: act_8666746580
                 - name: days
                   in: query
@@ -8668,6 +8674,8 @@ paths:
                     type: string
                     description: The Reddit advertiser account to read.
                     example: t2_gv9wtbfa
+                    minLength: 1
+                    maxLength: 64
                   example: t2_gv9wtbfa
                 - name: days
                   in: query

@@ -182,6 +182,51 @@ func TestGoogleActionItems_UnderspendingAndConstrainedRequireEnabled(t *testing.
 	}
 }
 
+// TestGoogleActionItems_UnderspendingTextUsesRequestedDays pins the fix for a bug where the
+// underspending action item's "expected" spend text hardcoded a 30-day window regardless of the
+// caller's requested `days` — a days=7 request would report an expected spend 4x too high in the
+// item text, even though pacingPct itself (computed in EvaluateGoogleMonitor from the same
+// `days`) was already correct.
+func TestGoogleActionItems_UnderspendingTextUsesRequestedDays(t *testing.T) {
+	row := model.AccountCampaignMetrics{PlatformCampaignID: "c1", Name: "c", Status: "ENABLED", BudgetDay: 10, Spend: 20}
+	items := googleActionItems(row, 20, model.MonitorPacingUnderspending, 7)
+	found := false
+	for _, it := range items {
+		if strings.Contains(it.Issue, "Only spending") {
+			found = true
+			if !strings.Contains(it.Issue, "$70.00 expected") {
+				t.Errorf("issue text = %q, want it to reflect days=7 ($10/day * 7 = $70.00 expected), not a hardcoded 30-day window", it.Issue)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no underspending action item found among %+v", items)
+	}
+}
+
+// TestEvaluateGoogleMonitor_SkipsFetchFailedRows pins the fix for a row whose per-campaign
+// metrics fetch failed: its zero-value numeric fields must not be run through pacing/action-item
+// evaluation (which would fabricate a bogus "underspending" label and HIGH action item), but the
+// row itself must still appear in the returned campaigns list with FetchFailed intact.
+func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
+	rows := []model.AccountCampaignMetrics{
+		{PlatformCampaignID: "1", Name: "Failed Fetch", Status: "enabled", BudgetDay: 50, FetchFailed: true},
+		{PlatformCampaignID: "2", Name: "Ok", Status: "enabled", BudgetDay: 50, Spend: 50},
+	}
+	out, items := EvaluateGoogleMonitor(rows, 1)
+	if len(out) != 2 {
+		t.Fatalf("got %d rows, want 2 — a FetchFailed row must still be returned: %+v", len(out), out)
+	}
+	if !out[0].Metrics.FetchFailed || out[0].PacingLabel != model.MonitorPacingNormal {
+		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and pacing label left at normal (unevaluated)", out[0])
+	}
+	for _, it := range items {
+		if it.CampaignID == "1" {
+			t.Errorf("FetchFailed row produced an action item, want none: %+v", it)
+		}
+	}
+}
+
 // TestGooglePriorityRank_IsNotBuggy pins that Google's rank function (unlike LinkedIn's, see
 // monitor_linkedin_test.go) correctly maps every priority, including MED, to its documented
 // slot: HIGH:0, MED:1, LOW:2, unknown:3.

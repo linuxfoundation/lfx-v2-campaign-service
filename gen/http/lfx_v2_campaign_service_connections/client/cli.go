@@ -1733,6 +1733,15 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 	var accountID string
 	{
 		accountID = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
+		if utf8.RuneCountInString(accountID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
+		}
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var days int
 	{
@@ -1779,6 +1788,13 @@ func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonito
 	var accountID string
 	{
 		accountID = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var days int
 	{
@@ -1825,6 +1841,13 @@ func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMet
 	var accountID string
 	{
 		accountID = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^act_[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var days int
 	{
@@ -1871,6 +1894,15 @@ func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorR
 	var accountID string
 	{
 		accountID = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountID
+		if utf8.RuneCountInString(accountID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 1, true))
+		}
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var days int
 	{

@@ -13,7 +13,7 @@ fully rather than porting the legacy BFF's silent 100-campaign truncation.
 **Fix** — Local OLD-vs-NEW differential verification against the live BFF
 (Google only so far) found and fixed three real port defects: `googleads`
 account-monitor query missing the channel-type/status/impressions scope
-filters `getMonitorData` applies (query. was returning years of `REMOVED`
+filters `getMonitorData` applies (query was returning years of `REMOVED`
 campaign history instead of the current 23 active ones); the totals fallback
 summing pre-rule-engine rows instead of the post-filter rows the response
 actually returns (`campaign_count` disagreed with `len(campaigns)`); and

@@ -75,7 +75,7 @@ func TestListAccountCampaigns_SinglePage_ReturnsAllRows(t *testing.T) {
 	)
 	c := newMonitorClient(srv)
 
-	rows, err := c.ListAccountCampaigns(context.Background(), "act_123")
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
 	if err != nil {
 		t.Fatalf("ListAccountCampaigns: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestListAccountCampaigns_MultiPage_ConcatenatesEveryPage(t *testing.T) {
 	)
 	c := newMonitorClient(srv)
 
-	rows, err := c.ListAccountCampaigns(context.Background(), "act_123")
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
 	if err != nil {
 		t.Fatalf("ListAccountCampaigns: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestListAccountCampaigns_MissingCursor_IsAnError(t *testing.T) {
 	srv, _ := monitorPageResponses(t, []string{badPage}, []string{insightsPage("111", 1000, 50, false)})
 	c := newMonitorClient(srv)
 
-	if _, err := c.ListAccountCampaigns(context.Background(), "act_123"); err == nil {
+	if _, err := c.ListAccountCampaigns(context.Background(), "act_123", 30); err == nil {
 		t.Fatal("expected an error for a paging.next with no cursor, got nil")
 	}
 }

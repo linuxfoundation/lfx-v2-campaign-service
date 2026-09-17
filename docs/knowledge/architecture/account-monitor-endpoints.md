@@ -81,3 +81,52 @@ defects, since fixed:
 
 LinkedIn and Reddit have not yet had the same class of check (missing
 platform-query scope filters) run against them.
+
+A fourth issue, flagged by automated PR review rather than the differential
+diff: the four `account_id` payload attributes had no `MinLength`, `Pattern`,
+or `MaxLength` — `Required()` only gates JSON-key presence, not shape — so an
+empty or malformed id passed Goa's own validation and reached the platform
+client, which fails with an opaque upstream error instead of a clean 400.
+Verified reachable on three of the four dispatchers: LinkedIn's and Meta's
+`ListAccountCampaignMetrics` pass `account_id` straight to the platform
+client with no check at all, and Reddit's `resolveMonitorClient` mismatch
+guard (`internal/dispatch/reddit.go`) skips its own check entirely when the
+incoming id is empty (`want != "" && got != "" && ...`). Google is the one
+exception — `gaqlSearchForCustomer` already rejects non-digit ids downstream
+with a clear error — but still gained the same design-layer guard for
+symmetry. Fix: `MinLength(1)` on all four; `Pattern` for LinkedIn
+(`^[0-9]+$`) and Meta (`^act_[0-9]+$`), reusing the same patterns their
+existing `*ConnectionConfig` types already enforce; `MaxLength(64)`
+everywhere. Google and Reddit get `MinLength`/`MaxLength` only — neither has
+an established `Pattern` convention anywhere else in the codebase to reuse,
+so inventing one here would be a new, unreviewed shape decision rather than
+a port of an existing one.
+
+## Correctness bugs found during PR review
+
+Three more real defects, caught by automated PR review rather than the
+differential diff, since fixed:
+
+1. All four `EvaluateGoogleMonitor`/`EvaluateLinkedInMonitor`/
+   `EvaluateMetaMonitor`/`EvaluateRedditMonitor` ran a `FetchFailed` row's
+   placeholder zero-value metrics through pacing/action-item evaluation
+   instead of skipping it — fabricating findings (a bogus "underspending" or
+   "no delivery" HIGH item) against a campaign whose metrics call to the
+   platform actually failed. Each now checks `FetchFailed` at the top of its
+   loop and returns the row unevaluated (still present in the response's
+   `campaigns` array, with the flag intact, but excluded from pacing/action
+   items). See `AccountCampaignMetrics.FetchFailed`'s doc comment
+   (`internal/domain/model/monitor.go`) for the contract this enforces.
+2. `googleActionItems`' underspending item text hardcoded a 30-day window
+   (`m.BudgetDay*30`) even though the pacing percentage right next to it was
+   already computed from the caller's real `days` parameter — a `days=7`
+   request would show a pacing number for 7 days next to expected-spend text
+   for 30. Now `m.BudgetDay*float64(days)`.
+3. `monitorAccount` (`internal/service/connection_monitor.go`) aborted the
+   whole endpoint with an error whenever Reddit's separate account-totals
+   call (`AccountTotalsReader.ReadAccountTotals`) failed, discarding the
+   per-campaign rows and action items already fetched successfully. A
+   totals-call error now falls back to `monitorTotalsFallback` the same way
+   the capability-absent (`!ok`) arm already did — the per-campaign data is
+   the response's primary content, and the account-wide totals are a
+   secondary, derivable figure not worth a 5xx over.

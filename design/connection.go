@@ -1592,7 +1592,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("account_id", String, "The Google Ads account to read.", func() { Example("8666746580") })
+			Attribute("account_id", String, "The Google Ads account to read.", func() {
+				MinLength(1)
+				MaxLength(64)
+				Example("8666746580")
+			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
 				Minimum(7)
 				Maximum(90)
@@ -1626,7 +1630,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("account_id", String, "The LinkedIn ad account to read.", func() { Example("512345678") })
+			Attribute("account_id", String, "The LinkedIn ad account to read.", func() {
+				Pattern(`^[0-9]+$`)
+				MaxLength(64)
+				Example("512345678")
+			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
 				Minimum(7)
 				Maximum(90)
@@ -1660,7 +1668,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("account_id", String, "The Meta ad account to read.", func() { Example("act_8666746580") })
+			Attribute("account_id", String, "The Meta ad account to read.", func() {
+				Pattern(`^act_[0-9]+$`)
+				MaxLength(64)
+				Example("act_8666746580")
+			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
 				Minimum(7)
 				Maximum(90)
@@ -1695,7 +1707,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("account_id", String, "The Reddit advertiser account to read.", func() { Example("t2_gv9wtbfa") })
+			Attribute("account_id", String, "The Reddit advertiser account to read.", func() {
+				MinLength(1)
+				MaxLength(64)
+				Example("t2_gv9wtbfa")
+			})
 			Attribute("days", Int, "Trailing days to read metrics over.", func() {
 				Minimum(7)
 				Maximum(90)

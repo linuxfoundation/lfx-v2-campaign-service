@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -45,11 +46,6 @@ type AccountCampaignRow struct {
 	FetchFailed bool
 }
 
-// monitorDatePreset maps a requested day-window to the nearest Meta date_preset. Meta's
-// account-monitor insights read (unlike GetCampaignMetrics) is ported from
-// getMetaAnalytics, which always asks for date_preset=last_30d — see ListAccountCampaigns.
-const monitorInsightsPreset = "last_30d"
-
 // ListAccountCampaigns ports getMetaAnalytics: an account-level insights read
 // (level=campaign, fully paginated — see fetchAccountCampaignInsights) merged with a
 // campaign-list read for status/budget/schedule fields insights does not carry. Unlike the
@@ -57,10 +53,15 @@ const monitorInsightsPreset = "last_30d"
 // walk every page (LFXV2-2519 Part 3): pagination is a pre-cutover fix, not one of the five
 // ported-verbatim bugs.
 //
+// days selects an explicit `time_range` for the insights read rather than the BFF's hardcoded
+// date_preset=last_30d — getMetaAnalytics ignored its own caller-supplied window entirely,
+// which is a data-correctness bug (a days=7 request silently answered with 30 days of spend),
+// not one of the five threshold/labeling quirks ported verbatim. See fetchAccountCampaignInsights.
+//
 // accountID must already be in Meta's "act_<digits>" form (the same form AccountConfig.
 // AccountID and normalizeMetaAccountID produce) — the dispatcher passes the resolved
 // connection's account id, not a caller-supplied one.
-func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string) ([]AccountCampaignRow, error) {
+func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	id := strings.TrimSpace(accountID)
 	if !strings.HasPrefix(id, "act_") || !numericIDRE.MatchString(strings.TrimPrefix(id, "act_")) {
 		return nil, fmt.Errorf("list account campaigns: account id %q must be act_<digits>", accountID)
@@ -70,7 +71,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	insightsByID, err := c.fetchAccountCampaignInsights(ctx, id)
+	insightsByID, err := c.fetchAccountCampaignInsights(ctx, id, days)
 	if err != nil {
 		return nil, err
 	}
@@ -198,12 +199,22 @@ type metaInsightsRow struct {
 // (level=campaign), following `paging.cursors.after` to exhaustion rather than reading one
 // page — see fetchAccountCampaignList's doc comment for why this departs from the ported
 // BFF behavior.
-func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string) (map[string]metaInsightsRow, error) {
+//
+// days is rendered as an explicit `time_range={"since":...,"until":...}` rather than a
+// date_preset — Meta's Graph API Insights accepts time_range as a direct alternative,
+// letting the caller-supplied window reach the query at all (the BFF's date_preset=last_30d
+// ignored it). The window is UTC and inclusive of `days` calendar days ending today, matching
+// the same days-1 convention Google/Reddit's monitor dispatchers already use.
+func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, error) {
+	end := time.Now().UTC()
+	start := end.AddDate(0, 0, -(days - 1))
+	timeRange := `{"since":"` + start.Format("2006-01-02") + `","until":"` + end.Format("2006-01-02") + `"}`
+
 	out := make(map[string]metaInsightsRow, monitorPageSize)
 	after := ""
 	seen := make(map[string]struct{})
 	for page := 0; page < monitorMaxPages; page++ {
-		path := "/" + accountID + "/insights?level=campaign&fields=campaign_id,impressions,clicks,spend&date_preset=" + monitorInsightsPreset + "&limit=" + strconv.Itoa(monitorPageSize)
+		path := "/" + accountID + "/insights?level=campaign&fields=campaign_id,impressions,clicks,spend&time_range=" + url.QueryEscape(timeRange) + "&limit=" + strconv.Itoa(monitorPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}

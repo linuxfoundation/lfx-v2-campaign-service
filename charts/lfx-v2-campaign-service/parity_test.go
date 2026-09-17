@@ -365,6 +365,17 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// and the two negative rows below pin that neither path leaked into the other's
 		// providers.
 		{"/projects/p1/connection-hubspot/emails", true},
+		// Account-scoped monitor reads (LFX One BFF /api/campaigns/*/monitor port):
+		// ruled for exactly the four providers whose dispatchers implement
+		// AccountMetricsReader — google-ads, linkedin-ads, meta-ads, and reddit-ads.
+		// reddit-ads gets this despite having no /accounts row above (no
+		// AccountLister, but it does have a monitor dispatcher). The microsoft-ads
+		// and twitter-ads rejected rows further down pin that neither has a monitor
+		// dispatcher and the alternation was not widened to them by accident.
+		{"/projects/p1/connection-google-ads/account-monitor", true},
+		{"/projects/p1/connection-linkedin-ads/account-monitor", true},
+		{"/projects/p1/connection-meta-ads/account-monitor", true},
+		{"/projects/p1/connection-reddit-ads/account-monitor", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -437,6 +448,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-reddit-ads/accounts", false},
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
+		// microsoft-ads and twitter-ads have no AccountMetricsReader dispatcher
+		// (no monitor rule engine ported for either) — account-monitor must not be
+		// admitted for them even though they share the /accounts discovery branch.
+		{"/projects/p1/connection-microsoft-ads/account-monitor", false},
+		{"/projects/p1/connection-twitter-ads/account-monitor", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},

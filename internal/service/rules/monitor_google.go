@@ -56,6 +56,17 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 			continue
 		}
 
+		// A FetchFailed row's numeric fields are left at their platform-reported zero value
+		// (see AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item
+		// calc against that placeholder zero would fabricate a bogus "underspending" label and a
+		// HIGH-priority action item for a campaign this port never actually measured. The row is
+		// still returned in the campaigns array (the caller sees it and its FetchFailed flag),
+		// just with pacing/action-item evaluation skipped.
+		if m.FetchFailed {
+			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
+			continue
+		}
+
 		expectedSpend := m.BudgetDay * float64(days)
 		pacingPct := 0.0
 		if expectedSpend > 0 {
@@ -120,7 +131,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	}
 	if label == model.MonitorPacingUnderspending && status == googleStatusEnabled {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Only spending %.0f%% of $%.2f/day budget — $%.2f spent vs $%.2f expected", pacingPct, m.BudgetDay, m.Spend, m.BudgetDay*30),
+			fmt.Sprintf("Only spending %.0f%% of $%.2f/day budget — $%.2f spent vs $%.2f expected", pacingPct, m.BudgetDay, m.Spend, m.BudgetDay*float64(days)),
 			"Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions")
 	}
 	if label == model.MonitorPacingConstrained && status == googleStatusEnabled {
@@ -162,7 +173,6 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			fmt.Sprintf("Campaign is still in draft — $%.2f/day budget allocated but not running", m.BudgetDay),
 			"Upload creative assets, review ad groups, publish the campaign (then pause if not ready to go live)")
 	}
-	_ = days
 	return items
 }
 

@@ -52,11 +52,19 @@ const monitorMaxPages = 50
 // accountID, merged with one account-level Ad Analytics pivot=CAMPAIGN read covering the
 // last `days` days (getLinkedInAnalytics's own dateRangeParams(days) window).
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
+	// Same guard client.go:654 and targeting.go apply before interpolating an account/campaign
+	// id into a URN or path: the Goa design layer's Pattern(`^[0-9]+$`) already rejects a
+	// malformed id at the HTTP boundary, but this dispatcher method is also reachable directly
+	// (e.g. from tests or a future non-HTTP caller), so it re-checks rather than trusting the
+	// caller.
+	if !accountIDRE.MatchString(accountID) {
+		return nil, fmt.Errorf("invalid LinkedIn ad account id %q: must be digits only", accountID)
+	}
 	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
-	end := c.now()
+	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	metricsByID, err := c.fetchAccountCampaignAnalytics(ctx, accountID, start, end)
 	if err != nil {

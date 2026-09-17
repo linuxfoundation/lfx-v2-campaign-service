@@ -2855,6 +2855,8 @@ paths:
                   description: The Google Ads account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  minLength: 1
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -4284,6 +4286,8 @@ paths:
                   description: The LinkedIn ad account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -4959,6 +4963,8 @@ paths:
                   description: The Meta ad account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  pattern: ^act_[0-9]+$
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -6218,6 +6224,8 @@ paths:
                   description: The Reddit advertiser account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  minLength: 1
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -7747,7 +7755,7 @@ definitions:
             totals:
                 campaign_count: 14
                 clicks: 11420
-                conversions: 212
+                conversions: 212.5
                 impressions: 184200
                 spend: 1842.55
         required:
@@ -8017,10 +8025,10 @@ definitions:
                 example: 11420
                 format: int64
             conversions:
-                type: integer
+                type: number
                 description: Account-wide conversions over the window.
-                example: 212
-                format: int64
+                example: 212.5
+                format: double
             impressions:
                 type: integer
                 description: Account-wide impressions over the window.
@@ -8034,7 +8042,7 @@ definitions:
         example:
             campaign_count: 14
             clicks: 11420
-            conversions: 212
+            conversions: 212.5
             impressions: 184200
             spend: 1842.55
         required:

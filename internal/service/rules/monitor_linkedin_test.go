@@ -139,3 +139,23 @@ func mustContainIssue(t *testing.T, items []model.AccountMonitorActionItem, subs
 	}
 	t.Errorf("no action item contained %q among %+v", substr, items)
 }
+
+// TestEvaluateLinkedInMonitor_SkipsFetchFailedRows mirrors
+// TestEvaluateGoogleMonitor_SkipsFetchFailedRows: a FetchFailed row's zero-value metrics must
+// not be run through pacing/action-item evaluation, but the row itself must still be returned.
+func TestEvaluateLinkedInMonitor_SkipsFetchFailedRows(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	rows := []model.AccountCampaignMetrics{
+		{PlatformCampaignID: "1", Name: "Failed Fetch", Status: "ACTIVE", BudgetDay: 50, FetchFailed: true},
+	}
+	out, items := EvaluateLinkedInMonitor(rows, 30, now)
+	if len(out) != 1 {
+		t.Fatalf("got %d rows, want 1 — a FetchFailed row must still be returned: %+v", len(out), out)
+	}
+	if !out[0].Metrics.FetchFailed || out[0].PacingLabel != model.MonitorPacingNormal {
+		t.Errorf("FetchFailed row = %+v, want FetchFailed=true and pacing label left at normal (unevaluated)", out[0])
+	}
+	if len(items) != 0 {
+		t.Errorf("FetchFailed row produced action items, want none: %+v", items)
+	}
+}

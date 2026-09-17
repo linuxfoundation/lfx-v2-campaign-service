@@ -98,17 +98,29 @@ spec:
           # here AND admitted by the HTTPRoute regex or the path is unreachable
           # through the gateway.
           - path: /projects/:projectId/connection-google-ads/accounts
+          # Account-scoped monitor reads — a live, credential-scoped read of every
+          # campaign under one raw ad account plus derived pacing/action-item rules
+          # (ported from the LFX One BFF's four rule engines). Ruled for exactly the
+          # four providers whose dispatchers implement AccountMetricsReader:
+          # google-ads, linkedin-ads, meta-ads, and reddit-ads. reddit-ads gets this
+          # despite having no /accounts entry above — it has no AccountLister
+          # (no ListAdAccounts in its platform client) but DOES have a monitor
+          # dispatcher. microsoft-ads and twitter-ads have neither and are not ruled.
+          - path: /projects/:projectId/connection-google-ads/account-monitor
           - path: /projects/:projectId/connection-linkedin-ads
           - path: /projects/:projectId/connection-linkedin-ads/test
           - path: /projects/:projectId/connection-linkedin-ads/set-credential
           - path: /projects/:projectId/connection-linkedin-ads/accounts
+          - path: /projects/:projectId/connection-linkedin-ads/account-monitor
           - path: /projects/:projectId/connection-meta-ads
           - path: /projects/:projectId/connection-meta-ads/test
           - path: /projects/:projectId/connection-meta-ads/set-credential
           - path: /projects/:projectId/connection-meta-ads/accounts
+          - path: /projects/:projectId/connection-meta-ads/account-monitor
           - path: /projects/:projectId/connection-reddit-ads
           - path: /projects/:projectId/connection-reddit-ads/test
           - path: /projects/:projectId/connection-reddit-ads/set-credential
+          - path: /projects/:projectId/connection-reddit-ads/account-monitor
           - path: /projects/:projectId/connection-twitter-ads
           - path: /projects/:projectId/connection-twitter-ads/test
           - path: /projects/:projectId/connection-twitter-ads/set-credential

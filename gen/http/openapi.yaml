@@ -2855,6 +2855,8 @@ paths:
                   description: The Google Ads account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  minLength: 1
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -4284,6 +4286,8 @@ paths:
                   description: The LinkedIn ad account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -4959,6 +4963,8 @@ paths:
                   description: The Meta ad account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  pattern: ^act_[0-9]+$
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.
@@ -6218,6 +6224,8 @@ paths:
                   description: The Reddit advertiser account to read.
                   required: true
                   type: string
+                  maxLength: 64
+                  minLength: 1
                 - name: days
                   in: query
                   description: Trailing days to read metrics over.

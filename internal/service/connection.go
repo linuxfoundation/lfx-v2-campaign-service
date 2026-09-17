@@ -300,7 +300,7 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		return nil
 	}
 	switch {
-	case errors.Is(aerr, ErrAccountsUnsupported):
+	case errors.Is(aerr, ErrAccountsUnsupported), errors.Is(aerr, ErrAccountMetricsUnsupported):
 		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 	case errors.Is(aerr, domain.ErrSystemConnectionMissing):
 		// ABOVE the ErrNotFound arm, and load-bearing: the forced-system resolver wraps this

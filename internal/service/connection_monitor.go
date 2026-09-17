@@ -150,9 +150,16 @@ func (s *ConnectionService) monitorAccount(
 
 	rows, actionItems := evaluate(metricsRows)
 
+	// A failure here (terr != nil) falls back the same way an unsupported capability
+	// (!ok) does, rather than aborting the whole endpoint: the per-campaign rows and
+	// action items above already succeeded and are the response's primary content, and
+	// Reddit's separate account-wide totals call (see model.AccountMonitorTotals' doc
+	// comment) is a secondary, derivable figure — summing the returned rows is not the
+	// platform's own number, but it is a strictly better answer than a 5xx that throws
+	// away campaign data the caller already has in hand.
 	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(metricsRows))
 	if terr != nil {
-		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, terr)
+		ok = false
 	}
 	if !ok {
 		// Sum the post-rule-engine rows (rows), not the raw dispatcher read (metricsRows):

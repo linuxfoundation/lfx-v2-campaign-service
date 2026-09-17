@@ -3980,6 +3980,8 @@ paths:
                     type: string
                     description: The Google Ads account to read.
                     example: "8666746580"
+                    minLength: 1
+                    maxLength: 64
                   example: "8666746580"
                 - name: days
                   in: query
@@ -4157,7 +4159,7 @@ paths:
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
-                                    conversions: 212
+                                    conversions: 212.5
                                     impressions: 184200
                                     spend: 1842.55
                 "400":
@@ -5939,6 +5941,8 @@ paths:
                     type: string
                     description: The LinkedIn ad account to read.
                     example: "512345678"
+                    pattern: ^[0-9]+$
+                    maxLength: 64
                   example: "512345678"
                 - name: days
                   in: query
@@ -6073,7 +6077,7 @@ paths:
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
-                                    conversions: 212
+                                    conversions: 212.5
                                     impressions: 184200
                                     spend: 1842.55
                 "400":
@@ -6894,6 +6898,8 @@ paths:
                     type: string
                     description: The Meta ad account to read.
                     example: act_8666746580
+                    pattern: ^act_[0-9]+$
+                    maxLength: 64
                   example: act_8666746580
                 - name: days
                   in: query
@@ -7119,7 +7125,7 @@ paths:
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
-                                    conversions: 212
+                                    conversions: 212.5
                                     impressions: 184200
                                     spend: 1842.55
                 "400":
@@ -8668,6 +8674,8 @@ paths:
                     type: string
                     description: The Reddit advertiser account to read.
                     example: t2_gv9wtbfa
+                    minLength: 1
+                    maxLength: 64
                   example: t2_gv9wtbfa
                 - name: days
                   in: query
@@ -8888,7 +8896,7 @@ paths:
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
-                                    conversions: 212
+                                    conversions: 212.5
                                     impressions: 184200
                                     spend: 1842.55
                 "400":
@@ -10771,7 +10779,7 @@ components:
                 totals:
                     campaign_count: 14
                     clicks: 11420
-                    conversions: 212
+                    conversions: 212.5
                     impressions: 184200
                     spend: 1842.55
             required:
@@ -11029,10 +11037,10 @@ components:
                     example: 11420
                     format: int64
                 conversions:
-                    type: integer
+                    type: number
                     description: Account-wide conversions over the window.
-                    example: 212
-                    format: int64
+                    example: 212.5
+                    format: double
                 impressions:
                     type: integer
                     description: Account-wide impressions over the window.
@@ -11046,7 +11054,7 @@ components:
             example:
                 campaign_count: 14
                 clicks: 11420
-                conversions: 212
+                conversions: 212.5
                 impressions: 184200
                 spend: 1842.55
             required:
