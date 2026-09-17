@@ -75,6 +75,12 @@ type briefBackendSetter interface {
 	// with the aggregate decode budget unenforced — working normally, and unbounded, which is
 	// the failure a compile-time contract exists to prevent.
 	SetDecodeReserver(*service.DecodeReserver)
+	// SetEmailReferenceSource is on this interface for the same reason SetCreativeAssetRepo is:
+	// the reference lookup needs the connection repo, which is nil until the cold-start retry
+	// binds it, and a pod that bound only the brief repos would generate email copy forever
+	// without a HubSpot reference block — a silent quality gap, not a failure, which is exactly
+	// the kind that hides from every existing test.
+	SetEmailReferenceSource(*service.EmailReferenceSource)
 }
 
 // audienceBackendSetter late-binds the audience repo after a cold-start retry.
@@ -808,8 +814,9 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 // the brief repos while forgetting the rest, because there is no longer a separate statement to
 // forget. This is the same reasoning that put SetOrchestrator behind the backendSetter interface
 // rather than a direct cast — one declared contract, both injection sites.
-func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) {
+func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, connRepo domain.ConnectionReader, enc domain.Encryptor) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
+	bb.SetEmailReferenceSource(service.NewEmailReferenceSource(connRepo, enc))
 	// ORDER MATTERS between these two, and only in one direction.
 	//
 	// On the cold-start retry path this mutates a BriefService that is ALREADY MOUNTED and
@@ -857,7 +864,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// leaving this one silently behind.
 	c.Connections.(backendSetter).SetOrchestrator(orch)
 	briefSvc := c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
-	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch)
+	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch, repo, enc)
 	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 	c.Explore = c.newAudienceExploreService()
@@ -937,7 +944,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
 			c.orch = orch
-			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch)
+			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch, connRepo, enc)
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)

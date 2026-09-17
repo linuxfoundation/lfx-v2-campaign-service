@@ -415,6 +415,64 @@ func TestCloneEmail_Mutating429IsNotRetried(t *testing.T) {
 	}
 }
 
+func TestCreateABTestVariant_SendsContentIDAndVariationName(t *testing.T) {
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/marketing/v3/emails/ab-test/create-variation" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"888","name":"KubeCon Invite - Variant B","state":"DRAFT_AB_VARIANT"}`)
+	})
+	e, err := c.CreateABTestVariant(context.Background(), "999", "KubeCon Invite - Variant B")
+	if err != nil {
+		t.Fatalf("CreateABTestVariant: %v", err)
+	}
+	if e.ID != "888" {
+		t.Errorf("variant id = %q, want 888", e.ID)
+	}
+	if body["contentId"] != "999" || body["variationName"] != "KubeCon Invite - Variant B" {
+		t.Errorf("create-variation body = %v", body)
+	}
+}
+
+func TestCreateABTestVariant_2xxNoIDIsUnconfirmed(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"name":"variant with no id"}`)
+	})
+	_, err := c.CreateABTestVariant(context.Background(), "999", "X")
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a create-variation 2xx with no id must be UNCONFIRMED (a variant may have been created), got: %v", err)
+	}
+}
+
+func TestCreateABTestVariant_Mutating429IsNotRetried(t *testing.T) {
+	var calls int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := c.CreateABTestVariant(context.Background(), "999", "X")
+	if err == nil {
+		t.Fatal("expected an error on create-variation 429")
+	}
+	if calls != 1 {
+		t.Errorf("a mutating create-variation 429 must NOT be retried, got %d calls", calls)
+	}
+}
+
+func TestCreateABTestVariant_RejectsEmptyIDs(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("must not make a request with an empty parent id or variation name")
+	})
+	if _, err := c.CreateABTestVariant(context.Background(), "  ", "X"); err == nil {
+		t.Error("expected an error for empty parent id")
+	}
+	if _, err := c.CreateABTestVariant(context.Background(), "999", "  "); err == nil {
+		t.Error("expected an error for empty variation name")
+	}
+}
+
 func TestPatchEmailSettings_OnlySetsProvidedFields(t *testing.T) {
 	var body map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -1588,10 +1588,13 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 
 	require.False(t, s.DecodeReserverIsSet(), "premise: unbound before wiring")
 
-	bindBriefLiveBackends(s, nil, nil, nil, nil, nil)
+	bindBriefLiveBackends(s, nil, nil, nil, nil, nil, nil, nil)
 
 	assert.True(t, s.CreativeAssetRepoIsSet(),
 		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
+
+	assert.True(t, s.EmailReferenceSourceIsSet(),
+		"the shared live-wiring helper must bind the email reference source; without it a cold-started pod would generate email copy forever with no HubSpot reference block")
 
 	// The decode budget is bound by the same helper and needs the same assertion, for a worse
 	// failure mode: an unbound repo makes uploads fail LOUDLY with a 503, but an unbound
@@ -1679,6 +1682,10 @@ func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
 	r.calls = append(r.calls, "reserver")
 }
 
+func (r *orderRecordingBriefSetter) SetEmailReferenceSource(*service.EmailReferenceSource) {
+	r.calls = append(r.calls, "reference")
+}
+
 // TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate pins the ORDER of two independently
 // locked setters, which on the cold-start retry path decides whether a memory bound can be
 // bypassed.
@@ -1699,7 +1706,7 @@ func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
 func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
 	rec := &orderRecordingBriefSetter{}
 
-	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil)
+	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil, nil, nil)
 
 	idx := func(name string) int {
 		for i, c := range rec.calls {
