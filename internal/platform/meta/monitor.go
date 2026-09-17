@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
@@ -59,8 +58,10 @@ type AccountCampaignRow struct {
 // not one of the five threshold/labeling quirks ported verbatim. See fetchAccountCampaignInsights.
 //
 // accountID must already be in Meta's "act_<digits>" form (the same form AccountConfig.
-// AccountID and normalizeMetaAccountID produce) — the dispatcher passes the resolved
-// connection's account id, not a caller-supplied one.
+// AccountID and normalizeMetaAccountID produce). On the account-monitor path this is a
+// caller-supplied id (MonitorMetaAdsAccountPayload.AccountID), not the resolved connection's
+// own account — validated at the design layer (MinLength/Pattern/MaxLength) before it reaches
+// here.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	id := strings.TrimSpace(accountID)
 	if !strings.HasPrefix(id, "act_") || !numericIDRE.MatchString(strings.TrimPrefix(id, "act_")) {
@@ -203,10 +204,12 @@ type metaInsightsRow struct {
 // days is rendered as an explicit `time_range={"since":...,"until":...}` rather than a
 // date_preset — Meta's Graph API Insights accepts time_range as a direct alternative,
 // letting the caller-supplied window reach the query at all (the BFF's date_preset=last_30d
-// ignored it). The window is UTC and inclusive of `days` calendar days ending today, matching
-// the same days-1 convention Google/Reddit's monitor dispatchers already use.
+// ignored it). The dates are rendered from UTC and inclusive of `days` calendar days ending
+// today, matching the same days-1 convention Google/Reddit's monitor dispatchers already use;
+// Meta itself interprets since/until in the ad account's configured timezone, so a boundary
+// day's spend can differ slightly from a strict UTC reading.
 func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, error) {
-	end := time.Now().UTC()
+	end := c.timeNow().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	timeRange := `{"since":"` + start.Format("2006-01-02") + `","until":"` + end.Format("2006-01-02") + `"}`
 

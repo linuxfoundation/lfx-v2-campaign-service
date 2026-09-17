@@ -1155,7 +1155,6 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // ListAccounts uses (a monitor read names its OWN target accountID, distinct from whatever
 // account the project's connection currently points at), then reads every campaign visible
 // on that account via meta.Client.ListAccountCampaigns.
-//
 func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	client, err := d.resolveMetaDiscoveryClient(ctx, projectID, platform)
 	if err != nil {

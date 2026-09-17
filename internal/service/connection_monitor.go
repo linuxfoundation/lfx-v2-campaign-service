@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -159,6 +160,8 @@ func (s *ConnectionService) monitorAccount(
 	// away campaign data the caller already has in hand.
 	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(metricsRows))
 	if terr != nil {
+		slog.ErrorContext(ctx, "account totals read failed; serving the row-summed fallback",
+			"error", terr, "project_id", projectID, "platform", platform)
 		ok = false
 	}
 	if !ok {

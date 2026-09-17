@@ -53,9 +53,15 @@ underspend threshold/label mismatch (fires at `<40`, labeled `<50`), and
 Reddit's totals coming from an independent upstream call rather than a row
 sum. Each has (or will have) its own follow-up issue.
 
-Meta's pagination is the one exception — the legacy BFF silently truncates
-past 100 campaigns, which is a data-completeness defect rather than a
-threshold quirk, so the port paginates fully instead of copying the bug.
+Meta has two deliberate departures rather than the usual verbatim port. Its
+pagination is the first — the legacy BFF silently truncates past 100
+campaigns, which is a data-completeness defect rather than a threshold
+quirk, so the port paginates fully instead of copying the bug. Its insights
+window is the second: the BFF's `getMetaAnalytics` hardcoded
+`date_preset=last_30d`, ignoring its own caller-supplied `days` entirely (a
+`days=7` request silently got 30 days of spend) — a data-correctness bug,
+not a threshold/labeling quirk, so the port renders an explicit
+`time_range` from the caller's `days` instead.
 
 ## Correctness bugs found during local differential verification
 
