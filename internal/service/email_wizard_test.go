@@ -1166,3 +1166,45 @@ func TestGenerateWizardContent_DoesNotRegressAPhase(t *testing.T) {
 		t.Errorf("a cloned session regressed to %q; the draft still exists in HubSpot", sess.Phase)
 	}
 }
+
+// TestChatWizardTurn_BoundsTheStoredReply pins that a model reply cannot grow the session row
+// without limit.
+//
+// maxWizardStoredTurns bounds the COUNT of persisted turns at 60; nothing bounded their SIZE.
+// The user's message was truncated to maxWizardChatMessage, the assistant's was stored verbatim,
+// and the llm client accepts up to 8 MiB — so 60 turns is a row measured in hundreds of MB. The
+// "under 200 words" line in the system prompt is an instruction to a model, not a guarantee.
+//
+// The reply RETURNED to the caller is deliberately not truncated: the operator reads the whole
+// answer, only the stored copy is bounded.
+func TestChatWizardTurn_BoundsTheStoredReply(t *testing.T) {
+	huge := strings.Repeat("y", maxWizardChatMessage*3)
+	h := newWizardHarness(t, func() string { return huge })
+	started := h.start(t)
+
+	out, err := h.svc.ChatWizardTurn(context.Background(), &briefs.ChatWizardTurnPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+		Message: "hello",
+	})
+	if err != nil {
+		t.Fatalf("ChatWizardTurn: %v", err)
+	}
+	if len(out.Message) != len(huge) {
+		t.Errorf("the caller must get the FULL reply; got %d runes of %d", len(out.Message), len(huge))
+	}
+
+	sess, serr := h.sessions.GetSession(context.Background(), wizardTestProject, wizardTestBrief, started.SessionID)
+	if serr != nil {
+		t.Fatalf("GetSession: %v", serr)
+	}
+	turns, terr := sess.Turns()
+	if terr != nil {
+		t.Fatalf("Turns: %v", terr)
+	}
+	for _, turn := range turns {
+		if utf8.RuneCountInString(turn.Content) > maxWizardChatMessage {
+			t.Errorf("a stored %s turn is %d runes, over the %d bound",
+				turn.Role, utf8.RuneCountInString(turn.Content), maxWizardChatMessage)
+		}
+	}
+}

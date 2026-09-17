@@ -1476,7 +1476,12 @@ func (s *BriefService) ChatWizardTurn(ctx context.Context, p *briefs.ChatWizardT
 	now := s.now()
 	turns = append(turns,
 		model.WizardChatTurn{Role: "user", Content: message, At: now},
-		model.WizardChatTurn{Role: "assistant", Content: reply, At: now},
+		// The reply is bounded before storage, like the user's message above. The system
+		// prompt asks for under 200 words, but that is an instruction to a model, not a
+		// guarantee: the client accepts up to maxResponseBody (8 MiB), and 60 stored turns of
+		// that is a session row measured in hundreds of megabytes. maxWizardStoredTurns bounds
+		// the COUNT; nothing bounded the size until here.
+		model.WizardChatTurn{Role: "assistant", Content: truncateString(reply, maxWizardChatMessage), At: now},
 	)
 	if len(turns) > maxWizardStoredTurns {
 		turns = turns[len(turns)-maxWizardStoredTurns:]
