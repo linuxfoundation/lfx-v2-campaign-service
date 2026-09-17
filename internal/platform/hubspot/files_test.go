@@ -146,3 +146,46 @@ func TestDeriveImageFilename(t *testing.T) {
 		}
 	}
 }
+
+// TestDownloadImage_DefaultClientRefusesAForbiddenAddress pins the SSRF guard on the
+// path that matters: a Client built the way production builds it (NewClient with no
+// download-client override). The other tests in this file inject an unguarded client so
+// they can reach their 127.0.0.1 httptest server, so without this one the guard could be
+// deleted entirely and every test here would still pass.
+//
+// It asserts on the DEFAULT, not on eventurl's guard — that package pins its own address
+// enumeration. What is pinned here is the wiring: that UploadImage's fetch goes through
+// the guarded client rather than a bare http.Client.
+func TestDownloadImage_DefaultClientRefusesAForbiddenAddress(t *testing.T) {
+	// Serves on 127.0.0.1, which the guard denies. Reaching it means no guard.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = io.WriteString(w, "fake-png-bytes")
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(testCreds(), testAccount())
+
+	_, err := c.UploadImage(context.Background(), srv.URL+"/hero.png")
+	if err == nil {
+		t.Fatal("UploadImage fetched a loopback address: the SSRF guard is not wired in")
+	}
+	if !strings.Contains(err.Error(), "forbidden address") {
+		t.Fatalf("expected a forbidden-address refusal, got %v", err)
+	}
+}
+
+// TestDownloadImage_RefusesANonHTTPScheme covers the case the dial-time guard cannot:
+// a non-http(s) scheme never reaches a dial, so without the explicit scheme check the
+// request would fail with a transport error that reads like an ordinary network fault.
+func TestDownloadImage_RefusesANonHTTPScheme(t *testing.T) {
+	c := NewClient(testCreds(), testAccount())
+
+	_, err := c.UploadImage(context.Background(), "file:///etc/passwd")
+	if err == nil {
+		t.Fatal("UploadImage accepted a file:// URL")
+	}
+	if !strings.Contains(err.Error(), "not http(s)") {
+		t.Fatalf("expected a scheme refusal, got %v", err)
+	}
+}

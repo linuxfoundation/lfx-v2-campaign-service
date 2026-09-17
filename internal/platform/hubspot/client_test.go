@@ -34,8 +34,13 @@ func newTestClient(t *testing.T, h http.HandlerFunc) (*Client, *httptest.Server)
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
+	// withDownloadClient is required, not incidental: image downloads go through the
+	// SSRF-guarded client by default, and that guard correctly REFUSES the 127.0.0.1
+	// httptest server every test here serves from. Only the download path is relaxed;
+	// TestDownloadImage_RefusesAForbiddenAddress pins that the default still denies.
 	c := NewClient(testCreds(), testAccount(),
-		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond),
+		withDownloadClient(&http.Client{Timeout: 5 * time.Second}))
 	return c, srv
 }
 

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -43,7 +44,7 @@ func (c *Client) UploadImage(ctx context.Context, imageURL string) (string, erro
 		return "", fmt.Errorf("hubspot: missing private-app token")
 	}
 
-	data, contentType, filename, err := downloadImage(ctx, imageURL)
+	data, contentType, filename, err := c.downloadImage(ctx, imageURL)
 	if err != nil {
 		return "", err
 	}
@@ -55,14 +56,44 @@ func (c *Client) UploadImage(ctx context.Context, imageURL string) (string, erro
 // mirroring the prototype's upload_image_to_hubspot: a page returning an HTML error
 // page (wrong URL, expired link) must be rejected before we waste a HubSpot upload
 // on it.
-func downloadImage(ctx context.Context, imageURL string) (data []byte, contentType, filename string, err error) {
+//
+// imageURL is CALLER-SUPPLIED (a hero/sponsor image scraped from an operator-named
+// event page), so this fetch is an SSRF sink and goes through c.downloadClient, which
+// carries eventurl's dial-time address guard. Two properties of THIS sink make the
+// guard load-bearing rather than defensive:
+//
+//   - the response body is re-hosted in the LF portal as a PUBLIC_INDEXABLE file and
+//     its CDN URL returned, so anything fetched becomes publicly readable. An
+//     unguarded fetch of 169.254.169.254 or a cluster-internal service would not just
+//     leak to this process, it would publish.
+//   - the Content-Type check below is NOT a second line of defence. The server that
+//     answers is the attacker's to choose, so it can claim image/png for any bytes.
+//
+// The scheme is checked here rather than left to the dialer because a non-http(s)
+// scheme never reaches a dial at all: file:// and similar are refused by Transport
+// with an error that reads like a network failure, and the guard would never run.
+func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byte, contentType, filename string, err error) {
+	parsed, perr := url.Parse(imageURL)
+	if perr != nil {
+		return nil, "", "", fmt.Errorf("hubspot: image URL is not parsable: %w", perr)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, "", "", fmt.Errorf("hubspot: image URL scheme %q is not http(s)", parsed.Scheme)
+	}
+
 	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if rerr != nil {
 		return nil, "", "", fmt.Errorf("hubspot: build image download request: %w", rerr)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
-	client := &http.Client{Timeout: imageDownloadTimeout}
+	client := c.downloadClient
+	if client == nil {
+		// Only reachable via a zero-value Client built outside NewClient. Falling back
+		// to an unguarded &http.Client{} here would make the guard depend on how the
+		// struct was constructed, which is exactly the bug this defends against.
+		client = eventurl.NewGuardedClient(imageDownloadTimeout)
+	}
 	resp, derr := client.Do(req)
 	if derr != nil {
 		return nil, "", "", fmt.Errorf("hubspot: download image: %w", derr)
