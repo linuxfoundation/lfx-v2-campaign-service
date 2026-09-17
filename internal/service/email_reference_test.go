@@ -393,3 +393,26 @@ func TestBuildReferenceBlock_FailsClosedWhenTheDisconnectProbeFails(t *testing.T
 		t.Errorf("fell back to the shared portal despite an unanswerable disconnect probe: %q", got)
 	}
 }
+
+// TestBuildReferenceBlock_ANilConnectionDoesNotPanic covers the one failure this best-effort
+// caller cannot absorb: domain.ConnectionReader does not forbid a (nil, nil) return, and
+// dereferencing that takes the whole request down instead of dropping the reference block.
+func TestBuildReferenceBlock_ANilConnectionDoesNotPanic(t *testing.T) {
+	src := NewEmailReferenceSource(nilConnReader{}, identityEncryptor{})
+
+	if got := src.BuildReferenceBlock(context.Background(), "proj-1"); got != "" {
+		t.Errorf("expected an empty block, got %q", got)
+	}
+}
+
+// nilConnReader returns the (nil, nil) that the port permits and nothing in the repo promises
+// not to produce.
+type nilConnReader struct{}
+
+func (nilConnReader) Get(context.Context, string, model.Provider) (*model.Connection, error) {
+	return nil, nil
+}
+
+func (nilConnReader) Disconnected(context.Context, string, model.Provider) (bool, error) {
+	return false, nil
+}

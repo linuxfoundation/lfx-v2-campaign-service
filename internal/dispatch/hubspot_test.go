@@ -4,11 +4,13 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1583,5 +1585,55 @@ func TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested(t *testing.T) {
 
 	if strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
 		t.Errorf("ConfigSnapshot claimed an A/B variant was requested when none was: %s", out.ConfigSnapshot)
+	}
+}
+
+// TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning pins the distinction the typed error
+// exists to make.
+//
+// HubSpot has, in practice, accepted a content PATCH with a 2xx and silently reverted it. That
+// leaves a draft matching neither the template nor the generated copy, and no retry of the same
+// payload is known to fix it — unlike a FAILED patch, which leaves the clone intact and is
+// retryable. Both used to log the same best-effort WARN, so a draft needing manual repair read
+// as a routine degrade.
+//
+// The assertion is on the log record because that is the only observable: the dispatch stays
+// best-effort by design (the campaign exists by this point, and failing it would be worse), so
+// the severity and the named error ARE the fix.
+func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
+	// 2xx on the content PATCH, but a re-read that never shows the widgets — HubSpot's silent
+	// revert. verifyContentSaved catches it and RebuildEmailContent wraps it.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
+			_, _ = io.WriteString(w, `{"id":"999","name":"cloned","state":"DRAFT"}`)
+		case strings.HasSuffix(r.URL.Path, "/draft"):
+			// Always the empty content tree, whatever was PATCHed. The PATCH itself 2xxes.
+			_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{},"flexAreas":{"main":{"sections":[]}}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"S","bodyHtml":"<p>b</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch should stay best-effort: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "level=ERROR") || !strings.Contains(logged, "not persisted") {
+		t.Errorf("a silently reverted content write was not raised as a named ERROR:\n%s", logged)
 	}
 }

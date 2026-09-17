@@ -55,14 +55,14 @@ type hubspotCreds struct {
 // yields nothing on any error, and importing it would create the cycle hubspotCreds' doc comment
 // describes. This type instead does the minimal project-then-system connection lookup itself.
 type EmailReferenceSource struct {
-	conn domain.ConnectionReader
+	conn connReader
 	enc  domain.Encryptor
 	opts []hubspot.Option
 }
 
 // NewEmailReferenceSource builds a reference source. opts are forwarded to hubspot.NewClient
 // (e.g. test overrides for the base URL or HTTP client).
-func NewEmailReferenceSource(conn domain.ConnectionReader, enc domain.Encryptor, opts ...hubspot.Option) *EmailReferenceSource {
+func NewEmailReferenceSource(conn connReader, enc domain.Encryptor, opts ...hubspot.Option) *EmailReferenceSource {
 	return &EmailReferenceSource{conn: conn, enc: enc, opts: opts}
 }
 
@@ -149,29 +149,17 @@ func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectI
 	return truncateRunes(b.String(), maxReferenceBlockRunes)
 }
 
-// disconnectedReader is the optional half of the connection port: whether a project
-// explicitly disconnected a provider, as opposed to never having connected it.
+// connReader is the connection port this source needs: the singleton read, plus whether a
+// project explicitly DISCONNECTED the provider as opposed to never having connected it.
 //
-// It is a separate, optionally-satisfied interface rather than a widening of
-// domain.ConnectionReader because every other reader (and every test fake) would otherwise
-// have to grow a method only this fallback needs. The postgres ConnectionRepo already
-// implements it.
-type disconnectedReader interface {
+// Disconnected is on the INTERFACE rather than behind a type assertion, matching
+// dispatch.connReader and for the reason stated there: a reader that cannot answer must fail to
+// COMPILE, not silently take the fallback an assertion's else-branch would give it. A caching or
+// metrics decorator that forwarded only Get would otherwise re-open the exact bug the probe
+// closes, and re-open it silently, since BuildReferenceBlock swallows every error.
+type connReader interface {
+	domain.ConnectionReader
 	Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error)
-}
-
-// disconnected reports whether projectID explicitly disconnected HubSpot.
-//
-// A reader that cannot answer returns false: without the probe there is no evidence of a
-// disconnect, and refusing every fallback on that basis would break the shared-portal case
-// this source exists to serve. That is a deliberate narrowing of the fail-closed rule to
-// "cannot ask" — an error from a reader that CAN ask still fails closed at the call site.
-func (r *EmailReferenceSource) disconnected(ctx context.Context, projectID string) (bool, error) {
-	probe, ok := r.conn.(disconnectedReader)
-	if !ok {
-		return false, nil
-	}
-	return probe.Disconnected(ctx, projectID, model.ProviderHubSpot)
 }
 
 // resolveClient builds a HubSpot client from the project's own connection, falling back to the
@@ -189,7 +177,7 @@ func (r *EmailReferenceSource) resolveClient(ctx context.Context, projectID stri
 		//
 		// Fails CLOSED on a probe error, matching dispatch's systemConn: an unanswered "was
 		// this disconnected?" is not a no.
-		if disconnected, derr := r.disconnected(ctx, projectID); derr != nil {
+		if disconnected, derr := r.conn.Disconnected(ctx, projectID, model.ProviderHubSpot); derr != nil {
 			return nil, fmt.Errorf("could not determine whether %s disconnected hubspot: %w", projectID, derr)
 		} else if disconnected {
 			return nil, domain.ErrNotFound

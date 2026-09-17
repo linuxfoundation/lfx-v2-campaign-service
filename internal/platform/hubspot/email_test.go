@@ -4,11 +4,13 @@
 package hubspot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -1108,4 +1110,32 @@ func TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort(t *testing.T) {
 			t.Errorf("blocks[1] = {%q, Placed=%v}, want the unplaced footer", got[1].Key, got[1].Placed)
 		}
 	})
+}
+
+// TestCreateABTestVariant_WarnsOnAnUnexpectedState covers the state check, which is otherwise
+// deletable with a green suite.
+//
+// A 2xx carrying some other state means HubSpot created something that is not the A/B variant
+// this call asked for. The variant is still returned (the caller's best-effort contract), so the
+// WARN is the only signal that the draft is not what it claims to be.
+func TestCreateABTestVariant_WarnsOnAnUnexpectedState(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"888","name":"V-B","state":"DRAFT"}`)
+	})
+
+	e, err := c.CreateABTestVariant(context.Background(), "999", "V-B")
+	if err != nil {
+		t.Fatalf("an unexpected state must not fail the call: %v", err)
+	}
+	if e == nil || e.ID != "888" {
+		t.Fatal("the variant should still be returned")
+	}
+	if !strings.Contains(buf.String(), "unexpected A/B variant state") {
+		t.Errorf("no warning for a variant HubSpot did not create as an A/B variant:\n%s", buf.String())
+	}
 }

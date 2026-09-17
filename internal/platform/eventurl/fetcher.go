@@ -445,6 +445,35 @@ func NewGuardedClient(timeout time.Duration) *http.Client {
 	return newGuardedClient([]nat64Prefix{wellKnownNAT64}, timeout)
 }
 
+// maxGuardedRedirects bounds a followed redirect chain. Small on purpose: legitimate asset
+// hosting redirects once or twice (a CDN to its origin, a bucket to a signed URL), and a
+// longer chain is a redirector being used as one.
+const maxGuardedRedirects = 5
+
+// NewGuardedRedirectClient is NewGuardedClient for callers that must follow redirects, which
+// asset URLs genuinely require: S3 pre-signed links, Cloudinary and imgix transforms, and most
+// CDN hotlink paths answer 302 rather than serving the bytes directly. Refusing those is a
+// functional break, not a security posture.
+//
+// Following is safe HERE because the address guard is a Transport-level dial hook, not a
+// per-request check: every hop opens its own connection and is judged on its own resolved
+// address, so a permitted host redirecting to 169.254.169.254 is refused at the hop that tries
+// to dial it. That is what makes this different from re-enabling redirects on an unguarded
+// client, and it is why the chain is bounded rather than trusted.
+//
+// Fetch keeps NewGuardedClient's refusal: an event PAGE that redirects is a different request
+// than the caller asked for, and its content is parsed rather than re-hosted.
+func NewGuardedRedirectClient(timeout time.Duration) *http.Client {
+	c := newGuardedClient([]nat64Prefix{wellKnownNAT64}, timeout)
+	c.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
+		if len(via) >= maxGuardedRedirects {
+			return fmt.Errorf("%w: redirect chain exceeded %d hops", ErrEventURLForbidden, maxGuardedRedirects)
+		}
+		return nil
+	}
+	return c
+}
+
 func newGuardedClient(nat64 []nat64Prefix, timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress(nat64)}
 	return &http.Client{
