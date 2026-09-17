@@ -290,8 +290,10 @@ type Client struct {
 	httpClient    *http.Client
 	baseURL       string
 	adsManagerURL string
-	// timeNow allows tests to control the clock used for 429 backoff.
-	// Defaults to time.Now.
+	// timeNow is this client's clock: 429 backoff timing and, since the account-monitor
+	// endpoints landed, the production time_range window fetchAccountCampaignInsights
+	// builds for every insights query. Defaults to time.Now; tests override it to control
+	// both consumers.
 	timeNow func() time.Time
 	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
 	// retryBaseDelay const; tests may shrink it to keep runs fast.
@@ -345,7 +347,8 @@ func WithAdsManagerURL(u string) Option {
 	return func(c *Client) { c.adsManagerURL = strings.TrimRight(u, "/") }
 }
 
-// WithClock overrides the time source used for 429 backoff. For tests.
+// WithClock overrides the client's clock (see timeNow's doc comment: 429 backoff and the
+// account-monitor insights time_range window both read it). For tests.
 func WithClock(now func() time.Time) Option {
 	return func(c *Client) {
 		if now != nil {

@@ -4944,8 +4944,8 @@ type AccountMonitorTotalsResponseBody struct {
 	CampaignCount *int `form:"campaign_count,omitempty" json:"campaign_count,omitempty" xml:"campaign_count,omitempty"`
 	// True when these totals are a sum of the returned campaigns array rather than
 	// the platform's own account-wide figure. Always false except on a Reddit read
-	// whose separate account-totals call failed or is unsupported, in which case
-	// the campaign rows are still authoritative but this aggregate is a derived
+	// whose separate account-totals call actually failed, in which case the
+	// campaign rows are still authoritative but this aggregate is a derived
 	// stand-in.
 	DerivedFromRows *bool `form:"derived_from_rows,omitempty" json:"derived_from_rows,omitempty" xml:"derived_from_rows,omitempty"`
 }

@@ -146,7 +146,9 @@ type AccountMonitorTotals struct {
 	// function's doc comment. Every platform but Reddit always sets it false: their totals
 	// ARE a row sum by design, so "derived" carries no information for them. For Reddit it
 	// distinguishes the platform's own independent account-level number from a stand-in
-	// computed here because that call failed or is unsupported.
+	// computed here because that call actually failed — not merely because no
+	// AccountTotalsReader exists for the platform, which is the contractual figure, not a
+	// stand-in.
 	DerivedFromRows bool
 }
 

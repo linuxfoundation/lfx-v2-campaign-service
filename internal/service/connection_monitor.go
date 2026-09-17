@@ -174,6 +174,7 @@ func (s *ConnectionService) monitorAccount(
 	// EvaluateGoogleMonitor's zz-prefix drop) — if one ever did, this count would need to
 	// come from whatever that implementation actually returned, not from rows.
 	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(rows))
+	totalsReadFailed := terr != nil
 	if terr != nil {
 		if errors.Is(terr, errAccountTotalsContractViolation) {
 			// A broken AccountTotalsReader adapter, not an ordinary upstream failure — see
@@ -211,13 +212,15 @@ func (s *ConnectionService) monitorAccount(
 		for i, r := range rows {
 			filteredMetrics[i] = r.Metrics
 		}
-		// Only Reddit's dispatcher implements AccountTotalsReader (see ReadAccountTotals'
-		// doc comment); every other platform reaches this branch via the !ok-with-nil-err
-		// path above on EVERY request, not on failure, because it has no such capability —
-		// for them this sum IS the contractual figure, not a stand-in. Reddit reaches this
-		// branch only when its own independent totals call actually failed, so only there is
-		// the sum a derived substitute for a platform-native number that was expected.
-		totals = monitorTotalsFallback(filteredMetrics, platform == model.ProviderRedditAds)
+		// derived must be true only when a platform-native figure was expected and its read
+		// actually failed (totalsReadFailed, captured before the !ok-with-nil-err path below
+		// resets ok), not whenever this branch is reached at all: a platform with no
+		// AccountTotalsReader implementation reaches this branch via !ok-with-nil-err on
+		// EVERY request, and for it this sum IS the contractual figure, not a stand-in.
+		// Keying off the provider instead of the actual failure signal would silently
+		// mislabel a future second AccountTotalsReader implementation's failures as
+		// non-derived.
+		totals = monitorTotalsFallback(filteredMetrics, totalsReadFailed)
 	}
 
 	connCampaigns := make([]*conn.AccountMonitorCampaign, 0, len(rows))
