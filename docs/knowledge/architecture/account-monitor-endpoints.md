@@ -28,9 +28,15 @@ reaches), not project-scoped ones.
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
 - Each dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit}.go`)
-  reuses its platform's existing discovery credential resolver — the same
-  fallback chain (`credsSource.resolve` → `resolveWithFallback` → `systemConn`
-  → forced-system) that account discovery already uses.
+  resolves its monitor read's credential via `credsSource.resolveOwned` —
+  the project's own connection only, never the LF system-account fallback
+  chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
+  that account discovery still uses. This is deliberately narrower than
+  discovery: see the Trust boundary section below for why (round-16/17
+  review). Google Ads/LinkedIn/Meta build an account-agnostic client the
+  same way discovery does; Reddit additionally scopes the requested
+  `account_id` to its own resolved connection's single account, since a
+  Reddit connection is bound to exactly one ad account.
 - The four rule engines (`internal/service/rules/monitor_*.go`) are ported as
   four separate files, deliberately **not** unified onto the shared
   `internal/service/rules` package (`pacing.go`/`actions.go`) — unifying
@@ -119,8 +125,12 @@ client, which fails with an opaque upstream error instead of a clean 400.
 Verified reachable on three of the four dispatchers: LinkedIn's and Meta's
 `ListAccountCampaignMetrics` pass `account_id` straight to the platform
 client with no check at all, and Reddit's `resolveMonitorClient` mismatch
-guard (`internal/dispatch/reddit.go`) skips its own check entirely when the
-incoming id is empty (`want != "" && got != "" && ...`). Google is the one
+guard (`internal/dispatch/reddit.go`) skipped its own check entirely when the
+incoming id was empty (`want != "" && got != "" && ...`) — no longer true as
+of round-17 review: both sides are now guaranteed non-empty before this guard
+runs (`reddit.ValidateAccountID` upstream, `resolveRedditClientWithCreds`'s
+own empty-account-id refusal), so the emptiness conditions were dropped as
+dead code and the guard is now a plain equality check. Google is the one
 exception — `gaqlSearchForCustomer` already rejects non-digit ids downstream
 with a clear error — but still gained the same design-layer guard for
 symmetry. Fix: `MaxLength(64)` on all four. LinkedIn (`^[0-9]+$`) and Meta
@@ -177,6 +187,55 @@ Every dispatcher's own shape check — `googleads.ValidateCustomerID`,
 `domain.ErrAccountIDMalformed`; it is now uniform defense-in-depth for a
 non-HTTP caller that bypasses Goa entirely on any of the four platforms,
 not the primary gate for two of them.
+
+## Trust boundary: `{project_id}` no longer means "or the system fallback"
+
+Round 15 documented, without fixing, a credential-scope gap: `{project_id}`
+in these URLs meant "whose credential resolves the platform client," and
+that resolution walked the same fallback chain (`resolve` →
+`resolveWithFallback` → `systemConn`) discovery already used — so a project
+with no connection of its own for a platform was served the shared LF system
+credential, and could read another project's spend/budget/campaign data for
+any account id that credential reaches. Round 16 escalated this to Critical
+because these four endpoints are externally routed (this branch's
+`httproute.yaml`/`ruleset.yaml` chart changes), and fixed it for
+Google/LinkedIn/Meta by adding a parallel "owned discovery" resolver per
+platform (`resolveOwnedGoogleAdsDiscoveryClient`,
+`resolveLinkedInOwnedDiscoveryCredentials`, `resolveOwnedMetaDiscoveryClient`)
+that refuses the system fallback the way `resolveOwned`
+(`internal/dispatch/creds.go`) already does for the adoption flow. A project
+with no connection of its own now gets `domain.ErrNotFound` → 404 via the
+existing `classifyDiscoveryError` arm, before any account id is even
+considered.
+
+Round 17 review found the round-16 fix incomplete: Reddit's
+`resolveMonitorClient` still resolved via `d.creds.resolve` (the fallback-
+permitting resolver), relying solely on an accountID-equality check against
+the resolved connection's own account to constrain access. That check
+constrains *which* account is read, not *whose* credential is lent — a
+project with no Reddit connection of its own that supplied the shared LF
+system account's id (recoverable from its own past campaigns'
+`redditCreationAccountID`, if it ever dispatched through the fallback) still
+satisfied the equality check and was served every campaign on that shared
+account. Fixed the same way as the other three: `resolveMonitorClient` now
+calls `d.creds.resolveOwned` instead of `d.creds.resolve`.
+
+**Residual exposure, by design, left open:** this fix is scoped to the four
+monitor reads only. `ListAccountCampaignMetrics`'s sibling paths — dispatch
+(campaign creation) and per-campaign `ReadMetrics` — still resolve *with* the
+system fallback on every platform, so a project operating entirely on the LF
+system ad account can still create campaigns and read their per-campaign
+metrics; it is only the account-wide monitor read that now refuses to serve
+that project at all, rather than scoping to what it created. This mirrors
+the adoption flow's own precedent and its stated limit: a project on a
+shared credential has no "own" account to monitor, the same way it has no
+"own" account to adopt into. Google Ads carries a further, unavoidable
+residual even for a project WITH its own connection — see
+`resolveOwnedGoogleAdsDiscoveryClient`'s doc comment
+(`internal/dispatch/googleads.go`): Google Ads is one shared customer across
+every foundation, so the fix closes the system-fallback gap but cannot make
+the endpoint project-scoped in the way LinkedIn/Meta/Reddit's per-project ad
+accounts are.
 
 ## Correctness bugs found during PR review
 

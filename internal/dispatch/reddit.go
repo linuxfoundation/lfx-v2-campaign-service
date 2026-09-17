@@ -525,21 +525,37 @@ func (d *RedditDispatcher) ReadAccountTotals(ctx context.Context, projectID stri
 	}, nil
 }
 
-// resolveMonitorClient resolves the project's Reddit connection and its client the same way
-// every other read-only Reddit path does (d.creds.resolve — the monitor read is not scoped
-// to a persisted campaign's creation account, so there is no existingResolver to defer to),
-// then confirms accountID names the SAME account the connection resolves to. A raw ad account
-// id that does not match is refused rather than silently served the connection's own account's
-// data under a different label, or silently ignored — either of which would misattribute
-// whichever account the caller thought it was reading.
+// resolveMonitorClient resolves the project's OWN Reddit connection and its client — never the
+// LF system fallback (d.creds.resolveOwned, not d.creds.resolve) — then confirms accountID
+// names the SAME account the connection resolves to. A raw ad account id that does not match is
+// refused rather than silently served the connection's own account's data under a different
+// label, or silently ignored — either of which would misattribute whichever account the caller
+// thought it was reading.
+//
+// Trust boundary (round-17 review, fixed): the account-id equality check alone does NOT close
+// the credential-scope gap round-16 fixed on Google/LinkedIn/Meta's monitor reads — it
+// constrains WHICH account is read, not WHOSE credential is lent. A project with no Reddit
+// connection of its own previously fell back to the shared LF system row, and any caller who
+// simply knew that system account's id (recoverable from its own past campaigns' result blobs,
+// see redditCreationAccountID) satisfied the equality check and was served every campaign on
+// the shared account, including ones dispatched by other projects through the same fallback.
+// resolveOwned closes this the same way it does for Google/LinkedIn/Meta: a project with no
+// connection of its own now gets domain.ErrNotFound (404) before any account-id comparison
+// runs. See resolveOwnedGoogleAdsDiscoveryClient's doc comment (internal/dispatch/googleads.go)
+// for the shared rationale.
 func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*reddit.Client, error) {
-	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolve)
+	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {
 		return nil, err
 	}
+	// Both sides are already guaranteed non-empty by this point — reddit.ValidateAccountID
+	// (called by every caller of this method before it resolves any credential) rejects an
+	// empty accountID, and resolveRedditClientWithCreds above already refused an empty
+	// res.accountID as ErrAccountNotSelected — so this is a plain equality check, not a guard
+	// against either side being blank.
 	want := strings.TrimSpace(accountID)
 	got := strings.TrimSpace(res.accountID)
-	if want != "" && got != "" && want != got {
+	if want != got {
 		return nil, fmt.Errorf("%w: reddit connection for project %s resolves to account %s, not the requested account %s",
 			domain.ErrConnectionNotUsable, projectID, got, want)
 	}
