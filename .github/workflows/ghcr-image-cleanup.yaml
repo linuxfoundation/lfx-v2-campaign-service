@@ -15,7 +15,7 @@ name: "Cleanup Stale Container Images"
         required: false
         default: true
       cut-off:
-        description: "Minimum age an untagged image version must reach before it is eligible for deletion (e.g. 30d, 4w 2d)."
+        description: "Minimum age an image version must reach before it is eligible for deletion (e.g. 30d, 4w 2d)."
         type: string
         required: false
         default: "30d"
@@ -30,15 +30,19 @@ jobs:
     permissions:
       packages: write
     steps:
-      # Untagged-only tag-selection and the fixed account/image-names below are
-      # intentionally not exposed as workflow_dispatch inputs: changing either
-      # would delete tagged (including per-commit SHA) versions or reach
-      # outside this package, both of which the team explicitly ruled out.
-      # keep-n-most-recent is left at its default (0, i.e. unused) for the
-      # same reason. snok/container-retention-policy protects multi-arch
-      # child manifests still referenced by a retained parent automatically,
-      # with no input here overriding that behavior.
-      - name: Delete stale untagged image versions
+      # tag-selection and the fixed account/image-names below are intentionally
+      # not exposed as workflow_dispatch inputs. tag-selection is `both`:
+      # per-commit SHA-tagged versions from PR/main builds are now in scope
+      # (see the --image-tags note below for what still protects releases and
+      # the current main build), but reaching outside this package is still
+      # ruled out, so account/image-names stay fixed. keep-n-most-recent is
+      # left at its default (0, i.e. unused): the cut-off already excludes
+      # anything younger than the configured age, so an additional
+      # most-recent-N carve-out wouldn't protect anything cut-off doesn't.
+      # snok/container-retention-policy protects multi-arch child manifests
+      # still referenced by a retained parent automatically, with no input
+      # here overriding that behavior.
+      - name: Delete stale image versions
         id: container-retention-policy
         # Invoked as a direct container reference, pinned by digest, rather
         # than via the `snok/container-retention-policy@<sha>` action alias:
@@ -54,14 +58,15 @@ jobs:
         # passed via `with.args`, GitHub's documented mechanism for a Docker
         # container step's args (see "jobs.<job_id>.steps[*].with.args" in the
         # workflow syntax reference), which forwards this string to the
-        # container's ENTRYPOINT. cut-off is double-quoted because its value
-        # may contain a space (e.g. "4w 2d"). --image-tags and --shas-to-skip
-        # are passed empty rather than omitted: upstream's action.yaml always
-        # forwards both flags to the CLI (empty when its own inputs are
-        # unset), and the CLI's arg parser requires the flags to be present,
-        # even with an empty value — confirmed by a live dry-run failing with
-        # "the following required arguments were not provided: --image-tags
-        # <IMAGE_TAGS>, --shas-to-skip <SHAS_TO_SKIP>" when they were omitted.
+        # container's ENTRYPOINT. cut-off and image-tags are double-quoted
+        # because their values contain a space (e.g. "4w 2d", "!latest
+        # !development"). --shas-to-skip is passed empty rather than omitted:
+        # upstream's action.yaml always forwards it to the CLI (empty when its
+        # own input is unset), and the CLI's arg parser requires the flag to
+        # be present, even with an empty value — confirmed by a live dry-run
+        # failing with "the following required arguments were not provided:
+        # --image-tags <IMAGE_TAGS>, --shas-to-skip <SHAS_TO_SKIP>" when both
+        # flags were omitted outright.
         env:
           RUST_LOG: container_retention_policy=INFO
         with:
@@ -70,20 +75,41 @@ jobs:
           # here — no separate PAT is needed. Requires the job-level
           # `permissions: packages: write` above.
           #
-          # Scheduled runs default to dry-run:true for now: the package has
-          # ~15,000 existing untagged versions, so the first unattended
-          # Sunday run would face the whole accumulated backlog rather than
-          # the small weekly slice a steady-state run sees, risking a
-          # GHCR rate-limit failure with no one watching. Flip this fallback
-          # to 'false' once a maintainer has reviewed a manual dry-run
-          # preview (or drained the backlog manually) and confirmed the
-          # candidate count is safe to delete unattended.
+          # --image-tags="!latest !development" protects releases and the
+          # current main build without needing to enumerate every branch
+          # name: per snok/container-retention-policy's matcher semantics
+          # (src/core/select_package_versions.rs::filter_by_matchers), a
+          # negative pattern matching *any* tag on a package version protects
+          # that whole version, regardless of its other tags. Every release
+          # build (.github/workflows/ko-build-tag.yaml) tags with `latest`
+          # plus its version strings, and the current main build
+          # (ko-build-main.yaml) tags with `development` — neither workflow's
+          # tags ever share a digest with a plain PR/main SHA-tagged build, so
+          # this excludes exactly the versions that must survive and nothing
+          # else. Everything else tagged (per-commit SHA + a branch name from
+          # ko-build-branch.yaml, or a superseded SHA + `development` pairing
+          # from an older main build) is now a deletion candidate once past
+          # cut-off, which is the point of widening tag-selection to `both`:
+          # previously only fully-untagged versions were ever considered, so
+          # per-commit SHA-tagged versions accumulated indefinitely.
+          #
+          # Known tradeoff: a PR branch whose last push is older than
+          # cut-off still carries a live branch-name tag, so its current
+          # image is now a deletion candidate too (an idle/abandoned PR, not
+          # just superseded commits on an active one). Accepted as normal
+          # cleanup of stale PR images; dry-run below guards the rollout.
+          #
+          # dry-run defaults to true for now, for both triggers: this widens
+          # scope to tagged versions for the first time, on top of the
+          # existing ~15,000-version untagged backlog, so a maintainer should
+          # review a manual dry-run preview before flipping either fallback
+          # to 'false'.
           args: >-
             --account=linuxfoundation
             --image-names=lfx-v2-campaign-service/campaign-service
-            --image-tags=
+            --image-tags="!latest !development"
             --shas-to-skip=
-            --tag-selection=untagged
+            --tag-selection=both
             --token=${{ secrets.GITHUB_TOKEN }}
             --cut-off="${{ github.event.inputs.cut-off || '30d' }}"
             --dry-run=${{ github.event.inputs.dry-run || 'true' }}

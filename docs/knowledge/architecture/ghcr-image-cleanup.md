@@ -1,14 +1,14 @@
 ---
 type: "Architecture Doc"
 title: "GHCR stale image cleanup"
-description: "How the scheduled and on-demand GitHub Actions workflow removes stale, untagged GHCR image versions for the campaign-service container package."
+description: "How the scheduled and on-demand GitHub Actions workflow removes stale GHCR image versions, tagged and untagged, for the campaign-service container package."
 resource: ".github/workflows/ghcr-image-cleanup.yaml"
 ---
 
 # GHCR stale image cleanup
 
 [`.github/workflows/ghcr-image-cleanup.yaml`](../../../.github/workflows/ghcr-image-cleanup.yaml)
-deletes stale, untagged versions of the
+deletes stale versions, tagged and untagged, of the
 `linuxfoundation/lfx-v2-campaign-service/campaign-service` GHCR package using
 [`snok/container-retention-policy`](https://github.com/snok/container-retention-policy),
 invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
@@ -31,26 +31,41 @@ run to fail immediately.
 
 - **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
   `cut-off: 30d`. `dry-run` currently defaults to `true` (preview only)
-  because the package's existing ~15,000-version backlog means the first
-  unattended run would otherwise face the whole backlog at once instead of
-  a manageable weekly slice. A maintainer flips the fallback to `false` in
-  the workflow file after reviewing a manual preview or draining the
-  backlog manually.
+  because this is the first run to widen scope from untagged-only to
+  `tag-selection=both` (see Scope below) on top of the package's existing
+  ~15,000-version untagged backlog — the first unattended run would
+  otherwise face both at once instead of a manageable weekly slice. A
+  maintainer flips the fallback to `false` in the workflow file after
+  reviewing a manual preview or draining the backlog manually.
 - **Manual** (`workflow_dispatch`): a maintainer can preview or tune a single
   run via the `dry-run` (default `true`) and `cut-off` (default `30d`)
   inputs, without changing the schedule's defaults.
 
 ## Scope
 
-`tag-selection` is hardcoded to `untagged` — tagged versions, including
-per-commit SHA tags and any release/production tags, are never deletion
-candidates. This is intentionally not exposed as an override: `ko build`
-publishes every image with both an immutable SHA tag and a moving
-branch-name tag (see `.github/workflows/ko-build-branch.yaml`), so the
-untagged versions this workflow reclaims are the orphaned digests left
-behind when a branch's moving tag is repointed to a newer build. SHA-tagged
-versions keep accumulating and are a known, accepted limitation of this
-rollout.
+`tag-selection` is hardcoded to `both` — untagged versions and tagged
+versions are both deletion candidates once past `cut-off`. `--image-tags`
+carries the negative filter `"!latest !development"`, which protects any
+package version carrying a `latest` or a `development` tag regardless of
+its other tags: release builds (`.github/workflows/ko-build-tag.yaml`) tag
+with `latest` plus version strings, and the current main build
+(`.github/workflows/ko-build-main.yaml`) tags with `development`. Neither
+workflow's tags ever share a digest with a plain PR/main SHA-tagged build,
+so this excludes exactly the versions that must survive.
+
+Everything else tagged — a per-commit SHA plus a branch name from
+`.github/workflows/ko-build-branch.yaml`, or a superseded SHA + `development`
+pairing from an older main build — is a deletion candidate once past
+cut-off. Previously only fully-untagged versions were ever considered, so
+per-commit SHA-tagged versions accumulated indefinitely; this widening to
+`tag-selection=both` closes that gap. `tag-selection` and the fixed
+`account`/`image-names` are not exposed as `workflow_dispatch` overrides.
+
+Known tradeoff: a PR branch whose last push is older than `cut-off` still
+carries a live branch-name tag, so its current image is now a deletion
+candidate too, not just superseded commits on an active branch. This is
+treated as normal cleanup of stale PR images; `dry-run` guards the rollout
+of this wider scope (see Triggers above).
 
 `snok/container-retention-policy` automatically protects multi-arch child
 manifests still referenced by a retained parent index, so multi-platform
