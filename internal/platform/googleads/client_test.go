@@ -646,10 +646,11 @@ func TestGaqlSearchForCustomer_RejectsMalformedCustomerID(t *testing.T) {
 }
 
 // TestValidateCustomerID pins the exported guard a caller reached directly by an
-// untrusted account id (e.g. the account-monitor dispatcher, which has no design-layer
-// Pattern to reuse — see design/connection.go) must use to classify a malformed id BEFORE
-// this client is invoked at all, rather than reaching gaqlSearchForCustomer's own
-// unsentineled error path.
+// untrusted account id (e.g. the account-monitor dispatcher, which re-checks the same shape
+// the design-layer Pattern already enforces — see design/connection.go — as defense-in-depth
+// for a non-HTTP caller that bypasses Goa) must use to classify a malformed id BEFORE this
+// client is invoked at all, rather than reaching gaqlSearchForCustomer's own unsentineled
+// error path.
 func TestValidateCustomerID(t *testing.T) {
 	valid := []string{"1234567890", "1"}
 	for _, cid := range valid {

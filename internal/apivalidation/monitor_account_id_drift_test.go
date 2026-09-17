@@ -18,14 +18,21 @@ import (
 )
 
 // TestMonitorAccountIDPatterns_MatchPlatformValidators guards against the two account_id
-// shape checks for the account-monitor endpoints — the design-layer Pattern, exercised here
+// CHARSET checks for the account-monitor endpoints — the design-layer Pattern, exercised here
 // through the actual generated decoder (DecodeMonitor*AccountRequest, routed through a real
 // goahttp.Muxer exactly as the running server would), and the platform client's own runtime
 // check (googleads.ValidateCustomerID, linkedin.ValidateAccountID, meta.ValidateAccountID,
 // reddit.ValidateAccountID) — drifting apart silently. The two exist for different reasons
 // (Goa rejects a malformed id at the transport before dispatch; the client re-checks because a
 // non-HTTP caller skips Goa entirely — see each Validate*'s doc comment) but must accept and
-// reject the same ids, or one layer's "valid" becomes the other's runtime error.
+// reject the same ids on charset, or one layer's "valid" becomes the other's runtime error.
+//
+// Charset only, deliberately: the design attributes also carry MaxLength(64), but none of the
+// four platform Validate* helpers bounds length at all, so the two layers already disagree for
+// an id of 65+ otherwise-valid characters. That is not a live defect — the design layer is the
+// stricter, outer one, so an HTTP caller is refused before a non-HTTP caller's dispatcher-level
+// check ever runs — but it means this test's cases stay short enough that MaxLength never
+// enters into the comparison; it is not a length-drift guard.
 //
 // Driving the real decoder (rather than a hand-copied regexp literal) means a regenerated
 // design/connection.go Pattern is picked up automatically: this test cannot go stale relative to

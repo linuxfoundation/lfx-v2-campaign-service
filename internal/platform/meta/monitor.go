@@ -72,16 +72,15 @@ type AccountCampaignRow struct {
 // oversight — today's only caller is that service layer; a future non-HTTP caller of this
 // package directly would need to add its own bound rather than rely on one here.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
-	id := strings.TrimSpace(accountID)
-	if err := ValidateAccountID(id); err != nil {
+	if err := ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
 
-	campaigns, err := c.fetchAccountCampaignList(ctx, id)
+	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
-	insightsByID, err := c.fetchAccountCampaignInsights(ctx, id, days)
+	insightsByID, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
 	if err != nil {
 		return nil, err
 	}

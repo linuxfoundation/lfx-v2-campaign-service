@@ -180,16 +180,15 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
-	id := strings.TrimSpace(accountID)
 
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	startDate := start.Format("2006-01-02")
 	endDate := end.Format("2006-01-02")
 
-	resp, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+id+"/campaigns", nil)
+	resp, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID+"/campaigns", nil)
 	if err != nil {
-		return nil, fmt.Errorf("list account campaigns: %w", redactReportPath(err, id))
+		return nil, fmt.Errorf("list account campaigns: %w", redactReportPath(err, accountID))
 	}
 	elements := decodeCampaignList(resp.Data)
 
@@ -227,7 +226,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		}
 
 		impressions, clicks, spendUSD, ferr := c.fetchMonitorReport(ctx,
-			"/ad_accounts/"+id+"/campaigns/"+e.ID+"/reports", startDate, endDate)
+			"/ad_accounts/"+accountID+"/campaigns/"+e.ID+"/reports", startDate, endDate)
 		if ferr != nil {
 			// DIVERGES from the BFF here — see AccountCampaignRow.FetchFailed's doc comment.
 			row.FetchFailed = true
@@ -260,13 +259,12 @@ func (c *Client) FetchAccountTotals(ctx context.Context, accountID string, days,
 	if err := ValidateAccountID(accountID); err != nil {
 		return AccountTotals{}, fmt.Errorf("fetch account totals: %w", err)
 	}
-	id := strings.TrimSpace(accountID)
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	impressions, clicks, spendUSD, err := c.fetchMonitorReport(ctx,
-		"/ad_accounts/"+id+"/reports", start.Format("2006-01-02"), end.Format("2006-01-02"))
+		"/ad_accounts/"+accountID+"/reports", start.Format("2006-01-02"), end.Format("2006-01-02"))
 	if err != nil {
-		return AccountTotals{CampaignCount: campaignCount}, fmt.Errorf("fetch account totals: %w", redactReportPath(err, id))
+		return AccountTotals{CampaignCount: campaignCount}, fmt.Errorf("fetch account totals: %w", redactReportPath(err, accountID))
 	}
 	return AccountTotals{
 		Impressions:   impressions,
