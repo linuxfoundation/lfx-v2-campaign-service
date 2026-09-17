@@ -100,13 +100,14 @@ guard (`internal/dispatch/reddit.go`) skips its own check entirely when the
 incoming id is empty (`want != "" && got != "" && ...`). Google is the one
 exception — `gaqlSearchForCustomer` already rejects non-digit ids downstream
 with a clear error — but still gained the same design-layer guard for
-symmetry. Fix: `MinLength(1)` on all four; `Pattern` for LinkedIn
-(`^[0-9]+$`) and Meta (`^act_[0-9]+$`), reusing the same patterns their
-existing `*ConnectionConfig` types already enforce; `MaxLength(64)`
-everywhere. Google and Reddit get `MinLength`/`MaxLength` only — neither has
-an established `Pattern` convention anywhere else in the codebase to reuse,
-so inventing one here would be a new, unreviewed shape decision rather than
-a port of an existing one.
+symmetry. Fix: `MaxLength(64)` on all four. Google and Reddit additionally get
+`MinLength(1)` — neither has an established `Pattern` convention anywhere
+else in the codebase to reuse, so inventing one here would be a new,
+unreviewed shape decision rather than a port of an existing one. LinkedIn
+(`^[0-9]+$`) and Meta (`^act_[0-9]+$`) get `Pattern` instead, reusing the
+same patterns their existing `*ConnectionConfig` types already enforce — the
+regex itself already rejects an empty string, so a separate `MinLength(1)`
+would be redundant there.
 
 ## Correctness bugs found during PR review
 
