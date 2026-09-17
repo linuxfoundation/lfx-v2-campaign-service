@@ -55,7 +55,13 @@ jobs:
         # container step's args (see "jobs.<job_id>.steps[*].with.args" in the
         # workflow syntax reference), which forwards this string to the
         # container's ENTRYPOINT. cut-off is double-quoted because its value
-        # may contain a space (e.g. "4w 2d").
+        # may contain a space (e.g. "4w 2d"). --image-tags and --shas-to-skip
+        # are passed empty rather than omitted: upstream's action.yaml always
+        # forwards both flags to the CLI (empty when its own inputs are
+        # unset), and the CLI's arg parser requires the flags to be present,
+        # even with an empty value — confirmed by a live dry-run failing with
+        # "the following required arguments were not provided: --image-tags
+        # <IMAGE_TAGS>, --shas-to-skip <SHAS_TO_SKIP>" when they were omitted.
         env:
           RUST_LOG: container_retention_policy=INFO
         with:
@@ -75,6 +81,8 @@ jobs:
           args: >-
             --account=linuxfoundation
             --image-names=lfx-v2-campaign-service/campaign-service
+            --image-tags=
+            --shas-to-skip=
             --tag-selection=untagged
             --token=${{ secrets.GITHUB_TOKEN }}
             --cut-off="${{ github.event.inputs.cut-off || '30d' }}"
